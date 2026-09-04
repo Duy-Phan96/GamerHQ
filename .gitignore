@@ -1,0 +1,42 @@
+# Secrets / runtime configuration
+.env
+.env.*
+!.env.example
+
+# Live data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+backups/
+logs/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local release/runtime folders
+runtime/
+data/live/
+
+# Superseded one-off patch artifacts (kept locally for historical reference)
+apply_*_patch.py
+PATCH_NOTES_V*.md
+*.before_*
+README.txt
+README_SETUP.md
+README_SAFETY.txt
+initialize_server.py
+cleanup_catalog.py
+data/games.json

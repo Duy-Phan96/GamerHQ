@@ -1,0 +1,707 @@
+{
+  "games": [
+    {
+      "name": "Minecraft",
+      "emoji": "⛏️",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Sandbox",
+        "Survival"
+      ],
+      "aliases": [
+        "MC"
+      ]
+    },
+    {
+      "name": "League of Legends",
+      "emoji": "🏆",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "MOBA"
+      ],
+      "aliases": [
+        "LoL",
+        "League"
+      ]
+    },
+    {
+      "name": "World of Warcraft",
+      "emoji": "🌍",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "MMO",
+        "RPG"
+      ],
+      "aliases": [
+        "WoW"
+      ]
+    },
+    {
+      "name": "Counter-Strike 2",
+      "emoji": "💣",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Shooter",
+        "Competitive"
+      ],
+      "aliases": [
+        "CS2",
+        "Counter Strike",
+        "CS"
+      ]
+    },
+    {
+      "name": "GTA Online",
+      "emoji": "🚗",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Open World",
+        "Multiplayer"
+      ],
+      "aliases": [
+        "GTA",
+        "GTA V",
+        "GTA 5"
+      ]
+    },
+    {
+      "name": "Fortnite",
+      "emoji": "🪂",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Battle Royale",
+        "Shooter"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Rocket League",
+      "emoji": "🚀",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Sports"
+      ],
+      "aliases": [
+        "RL"
+      ]
+    },
+    {
+      "name": "Hearthstone",
+      "emoji": "🃏",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Card"
+      ],
+      "aliases": [
+        "HS"
+      ]
+    },
+    {
+      "name": "Warcraft III",
+      "emoji": "⚔️",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "Strategy",
+        "RTS"
+      ],
+      "aliases": [
+        "Warcraft 3",
+        "WC3"
+      ]
+    },
+    {
+      "name": "Dota 2",
+      "emoji": "🛡️",
+      "display_group": "⭐ All-Time Classics",
+      "tags": [
+        "MOBA"
+      ],
+      "aliases": [
+        "Dota"
+      ]
+    },
+    {
+      "name": "Overwatch 2",
+      "emoji": "🤖",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Shooter",
+        "Hero Shooter"
+      ],
+      "aliases": [
+        "Overwatch",
+        "OW",
+        "OW2"
+      ]
+    },
+    {
+      "name": "Valorant",
+      "emoji": "🎯",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Shooter",
+        "Competitive"
+      ],
+      "aliases": [
+        "Valo"
+      ]
+    },
+    {
+      "name": "Marvel Rivals",
+      "emoji": "🦸",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Hero Shooter"
+      ],
+      "aliases": [
+        "Rivals"
+      ]
+    },
+    {
+      "name": "Apex Legends",
+      "emoji": "🔺",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Shooter",
+        "Battle Royale"
+      ],
+      "aliases": [
+        "Apex"
+      ]
+    },
+    {
+      "name": "Palworld",
+      "emoji": "🐾",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Survival",
+        "Sandbox"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Helldivers 2",
+      "emoji": "🚀",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Shooter",
+        "Co-op"
+      ],
+      "aliases": [
+        "Helldivers"
+      ]
+    },
+    {
+      "name": "Rainbow Six Siege",
+      "emoji": "🛡️",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Shooter",
+        "Tactical"
+      ],
+      "aliases": [
+        "R6",
+        "R6S",
+        "Siege"
+      ]
+    },
+    {
+      "name": "Call of Duty: Warzone",
+      "emoji": "🪖",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Shooter",
+        "Battle Royale"
+      ],
+      "aliases": [
+        "Warzone",
+        "COD Warzone",
+        "Call of Duty"
+      ]
+    },
+    {
+      "name": "Dead by Daylight",
+      "emoji": "🩸",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "Horror",
+        "Multiplayer"
+      ],
+      "aliases": [
+        "DBD"
+      ]
+    },
+    {
+      "name": "Wuthering Waves",
+      "emoji": "🌊",
+      "display_group": "🔥 Popular",
+      "tags": [
+        "RPG",
+        "Open World"
+      ],
+      "aliases": [
+        "WuWa"
+      ]
+    },
+    {
+      "name": "Brawl Stars",
+      "emoji": "⭐",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile"
+      ],
+      "aliases": [
+        "Brawl"
+      ]
+    },
+    {
+      "name": "Clash Royale",
+      "emoji": "👑",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile",
+        "Strategy"
+      ],
+      "aliases": [
+        "CR"
+      ]
+    },
+    {
+      "name": "Clash of Clans",
+      "emoji": "🏰",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile",
+        "Strategy"
+      ],
+      "aliases": [
+        "CoC"
+      ]
+    },
+    {
+      "name": "Pokémon GO",
+      "emoji": "🔴",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile"
+      ],
+      "aliases": [
+        "Pokemon GO",
+        "PoGo"
+      ]
+    },
+    {
+      "name": "League of Legends: Wild Rift",
+      "emoji": "🏯",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile",
+        "MOBA"
+      ],
+      "aliases": [
+        "Wild Rift"
+      ]
+    },
+    {
+      "name": "Mobile Legends: Bang Bang",
+      "emoji": "💠",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile",
+        "MOBA"
+      ],
+      "aliases": [
+        "Mobile Legends",
+        "MLBB"
+      ]
+    },
+    {
+      "name": "Call of Duty: Mobile",
+      "emoji": "📲",
+      "display_group": "📱 Mobile Games",
+      "tags": [
+        "Mobile",
+        "Shooter"
+      ],
+      "aliases": [
+        "COD Mobile",
+        "CODM"
+      ]
+    },
+    {
+      "name": "Among Us",
+      "emoji": "👨‍🚀",
+      "display_group": "🎉 Party & Social",
+      "tags": [
+        "Party",
+        "Social"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Fall Guys",
+      "emoji": "🫘",
+      "display_group": "🎉 Party & Social",
+      "tags": [
+        "Party"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Party Animals",
+      "emoji": "🐾",
+      "display_group": "🎉 Party & Social",
+      "tags": [
+        "Party"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Lethal Company",
+      "emoji": "👻",
+      "display_group": "🎉 Party & Social",
+      "tags": [
+        "Co-op",
+        "Horror"
+      ],
+      "aliases": [
+        "Lethal"
+      ]
+    },
+    {
+      "name": "Phasmophobia",
+      "emoji": "🔦",
+      "display_group": "🎉 Party & Social",
+      "tags": [
+        "Co-op",
+        "Horror"
+      ],
+      "aliases": [
+        "Phasmo"
+      ]
+    },
+    {
+      "name": "THE FINALS",
+      "emoji": "💥",
+      "display_group": "🔫 Shooter",
+      "tags": [
+        "Shooter"
+      ],
+      "aliases": [
+        "The Finals",
+        "Finals"
+      ]
+    },
+    {
+      "name": "Battlefield",
+      "emoji": "🎖️",
+      "display_group": "🔫 Shooter",
+      "tags": [
+        "Shooter"
+      ],
+      "aliases": [
+        "BF"
+      ]
+    },
+    {
+      "name": "Escape from Tarkov",
+      "emoji": "🎒",
+      "display_group": "🔫 Shooter",
+      "tags": [
+        "Extraction Shooter"
+      ],
+      "aliases": [
+        "Tarkov",
+        "EFT"
+      ]
+    },
+    {
+      "name": "Hunt: Showdown 1896",
+      "emoji": "🤠",
+      "display_group": "🔫 Shooter",
+      "tags": [
+        "Extraction Shooter"
+      ],
+      "aliases": [
+        "Hunt Showdown",
+        "Hunt"
+      ]
+    },
+    {
+      "name": "PUBG: Battlegrounds",
+      "emoji": "🪂",
+      "display_group": "🔫 Shooter",
+      "tags": [
+        "Battle Royale",
+        "Shooter"
+      ],
+      "aliases": [
+        "PUBG"
+      ]
+    },
+    {
+      "name": "Final Fantasy XIV",
+      "emoji": "🌟",
+      "display_group": "🌍 MMO & RPG",
+      "tags": [
+        "MMO",
+        "RPG"
+      ],
+      "aliases": [
+        "FFXIV",
+        "FF14"
+      ]
+    },
+    {
+      "name": "Guild Wars 2",
+      "emoji": "🐉",
+      "display_group": "🌍 MMO & RPG",
+      "tags": [
+        "MMO",
+        "RPG"
+      ],
+      "aliases": [
+        "GW2"
+      ]
+    },
+    {
+      "name": "Diablo IV",
+      "emoji": "😈",
+      "display_group": "🌍 MMO & RPG",
+      "tags": [
+        "ARPG"
+      ],
+      "aliases": [
+        "Diablo 4",
+        "D4"
+      ]
+    },
+    {
+      "name": "Path of Exile 2",
+      "emoji": "💀",
+      "display_group": "🌍 MMO & RPG",
+      "tags": [
+        "ARPG"
+      ],
+      "aliases": [
+        "PoE2",
+        "POE 2"
+      ]
+    },
+    {
+      "name": "Monster Hunter Wilds",
+      "emoji": "🐲",
+      "display_group": "🌍 MMO & RPG",
+      "tags": [
+        "RPG",
+        "Co-op"
+      ],
+      "aliases": [
+        "Monster Hunter",
+        "MH Wilds"
+      ]
+    },
+    {
+      "name": "Rust",
+      "emoji": "🛠️",
+      "display_group": "🏗️ Survival & Sandbox",
+      "tags": [
+        "Survival"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "ARK: Survival Ascended",
+      "emoji": "🦖",
+      "display_group": "🏗️ Survival & Sandbox",
+      "tags": [
+        "Survival"
+      ],
+      "aliases": [
+        "ARK",
+        "ASA"
+      ]
+    },
+    {
+      "name": "Valheim",
+      "emoji": "🪓",
+      "display_group": "🏗️ Survival & Sandbox",
+      "tags": [
+        "Survival"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Terraria",
+      "emoji": "🌳",
+      "display_group": "🏗️ Survival & Sandbox",
+      "tags": [
+        "Sandbox"
+      ],
+      "aliases": []
+    },
+    {
+      "name": "Project Zomboid",
+      "emoji": "🧟",
+      "display_group": "🏗️ Survival & Sandbox",
+      "tags": [
+        "Survival"
+      ],
+      "aliases": [
+        "Zomboid",
+        "PZ"
+      ]
+    },
+    {
+      "name": "StarCraft II",
+      "emoji": "👽",
+      "display_group": "⚔️ Strategy & Card",
+      "tags": [
+        "Strategy",
+        "RTS"
+      ],
+      "aliases": [
+        "StarCraft 2",
+        "SC2"
+      ]
+    },
+    {
+      "name": "Age of Empires II",
+      "emoji": "🏹",
+      "display_group": "⚔️ Strategy & Card",
+      "tags": [
+        "Strategy",
+        "RTS"
+      ],
+      "aliases": [
+        "Age of Empires 2",
+        "AoE2"
+      ]
+    },
+    {
+      "name": "Age of Empires IV",
+      "emoji": "🏰",
+      "display_group": "⚔️ Strategy & Card",
+      "tags": [
+        "Strategy",
+        "RTS"
+      ],
+      "aliases": [
+        "Age of Empires 4",
+        "AoE4"
+      ]
+    },
+    {
+      "name": "Civilization VII",
+      "emoji": "🌐",
+      "display_group": "⚔️ Strategy & Card",
+      "tags": [
+        "Strategy"
+      ],
+      "aliases": [
+        "Civilization 7",
+        "Civ 7",
+        "Civ7"
+      ]
+    },
+    {
+      "name": "Teamfight Tactics",
+      "emoji": "♟️",
+      "display_group": "⚔️ Strategy & Card",
+      "tags": [
+        "Auto Battler"
+      ],
+      "aliases": [
+        "TFT"
+      ]
+    },
+    {
+      "name": "SMITE 2",
+      "emoji": "⚡",
+      "display_group": "🏆 MOBA",
+      "tags": [
+        "MOBA"
+      ],
+      "aliases": [
+        "Smite"
+      ]
+    },
+    {
+      "name": "Heroes of the Storm",
+      "emoji": "🌀",
+      "display_group": "🏆 MOBA",
+      "tags": [
+        "MOBA"
+      ],
+      "aliases": [
+        "HotS"
+      ]
+    },
+    {
+      "name": "EA Sports FC",
+      "emoji": "⚽",
+      "display_group": "⚽ Sports & Racing",
+      "tags": [
+        "Sports"
+      ],
+      "aliases": [
+        "EA FC",
+        "FC"
+      ]
+    },
+    {
+      "name": "Forza Horizon",
+      "emoji": "🏎️",
+      "display_group": "⚽ Sports & Racing",
+      "tags": [
+        "Racing"
+      ],
+      "aliases": [
+        "Forza"
+      ]
+    },
+    {
+      "name": "Formula 1",
+      "emoji": "🏁",
+      "display_group": "⚽ Sports & Racing",
+      "tags": [
+        "Racing"
+      ],
+      "aliases": [
+        "Formula 1"
+      ]
+    },
+    {
+      "name": "Tekken 8",
+      "emoji": "🥊",
+      "display_group": "🥊 Fighting",
+      "tags": [
+        "Fighting"
+      ],
+      "aliases": [
+        "Tekken"
+      ]
+    },
+    {
+      "name": "Street Fighter 6",
+      "emoji": "🥋",
+      "display_group": "🥊 Fighting",
+      "tags": [
+        "Fighting"
+      ],
+      "aliases": [
+        "SF6",
+        "Street Fighter"
+      ]
+    },
+    {
+      "name": "Brawlhalla",
+      "emoji": "⚔️",
+      "display_group": "🥊 Fighting",
+      "tags": [
+        "Fighting"
+      ],
+      "aliases": []
+    }
+  ]
+}

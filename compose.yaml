@@ -1,0 +1,18 @@
+services:
+  gamerhq:
+    build:
+      context: .
+    image: gamerhq-bot:${GAMERHQ_VERSION:-local}
+    container_name: gamerhq-bot
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      GAMERHQ_DB_PATH: /app/data/gamerhq.db
+    volumes:
+      - ./runtime/data:/app/data
+      - ./runtime/backups:/app/backups
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
