@@ -36,6 +36,16 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         with db.connect() as conn: self.assertEqual(before,list(map(tuple,conn.execute('SELECT * FROM settings'))))
         self.assertEqual(edits,sum(len(c.edits) for c in self.guild.text_channels))
 
+    async def test_partner_health_and_registered_finance_handler(self):
+        from cogs.tickets import SupportOffers
+        fake=SimpleNamespace(persistent_views=[SupportOffers()],tree=SimpleNamespace(get_commands=lambda **kw:[]))
+        result=await health.scan(self.guild,fake)
+        for name in ('PARTNERS & BENEFITS','germany-services','gaming-deals','ai-tools','Partner ticket handlers'):
+            self.assertEqual(next(f.state for f in result if f.name==name),'PASS')
+        fake.persistent_views=[SupportOffers('energy')]
+        result=await health.scan(self.guild,fake)
+        self.assertEqual(next(f.state for f in result if f.name=='Partner ticket handlers'),'WARN')
+
     async def test_renamed_guide_deleted_pin_repaired_without_duplicates(self):
         guide=structure.core_channel(self.guild,'guide')
         old_id=guide.id

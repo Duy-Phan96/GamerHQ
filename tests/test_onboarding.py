@@ -86,6 +86,9 @@ class FakeChannel:
 
 
 class FakeCategory:
+    async def delete(self, **kwargs):
+        self.guild.categories.remove(self)
+
     def __init__(self, guild, name, cid):
         self.guild, self.name, self.id = guild, name, cid
         self.overwrites = {}
@@ -106,6 +109,9 @@ class FakeCategory:
 
 
 class FakeGuild:
+    async def fetch_channels(self):
+        return list(self.channels)
+
     def __init__(self):
         self.id, self.sequence = 1, 1000
         self.categories, self.text_channels = [], []
@@ -298,9 +304,10 @@ class OnboardingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed, [])
         self.assertEqual(sum(onboarding.alias(c.name) == 'welcome' for c in self.guild.text_channels), 1)
         self.guild.categories.remove(self.community)
+        remaining_categories = [c.id for c in self.guild.categories]
         _, failed = await setup.repair_server(self.guild, self.bot)
         self.assertTrue(failed)
-        self.assertEqual(len(self.guild.categories), 6)
+        self.assertEqual([c.id for c in self.guild.categories], remaining_categories)
 
     def test_guides_are_short_use_actual_commands_and_correct_music_disconnect(self):
         from services.community_structure_service import guide_text

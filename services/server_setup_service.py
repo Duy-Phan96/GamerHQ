@@ -45,6 +45,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("💡・suggestions"),
         ),
     ),
+    CategorySpec("🤝 PARTNERS & BENEFITS", (ChannelSpec("🇩🇪・germany-services"), ChannelSpec("🎮・gaming-deals"), ChannelSpec("🤖・ai-tools"))),
     CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
     CategorySpec("🏆 EVENTS", (ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
     CategorySpec(
@@ -169,7 +170,7 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
         )
     lines.extend([
         "",
-        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It also refreshes existing Music Bots access.",
+        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It also repairs Support and PARTNERS & BENEFITS with read-only channels and separate messages, and refreshes existing Music Bots access.",
     ])
     return "\n".join(lines)
 

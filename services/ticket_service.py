@@ -23,13 +23,16 @@ TICKET_TYPES = {
     'GENERAL_SUPPORT': 'General Support',
     'ENERGY_SUPPORT': 'Energy Support',
     'ENERGY_COURSE_REQUEST': 'Energy Course Request',
+    'FINANCE_REQUEST': 'Finance Request',
 }
-ENERGY_COPY = {
+REQUEST_COPY = {
     'ENERGY_SUPPORT': ('⚡ Strom & Gas Support',
         'Deine private Support-Anfrage wurde erstellt.\n\nBeschreibe hier kurz, wobei du Unterstützung brauchst oder welche Fragen du hast.'),
     'ENERGY_COURSE_REQUEST': ('🎓 Kursanfrage – Strom & Gas Vertrieb',
-        'Deine Anfrage wurde erstellt.\n\nHier erhältst du die nächsten Schritte und den Zugang zum Kurs.'),
+        'Deine Anfrage wurde erstellt.\n\nHier erhältst du Zugang zum kostenlosen Kurs.'),
 }
+REQUEST_COPY['FINANCE_REQUEST'] = ('💶 Finanzcheck & Planung',
+    'Deine private Anfrage wurde erstellt.\n\nBeschreibe hier kurz, welche Themen oder Ziele du besprechen möchtest.')
 FEATURES = {'Bot','LFG','Voice','Roles','Game Areas','Other'}
 _user_locks, _ticket_locks, _recovery_locks, _entry_locks = {}, {}, {}, {}
 
@@ -97,15 +100,15 @@ def marker(guild_id,ticket_id): return f'gamerhq:ticket:{guild_id}:{ticket_id}'
 
 def ticket_title(item):
     kind = item.get('ticket_type', 'GENERAL_SUPPORT')
-    return '# ' + ENERGY_COPY[kind][0] if kind in ENERGY_COPY else f'# 🎫 Support Ticket #{item["id"]:04d}'
+    return '# ' + REQUEST_COPY[kind][0] if kind in REQUEST_COPY else f'# 🎫 Support Ticket #{item["id"]:04d}'
 
 
 def opening_text(item):
     assigned = f'<@{item["assigned_staff_id"]}>' if item['assigned_staff_id'] else 'Not assigned'
     unavailable = ' (left/unavailable)' if item['creator_left'] else ''
     kind = item.get('ticket_type', 'GENERAL_SUPPORT')
-    if kind in ENERGY_COPY:
-        intro = ENERGY_COPY[kind][1] if item['status'] != 'CLOSED' else 'Diese Anfrage ist geschlossen. Der Verlauf bleibt für dich und das GamerHQ-Team lesbar.'
+    if kind in REQUEST_COPY:
+        intro = REQUEST_COPY[kind][1] if item['status'] != 'CLOSED' else 'Diese Anfrage ist geschlossen. Der Verlauf bleibt für dich und das GamerHQ-Team lesbar.'
         return (f'{ticket_title(item)}\n\n{intro}\n\nTicket: #{item["id"]:04d}\n'
                 f'Type: {TICKET_TYPES[kind]}\nErstellt von: <@{item["creator_discord_id"]}>{unavailable}\n'
                 f'Zugewiesen an: {assigned}\n\nStatus: {item["status"]}')
