@@ -7,7 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import DISPLAY_GROUP_ORDER, GAME_SUGGESTIONS_CHANNEL_ID, CHOOSE_GAMES_CHANNEL_ID
+from config import DISPLAY_GROUP_ORDER, CHOOSE_GAMES_CHANNEL_ID
 from database import db
 from services.game_service import (
     GameStructureError,
@@ -17,7 +17,6 @@ from services.game_service import (
     refresh_choose_games_message,
     rebuild_choose_games_message,
     build_choose_games_sections,
-    remove_game_structure,
     search_games,
 )
 
@@ -177,49 +176,6 @@ class ConfirmGameAddView(discord.ui.View):
         )
 
 
-class RemoveConfirmView(discord.ui.View):
-    def __init__(self, cog, game, admin_id):
-        super().__init__(timeout=60)
-        self.cog = cog
-        self.game = game
-        self.admin_id = admin_id
-
-    @discord.ui.button(label="Remove Area", emoji="🗑️", style=discord.ButtonStyle.danger)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message(
-                "Only the admin who opened this confirmation can confirm it.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        await remove_game_structure(interaction.guild, self.game)
-
-        try:
-            await refresh_choose_games_message(self.cog.bot, view=GameCategoryView, intro_view=lambda: ChooseGamesButtons(self.cog))
-            overview = "\n✅ `choose-your-games` updated."
-        except GameStructureError as exc:
-            overview = (
-                "\n⚠️ Game was removed, but `choose-your-games` could not be updated: "
-                f"`{type(exc.original).__name__}: {exc.original}`"
-            )
-
-        await interaction.edit_original_response(
-            content=f"✅ The dedicated **{self.game['name']}** area was removed. The game role/library entry was kept.{overview}",
-            embed=None,
-            view=None,
-        )
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
-            content="Cancelled. Nothing was changed.",
-            embed=None,
-            view=None,
-        )
-
-
 class DeleteGameConfirmView(discord.ui.View):
     def __init__(self, cog, game, admin_id):
         super().__init__(timeout=90)
@@ -262,16 +218,8 @@ class DeleteGameConfirmView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        try:
-            if current.get("area_enabled") or current.get("category_id"):
-                await remove_game_structure(interaction.guild, current)
-                current = db.get_game_by_id(current["id"]) or current
-        except discord.Forbidden:
-            await interaction.edit_original_response(
-                content="❌ I could not remove the dedicated area. Check Manage Channels permission. The library entry was kept.",
-                embed=None,
-                view=None,
-            )
+        if current.get('area_enabled') or current.get('category_id'):
+            await interaction.edit_original_response(content='Remove the area first through `/area manage` and its safety preview, then review permanent game deletion again.', embed=None, view=None)
             return
 
         role = interaction.guild.get_role(int(current["role_id"])) if current.get("role_id") else None
@@ -894,15 +842,8 @@ class SuggestGameModal(discord.ui.Modal, title="💡 Suggest a Game"):
                 ephemeral=True,
             )
             return
-        channel = self.cog.bot.get_channel(GAME_SUGGESTIONS_CHANNEL_ID) if GAME_SUGGESTIONS_CHANNEL_ID else None
-        if not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("❌ The suggestions channel is not configured yet.", ephemeral=True)
-            return
-        embed = discord.Embed(title="💡 Game Suggestion", description=f"**{name}**")
-        embed.add_field(name="Suggested by", value=interaction.user.mention, inline=False)
-        embed.set_footer(text=f"User ID: {interaction.user.id}")
-        await channel.send(embed=embed)
-        await interaction.response.send_message(f"✅ **{name}** was suggested to the GamerHQ staff.", ephemeral=True)
+        from cogs.suggestions import submit
+        await submit(interaction, f'Game: {name}'[:100], name)
 
 
 def _find_database_path():
@@ -1385,29 +1326,8 @@ class Games(commands.Cog):
             )
             return
 
-        channel = (
-            self.bot.get_channel(GAME_SUGGESTIONS_CHANNEL_ID)
-            if GAME_SUGGESTIONS_CHANNEL_ID
-            else None
-        )
-
-        if not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message(
-                "❌ The suggestions channel has not been configured yet.",
-                ephemeral=True,
-            )
-            return
-
-        embed = discord.Embed(title="💡 Game Suggestion")
-        embed.add_field(name="Game", value=name, inline=False)
-        embed.add_field(name="Suggested by", value=interaction.user.mention, inline=False)
-        embed.set_footer(text=f"User ID: {interaction.user.id}")
-
-        await channel.send(embed=embed)
-        await interaction.response.send_message(
-            f"✅ **{name}** was suggested to the GamerHQ staff.",
-            ephemeral=True,
-        )
+        from cogs.suggestions import submit
+        await submit(interaction, f'Game: {name}'[:100], name)
 
     @game_admin.command(
         name="database",
@@ -1930,25 +1850,15 @@ class Games(commands.Cog):
             )
             return
 
-        embed = discord.Embed(
-            title=f"⚠️ Remove dedicated area: {selected['name']}?",
-            description=(
-                "This will remove the **dedicated Discord area** currently linked to this game:\n"
-                "• Game category\n"
-                "• chat\n"
-                "• looking-for-group (if enabled)\n"
-                "• Create Voice\n\n"
-                "**The game role, Game Library entry and Choose Your Games visibility are kept.**\n"
-                "Use `/game-admin set-visible` separately if you also want to hide the game.\n\n"
-                "**Nothing will be deleted until you press Remove Area.**"
-            ),
-        )
-
+        from cogs.area import AreaSelect, AreaConfirm
+        from services.area_management_service import preview
+        rows = preview(interaction.guild, interaction.user, {selected['id']})
+        back = AreaSelect(interaction.guild, interaction.user.id, 'remove')
+        back.selected = {selected['id']}; back.rebuild()
+        details = '; '.join(rows[0]['reasons']) if rows else 'Area no longer exists.'
         await interaction.response.send_message(
-            embed=embed,
-            view=RemoveConfirmView(self, selected, interaction.user.id),
-            ephemeral=True,
-        )
+            content=f"⚠️ Remove area for {selected['name']}?\n{details}\nManaged channels/category and their message history are permanently deleted. Game, role, selection and LFG remain. Safety will be checked again. For multiple areas use `/area manage`.",
+            view=AreaConfirm(interaction.guild, interaction.user.id, rows, back), ephemeral=True)
 
     @remove_area.autocomplete("game")
     async def remove_area_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -1960,7 +1870,7 @@ class Games(commands.Cog):
 
     @game_admin.command(
         name="delete",
-        description="Admin: permanently delete a game, its role and dedicated area.",
+        description="Admin: permanently delete a library game and role after its area is safely removed.",
     )
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(game="Game to permanently delete from GamerHQ")

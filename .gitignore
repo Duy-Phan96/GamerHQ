@@ -40,3 +40,61 @@ README_SAFETY.txt
 initialize_server.py
 cleanup_catalog.py
 data/games.json
+
+# Additional caches, reports and local environments
+.ruff_cache/
+.tox/
+.nox/
+env/
+ENV/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+coverage/
+*.egg-info/
+*.egg
+build/
+dist/
+*.log
+*.log.*
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# Private runtime content and SQLite sidecars
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.db-journal
+data/runtime/
+storage/
+transcripts/
+tickets/
+exports/
+uploads/
+
+# Credentials and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.*
+secrets.*
+id_rsa
+id_ed25519
+
+# Future/local web tooling (no web component is currently shipped)
+node_modules/
+.next/
+
+# Local test output and release archives
+*-output.txt
+*.zip
+*.tar
+*.tar.gz

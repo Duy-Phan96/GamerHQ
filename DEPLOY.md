@@ -1,4 +1,4 @@
-+# Deploy GamerHQ on a Linux VPS
+# Deploy GamerHQ on a Linux VPS
 
 GamerHQ runs well on a small always-on Linux VPS with Docker Compose. The code,
 runtime configuration and live data are separate:
@@ -18,7 +18,7 @@ never committed or copied into a container image.
 ## 1. Prepare the release locally
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m tools.test
 .\.venv\Scripts\python.exe -m tools.production_preflight --db-path gamerhq.db
 ```
 
@@ -30,17 +30,19 @@ Install Git, Docker Engine and the Docker Compose plugin using your Linux
 distribution or hosting provider documentation. Then:
 
 ```bash
-sudo mkdir -p /opt/gamerhq/app/runtime/{data,backups}
-sudo chown -R 10001:10001 /opt/gamerhq/app/runtime
+sudo mkdir -p /opt/gamerhq
+# Give your deployment account ownership of /opt/gamerhq before cloning.
 cd /opt/gamerhq
-git clone <YOUR_PRIVATE_REPOSITORY_URL> app
+git clone <YOUR_REPOSITORY_URL> app
 cd app
+mkdir -p runtime/data runtime/backups
+sudo chown -R 10001:10001 runtime
 cp .env.example .env
 chmod 600 .env
 ```
 
 Fill `.env` with the production token and Discord IDs. Compose sets
-`GAMERHQ_DB_PATH=/app/data/gamerhq.db`.
+`GAMERHQ_DB_PATH=/app/runtime/data/gamerhq.db`.
 
 ## 3. Move the existing live DB once
 
@@ -59,7 +61,7 @@ UID/GID `10001`. Never copy a database from a release archive.
 ```bash
 cd /opt/gamerhq/app
 docker compose build --pull
-docker compose run --rm gamerhq python -m tools.production_preflight --db-path /app/data/gamerhq.db
+docker compose run --rm gamerhq python -m tools.production_preflight --db-path /app/runtime/data/gamerhq.db
 docker compose up -d
 docker compose logs --tail=200 -f gamerhq
 ```
@@ -104,3 +106,5 @@ docker compose up -d
 Keep the live DB unless release notes explicitly document an incompatible
 migration. See `ROLLBACK.md`.
 
+
+The image copies only application sources and the public seed. Private SQLite is mounted under `/app/runtime/data`, leaving `/app/data/games_seed.json` visible. The default backup destination remains `/app/backups` and is separately mounted. These deployment commands are owner actions, not steps executed by repository preparation or CI.

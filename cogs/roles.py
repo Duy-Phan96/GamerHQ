@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 
-from config import GAME_SUGGESTIONS_CHANNEL_ID
 from services.role_service import ROLE_GROUPS, configured_group
 
 
@@ -10,18 +9,6 @@ def _channel_alias(name: str) -> str:
     value = name.lower().strip()
     value = re.sub(r"[^a-z0-9_-]+", "", value)
     return value.strip("-_")
-
-
-def find_suggestions_channel(guild: discord.Guild) -> discord.TextChannel | None:
-    matches = [
-        channel
-        for channel in guild.text_channels
-        if _channel_alias(channel.name) in {"suggestions", "role-suggestions"}
-    ]
-    if len(matches) == 1:
-        return matches[0]
-    fallback = guild.get_channel(GAME_SUGGESTIONS_CHANNEL_ID) if GAME_SUGGESTIONS_CHANNEL_ID else None
-    return fallback if isinstance(fallback, discord.TextChannel) else None
 
 
 class RoleCategorySelect(discord.ui.Select):
@@ -217,28 +204,9 @@ class SuggestRoleModal(discord.ui.Modal, title="💡 Suggest a Role"):
         if not interaction.guild:
             await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
             return
-        channel = find_suggestions_channel(interaction.guild)
-        if channel is None:
-            await interaction.response.send_message(
-                "❌ The suggestions channel is not configured yet. Please tell a GamerHQ admin.",
-                ephemeral=True,
-            )
-            return
-        content = (
-            "# 💡 Role Suggestion\n"
-            f"**Suggestion:** {str(self.suggestion).strip()}\n"
-            f"**Type:** {str(self.role_type).strip()}\n"
-            f"**Suggested by:** {interaction.user.mention}"
-        )
-        reason = str(self.reason).strip()
-        if reason:
-            content += f"\n\n**Reason**\n{reason}"
-        try:
-            await channel.send(content, allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False))
-        except (discord.Forbidden, discord.HTTPException) as exc:
-            await interaction.response.send_message(f"❌ I could not submit your suggestion: `{exc}`", ephemeral=True)
-            return
-        await interaction.response.send_message("✅ Thanks! Your role suggestion was sent to the GamerHQ team.", ephemeral=True)
+        from cogs.suggestions import submit
+        await submit(interaction, f'Role: {str(self.suggestion).strip()}'[:100],
+                     f'Type: {str(self.role_type).strip()}\nRole: {str(self.suggestion).strip()}', str(self.reason))
 
 
 class ChooseRolesHubView(discord.ui.View):

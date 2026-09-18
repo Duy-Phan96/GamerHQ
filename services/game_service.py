@@ -7,6 +7,8 @@ import discord
 
 from config import CHOOSE_GAMES_CHANNEL_ID, DISPLAY_GROUP_ORDER
 from database import db
+from services.game_area_safety import coordinated_game_creation
+from services.music_bot_service import with_music_access, resolve_music_role, apply_music_access
 
 
 class GameStructureError(Exception):
@@ -130,17 +132,34 @@ def format_plan(plan: dict) -> str:
     return "\n".join(lines)
 
 
-async def create_game_structure_confirmed(guild: discord.Guild, game: dict, plan: dict):
+@coordinated_game_creation
+async def create_game_structure_confirmed(guild: discord.Guild, game: dict, plan: dict, *, fresh=False):
     """
     Executes ONLY after explicit admin confirmation.
     Existing matching objects are reused.
     On failure, resources created by THIS operation are rolled back.
     """
+    if fresh:
+        game = db.get_game_by_id(game['id'])
+        if not game or not game.get('selectable') or game.get('category_id') or game.get('area_enabled'):
+            raise GameStructureError('ALREADY EXISTS', RuntimeError('Area already mapped or game changed.'))
+        plan = inspect_game_structure(guild, game)
+        if plan['category'] is not None:
+            raise GameStructureError('ALREADY EXISTS', RuntimeError('Matching category exists; review existing mappings.'))
+        if game.get('role_id'):
+            mapped_role = guild.get_role(game['role_id'])
+            if mapped_role:
+                plan['role'] = mapped_role
+    current = db.get_game_by_id(game['id'])
+    if current and current.get('category_id') and (plan['category'] is None or plan['category'].id != current['category_id']):
+        raise GameStructureError('ALREADY EXISTS', RuntimeError('Area mapping changed; open a fresh preview.'))
     if plan["conflicts"]:
         raise GameStructureError(
             "PRE-CHECK",
             RuntimeError("Conflicts exist. Resolve duplicate names before continuing.")
         )
+    if plan['category'] is not None and guild.get_channel(plan['category'].id) is None:
+        raise GameStructureError('PRE-CHECK', RuntimeError('The area changed after the preview. Open a fresh setup preview.'))
 
     bot_member = guild.me
     if bot_member is None:
@@ -186,6 +205,7 @@ async def create_game_structure_confirmed(guild: discord.Guild, game: dict, plan
             ),
         }
 
+        overwrites = with_music_access(guild, overwrites, 'category', parent=category)
         if category is None:
             try:
                 category = await guild.create_category(
@@ -253,6 +273,17 @@ async def create_game_structure_confirmed(guild: discord.Guild, game: dict, plan
         except Exception as exc:
             raise GameStructureError("SAVE DATABASE", exc) from exc
 
+        # Existing resources get only the dedicated music-role overwrite; keep all others.
+        music_role, music_error = resolve_music_role(guild)
+        if music_role:
+            for resource in (category, chat, lfg, create_voice):
+                if resource is not None:
+                    try:
+                        await apply_music_access(resource, music_role)
+                    except discord.HTTPException:
+                        import logging
+                        logging.getLogger(__name__).warning('Music permissions need /server setup repair for channel %s', resource.id)
+
         return db.get_game_by_id(game["id"])
 
     except Exception:
@@ -280,27 +311,8 @@ async def create_game_structure_confirmed(guild: discord.Guild, game: dict, plan
 
 
 async def remove_game_structure(guild: discord.Guild, game: dict):
-    for key in (
-        "chat_channel_id",
-        "memes_channel_id",
-        "lfg_channel_id",
-        "clips_channel_id",
-        "create_voice_channel_id",
-    ):
-        cid = game.get(key)
-        if cid:
-            channel = guild.get_channel(cid)
-            if channel:
-                await channel.delete(reason=f"GamerHQ remove game: {game['name']}")
-
-    category_id = game.get("category_id")
-    if category_id:
-        category = guild.get_channel(category_id)
-        if category:
-            await category.delete(reason=f"GamerHQ remove game: {game['name']}")
-
-    # V1: removing an area must never remove the game role or library entry.
-    db.deactivate_game(game["id"])
+    """Legacy entry point cannot bypass the reviewed removal workflow."""
+    raise ValueError('Use /area manage with a safety preview and explicit confirmation.')
 
 
 def build_choose_games_message():

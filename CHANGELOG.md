@@ -2,6 +2,37 @@
 
 All notable GamerHQ Bot changes are tracked here from the stable-release workflow onward.
 
+## [Unreleased] - 2026-09-12
+
+- Added ID-based Music Bots role configuration and least-privilege access sync in
+  owner setup, plus automatic access for game areas and gaming temporary voices.
+- Added `/server cleanup-game-areas`: private preview, one-area confirmation,
+  fresh dependency/topology checks, resource coordination and per-deletion logs.
+  Game records/roles remain intact; setup never invokes deletion.
+- Added 20 offline music/cleanup regressions (60 total passing). See
+  `MUSIC_CLEANUP_REPORT.md` for scope, safety rules and owner acceptance steps.
+
+- Focused owner setup update: migrate old welcome to COMMUNITY/newbies, establish
+  a read-only START HERE/welcome, and standardize community-commands as bot-commands.
+- Replace the long member command pages with one concise command/music guide;
+  use the registered `/game` and `/lfg` commands and verified music command names.
+- Stop regenerating Introductions guides; remove only identifiable obsolete bot
+  onboarding pins from introductions/newbies. Preserve conversation and unrelated pins.
+- Add persistent channel identity, guarded pin recovery, posting permission changes
+  and ten offline migration/permission/idempotency tests. See `ONBOARDING_REPORT.md`.
+
+## [Unreleased] - 2026-09-11
+
+- Added active lobby dashboard cards, host/member action panels, post-creation invitations,
+  safe editing, participant removal and host-approved time proposals.
+- Preserved private event channels, public/per-game discovery posts and existing share flows.
+- Made final joins transactional and invitation-aware; retained occupied voice and failed
+  cleanup mappings; show final event state before delayed cleanup.
+- Added four event columns and the indexed `lfg_time_proposals` table through additive startup
+  migrations. Back up the runtime DB before deployment; no live migration was run here.
+- Added offline permission, migration, concurrency, dashboard and voice regressions.
+  See `ACTIVE_LOBBY_REPORT.md` for acceptance steps and limitations. Not yet live-tested.
+
 ## [1.0.0-beta.1-rc4] - 2026-09-04
 
 ### Games
@@ -71,3 +102,53 @@ All notable GamerHQ Bot changes are tracked here from the stable-release workflo
 - Runtime database files are not shipped in releases.
 - `.env` is not shipped in releases.
 - `GAMERHQ_DB_PATH` can point to a persistent database outside the application/release directory.
+
+
+## Core structure and private suggestions — 2026-09-13
+
+- Preserve channel IDs while moving LFG to START HERE and tournament/giveaway channels to EVENTS.
+- Add one central guide and read-only suggestion entrypoint; shorten the bot-command pin.
+- Persist private staff suggestions and restart-safe status buttons; route game/role suggestions privately.
+- Preserve existing lobby, selector, voice and music behavior; exclude staff/core boards from music posting grants.
+
+
+## Voice owner controls and Area management — 2026-09-13
+
+- Rename/reuse 📘・guide and publish concise member instructions.
+- Add persisted-owner `/voice manage` controls without direct creator management grants.
+- Add paginated `/area manage` batches with shared safety checks and single-use removal confirmation.
+- Route legacy area removal through the same checks; preserve games, roles and LFG availability.
+
+
+## Acceptance preparation — 2026-09-14
+
+- Add read-only health classifications/details and setup repair previews.
+- Recover core guides by persisted identity; preserve unknown resources.
+- Deduplicate rapid suggestions and validate staff status transitions.
+- Harden expired LFG actions, scheduler isolation, dashboard authors and departed participant cleanup.
+- Reduce implicit startup migrations; retain ambiguous Voice records for review and ignore unchanged-channel events.
+- Add consistent private failure handling, audit logs and generated command inventory.
+
+
+## Affiliate support board — 2026-09-16
+
+- Add owner-repaired, read-only Support GamerHQ category/channel with stable resource IDs.
+- Maintain one canonical affiliate pin for Instant Gaming, PixVerse and Amazon, plus a short guide reference.
+- Include support in setup inventory/health and add eight offline regressions; no payment or donation feature.
+
+## Private support tickets — 2026-09-16
+
+- Add separate Need Support and Support GamerHQ entries in START HERE; move the existing affiliate channel without changing its ID or deleting the old category.
+- Add private ticket forms, current Staff role access, assignment, waiting state and confirmed closure with readable history.
+- Persist ticket metadata/audit, limit open tickets, serialize actions and recover canonical controls after restart without blindly recreating channels.
+- Reconcile creator departure and Staff permission changes, including access to historical ticket logs.
+- Add owner setup/health diagnostics, capacity safeguards and offline ticket regressions. No automatic ticket deletion, donations or live migration.
+
+## Public repository preparation — 2026-09-17
+
+- Expand Git/Docker privacy exclusions and add redacted working-tree/index/history auditing.
+- Document portable local setup, actual command inventory, architecture, security and contribution guidelines; leave licensing to the owner.
+- Add an isolated offline test entrypoint and credential-free test-only CI workflow.
+- Validate essential startup settings without echoing values; resolve relative DB paths from the repository and create runtime directories only on database use.
+- Copy only explicit application sources into Docker; keep private data mounts separate from the public seed catalog.
+- Retain pinned dependencies and existing product behavior; no deployment, commit, push or live migration.

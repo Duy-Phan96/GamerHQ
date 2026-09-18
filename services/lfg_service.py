@@ -21,21 +21,19 @@ def parse_server_datetime(date_text: str, time_text: str) -> int:
         local_dt = datetime.strptime(value, "%Y-%m-%d %H:%M").replace(tzinfo=SERVER_TZ)
     except ValueError as exc:
         raise ValueError("Use date `YYYY-MM-DD` and time `HH:MM`, e.g. `2026-08-28` and `20:00`.") from exc
+    roundtrip = datetime.fromtimestamp(local_dt.timestamp(), SERVER_TZ)
+    if roundtrip.replace(tzinfo=None) != local_dt.replace(tzinfo=None):
+        raise ValueError('That local time does not exist due to daylight saving time.')
+    if local_dt.utcoffset() != local_dt.replace(fold=1).utcoffset():
+        raise ValueError('That local time occurs twice due to daylight saving time; choose an unambiguous time.')
     if local_dt.timestamp() <= datetime.now(tz=SERVER_TZ).timestamp():
         raise ValueError("The event start must be in the future.")
     return int(local_dt.timestamp())
 
 
 def find_lfg_channel(guild: discord.Guild) -> discord.TextChannel | None:
-    import re
-
-    def alias(name: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-    for channel in guild.text_channels:
-        if alias(channel.name) in {"looking-for-group", "lfg"}:
-            return channel
-    return None
+    from services.community_structure_service import core_channel
+    return core_channel(guild, 'looking-for-group')
 
 
 
@@ -103,11 +101,25 @@ def render_event(guild: discord.Guild, event: dict) -> str:
     ]
 
     if joined:
-        mentions = [f"<@{user_id}>" for user_id in joined]
+        mentions = [f"<@{user_id}>" for user_id in joined[:20]]
         lines.append("**Players:** " + " · ".join(mentions))
+        if len(joined) > 20:
+            lines.append(f"… and {len(joined) - 20} more (View Participants).")
         lines.append("")
 
-    lines.append("Use the buttons below to join or leave this event.")
+    status = event.get('status', 'scheduled')
+    label = ('FULL' if len(joined) >= int(event['max_players']) else 'OPEN') if status == 'scheduled' else status.upper()
+    lines.append(f"**Status: {label}**")
+    if event.get('note'):
+        lines.append(discord.utils.escape_markdown(event['note'])[:500])
+    if event.get('voice_channel_id'):
+        lines.append(f"🎧 Voice: <#{event['voice_channel_id']}>")
+    if status == 'scheduled':
+        from services.lobby_service import proposals
+        pending = proposals(int(event['id']))
+        if pending:
+            lines.append(f"🕒 **{len(pending)} time proposal(s) pending** — Lobby Actions → Time Proposals")
+        lines.append("Join or open Lobby Actions to manage your participation.")
     return "\n".join(lines)
 
 
