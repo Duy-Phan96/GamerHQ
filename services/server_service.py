@@ -84,6 +84,8 @@ async def upsert_fixed_message(
     content: str,
     pin: bool = False,
     view: discord.ui.View | None = None,
+    recover_match=None,
+    allowed_mentions=None,
 ):
     """Create or edit one bot-managed fixed message and persist its message ID.
 
@@ -110,12 +112,24 @@ async def upsert_fixed_message(
         bot_user = channel.guild.me
         if message is not None and (bot_user is None or message.author.id != bot_user.id):
             message = None
+        if message is not None and recover_match is not None and not recover_match(message):
+            # A stale mapping must not overwrite an unrelated bot/admin notice.
+            message = None
+
+        if message is None and recover_match is not None and bot_user:
+            candidates = [item async for item in channel.pins(limit=None)]
+            async for item in channel.history(limit=100):
+                if all(item.id != existing.id for existing in candidates):
+                    candidates.append(item)
+            message = next((item for item in candidates if item.author.id == bot_user.id and recover_match(item)), None)
+            if message:
+                db.set_setting(setting_key, message.id)
 
         if message is None:
-            message = await channel.send(content=content, view=view)
+            message = await channel.send(content=content, view=view, allowed_mentions=allowed_mentions)
             db.set_setting(setting_key, message.id)
         else:
-            await message.edit(content=content, embed=None, view=view)
+            await message.edit(content=content, embed=None, view=view, allowed_mentions=allowed_mentions)
 
         if pin:
             await pin_managed_message(

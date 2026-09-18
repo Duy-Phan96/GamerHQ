@@ -9,9 +9,9 @@ services:
     env_file:
       - .env
     environment:
-      GAMERHQ_DB_PATH: /app/data/gamerhq.db
+      GAMERHQ_DB_PATH: /app/runtime/data/gamerhq.db
     volumes:
-      - ./runtime/data:/app/data
+      - ./runtime/data:/app/runtime/data
       - ./runtime/backups:/app/backups
     stop_grace_period: 30s
     security_opt:

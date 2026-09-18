@@ -25,11 +25,14 @@ def main() -> None:
         if not value.isdigit() or int(value) <= 0:
             errors.append(f"{name} must be a positive Discord ID")
 
-    configured_db = args.db_path or Path(values.get("GAMERHQ_DB_PATH") or "")
-    if not str(configured_db):
+    raw_db = args.db_path or values.get("GAMERHQ_DB_PATH")
+    if not raw_db:
         errors.append("GAMERHQ_DB_PATH is missing")
     else:
-        configured_db = configured_db.expanduser().resolve()
+        configured_db = Path(raw_db).expanduser()
+        if not configured_db.is_absolute():
+            configured_db = Path(__file__).resolve().parents[1] / configured_db
+        configured_db = configured_db.resolve()
         if not configured_db.is_file():
             errors.append(f"Runtime DB does not exist: {configured_db}")
         else:

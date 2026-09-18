@@ -1,7 +1,11 @@
+import logging
 import discord
 from discord.ext import commands
 
-from config import TOKEN, GUILD_ID
+try:
+    from config import TOKEN, GUILD_ID, validate_startup, ConfigurationError
+except ValueError as error:
+    raise SystemExit(f"Configuration error: {error}") from None
 from database import db
 from services.command_guide_service import (
     refresh_staff_command_guide,
@@ -25,8 +29,12 @@ class GamerHQBot(commands.Bot):
 
         await self.load_extension("cogs.games")
         await self.load_extension("cogs.voice")
+        await self.load_extension("cogs.voice_controls")
+        await self.load_extension("cogs.area")
         await self.load_extension("cogs.server")
         await self.load_extension("cogs.roles")
+        await self.load_extension("cogs.suggestions")
+        await self.load_extension("cogs.tickets")
         await self.load_extension("cogs.lfg")
         await self.load_extension("cogs.streamer")
 
@@ -43,6 +51,7 @@ class GamerHQBot(commands.Bot):
 
         print(f"Synced {len(guild_synced)} command group(s) to GamerHQ.")
         print(f"Cleared global commands: {len(global_synced)} remaining.")
+        logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Use /server health for acceptance diagnostics; owner /server setup for repairs.", len(self.extensions), len(self.persistent_views))
 
 bot = GamerHQBot()
 
@@ -67,7 +76,12 @@ async def on_ready():
         # Keep the private staff command reference synchronized with the
         # currently registered /server and /game-admin commands.
         try:
-            await refresh_staff_command_guide(bot, guild)
+            from services.onboarding_service import alias, unique
+            existing = unique([c for c in guild.text_channels if alias(c.name) in {'mod-commands','staff-commands','moderator-commands','mods-commands'}], 'mod-commands')
+            if existing:
+                await refresh_staff_command_guide(bot, guild, channel=existing)
+            else:
+                print('Staff guide not found; review /server health. No structure created.')
         except Exception as exc:
             # Documentation refresh must never prevent the bot from coming online.
             print(f"Staff command guide refresh skipped: {exc}")
@@ -78,12 +92,17 @@ async def on_ready():
             print(f"Community command guide refresh skipped: {exc}")
 
         try:
-            await refresh_streamer_command_guide(bot, guild)
+            from services.onboarding_service import unique
+            existing = unique(guild.text_channels, 'streamer-commands')
+            if existing:
+                await refresh_streamer_command_guide(bot, guild, channel=existing)
+            else:
+                print('Streamer commands missing; review /server health. No structure created.')
         except Exception as exc:
             print(f"Streamer command guide refresh skipped: {exc}")
 
         # Refresh GamerHQ-owned fixed server copy. This also migrates the old
-        # introductions embed to the current managed markdown message in place.
+        # onboarding pins without recreating guides in introductions/newbies.
         server_cog = bot.get_cog("ServerAdmin")
         if server_cog:
             try:
@@ -112,7 +131,9 @@ async def on_ready():
             print(f"Choose Your Games refresh skipped: {exc}")
 
 
-if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN missing in .env")
-
-bot.run(TOKEN)
+if __name__ == "__main__":
+    try:
+        validate_startup()
+    except ConfigurationError as error:
+        raise SystemExit(f"Configuration error: {error}") from None
+    bot.run(TOKEN)

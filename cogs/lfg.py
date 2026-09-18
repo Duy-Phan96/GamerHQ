@@ -9,6 +9,9 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from database import db
+from services import lobby_service as lobby_rules
+from services.lobby_dashboard import event_lock, sync_card, cleanup_ended
+import logging
 from services.lfg_service import (
     SERVER_TZ, find_lfg_channel, find_game_lfg_channel, member_has_game_role,
     render_event, user_games,
@@ -16,30 +19,38 @@ from services.lfg_service import (
 
 
 async def refresh_event_posts(guild: discord.Guild, event_id: int):
-    event = db.get_lfg_event(event_id)
-    if not event:
-        return
-    content = render_event(guild, event)
-    view = LFGEventView(event_id)
-    rows = db.get_lfg_event_messages(event_id)
-    # Compatibility with events created before multi-post support.
-    if not rows and event.get("channel_id") and event.get("message_id"):
-        rows = [{"channel_id": event["channel_id"], "message_id": event["message_id"]}]
-    for row in rows:
-        channel = guild.get_channel(int(row["channel_id"]))
-        if not isinstance(channel, discord.TextChannel):
-            continue
+    async with event_lock(event_id):
+        event = db.get_lfg_event(event_id)
+        if not event or event['guild_id'] != guild.id:
+            return
+        content = render_event(guild, event)
+        view = LFGEventView(event_id) if event['status'] == 'scheduled' else None
         try:
-            msg = await channel.fetch_message(int(row["message_id"]))
-            await msg.edit(content=content, view=view)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
+            await sync_card(guild, event, view)
+        except discord.HTTPException:
+            logging.getLogger(__name__).exception('Could not sync lobby dashboard %s', event_id)
+        event = db.get_lfg_event(event_id)
+        rows = db.get_lfg_event_messages(event_id)
+        if not rows and event.get('channel_id') and event.get('message_id'):
+            rows = [{'channel_id': event['channel_id'], 'message_id': event['message_id']}]
+        for row in rows:
+            if row['message_id'] == event.get('dashboard_message_id'):
+                continue
+            channel = guild.get_channel(int(row['channel_id']))
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            try:
+                msg = await channel.fetch_message(int(row['message_id']))
+                await msg.edit(content=content, view=view, allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException:
+                logging.getLogger(__name__).warning('Could not update lobby post %s', row['message_id'])
 
 
 async def delete_event_posts(guild: discord.Guild, event: dict) -> None:
     rows = db.get_lfg_event_messages(int(event["id"]))
     if not rows and event.get("channel_id") and event.get("message_id"):
         rows = [{"channel_id": event["channel_id"], "message_id": event["message_id"]}]
+    success = True
     for row in rows:
         channel = guild.get_channel(int(row["channel_id"]))
         if not isinstance(channel, discord.TextChannel):
@@ -47,9 +58,12 @@ async def delete_event_posts(guild: discord.Guild, event: dict) -> None:
         try:
             message = await channel.fetch_message(int(row["message_id"]))
             await message.delete()
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
             pass
+        except discord.HTTPException:
+            success = False
 
+    return success
 
 async def notify_cancelled_users(guild: discord.Guild, event: dict) -> None:
     game = db.get_game_by_id(int(event["game_id"]))
@@ -72,17 +86,24 @@ async def notify_cancelled_users(guild: discord.Guild, event: dict) -> None:
             pass
 
 
-async def delete_event_voice(guild: discord.Guild, event: dict) -> None:
-    channel_id = event.get("voice_channel_id")
+async def delete_event_voice(guild: discord.Guild, event: dict) -> bool:
+    channel_id = event.get('voice_channel_id')
     if not channel_id:
-        return
+        return True
     channel = guild.get_channel(int(channel_id))
     if isinstance(channel, discord.VoiceChannel):
+        if channel.members:
+            return False
         try:
             await channel.delete(reason=f"GamerHQ LFG event #{event['id']} cancelled/finished")
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
             pass
-    db.clear_lfg_event_voice(int(event["id"]))
+        except discord.HTTPException:
+            return False
+    elif channel is not None:
+        return False
+    db.clear_lfg_event_voice(int(event['id']))
+    return True
 
 
 def event_voice_overwrites(guild: discord.Guild, event: dict) -> dict:
@@ -107,7 +128,10 @@ def event_voice_overwrites(guild: discord.Guild, event: dict) -> dict:
             view_channel=True, connect=True, speak=True,
             manage_channels=is_host, move_members=is_host,
         )
-    return overwrites
+    from services.music_bot_service import with_music_access
+    game = db.get_game_by_id(event['game_id'])
+    parent = guild.get_channel(game['category_id']) if game and game.get('category_id') else None
+    return with_music_access(guild, overwrites, 'voice', parent=parent)
 
 
 async def send_voice_ready_dm(guild: discord.Guild, event: dict, member: discord.Member, channel: discord.VoiceChannel) -> bool:
@@ -153,6 +177,8 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
     if not fresh or fresh.get("status") != "scheduled":
         return None
 
+    if event["start_at"] != fresh["start_at"]:
+        return None
     existing_id = fresh.get("voice_channel_id")
     if existing_id:
         existing = guild.get_channel(int(existing_id))
@@ -172,7 +198,7 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
         return None
 
     # Only one scheduler/process may claim the event voice, and never after cancellation.
-    if not db.claim_lfg_event_voice(event_id, channel.id):
+    if not db.claim_lfg_event_voice(event_id, channel.id, expected_start=fresh['start_at']):
         try:
             await channel.delete(reason=f"GamerHQ LFG event #{event_id} duplicate/cancelled voice")
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
@@ -218,7 +244,7 @@ class ConfirmCancelEventView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Delete Event", emoji="🗑️", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Cancel Event", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def confirm_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.guild:
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
@@ -230,18 +256,14 @@ class ConfirmCancelEventView(discord.ui.View):
         if interaction.user.id != int(event["host_id"]) and not is_admin:
             return await interaction.response.send_message("❌ Only the host or an administrator can delete this event.", ephemeral=True)
 
-        # Stop the scheduler first. A cancelled event must never create/send a voice afterwards.
-        db.set_lfg_event_status(self.event_id, "cancelled")
-        event = db.get_lfg_event(self.event_id) or event
+        try:
+            event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, 'cancelled', administrator=is_admin)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         await notify_cancelled_users(interaction.guild, event)
-        await delete_event_posts(interaction.guild, event)
-        await delete_event_voice(interaction.guild, event)
-        await delete_private_event_channel(interaction.guild, event)
-        db.delete_lfg_event(self.event_id)
-        await interaction.response.edit_message(
-            content="✅ Event deleted. Participants were notified where possible.",
-            view=None,
-        )
+        await refresh_event_posts(interaction.guild, self.event_id)
+        await interaction.edit_original_response(content="Lobby cancelled. The final card remains for 24 hours; voice cleanup waits until empty.", view=None)
         self.stop()
 
     @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
@@ -274,10 +296,7 @@ async def _grant_private_event_access(guild: discord.Guild, event: dict, member:
 async def _revoke_private_event_access(guild: discord.Guild, event: dict, member: discord.Member) -> None:
     channel = _event_private_channel(guild, event)
     if channel is not None and member.id != int(event["host_id"]):
-        try:
-            await channel.set_permissions(member, overwrite=None)
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        await channel.set_permissions(member, overwrite=None)
 
 
 async def create_private_event_channel(guild: discord.Guild, event: dict, game: dict) -> discord.TextChannel | None:
@@ -320,13 +339,16 @@ async def create_private_event_channel(guild: discord.Guild, event: dict, game: 
     return channel
 
 
-async def delete_private_event_channel(guild: discord.Guild, event: dict) -> None:
+async def delete_private_event_channel(guild: discord.Guild, event: dict) -> bool:
     channel = _event_private_channel(guild, event)
     if channel is not None:
         try:
             await channel.delete(reason=f"GamerHQ private event #{int(event['id'])} cancelled/finished")
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
             pass
+        except discord.HTTPException:
+            return False
+    return True
 
 
 async def make_server_invite(channel: discord.TextChannel) -> str | None:
@@ -337,14 +359,13 @@ async def make_server_invite(channel: discord.TextChannel) -> str | None:
         return None
 
 
-async def _finish_join(guild: discord.Guild, event: dict, member: discord.Member) -> str:
-    members = db.get_lfg_event_members(int(event["id"]))
-    states = {int(r["user_id"]): r["status"] for r in members}
-    if states.get(member.id) == "joined":
-        return "already"
-    if sum(r["status"] == "joined" for r in members) >= int(event["max_players"]):
-        return "full"
-    db.set_lfg_event_member(int(event["id"]), member.id, "joined")
+async def _finish_join(guild: discord.Guild, event: dict, member: discord.Member, *, share_token=None) -> str:
+    try:
+        result = lobby_rules.join(int(event['id']), guild.id, member.id, share_token=share_token)
+    except ValueError:
+        return 'unavailable'
+    if result != 'joined':
+        return result
     fresh = db.get_lfg_event(int(event["id"]))
     if fresh and fresh.get("visibility") == "private":
         await _grant_private_event_access(guild, fresh, member)
@@ -361,11 +382,12 @@ async def _finish_join(guild: discord.Guild, event: dict, member: discord.Member
 
 
 class AddGameAndJoinView(discord.ui.View):
-    def __init__(self, event_id: int, guild_id: int, user_id: int):
+    def __init__(self, event_id: int, guild_id: int, user_id: int, share_token=None):
         super().__init__(timeout=120)
         self.event_id = int(event_id)
         self.guild_id = int(guild_id)
         self.user_id = int(user_id)
+        self.share_token = share_token
 
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -384,24 +406,27 @@ class AddGameAndJoinView(discord.ui.View):
         role = guild.get_role(int(game["role_id"])) if game and game.get("role_id") else None
         if not game or role is None:
             return await interaction.response.edit_message(content="❌ The game role is currently unavailable.", view=None)
+        await interaction.response.defer()
         try:
             if role not in member.roles:
                 await member.add_roles(role, reason="GamerHQ Add Game & Join")
         except discord.Forbidden:
-            return await interaction.response.edit_message(content="❌ I couldn't add the game role. Please ask staff to check my role permissions.", view=None)
+            return await interaction.edit_original_response(content="❌ I couldn't add the game role. Please ask staff to check my role permissions.", view=None)
         except discord.HTTPException as exc:
-            return await interaction.response.edit_message(content=f"❌ Discord couldn't add the game role: `{exc}`", view=None)
+            return await interaction.edit_original_response(content=f"❌ Discord couldn't add the game role: `{exc}`", view=None)
 
-        result = await _finish_join(guild, event, member)
+        result = await _finish_join(guild, event, member, share_token=self.share_token)
         # Adding a member role does not change selector content. Refreshing here
         # previously passed no views and stripped every public game button.
+        if result == "unavailable":
+            return await interaction.edit_original_response(content="This lobby or invitation is no longer available.", view=None)
         if result == "full":
             msg = f"🎮 **{game['name']}** was added to your games, but this event is already full."
         elif result == "already":
             msg = f"✅ **{game['name']}** was added to your games. You're already in this event."
         else:
             msg = f"✅ **{game['name']}** was added to your games and you've joined the event."
-        await interaction.response.edit_message(content=msg, view=None)
+        await interaction.edit_original_response(content=msg, view=None)
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
@@ -410,7 +435,7 @@ class AddGameAndJoinView(discord.ui.View):
         self.stop()
 
 
-async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict, game: dict, guild: discord.Guild):
+async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict, game: dict, guild: discord.Guild, *, share_token=None):
     content = (
         f"# 🎮 Add {game['name']}?\n\n"
         f"**{game['name']}** isn't in your GamerHQ games yet.\n"
@@ -418,7 +443,7 @@ async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict
     )
     await interaction.response.send_message(
         content,
-        view=AddGameAndJoinView(int(event["id"]), guild.id, interaction.user.id),
+        view=AddGameAndJoinView(int(event["id"]), guild.id, interaction.user.id, share_token=share_token),
         ephemeral=interaction.guild is not None,
     )
 
@@ -440,6 +465,13 @@ class LFGEventView(discord.ui.View):
                                   custom_id=f"gamerhq:lfg:share:{self.event_id}")
         join.callback, leave.callback, share.callback = self.join_event, self.leave_event, self.share_event
         self.add_item(join); self.add_item(leave); self.add_item(share)
+        manage = discord.ui.Button(label='Lobby Actions', style=discord.ButtonStyle.primary,
+                                   custom_id=f'gamerhq:lfg:manage:{self.event_id}')
+        async def manage_callback(interaction):
+            from cogs.lobby_management import open_panel
+            await open_panel(interaction, self.event_id)
+        manage.callback = manage_callback
+        self.add_item(manage)
 
     async def join_event(self, interaction: discord.Interaction):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
@@ -458,12 +490,15 @@ class LFGEventView(discord.ui.View):
                 )
         if not member_has_game_role(interaction.user, game):
             return await prompt_add_game_and_join(interaction, event, game, interaction.guild)
+        await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(interaction.guild, event, interaction.user)
         if result == "already":
-            return await interaction.response.send_message("✅ You're already in this event.", ephemeral=True)
+            return await interaction.followup.send("✅ You're already in this event.", ephemeral=True)
+        if result == "unavailable":
+            return await interaction.followup.send("This lobby or invitation is no longer available.", ephemeral=interaction.guild is not None)
         if result == "full":
-            return await interaction.response.send_message("❌ This event is full.", ephemeral=True)
-        await interaction.response.send_message("✅ You've joined the event.", ephemeral=True)
+            return await interaction.followup.send("❌ This event is full.", ephemeral=True)
+        await interaction.followup.send("✅ You've joined the event.", ephemeral=True)
 
     async def share_event(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -471,16 +506,17 @@ class LFGEventView(discord.ui.View):
         event = db.get_lfg_event(self.event_id)
         if not event or event.get("status") != "scheduled":
             return await interaction.response.send_message("❌ This event is no longer available.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         if event.get("visibility") == "private":
             if interaction.user.id != int(event["host_id"]):
-                return await interaction.response.send_message("🔒 Only the host can share this private event invite.", ephemeral=True)
+                return await interaction.followup.send("🔒 Only the host can share this private event invite.", ephemeral=True)
             token = event.get("share_token")
             if not token or not int(event.get("share_enabled", 1)):
-                return await interaction.response.send_message("❌ The private invite link is currently disabled.", ephemeral=True)
+                return await interaction.followup.send("❌ The private invite link is currently disabled.", ephemeral=True)
             private_channel = _event_private_channel(interaction.guild, event)
             invite_url = await make_server_invite(private_channel) if private_channel else None
             server_line = f"**Server invite:** {invite_url}\n" if invite_url else ""
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "# 🔒 Share Private Event\n\n"
                 f"{server_line}"
                 f"**Event access:** `{token}`\n\n"
@@ -501,8 +537,8 @@ class LFGEventView(discord.ui.View):
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     pass
         if not url:
-            return await interaction.response.send_message("❌ Event link is currently unavailable.", ephemeral=True)
-        await interaction.response.send_message(f"# 🔗 Share Event\n\n{url}", ephemeral=True)
+            return await interaction.followup.send("❌ Event link is currently unavailable.", ephemeral=True)
+        await interaction.followup.send(f"# 🔗 Share Event\n\n{url}", ephemeral=True)
 
     async def leave_event(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -516,11 +552,20 @@ class LFGEventView(discord.ui.View):
         status = next((r["status"] for r in members if int(r["user_id"]) == interaction.user.id), None)
         if status != "joined":
             return await interaction.response.send_message("You're not currently joined.", ephemeral=True)
-        db.remove_lfg_event_member(self.event_id, interaction.user.id)
-        if event.get("visibility") == "private" and isinstance(interaction.user, discord.Member):
-            await _revoke_private_event_access(interaction.guild, event, interaction.user)
-        await interaction.response.send_message("↩️ You've left the event.", ephemeral=True)
+        try:
+            lobby_rules.remove(self.event_id, interaction.guild.id, interaction.user.id, interaction.user.id)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        from cogs.lobby_management import revoke_access
+        notice = "You've left the lobby."
+        try:
+            await revoke_access(interaction.guild, event, interaction.user.id)
+        except discord.HTTPException:
+            notice += ' Discord access cleanup failed; please ask staff to remove the channel override.'
         await refresh_event_posts(interaction.guild, self.event_id)
+        await interaction.edit_original_response(content=notice, view=None)
+
 
 
 
@@ -556,111 +601,52 @@ class HostedEventSelect(discord.ui.Select):
             return await interaction.response.edit_message(
                 content="❌ That event is no longer available.", view=self.parent_view
             )
-        game = db.get_game_by_id(int(event["game_id"]))
-        game_name = game["name"] if game else "Unknown game"
-        await interaction.response.edit_message(
-            content=(
-                "# ⚙️ Manage Your LFG Events\n\n"
-                f"**Selected:** {event['title']}\n"
-                f"🎮 **Game:** {game_name}\n"
-                f"📅 **Starts:** <t:{int(event['start_at'])}:F>\n\n"
-                "Only you can see and use these management controls."
-            ),
-            view=self.parent_view,
-        )
+        from cogs.lobby_management import open_panel
+        await open_panel(interaction, event['id'], update=True)
+
 
 
 class LFGManageView(discord.ui.View):
     def __init__(self, host_id: int, events: list[dict]):
         super().__init__(timeout=300)
         self.host_id = int(host_id)
-        self.selected_event_id: int | None = None
-        self.add_item(HostedEventSelect(self, events))
-        self._sync_buttons()
+        self.events = events
+        self.page = 0
+        self.selected_event_id = None
+        self.rebuild()
 
-    async def interaction_check(self, interaction: discord.Interaction):
+    def rebuild(self):
+        for item in list(self.children):
+            if isinstance(item, discord.ui.Select):
+                self.remove_item(item)
+        self.add_item(HostedEventSelect(self, self.events[self.page * 25:(self.page + 1) * 25]))
+        self.previous.disabled = self.page == 0
+        self.next_page.disabled = (self.page + 1) * 25 >= len(self.events)
+
+    def _sync_buttons(self):
+        pass  # Selection now opens the complete lobby panel.
+
+    async def interaction_check(self, interaction):
         if interaction.user.id != self.host_id:
-            await interaction.response.send_message("This event manager belongs to another user.", ephemeral=True)
+            await interaction.response.send_message('This manager belongs to another user.', ephemeral=True)
             return False
         return True
 
-    def _sync_buttons(self):
-        disabled = self.selected_event_id is None
-        self.cancel_selected.disabled = disabled
-        self.share_selected.disabled = disabled
-        self.rotate_private_link.disabled = disabled
+    @discord.ui.button(label='Previous', row=1)
+    async def previous(self, interaction, button):
+        self.page = max(0, self.page - 1)
+        self.rebuild()
+        await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(label="Share", emoji="🔗", style=discord.ButtonStyle.primary, row=1, disabled=True)
-    async def share_selected(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.selected_event_id:
-            return await interaction.response.send_message("Choose an event first.", ephemeral=True)
-        event = db.get_lfg_event(self.selected_event_id)
-        if not event or int(event["host_id"]) != self.host_id:
-            return await interaction.response.send_message("❌ That event is no longer available.", ephemeral=True)
-        if event.get("visibility") == "private":
-            token = event.get("share_token")
-            if not token or not int(event.get("share_enabled", 1)):
-                return await interaction.response.send_message("❌ Private sharing is disabled for this event.", ephemeral=True)
-            channel = _event_private_channel(interaction.guild, event) if interaction.guild else None
-            invite_url = await make_server_invite(channel) if channel else None
-            server_line = f"**Server invite:** {invite_url}\n" if invite_url else ""
-            return await interaction.response.send_message(
-                f"# 🔒 Share Private Event\n\n{server_line}**Event access:** `{token}`\n\n"
-                "Already a member? Use `/lfg join-code` with the Event access value. "
-                "New member? Join GamerHQ first, then use the same value.", ephemeral=True
-            )
-        rows = db.get_lfg_event_messages(self.selected_event_id)
-        for row in rows:
-            channel = interaction.guild.get_channel(int(row["channel_id"])) if interaction.guild else None
-            if isinstance(channel, discord.TextChannel):
-                try:
-                    msg = await channel.fetch_message(int(row["message_id"]))
-                    return await interaction.response.send_message(f"# 🔗 Share Event\n\n{msg.jump_url}", ephemeral=True)
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    continue
-        await interaction.response.send_message("❌ Event link is currently unavailable.", ephemeral=True)
+    @discord.ui.button(label='Next', row=1)
+    async def next_page(self, interaction, button):
+        self.page = min((len(self.events) - 1) // 25, self.page + 1)
+        self.rebuild()
+        await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(label="Regenerate Invite", emoji="🔄", style=discord.ButtonStyle.secondary, row=1, disabled=True)
-    async def rotate_private_link(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.selected_event_id:
-            return await interaction.response.send_message("Choose an event first.", ephemeral=True)
-        event = db.get_lfg_event(self.selected_event_id)
-        if not event or int(event["host_id"]) != self.host_id:
-            return await interaction.response.send_message("❌ That event is no longer available.", ephemeral=True)
-        if event.get("visibility") != "private":
-            return await interaction.response.send_message("🌐 Public events use their normal Share Event link and do not need a private invite.", ephemeral=True)
-        token = secrets.token_urlsafe(8)
-        db.rotate_lfg_share_token(self.selected_event_id, token)
-        await interaction.response.send_message(
-            f"✅ The old private invite is disabled. New Event access: `{token}`\nShare it only with people you want to let into this event.",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Cancel Event", emoji="🗑️", style=discord.ButtonStyle.danger, row=1, disabled=True)
-    async def cancel_selected(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.selected_event_id:
-            return await interaction.response.send_message("Choose an event first.", ephemeral=True)
-        event = db.get_lfg_event(self.selected_event_id)
-        if not event or event.get("status") != "scheduled":
-            return await interaction.response.edit_message(content="❌ This event is no longer available.", view=None)
-        if int(event["host_id"]) != self.host_id:
-            return await interaction.response.edit_message(content="❌ You can only manage events you created.", view=None)
-        joined = [r for r in db.get_lfg_event_members(self.selected_event_id) if r["status"] == "joined"]
-        affected = max(0, len(joined) - 1)
-        await interaction.response.edit_message(
-            content=(
-                "# 🗑️ Cancel Event?\n\n"
-                f"**{event['title']}** will be removed from every GamerHQ LFG channel.\n"
-                f"👥 **{affected} other joined player{'s' if affected != 1 else ''}** will be affected.\n\n"
-                "This cannot be undone."
-            ),
-            view=ConfirmCancelEventView(self.selected_event_id, self.host_id),
-        )
-        self.stop()
-
-    @discord.ui.button(label="Close", emoji="✖️", style=discord.ButtonStyle.secondary, row=1)
-    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="✅ LFG event manager closed.", view=None)
+    @discord.ui.button(label='Dismiss', row=1)
+    async def close(self, interaction, button):
+        await interaction.response.edit_message(content='Lobby manager closed.', view=None)
         self.stop()
 
 
@@ -689,12 +675,15 @@ class LFGInviteDMView(discord.ui.View):
             return await interaction.response.send_message("❌ This event's game is unavailable.")
         if not member_has_game_role(member, game):
             return await prompt_add_game_and_join(interaction, event, game, guild)
+        await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(guild, event, member)
         if result == "already":
-            return await interaction.response.send_message("✅ You're already in this event.")
+            return await interaction.followup.send("✅ You're already in this event.")
+        if result == "unavailable":
+            return await interaction.followup.send("This lobby or invitation is no longer available.", ephemeral=interaction.guild is not None)
         if result == "full":
-            return await interaction.response.send_message("❌ This event is full.")
-        await interaction.response.send_message("✅ You've joined the event. See you there!")
+            return await interaction.followup.send("❌ This event is full.")
+        await interaction.followup.send("✅ You've joined the event. See you there!")
 
 
 async def send_event_invites(guild: discord.Guild, event: dict, event_message: discord.Message) -> None:
@@ -796,13 +785,20 @@ class EventDraftView(discord.ui.View):
 
         hour, minute = b.hour, b.minute
         dt = datetime.fromisoformat(b.date).replace(hour=hour, minute=minute, tzinfo=SERVER_TZ)
-        start_at = int(dt.timestamp())
-        event = db.create_lfg_event(
-            guild_id=interaction.guild.id, game_id=b.game["id"], host_id=b.host.id,
-            title=b.title, start_at=start_at, max_players=b.max_players,
-            invite_lead_minutes=b.invite_lead, visibility=b.visibility,
-            share_token=secrets.token_urlsafe(8),
-        )
+        from services.lfg_service import parse_server_datetime
+        try:
+            start_at = parse_server_datetime(b.date, f'{hour:02d}:{minute:02d}')
+        except ValueError as exc:
+            return await interaction.edit_original_response(content=str(exc), view=None)
+        try:
+            event = db.create_lfg_event(
+                guild_id=interaction.guild.id, game_id=b.game["id"], host_id=b.host.id,
+                title=b.title, start_at=start_at, max_players=b.max_players,
+                invite_lead_minutes=b.invite_lead, visibility=b.visibility,
+                share_token=secrets.token_urlsafe(8),
+            )
+        except ValueError as exc:
+            return await interaction.edit_original_response(content=str(exc), view=None)
         for uid in b.invited_ids:
             member = interaction.guild.get_member(int(uid))
             if member and not member.bot:
@@ -836,6 +832,7 @@ class EventDraftView(discord.ui.View):
         if not posts:
             return await interaction.edit_original_response(content="❌ I could not post the event.", view=None)
         db.set_lfg_event_message(event["id"], channel_id=posts[0].channel.id, message_id=posts[0].id)
+        await refresh_event_posts(interaction.guild, event["id"])
         await send_event_invites(interaction.guild, db.get_lfg_event(event["id"]), posts[0])
         where = " and ".join(p.channel.mention for p in posts)
         visibility_note = "🔒 Private event" if b.visibility == "private" else "🌐 Public event"
@@ -1114,38 +1111,47 @@ class LFG(commands.Cog):
     async def voice_scheduler(self):
         now = int(datetime.now(SERVER_TZ).timestamp())
         for guild in self.bot.guilds:
+            try:
+                await cleanup_ended(guild, reconcile=self.voice_scheduler.current_loop % 10 == 0)
+            except Exception:
+                logging.getLogger(__name__).exception('LFG terminal recovery failed guild=%s; retry next cycle.', guild.id)
             for event in db.get_active_lfg_events(guild.id):
-                event_id = int(event["id"])
-                voice_id = event.get("voice_channel_id")
-                # Retire old events after a generous six-hour window. Never kick an
-                # active voice room; cleanup waits until it is empty.
-                if now >= int(event["start_at"]) + 6 * 3600:
-                    voice = guild.get_channel(int(voice_id)) if voice_id else None
-                    if isinstance(voice, discord.VoiceChannel) and voice.members:
+                try:
+                    event_id = int(event["id"])
+                    # Periodically repair missing cards and failed Discord updates.
+                    if self.voice_scheduler.current_loop % 10 == 0:
+                        await refresh_event_posts(guild, event_id)
+                    event = db.get_lfg_event(event_id)
+                    if not event or event['status'] != 'scheduled':
                         continue
-                    if isinstance(voice, discord.VoiceChannel):
-                        try:
-                            await voice.delete(reason=f"GamerHQ LFG event #{event_id} completed")
-                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                            pass
-                    await delete_event_posts(guild, event)
-                    await delete_private_event_channel(guild, event)
-                    db.set_lfg_event_status(event_id, "completed")
-                    continue
-                invite_at = int(event["start_at"]) - int(event["invite_lead_minutes"]) * 60
-                if not voice_id and now >= invite_at and now < int(event["start_at"]) + 6 * 3600:
-                    await create_event_voice(guild, event)
-                    continue
-                if voice_id:
-                    channel = guild.get_channel(int(voice_id))
-                    if channel is None:
-                        db.clear_lfg_event_voice(event_id)
-                    elif isinstance(channel, discord.VoiceChannel) and now >= int(event["start_at"]) + 2 * 3600 and not channel.members:
-                        try:
-                            await channel.delete(reason=f"GamerHQ LFG event #{event_id} finished and voice is empty")
-                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                            pass
-                        db.clear_lfg_event_voice(event_id)
+                    voice_id = event.get("voice_channel_id")
+                    # Retire old events after a generous six-hour window. Never kick an
+                    # active voice room; cleanup waits until it is empty.
+                    if now >= int(event["start_at"]) + 6 * 3600:
+                        voice = guild.get_channel(int(voice_id)) if voice_id else None
+                        if isinstance(voice, discord.VoiceChannel) and voice.members:
+                            continue
+                        lobby_rules.end(event_id, guild.id, event['host_id'], 'completed')
+                        await refresh_event_posts(guild, event_id)
+                        continue
+                    invite_at = int(event["start_at"]) - int(event["invite_lead_minutes"]) * 60
+                    if not voice_id and now >= invite_at and now < int(event["start_at"]) + 2 * 3600:
+                        await create_event_voice(guild, event)
+                        continue
+                    if voice_id:
+                        channel = guild.get_channel(int(voice_id))
+                        if channel is None:
+                            db.clear_lfg_event_voice(event_id)
+                        elif isinstance(channel, discord.VoiceChannel) and now >= int(event["start_at"]) + 2 * 3600 and not channel.members:
+                            try:
+                                await channel.delete(reason=f"GamerHQ LFG event #{event_id} finished and voice is empty")
+                            except discord.NotFound:
+                                pass
+                            except discord.HTTPException:
+                                continue
+                            db.clear_lfg_event_voice(event_id)
+                except Exception:
+                    logging.getLogger(__name__).exception('LFG scheduler failed guild=%s event=%s; retry next cycle.', guild.id, event['id'])
 
     @voice_scheduler.before_loop
     async def before_voice_scheduler(self):
@@ -1194,13 +1200,16 @@ class LFG(commands.Cog):
         if not game:
             return await interaction.response.send_message("❌ This event's game is unavailable.", ephemeral=True)
         if not member_has_game_role(interaction.user, game):
-            return await prompt_add_game_and_join(interaction, event, game, interaction.guild)
-        result = await _finish_join(interaction.guild, event, interaction.user)
+            return await prompt_add_game_and_join(interaction, event, game, interaction.guild, share_token=code.strip())
+        await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
+        result = await _finish_join(interaction.guild, event, interaction.user, share_token=code.strip())
+        if result == "unavailable":
+            return await interaction.followup.send("This lobby or invitation is no longer available.", ephemeral=interaction.guild is not None)
         if result == "full":
-            return await interaction.response.send_message("❌ This event is full.", ephemeral=True)
+            return await interaction.followup.send("❌ This event is full.", ephemeral=True)
         if result == "already":
-            return await interaction.response.send_message("✅ You're already in this private event.", ephemeral=True)
-        await interaction.response.send_message("✅ You've joined the private event and now have access to its event channel.", ephemeral=True)
+            return await interaction.followup.send("✅ You're already in this private event.", ephemeral=True)
+        await interaction.followup.send("✅ You've joined the private event and now have access to its event channel.", ephemeral=True)
 
     @lfg.command(name="manage", description="Manage or cancel LFG events you created.")
     async def lfg_manage(self, interaction: discord.Interaction):
@@ -1219,8 +1228,11 @@ class LFG(commands.Cog):
             ephemeral=True,
         )
     async def cog_load(self):
+        from cogs.lobby_management import ProposalDMView
         self.bot.add_view(LFGHubView())
         for event in db.get_active_lfg_events():
+            for proposal in lobby_rules.proposals(event['id']):
+                self.bot.add_view(ProposalDMView(event['id'], proposal['id']))
             rows=db.get_lfg_event_messages(event["id"])
             if rows:
                 for row in rows: self.bot.add_view(LFGEventView(event["id"]),message_id=int(row["message_id"]))
@@ -1234,13 +1246,23 @@ class LFG(commands.Cog):
             return
         self._game_lfg_migrated = True
         for guild in self.bot.guilds:
-            for game in db.get_area_games(lfg_only=True):
-                cid=game.get("lfg_channel_id") or game.get("clips_channel_id")
-                channel=guild.get_channel(int(cid)) if cid else None
-                if isinstance(channel,discord.TextChannel) and "clips" in channel.name:
-                    try:
-                        await channel.edit(name="🎯・looking-for-group",reason="GamerHQ LFG migration: replace clips with game LFG")
-                    except (discord.Forbidden,discord.HTTPException):
-                        pass
+            for event in db.get_active_lfg_events(guild.id):
+                await refresh_event_posts(guild, event["id"])
+            # Structural legacy migrations belong to explicit owner maintenance.
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member):
+        for event in db.get_active_lfg_events(member.guild.id):
+            if event['host_id'] == member.id:
+                logging.getLogger(__name__).warning('LFG host departed guild=%s event=%s; retained for admin review/expiry.', member.guild.id, event['id'])
+                continue
+            try:
+                lobby_rules.remove(event['id'], member.guild.id, member.id, member.id)
+            except ValueError:
+                continue
+            try:
+                await refresh_event_posts(member.guild, event['id'])
+            except discord.HTTPException:
+                logging.getLogger(__name__).exception('Departed LFG member removed; card refresh deferred event=%s', event['id'])
 
 async def setup(bot): await bot.add_cog(LFG(bot))

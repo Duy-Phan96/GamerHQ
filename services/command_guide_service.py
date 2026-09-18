@@ -5,7 +5,7 @@ from database import db
 from services.server_service import ServerMessageError, upsert_fixed_message
 
 
-STAFF_COMMAND_ROOTS = ("server", "game-admin")
+STAFF_COMMAND_ROOTS = ("server", "game-admin", "area")
 STAFF_GUIDE_CHANNEL_KEY = "server_staff_commands_channel_id"
 STAFF_GUIDE_MESSAGE_KEY = "server_staff_commands_message_id"
 
@@ -147,11 +147,7 @@ async def ensure_staff_guide_channel(guild: discord.Guild) -> discord.TextChanne
             break
 
     if staff_category is None:
-        staff_category = await guild.create_category(
-            "🛠️ STAFF",
-            overwrites=_staff_role_overwrites(guild),
-            reason="GamerHQ managed staff area",
-        )
+        raise ServerMessageError('No suitable STAFF category exists; staff guide creation skipped. Review STAFF manually.')
 
     # A channel inside an existing private staff category inherits its permissions.
     # For a category created above, the private staff overwrites are already present.
@@ -215,7 +211,7 @@ def _build_member_group_page(bot, guild: discord.Guild, root_name: str, title: s
         if root_name == "lfg" and command.name == "create":
             lines.append("Create a public or private gaming event. The event setup lets you choose the game, date/time, player limit and reminder.")
         elif root_name == "lfg" and command.name == "manage":
-            lines.append("Open your personal event management panel for your active events.")
+            lines.append("Manage active lobbies: edit details/seats/reminders, invite or remove players, review time proposals, open voice and close/cancel. Lobby Actions on an event card also opens this panel.")
         elif root_name == "lfg" and command.name == "join-code":
             lines.append("Beta fallback for joining a private event invitation shared by its host.")
         elif root_name == "game" and command.name == "select":
@@ -231,68 +227,40 @@ def _build_member_group_page(bot, guild: discord.Guild, root_name: str, title: s
     return text
 
 
+MUSIC_GUIDE = (
+    "## 🎵 Music Bots\n"
+    "**Jockie Music — Apple Music** · Prefix: `m!`\n"
+    "**Pancake — Spotify** · Prefix: `p!`\n"
+    "GamerHQ's preferred bots for those song/playlist links.\n\n"
+    "Join a voice channel, then use the bot's prefix:\n"
+    "`play <song/link>` — add music; playlist links go directly after `play`\n"
+    "`skip` — skip (Pancake may start a vote)\n"
+    "`pause` / `resume` — pause or continue playback\n"
+    "`queue` — show upcoming songs\n"
+    "Jockie: `m!leave` · Pancake: `p!stop` — disconnect (Pancake also clears the queue)\n\n"
+    "`m!play <Apple Music song or playlist link>`\n"
+    "`p!play <Spotify song or playlist link>`\n\n"
+    "More: `m!help`, `p!help` or the bots' official documentation."
+)
+
+
 def build_community_command_guide_pages(bot, guild: discord.Guild) -> list[str]:
-    """General member commands only. Streamer commands intentionally live in the Streamers area."""
-    pages: list[str] = []
-
-    game = _build_member_group_page(
-        bot,
-        guild,
-        "game",
-        "🎮 GAME COMMANDS",
-        "Manage the games connected to your GamerHQ profile.",
-    )
-    if game:
-        pages.append(game)
-
-    lfg = _build_member_group_page(
-        bot,
-        guild,
-        "lfg",
-        "🎯 LFG & EVENT COMMANDS",
-        "Create, join and manage gaming sessions with other members.",
-    )
-    if lfg:
-        pages.append(lfg)
-
-    if not pages:
-        pages.append(
-            "# 🤖 GamerHQ Commands\n\n"
-            "No member command groups were found in the current command tree. "
-            "Restart the bot after command sync to refresh this guide."
-        )
-    return pages[:2]
+    from services.community_structure_service import mention
+    return ['🤖 Bot Commands\n\nUse this channel for bot commands.\n\n'
+            f'For GamerHQ commands, LFG help and music bot commands, see {mention(guild, "guide")}.']
 
 
 async def ensure_community_guide_channel(guild: discord.Guild) -> discord.TextChannel:
-    wanted = {"community-commands", "community-guide", "bot-commands", "gamerhq-guide"}
-    raw_channel_id = db.get_setting(COMMUNITY_GUIDE_CHANNEL_KEY)
-    if raw_channel_id:
-        try:
-            existing = guild.get_channel(int(raw_channel_id))
-        except (TypeError, ValueError):
-            existing = None
-        if isinstance(existing, discord.TextChannel) and _alias(existing.name) in wanted:
-            return existing
-
-    for channel in guild.text_channels:
-        if _alias(channel.name) in wanted:
-            db.set_setting(COMMUNITY_GUIDE_CHANNEL_KEY, channel.id)
-            return channel
-
-    community = next((c for c in guild.categories if _alias(c.name) in {"community", "gamerhq-community"}), None)
-    if community is None:
-        community = await guild.create_category("💬 COMMUNITY", reason="GamerHQ community guide")
-    channel = await guild.create_text_channel(
-        "📘・community-commands",
-        category=community,
-        reason="GamerHQ member command guide",
-    )
+    # Startup only resolves existing channels. Owner repair performs structural migration.
+    from services.onboarding_service import unique
+    channel = unique(guild.text_channels, 'bot-commands') or unique(guild.text_channels, 'community-commands')
+    if channel is None:
+        raise ServerMessageError('Bot command channel missing. Run /server setup to create it in COMMUNITY.')
     db.set_setting(COMMUNITY_GUIDE_CHANNEL_KEY, channel.id)
     return channel
 
 
-async def _delete_managed_message_by_setting(guild: discord.Guild, setting_key: str) -> bool:
+async def _delete_managed_message_by_setting(guild: discord.Guild, setting_key: str, *, guide_only=False) -> bool:
     """Delete only the bot-managed message referenced by a stored setting.
 
     This is used for one-time guide migrations so we never delete arbitrary user
@@ -308,19 +276,27 @@ async def _delete_managed_message_by_setting(guild: discord.Guild, setting_key: 
         return False
 
     for text_channel in guild.text_channels:
+        if guide_only and _alias(text_channel.name) not in {'community-commands', 'bot-commands', 'community-guide', 'gamerhq-guide'}:
+            continue
         try:
             message = await text_channel.fetch_message(message_id)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        except discord.NotFound:
             continue
-        if guild.me is not None and message.author.id != guild.me.id:
+        except discord.HTTPException as exc:
+            raise ServerMessageError('Could not inspect an obsolete guide; retry after permissions recover.') from exc
+        if guild.me is None or message.author.id != guild.me.id:
             # Never remove a message that is not ours, even if a stale setting
             # somehow points at it.
             db.set_setting(setting_key, "")
             return False
+        if guide_only and not any((message.content or '').startswith(prefix) for prefix in ('# 🎮 GAME COMMANDS', '# 🎯 LFG & EVENT COMMANDS', '# 🎥 STREAMER COMMANDS', '# 🤖 GamerHQ Bot Commands')):
+            return False
         try:
             await message.delete()
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return False
+        except discord.NotFound:
+            pass
+        except discord.HTTPException as exc:
+            raise ServerMessageError('Could not remove an obsolete guide; its ID was kept for retry.') from exc
         db.set_setting(setting_key, "")
         return True
 
@@ -334,17 +310,32 @@ async def refresh_community_command_guide(bot, guild: discord.Guild, channel: di
     else:
         db.set_setting(COMMUNITY_GUIDE_CHANNEL_KEY, channel.id)
 
-    # Remove the old v24 /streamer page from community-commands. Streamer
-    # commands now live exclusively in the dedicated streamer-commands channel.
-    await _delete_managed_message_by_setting(guild, LEGACY_COMMUNITY_STREAMER_MESSAGE_KEY)
-
-    pages = build_community_command_guide_pages(bot, guild)
-    messages = []
-    for index, key in enumerate(COMMUNITY_GUIDE_MESSAGE_KEYS):
-        if index >= len(pages):
-            break
-        messages.append(await upsert_fixed_message(channel, setting_key=key, content=pages[index], pin=True))
-    return messages
+    await _delete_managed_message_by_setting(guild, LEGACY_COMMUNITY_STREAMER_MESSAGE_KEY, guide_only=True)
+    await _delete_managed_message_by_setting(guild, COMMUNITY_GUIDE_MESSAGE_KEYS[1], guide_only=True)
+    first_key = COMMUNITY_GUIDE_MESSAGE_KEYS[0]
+    raw = db.get_setting(first_key)
+    if raw:
+        try:
+            await channel.fetch_message(int(raw))
+        except discord.NotFound:
+            await _delete_managed_message_by_setting(guild, first_key, guide_only=True)
+    content = build_community_command_guide_pages(bot, guild)[0]
+    message = await upsert_fixed_message(channel, setting_key=first_key, content=content, pin=True,
+        recover_match=lambda m: (m.content or '').startswith(('🤖 Bot Commands', '# 🤖 GamerHQ Bot Commands', '# 🎮 GAME COMMANDS')))
+    # Recover obsolete pages even when their setting was lost. Only exact managed
+    # headings on our own messages qualify; user/admin history is never removed.
+    candidates = {m.id: m async for m in channel.pins(limit=None)}
+    async for candidate in channel.history(limit=100):
+        candidates[candidate.id] = candidate
+    for candidate in candidates.values():
+        if candidate.id == message.id or not guild.me or candidate.author.id != guild.me.id:
+            continue
+        if (candidate.content or '').startswith(('🤖 Bot Commands\n', '# 🤖 GamerHQ Bot Commands', '# 🎮 GAME COMMANDS', '# 🎯 LFG & EVENT COMMANDS', '# 🎥 STREAMER COMMANDS')):
+            try:
+                await candidate.delete()
+            except discord.NotFound:
+                pass
+    return [message]
 
 
 def build_streamer_command_guide(bot, guild: discord.Guild) -> str:

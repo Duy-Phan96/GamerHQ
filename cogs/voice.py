@@ -1,7 +1,11 @@
+import logging
 import discord
 from discord.ext import commands
 
 from database import db
+from services.music_bot_service import with_music_access
+from services.game_area_safety import area_lock
+from services.temp_voice_service import empty_cleanup, forget, restrict_legacy_owner
 
 
 GLOBAL_VOICE_CATEGORY = "🔊 VOICE CHANNELS"
@@ -54,14 +58,23 @@ class VoiceGenerator(commands.Cog):
                     pass
 
     async def cleanup_empty_temp_channels(self, guild):
-        await self.ensure_global_voice_structure(guild)
         for channel_id in db.get_temp_voice_ids():
             channel = guild.get_channel(channel_id)
             if channel is None:
-                db.remove_temp_voice(channel_id)
-            elif isinstance(channel, discord.VoiceChannel) and len(channel.members) == 0:
-                await channel.delete(reason="Empty GamerHQ temporary voice")
-                db.remove_temp_voice(channel_id)
+                logging.getLogger(__name__).warning('Temporary voice %s absent from guild %s cache; retained for /server health review.', channel_id, guild.id)
+                continue
+            try:
+                if isinstance(channel, discord.VoiceChannel) and not channel.members:
+                    await empty_cleanup(channel)
+                elif isinstance(channel, discord.VoiceChannel):
+                    await restrict_legacy_owner(channel)
+            except discord.HTTPException:
+                logging.getLogger(__name__).exception('Temporary voice recovery failed channel=%s; tracking retained.', channel_id)
+
+    @commands.Cog.listener()
+    async def on_guild_channel_delete(self, channel):
+        if db.get_temp_voice(channel.id):
+            forget(channel.id)
 
     async def _create_global_temp_voice(self, member: discord.Member, generator: discord.VoiceChannel):
         category = generator.category
@@ -71,8 +84,8 @@ class VoiceGenerator(commands.Cog):
             view_channel=True,
             connect=True,
             speak=True,
-            manage_channels=True,
-            move_members=True,
+            manage_channels=False,
+            move_members=False,
         )
         if bot_member:
             overwrites[bot_member] = discord.PermissionOverwrite(
@@ -82,6 +95,7 @@ class VoiceGenerator(commands.Cog):
                 move_members=True,
             )
 
+        overwrites = with_music_access(member.guild, overwrites, 'voice', parent=category)
         temp = await member.guild.create_voice_channel(
             name=f"🔊 {member.display_name}'s Room",
             category=category,
@@ -95,7 +109,11 @@ class VoiceGenerator(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
+        if before.channel == after.channel:
+            return
         if member.bot:
+            if before.channel and db.get_temp_voice(before.channel.id):
+                await empty_cleanup(before.channel)
             return
 
         # Joined a Create Voice generator.
@@ -125,46 +143,48 @@ class VoiceGenerator(commands.Cog):
                     None,
                 )
                 if game:
-                    category = member.guild.get_channel(game["category_id"])
-                    role = member.guild.get_role(game["role_id"])
-                    bot_member = member.guild.me
+                    async with area_lock(game["id"]):
+                        game = db.get_game_by_id(game["id"])
+                        if not game or not game.get("category_id") or not game.get("area_enabled"):
+                            return
+                        category = member.guild.get_channel(game["category_id"])
+                        role = member.guild.get_role(game["role_id"])
+                        bot_member = member.guild.me
 
-                    overwrites = dict(category.overwrites) if isinstance(category, discord.CategoryChannel) else {}
-                    if role:
-                        overwrites[role] = discord.PermissionOverwrite(
-                            view_channel=True, connect=True, speak=True
-                        )
-                    overwrites[member] = discord.PermissionOverwrite(
-                        view_channel=True,
-                        connect=True,
-                        speak=True,
-                        manage_channels=True,
-                        move_members=True,
-                    )
-                    if bot_member:
-                        overwrites[bot_member] = discord.PermissionOverwrite(
+                        overwrites = dict(category.overwrites) if isinstance(category, discord.CategoryChannel) else {}
+                        if role:
+                            overwrites[role] = discord.PermissionOverwrite(
+                                view_channel=True, connect=True, speak=True
+                            )
+                        overwrites[member] = discord.PermissionOverwrite(
                             view_channel=True,
                             connect=True,
-                            manage_channels=True,
-                            move_members=True,
+                            speak=True,
+                            manage_channels=False,
+                            move_members=False,
                         )
+                        if bot_member:
+                            overwrites[bot_member] = discord.PermissionOverwrite(
+                                view_channel=True,
+                                connect=True,
+                                manage_channels=True,
+                                move_members=True,
+                            )
 
-                    temp = await member.guild.create_voice_channel(
-                        name=f"🔊 {member.display_name}'s Party",
-                        category=category if isinstance(category, discord.CategoryChannel) else None,
-                        overwrites=overwrites,
-                        reason=f"GamerHQ temporary voice for {game['name']}",
-                    )
-                    db.add_temp_voice(temp.id, member.id, game["id"])
-                    await member.move_to(temp, reason="GamerHQ Create Voice")
+                        overwrites = with_music_access(member.guild, overwrites, 'voice', parent=category)
+                        temp = await member.guild.create_voice_channel(
+                            name=f"🔊 {member.display_name}'s Party",
+                            category=category if isinstance(category, discord.CategoryChannel) else None,
+                            overwrites=overwrites,
+                            reason=f"GamerHQ temporary voice for {game['name']}",
+                        )
+                        db.add_temp_voice(temp.id, member.id, game["id"])
+                        await member.move_to(temp, reason="GamerHQ Create Voice")
 
         # Remove any tracked temporary channel once empty.
         if before.channel and before.channel.id in set(db.get_temp_voice_ids()):
             if len(before.channel.members) == 0:
-                try:
-                    await before.channel.delete(reason="Empty GamerHQ temporary voice")
-                finally:
-                    db.remove_temp_voice(before.channel.id)
+                await empty_cleanup(before.channel)
 
         # If one of the old Gaming rooms was occupied during startup, remove it
         # automatically after the final member leaves.

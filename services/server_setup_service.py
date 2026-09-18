@@ -28,20 +28,25 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("📢・announcements"),
             ChannelSpec("🎮・choose-your-games"),
             ChannelSpec("👤・choose-your-roles"),
+            ChannelSpec("🎯・looking-for-group"),
+            ChannelSpec("📘・guide"),
+            ChannelSpec("🆘・need-support"),
+            ChannelSpec("💜・support-gamerhq"),
         ),
     ),
     CategorySpec(
         "💬 COMMUNITY",
         (
             ChannelSpec("💬・general"),
+            ChannelSpec("👋・newbies"),
             ChannelSpec("👋・introductions"),
-            ChannelSpec("🏆・tournaments"),
-            ChannelSpec("🎁・giveaways"),
-            ChannelSpec("🎮・looking-for-group"),
-            ChannelSpec("📘・community-commands"),
+
+            ChannelSpec("🤖・bot-commands"),
             ChannelSpec("💡・suggestions"),
         ),
     ),
+    CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
+    CategorySpec("🏆 EVENTS", (ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
     CategorySpec(
         "🔊 VOICE CHANNELS",
         (
@@ -54,6 +59,8 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
         "🔒 STAFF",
         (
             ChannelSpec("💬・staff-chat"),
+            ChannelSpec("💡・staff-suggestions"),
+            ChannelSpec("🎫・ticket-logs"),
             ChannelSpec("🚨・mod-log"),
             ChannelSpec("🤖・bot-log"),
             ChannelSpec("🛠️・mod-commands"),
@@ -158,12 +165,11 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
         lines.append("✅ **Core GamerHQ server structure is complete.**")
     else:
         lines.append(
-            f"🔧 Repair can create **{report['missing_categories']} missing categor{'y' if report['missing_categories'] == 1 else 'ies'}** "
-            f"and **{report['missing_channels']} missing channel{'s' if report['missing_channels'] != 1 else ''}**."
+            "🔧 The inventory shows missing resources. This update repairs onboarding, LFG/guide boards, EVENTS and private staff suggestions. Missing unrelated resources are reported."
         )
     lines.extend([
         "",
-        "Custom areas (for example KAMEX), game categories and unknown channels are **never deleted or renamed** by this setup.",
+        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It also refreshes existing Music Bots access.",
     ])
     return "\n".join(lines)
 
@@ -174,66 +180,23 @@ def render_details(report: dict) -> str:
         spec: CategorySpec = row["spec"]
         category = row["category"]
         lines.append(f"## {spec.name}")
-        lines.append("✅ Category found" if category else "➕ Category will be created")
+        lines.append("✅ Category found" if category else "⚠️ Category missing (inventory only)")
         for ch in row["channels"]:
             channel_spec: ChannelSpec = ch["spec"]
             if ch["channel"]:
                 lines.append(f"✅ {channel_spec.name}")
             else:
                 icon = "🔊" if channel_spec.kind == "voice" else "#️⃣"
-                lines.append(f"➕ {icon} {channel_spec.name}")
+                lines.append(f"⚠️ {icon} {channel_spec.name} — missing")
         lines.append("")
-    lines.append("**No deletes, renames or moves are performed by Repair.**")
+    lines.append("**Update preserves welcome/newbies history; moves LFG to START HERE and tournaments/giveaways to EVENTS; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed.**")
     return "\n".join(lines)
 
 
-async def repair_server(guild: discord.Guild) -> tuple[list[str], list[str]]:
-    """Create only missing core resources. Existing resources are adopted by normalized name.
-
-    Returns (created, failed). This intentionally does not delete, rename, move or rewrite
-    existing resources in V1.
-    """
-    created: list[str] = []
-    failed: list[str] = []
-
-    for spec in SERVER_BLUEPRINT:
-        category = _find_category(guild, spec)
-        if category is None:
-            try:
-                overwrites = None
-                if spec.private:
-                    overwrites = {
-                        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                    }
-                    if guild.me:
-                        overwrites[guild.me] = discord.PermissionOverwrite(
-                            view_channel=True,
-                            send_messages=True,
-                            manage_channels=True,
-                            manage_messages=True,
-                        )
-                    owner = guild.get_member(guild.owner_id)
-                    if owner:
-                        overwrites[owner] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-                category = await guild.create_category(spec.name, overwrites=overwrites, reason="GamerHQ owner server setup")
-                created.append(f"Category: {spec.name}")
-            except (discord.Forbidden, discord.HTTPException) as exc:
-                failed.append(f"Category: {spec.name} ({exc})")
-                continue
-
-        for channel_spec in spec.channels:
-            if _find_channel(category, channel_spec) is not None:
-                continue
-            try:
-                if channel_spec.kind == "voice":
-                    await category.create_voice_channel(channel_spec.name, reason="GamerHQ owner server setup")
-                else:
-                    await category.create_text_channel(channel_spec.name, reason="GamerHQ owner server setup")
-                created.append(f"{spec.name} → {channel_spec.name}")
-            except (discord.Forbidden, discord.HTTPException) as exc:
-                failed.append(f"{spec.name} → {channel_spec.name} ({exc})")
-
-    return created, failed
+async def repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list[str]]:
+    """Focused onboarding update. Unrelated categories/resources remain untouched."""
+    from services.onboarding_service import migrate_onboarding
+    return await migrate_onboarding(guild, bot)
 
 
 async def migrate_v27_community_and_game_channels(guild: discord.Guild) -> tuple[list[str], list[str]]:

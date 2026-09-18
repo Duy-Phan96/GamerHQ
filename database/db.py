@@ -6,6 +6,44 @@ from config import DB_PATH, SEED_PATH
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS support_tickets (
+    ticket_type TEXT NOT NULL DEFAULT 'GENERAL_SUPPORT',
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    channel_id INTEGER UNIQUE,
+    opening_message_id INTEGER,
+    creator_discord_id INTEGER NOT NULL,
+    subject TEXT NOT NULL,
+    description TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Other',
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','IN_PROGRESS','WAITING_FOR_USER','CLOSED')),
+    assigned_staff_id INTEGER,
+    creator_left INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    closed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS ticket_owner_status ON support_tickets(guild_id,creator_discord_id,status);
+CREATE TABLE IF NOT EXISTS ticket_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER NOT NULL,
+    actor_id INTEGER,
+    action TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    author_discord_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'NEW',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    staff_channel_id INTEGER NOT NULL,
+    staff_message_id INTEGER UNIQUE
+);
 CREATE TABLE IF NOT EXISTS games (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -91,6 +129,18 @@ CREATE TABLE IF NOT EXISTS lfg_voice_notifications (
     PRIMARY KEY(event_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS lfg_time_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    proposer_id INTEGER NOT NULL,
+    start_at INTEGER NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS lfg_unique_pending_time
+ON lfg_time_proposals(event_id, start_at) WHERE status='PENDING';
+
 
 CREATE TABLE IF NOT EXISTS streamer_applications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -130,6 +180,7 @@ CREATE TABLE IF NOT EXISTS streamer_channels (
 
 @contextmanager
 def connect():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -142,8 +193,21 @@ def connect():
 def init_db():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Existing tickets keep their identity/state and become general support.
+        ticket_cols = {row['name'] for row in conn.execute('PRAGMA table_info(support_tickets)')}
+        if 'ticket_type' not in ticket_cols:
+            conn.execute("ALTER TABLE support_tickets ADD COLUMN ticket_type TEXT NOT NULL DEFAULT 'GENERAL_SUPPORT'")
+        conn.execute('CREATE INDEX IF NOT EXISTS ticket_owner_type_status ON support_tickets(guild_id,creator_discord_id,ticket_type,status)')
         # Lightweight migrations for existing GamerHQ databases.
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(lfg_events)").fetchall()}
+        for name, definition in {
+            "note": "TEXT NOT NULL DEFAULT ''",
+            "dashboard_channel_id": "INTEGER",
+            "dashboard_message_id": "INTEGER",
+            "ended_at": "INTEGER",
+        }.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE lfg_events ADD COLUMN {name} {definition}")
         if "voice_channel_id" not in cols:
             conn.execute("ALTER TABLE lfg_events ADD COLUMN voice_channel_id INTEGER")
         if "voice_invite_sent" not in cols:
@@ -459,6 +523,8 @@ def delete_managed_role(role_id):
 
 
 def create_lfg_event(*, guild_id, game_id, host_id, title, start_at, max_players, invite_lead_minutes, visibility="public", share_token=None):
+    from services.game_area_safety import require_available
+    require_available(game_id)
     with connect() as conn:
         cur = conn.execute(
             """
@@ -569,13 +635,14 @@ def set_lfg_event_status(event_id, status):
         return cur.rowcount > 0
 
 
-def claim_lfg_event_voice(event_id, channel_id):
+def claim_lfg_event_voice(event_id, channel_id, *, expected_start=None):
     """Atomically attach one voice channel only while the event is still scheduled."""
     with connect() as conn:
         cur = conn.execute(
             "UPDATE lfg_events SET voice_channel_id=?, voice_invite_sent=1 "
-            "WHERE id=? AND status='scheduled' AND voice_channel_id IS NULL",
-            (channel_id, event_id),
+            "WHERE id=? AND status='scheduled' AND voice_channel_id IS NULL "
+            "AND (? IS NULL OR start_at=?)",
+            (channel_id, event_id, expected_start, expected_start),
         )
         return cur.rowcount > 0
 
@@ -618,6 +685,8 @@ def clear_lfg_event_voice(event_id):
 def delete_lfg_event(event_id):
     """Delete one LFG event and all of its local database relations."""
     with connect() as conn:
+        conn.execute("DELETE FROM lfg_time_proposals WHERE event_id=?", (event_id,))
+        conn.execute("DELETE FROM lfg_voice_notifications WHERE event_id=?", (event_id,))
         conn.execute("DELETE FROM lfg_event_members WHERE event_id=?", (event_id,))
         conn.execute("DELETE FROM lfg_event_messages WHERE event_id=?", (event_id,))
         conn.execute("DELETE FROM lfg_events WHERE id=?", (event_id,))
@@ -740,3 +809,9 @@ def clear_game_memes_channel(game_id):
     """V27 migration: game areas no longer use a memes channel."""
     with connect() as conn:
         conn.execute("UPDATE games SET memes_channel_id=NULL WHERE id=?", (game_id,))
+
+
+def get_temp_voice(channel_id):
+    with connect() as conn:
+        row = conn.execute('SELECT * FROM temp_voice_channels WHERE channel_id=?', (channel_id,)).fetchone()
+        return dict(row) if row else None
