@@ -17,50 +17,62 @@ TITLE = '# 💜 Support GamerHQ'
 TELESON_URL = 'https://kundenportal.teleson.de/index.php?_url=register/karriere&reference=bFFQT1RPUHltMWVJb3REWXJDOWhwbzRNdXp5RTNhMUJWUkg4ckxZMHhVVjd5M0kvTWMvR3YrSkhCNWM4Z3ZiUnh2cDJSbFhEYUtjTHZKUWVlQWUrQnFPdWljOUpIbG5wc1drRk9KcXlhalU9'
 INTRO_TEXT = TITLE + """
 
-GamerHQ ist kostenlos nutzbar.
+Wenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote.
 
-Wenn du den Server unterstützen möchtest, findest du unter **PARTNERS & BENEFITS** verschiedene Partnerangebote und Empfehlungslinks.
+Dort findet ihr unter anderem:
 
-Wenn du einen dieser Links nutzt, kann GamerHQ oder der jeweilige Partner eine Provision erhalten.
+- Direct Support
+- Amazon
+- Strom & Gas
+- Finanzberatung
+- Gaming Deals
+- AI Tools
 
-Für dich entstehen **keine zusätzlichen Kosten allein durch die Nutzung eines Empfehlungslinks**.
+Bei Partner- und Empfehlungslinks kann GamerHQ oder der jeweilige Partner eine Provision erhalten.
 
-## 🛒 Amazon
+Für euch entstehen dadurch keine zusätzlichen Kosten allein durch die Nutzung eines Empfehlungslinks."""
+DIRECT_TEXT = """# 💜 Direct Support
 
-Du kannst GamerHQ auch unterstützen, indem du vor deinem normalen Amazon-Einkauf unseren Link verwendest.
-
-Tipp: Speichere den Link einfach als Lesezeichen im Browser und nutze ihn vor deinem nächsten Einkauf.
-
-## 💜 Direct Support
-
-Eine Möglichkeit zur direkten freiwilligen Unterstützung von GamerHQ folgt später.
+Wenn du GamerHQ direkt unterstützen möchtest, findest du hier künftig die Möglichkeit dazu.
 
 **Coming Soon**"""
+AMAZON_TEXT = """# 🛒 Amazon
+
+Du kannst GamerHQ unterstützen, indem du vor deinem normalen Amazon-Einkauf unseren Link verwendest.
+
+Tipp: Speichere den Link als Lesezeichen in deinem Browser und nutze ihn einfach vor deinem nächsten Einkauf."""
 GERMANY_TEXT = """# ⚡ Strom & Gas
 
-Du wohnst in Deutschland und möchtest deinen Strom- oder Gasvertrag optimieren?
+🇩🇪 Nur für Nutzer in Deutschland.
+
+Du möchtest deinen Strom- oder Gasvertrag optimieren?
 
 Über den Button erhältst du Zugang zu einem Netzwerk, über das du dir selbst einen passenden Strom- oder Gastarif auswählen kannst.
 
-Brauchst du dabei Unterstützung oder hast Fragen?"""
+Brauchst du Unterstützung oder hast Fragen?"""
 SALES_TEXT = """# 🎓 Strom & Gas Vertrieb
+
+🇩🇪 Nur für Nutzer in Deutschland.
 
 Du möchtest dich im Strom- & Gasvertrieb weiterbilden und selbst damit starten?
 
 Dafür steht ein kompletter kostenloser Kurs zur Verfügung.
 
 Über **Kurs anfragen** wird eine private Anfrage erstellt. Dort erhältst du Zugang zum kostenlosen Kurs."""
-FINANCE_TEXT = """# 💶 Finanzcheck & Planung
+FINANCE_TEXT = """# 💶 Finanzberatung
 
-Du möchtest deine Finanzen einmal strukturiert überprüfen und langfristig besser aufstellen?
+🇩🇪 Nur für Nutzer in Deutschland.
 
-Ein persönlicher Finanzcheck kann dabei helfen, Einnahmen und Ausgaben besser zu überblicken, bestehende Strukturen zu prüfen und finanzielle Ziele sinnvoll zu planen.
+Du möchtest deine Finanzen strukturiert überprüfen und langfristig besser aufstellen?
 
-Ein besonderer Fokus kann dabei auf langfristigem Vermögensaufbau, Investments und Immobilien liegen.
+Ein persönlicher Finanzcheck kann helfen, Einnahmen und Ausgaben besser zu überblicken, bestehende Strukturen zu prüfen und finanzielle Ziele sinnvoll zu planen.
+
+Ein besonderer Fokus kann dabei auf Vermögensaufbau, Investments und Immobilien liegen.
 
 Eine feste Ansprechperson für Finanzfragen an der Seite zu haben, kann bei langfristigen Entscheidungen sehr hilfreich sein."""
 PARTNER_CATEGORY = '🤝 PARTNERS & BENEFITS'
-PARTNER_CHANNELS = {'germany-services': '🇩🇪・germany-services', 'gaming-deals': '🎮・gaming-deals', 'ai-tools': '🤖・ai-tools'}
+PARTNER_CHANNELS = {'direct-support':'💜・direct-support', 'amazon':'🛒・amazon', 'strom-gas':'⚡・strom-gas',
+                    'finanzberatung':'💶・finanzberatung', 'gaming-deals':'🎮・gaming-deals', 'ai-tools':'🤖・ai-tools'}
 LEGACY_SECTIONS = ('intro','transparency','instant_gaming','pixverse','amazon','energy','energy_sales')
 LEGACY_HEADINGS = {TITLE, '## ℹ️ Transparency', '## 🎮 Instant Gaming', '## 🤖 PixVerse', '## 🛒 Amazon', '## 🇩🇪 For Germany', '## 🇩🇪 For Germans', '## 🎓 Strom & Gas Vertrieb'}
 _locks = {}
@@ -103,12 +115,13 @@ def legacy_message_key(guild, section='intro'):
 
 
 def section_channel(section):
-    return {'intro':'support-gamerhq', 'energy':'germany-services', 'energy_sales':'germany-services',
-            'finance':'germany-services', 'instant_gaming':'gaming-deals', 'pixverse':'ai-tools'}[section]
+    return {'intro':'support-gamerhq', 'direct':'direct-support', 'amazon':'amazon', 'energy':'strom-gas', 'energy_sales':'strom-gas',
+            'finance':'finanzberatung', 'instant_gaming':'gaming-deals', 'pixverse':'ai-tools'}[section]
 
 
 def support_sections(channel_name=None):
-    sections = [('intro', INTRO_TEXT, AFFILIATES[2]), ('energy', GERMANY_TEXT, None),
+    sections = [('intro', INTRO_TEXT, None), ('direct', DIRECT_TEXT, None), ('amazon', AMAZON_TEXT, AFFILIATES[2]),
+                ('energy', GERMANY_TEXT, None),
                 ('energy_sales', SALES_TEXT, None), ('finance', FINANCE_TEXT, None),
                 ('instant_gaming', '# 🎮 Gaming Deals\n\n## Instant Gaming\n\nGames & Deals\n\n' + AFFILIATES[0].copy + '\n\nℹ️ Affiliate Link', AFFILIATES[0]),
                 ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\nAI Video Generation\n\n' + AFFILIATES[1].copy + '\n\nℹ️ Affiliate Link', AFFILIATES[1])]
@@ -122,10 +135,10 @@ def section_view(section, affiliate):
     from cogs.tickets import SupportOffers
     if affiliate:
         view = discord.ui.View(timeout=None)
-        label = '🛒 Amazon öffnen' if section == 'intro' else f'{affiliate.emoji} Open {affiliate.name}'
+        label = '🛒 Amazon öffnen' if section == 'amazon' else f'{affiliate.emoji} Open {affiliate.name}'
         view.add_item(discord.ui.Button(label=label, url=affiliate.url))
         return view
-    return SupportOffers(section)
+    return None if section in ('intro', 'direct') else SupportOffers(section)
 
 
 def resource(guild, name, category=False):
@@ -152,7 +165,9 @@ def guide_reference(guild):
 
 
 def matches_section(message, content):
-    return (message.content or '').split('\n', 1)[0] == content.split('\n', 1)[0]
+    heading = (message.content or '').split('\n', 1)[0]
+    expected = content.split('\n', 1)[0]
+    return heading == expected or (expected == '# 💶 Finanzberatung' and heading == '# 💶 Finanzcheck & Planung')
 
 
 async def remove_empty_legacy_category(guild):
@@ -180,7 +195,7 @@ async def remove_empty_legacy_category(guild):
 
 async def rebuild_order(guild, channel, journal):
     """Resume a persisted create/pin → atomic ID switch → old-message cleanup."""
-    sections = support_sections("germany-services")
+    sections = support_sections("strom-gas")
     journal_key = f'partner_reorder:{guild.id}'
     result = {'messages': [], 'pin_failures': []}
     if journal['channel'] != channel.id:
@@ -265,6 +280,73 @@ async def retire_legacy_messages(guild, channel, active_ids):
     return retained
 
 
+async def prepare_germany_split(guild, legacy):
+    """Persist source identities before canonical IDs can change channels."""
+    key = f'partner_split:{guild.id}'
+    if db.get_setting(key) or legacy is None or db.get_setting(f'partner_manual_review:{guild.id}') == str(legacy.id):
+        return
+    old = {int(raw) for section in ('energy','energy_sales','finance')
+           if (raw := db.get_setting(message_key(guild,section))) and raw.isdigit()}
+    reorder_key = f'partner_reorder:{guild.id}'
+    pending = db.get_setting(reorder_key)
+    if pending:
+        journal = json.loads(pending)
+        if journal['channel'] != legacy.id:
+            raise ServerMessageError('Pending partner reorder refers to another channel; review before migration.')
+        old.update(journal['old'])
+        old.update(journal.get('new',{}).values())
+    with db.connect() as conn:
+        rows = conn.execute('SELECT key,value FROM settings WHERE key LIKE ?', (reorder_key + ':%',)).fetchall()
+    old.update(int(r['value']) for r in rows if r['value'].isdigit())
+    # Recover lost legacy mappings using the same bot-authored heading identity
+    # as the existing upsert helper, before moving the finance topic elsewhere.
+    headings = {'# ⚡ Strom & Gas','# 🎓 Strom & Gas Vertrieb','# 💶 Finanzcheck & Planung'}
+    candidates = {m.id:m async for m in legacy.pins(limit=None)}
+    async for message in legacy.history(limit=100):candidates[message.id] = message
+    old.update(m.id for m in candidates.values() if m.author.id == guild.me.id and (m.content or '').split('\n',1)[0] in headings)
+    snapshot = json.dumps({'channel':legacy.id,'old':sorted(old)})
+    with db.connect() as conn:
+        conn.execute('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key,snapshot))
+        for old_key in [reorder_key] + [r['key'] for r in rows]:
+            conn.execute('DELETE FROM settings WHERE key=?',(old_key,))
+
+
+async def finish_germany_split(guild, active_ids):
+    key = f'partner_split:{guild.id}'
+    raw = db.get_setting(key)
+    if not raw:
+        return
+    snapshot = json.loads(raw)
+    source = guild.get_channel(snapshot['channel'])
+    retained = False
+    if source in guild.text_channels:
+        headings = {'# ⚡ Strom & Gas','# 🎓 Strom & Gas Vertrieb','# 💶 Finanzcheck & Planung'}
+        for mid in set(snapshot['old']) - set(active_ids):
+            try:
+                message = await source.fetch_message(mid)
+                if message.author.id != guild.me.id or (message.content or '').split('\n',1)[0] not in headings:
+                    retained = True
+                    continue
+                await message.delete()
+                log.info('Germany services migrated old message=%s', mid)
+            except discord.NotFound:
+                pass
+        reused = str(source.id) == db.get_setting(channel_key(guild,'strom-gas'))
+        if not reused or retained:
+            # Never delete a channel with possibly uncached/archived thread history.
+            db.set_setting(f'partner_manual_review:{guild.id}', source.id)
+        else:
+            db.set_setting(f'partner_manual_review:{guild.id}', '')
+    with db.connect() as conn:
+        conn.execute('DELETE FROM settings WHERE key IN (?,?)', (key,channel_key(guild,'germany-services')))
+
+
+def legacy_review_channel(guild):
+    raw = db.get_setting(f'partner_manual_review:{guild.id}')
+    retained = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    return retained or resource(guild,'germany-services')
+
+
 async def sync_support_messages(guild, channel=None):
     """Refresh adopted channels only; owner repair creates the structure."""
     async with _locks.setdefault(guild.id, asyncio.Lock()):
@@ -278,7 +360,7 @@ async def sync_support_messages(guild, channel=None):
         result = {'messages': [], 'pin_failures': [], 'retained_messages': []}
         pending = db.get_setting(f'partner_reorder:{guild.id}')
         if pending:
-            resumed = await rebuild_order(guild, channels['germany-services'], json.loads(pending))
+            resumed = await rebuild_order(guild, channels['strom-gas'], json.loads(pending))
             if resumed['pin_failures']:
                 return resumed
         grouped = {}
@@ -301,16 +383,19 @@ async def sync_support_messages(guild, channel=None):
             except discord.HTTPException:
                 result['pin_failures'].append(section)
                 log.exception('Partner pin failed section=%s', section)
-        germany = grouped['germany-services']
+        germany = grouped['strom-gas']
         if germany != sorted(germany):
-            journal = {'channel':channels['germany-services'].id, 'phase':'create', 'generation':uuid.uuid4().hex, 'old':germany}
+            journal = {'channel':channels['strom-gas'].id, 'phase':'create', 'generation':uuid.uuid4().hex, 'old':germany}
             db.set_setting(f'partner_reorder:{guild.id}', json.dumps(journal))
-            ordered = await rebuild_order(guild, channels['germany-services'], journal)
+            ordered = await rebuild_order(guild, channels['strom-gas'], journal)
             result['pin_failures'].extend(ordered['pin_failures'])
             result['messages'] = [int(db.get_setting(message_key(guild,k))) for k,_,_ in support_sections()]
         if not result['pin_failures']:
+            await finish_germany_split(guild, result['messages'])
             result['retained_messages'] = await retire_legacy_messages(guild, channels['support-gamerhq'], result['messages'])
         result['retained_categories'] = await remove_empty_legacy_category(guild)
+        review = legacy_review_channel(guild)
+        result['manual_review_channels'] = [review.id] if review else []
         return result
 
 
@@ -325,11 +410,15 @@ async def repair_support(guild, changed):
         raise ServerMessageError('START HERE must exist before support setup.')
     partners = resource(guild, 'partners-benefits', True)
     channels = {name:resource(guild,name) for name in ['support-gamerhq', *PARTNER_CHANNELS]}
+    legacy = resource(guild,'germany-services')
+    if legacy and channels['strom-gas'] is None:
+        channels['strom-gas'] = legacy
     if partners and blocked_name(partners):
         raise ServerMessageError('Mapped partner category is protected/private; review manually.')
-    for channel in channels.values():
+    for channel in [*channels.values(), legacy]:
         if channel and channel.category and blocked_name(channel.category) and alias(channel.category.name) != 'support-gamerhq':
             raise ServerMessageError('A partner/support channel is in a protected/private area; review before making it public.')
+    await prepare_germany_split(guild, legacy)
     empty = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda target:discord.PermissionOverwrite())
     overwrites = guide_overwrites(empty)
     if partners is None:
@@ -349,5 +438,7 @@ async def repair_support(guild, changed):
         await set_read_only(channel)
     result = await sync_support_messages(guild)
     changed.append('Updated Support and Partners & Benefits; existing channels/history retained')
+    if result and result.get('manual_review_channels'):
+        changed.append('MANUAL_REVIEW: old germany-services channel/history retained; inspect manually.')
     if result and result['pin_failures']:
         raise ServerMessageError('Partner messages saved, but pinning failed: ' + ', '.join(result['pin_failures']) + '. Restore permissions and retry.')
