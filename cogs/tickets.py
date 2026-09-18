@@ -112,23 +112,29 @@ class TicketActions(SafeView):
 
 class SupportOffers(SafeView):
     """Persistent, canonical-board-bound routes into the existing ticket service."""
-    def __init__(self):
+    def __init__(self, section=None):
         from services.support_service import TELESON_URL
         super().__init__(timeout=None)
         requests = list(self.children)
         self.clear_items()
-        self.add_item(discord.ui.Button(label='⚡ Strom & Gas starten',style=discord.ButtonStyle.link,url=TELESON_URL))
-        for button in requests:self.add_item(button)
+        if section in (None, 'energy'):
+            self.add_item(discord.ui.Button(label='⚡ Strom & Gas starten',style=discord.ButtonStyle.link,url=TELESON_URL))
+        for button in requests:
+            if section is None or (section == 'energy' and button.custom_id.endswith('energy-support')) or (section == 'energy_sales' and button.custom_id.endswith('energy-course')) or (section == 'finance' and button.custom_id.endswith('finance')):
+                self.add_item(button)
 
     async def request(self, interaction, kind):
         from services import support_service as support
         await interaction.response.defer(ephemeral=True)
         try:
             guild = interaction.guild
-            if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild))
-                    or str(interaction.message.id)!=db.get_setting(support.message_key(guild))):
-                raise ValueError('Bitte nutze die aktuelle Nachricht in Support GamerHQ.')
-            title,description=tickets.ENERGY_COPY[kind]
+            section = {'ENERGY_SUPPORT': 'energy', 'ENERGY_COURSE_REQUEST': 'energy_sales', 'FINANCE_REQUEST': 'finance'}.get(kind)
+            if section is None:
+                raise ValueError('Unbekannte Support-Anfrage.')
+            if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild, support.section_channel(section)))
+                    or str(interaction.message.id)!=db.get_setting(support.message_key(guild, section))):
+                raise ValueError('Bitte nutze die aktuelle Nachricht in Germany Services.')
+            title,description=tickets.REQUEST_COPY[kind]
             item,created=await tickets.open_ticket(guild,interaction.user,title,description,ticket_type=kind)
             channel=guild.get_channel(item['channel_id']) if item['channel_id'] else None
             view=discord.ui.View()
@@ -145,6 +151,9 @@ class SupportOffers(SafeView):
 
     @discord.ui.button(label='🎓 Kurs anfragen',style=discord.ButtonStyle.secondary,custom_id='gamerhq:offers:energy-course')
     async def energy_course(self,interaction,button):await self.request(interaction,'ENERGY_COURSE_REQUEST')
+
+    @discord.ui.button(label='💬 Finanzcheck anfragen',style=discord.ButtonStyle.primary,custom_id='gamerhq:offers:finance')
+    async def finance(self,interaction,button):await self.request(interaction,'FINANCE_REQUEST')
 
 
 class Tickets(commands.Cog):

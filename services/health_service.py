@@ -80,7 +80,7 @@ async def scan(guild, bot=None, *, messages=True):
                 posting = everyone.send_messages is not False or any(o.send_messages is True and t!=guild.me and not (t in guild.roles and (t.permissions.administrator or t.permissions.manage_messages or t.permissions.manage_guild or t.permissions.moderate_members)) for t,o in channel.overwrites.items())
                 if posting: add(f'{name} permissions','REPAIRABLE','Normal posting is not fully disabled.')
                 if everyone.use_application_commands is False: add(f'{name} interactions','MANUAL_REVIEW','Application commands explicitly denied; review custom policy.')
-    from services.support_service import resolve as support_resource, CATEGORY_NAME, CHANNEL_NAME
+    from services.support_service import resolve as support_resource, CHANNEL_NAME
     try:
         category = next((c for c in guild.categories if alias(c.name)=='start-here'),None)
         support = support_resource(guild, 'channel')
@@ -93,6 +93,23 @@ async def scan(guild, bot=None, *, messages=True):
                 add('Support permissions','REPAIRABLE','Support board needs public read-only permissions.')
     except ServerMessageError:
         add('Support GamerHQ','MANUAL_REVIEW','Ambiguous support resources; no automatic merge.')
+    from services.support_service import resource, PARTNER_CHANNELS, PARTNER_CATEGORY
+    try:
+        partners = resource(guild, 'partners-benefits', True)
+        add('PARTNERS & BENEFITS', 'PASS' if partners and partners.name == PARTNER_CATEGORY else 'REPAIRABLE', 'Owner setup creates/reuses the partner category.')
+        for name, display in PARTNER_CHANNELS.items():
+            ch = resource(guild, name)
+            channels[name] = ch
+            rights = ch.overwrites_for(guild.default_role) if ch else None
+            valid = ch and partners and ch.category_id == partners.id and ch.name == display
+            valid = valid and rights.view_channel is True and rights.read_message_history is True and rights.send_messages is False
+            add(name, 'PASS' if valid else 'REPAIRABLE', 'Partner placement and read-only permissions checked.')
+    except ServerMessageError:
+        add('PARTNERS & BENEFITS', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
+    if bot is not None:
+        registered = {item.custom_id for view in getattr(bot, 'persistent_views', []) for item in view.children if getattr(item, 'custom_id', None)}
+        expected = {'gamerhq:offers:energy-support', 'gamerhq:offers:energy-course', 'gamerhq:offers:finance'}
+        add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent energy, course and finance handlers checked; restart after updating if missing.')
     from services import ticket_service as tickets
     from services.onboarding_service import is_staff
     add('Ticket Staff access','PASS' if any(is_staff(r) for r in guild.roles) else 'WARN','Uses current moderation roles and server owner; review role policy.')
@@ -139,7 +156,10 @@ async def scan(guild, bot=None, *, messages=True):
     except ServerMessageError:
         add('Staff suggestions privacy','MANUAL_REVIEW','Missing, ambiguous or unsafe inbox; review STAFF and run setup.')
     if messages:
-        for name,key,prefix in [('guide',f'central_guide:{guild.id}','# 📘 GamerHQ Guide'),('suggestions',f'suggestions_entry:{guild.id}','💡 Suggestions'),('bot-commands','server_community_commands_message_1_id','🤖 Bot Commands'),('support-gamerhq',f'support_message:{guild.id}','# 💜 Support GamerHQ'),('need-support',f'ticket_entry:{guild.id}','# 🆘 Need Support?')]:
+        from services.support_service import support_sections, message_key, section_channel
+        support_checks = [(section_channel(section), message_key(guild, section), content.split('\n', 1)[0])
+                          for section, content, _ in support_sections()]
+        for name,key,prefix in [('guide',f'central_guide:{guild.id}','# 📘 GamerHQ Guide'),('suggestions',f'suggestions_entry:{guild.id}','💡 Suggestions'),('bot-commands','server_community_commands_message_1_id','🤖 Bot Commands'),('need-support',f'ticket_entry:{guild.id}','# 🆘 Need Support?')] + support_checks:
             channel=channels.get(name); raw=db.get_setting(key)
             if not channel or not raw or not str(raw).isdigit():
                 add(f'{name} pin','REPAIRABLE','Canonical mapping missing; setup can recover/create the managed message.'); continue
@@ -178,7 +198,7 @@ async def scan(guild, bot=None, *, messages=True):
                 if game.get(field) and (not ch or ch.category_id!=cid): add('Game Area mapping','MANUAL_REVIEW',f'Game {game["id"]}: {field} missing/moved.')
         elif game.get('area_enabled'): add('Game Area','MANUAL_REVIEW',f'Game {game["id"]}: enabled area lacks category ID.')
     if not any(f.name.startswith('Game') and f.state!='PASS' for f in findings): add('Game Areas','PASS',f'{len(mapped)} area mappings checked.')
-    known_categories={'start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets'}
+    known_categories={'start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits'}
     unknown=[c for c in guild.categories if c.id not in mapped and alias(c.name) not in known_categories]
     if unknown: add('Unknown categories','MANUAL_REVIEW',f'{len(unknown)} unmapped categories retained; may include legitimate custom/Streamer areas.')
     for row in temps:

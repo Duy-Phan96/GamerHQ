@@ -246,3 +246,5 @@ Do not include real ticket text, private invite codes or unredacted user data in
 ## License
 
 LICENSE is not configured. Owner decision required before making the repository public; no software license has been selected on the owner's behalf.
+
+Support GamerHQ stays in START HERE with Amazon and general support information. PARTNERS & BENEFITS contains read-only Germany Services, Gaming Deals and AI Tools. Owner `/server setup` repairs/migrates this structure; `/server sync-support` updates adopted boards. See [partner setup, final copy and tests](docs/PARTNERS.md).
