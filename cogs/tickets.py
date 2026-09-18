@@ -133,7 +133,7 @@ class SupportOffers(SafeView):
                 raise ValueError('Unbekannte Support-Anfrage.')
             if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild, support.section_channel(section)))
                     or str(interaction.message.id)!=db.get_setting(support.message_key(guild, section))):
-                raise ValueError('Bitte nutze die aktuelle Nachricht in Germany Services.')
+                raise ValueError('Bitte nutze die aktuelle Nachricht im passenden Partner-Kanal.')
             title,description=tickets.REQUEST_COPY[kind]
             item,created=await tickets.open_ticket(guild,interaction.user,title,description,ticket_type=kind)
             channel=guild.get_channel(item['channel_id']) if item['channel_id'] else None

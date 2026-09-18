@@ -37,7 +37,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNot(rights.use_application_commands,False)
             for target in (self.guild.mod,self.guild.me):
                 self.assertTrue(ch.overwrites_for(target).send_messages)
-            expected=3 if name=='germany-services' else 1
+            expected=2 if name=='strom-gas' else 1
             self.assertEqual(ch.sends,expected)
             self.assertTrue(all(m.pinned for m in ch.messages.values()))
 
@@ -69,7 +69,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(m.deleted for m in old[1:]))
         self.assertFalse(user.deleted)
         self.assertEqual(len(channel.messages),2)
-        self.assertEqual(len(support.resource(self.guild,'germany-services').messages),3)
+        self.assertEqual(len(support.resource(self.guild,'strom-gas').messages),2)
         await self.setup_board()
         self.assertEqual(len(channel.messages),2)
 
@@ -77,7 +77,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         channel=await self.setup_board()
         legacy=self.add_message(channel,'## 🇩🇪 For Germans\nLegacy',pinned=True)
         db.set_setting(support.legacy_message_key(self.guild,'energy'),legacy.id)
-        germany=support.resource(self.guild,'germany-services')
+        germany=support.resource(self.guild,'finanzberatung')
         finance=germany.messages[int(db.get_setting(support.message_key(self.guild,'finance')))]
         finance.pinned=False
         error=discord.Forbidden(type('Response',(),{'status':403,'reason':'Forbidden'})(),'denied')
@@ -89,7 +89,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(discord.Forbidden):await support.sync_support_messages(self.guild)
         await support.sync_support_messages(self.guild)
         self.assertTrue(legacy.deleted)
-        self.assertEqual(germany.sends,3)
+        self.assertEqual(germany.sends,1)
         self.assertFalse(db.get_setting(support.legacy_message_key(self.guild,'energy')))
 
     async def test_interrupted_previous_reorder_is_retired(self):
@@ -105,14 +105,14 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_middle_message_reorders_germany_once(self):
         await self.setup_board()
-        channel=support.resource(self.guild,'germany-services')
-        await channel.messages[int(db.get_setting(support.message_key(self.guild,'energy_sales')))].delete()
+        channel=support.resource(self.guild,'strom-gas')
+        await channel.messages[int(db.get_setting(support.message_key(self.guild,'energy')))].delete()
         await asyncio.gather(*(support.sync_support_messages(self.guild) for _ in range(3)))
         messages=sorted(channel.messages.values(),key=lambda m:m.id)
-        self.assertEqual([m.content for m in messages],[text for _,text,_ in support.support_sections('germany-services')])
-        self.assertEqual(len(messages),3)
+        self.assertEqual([m.content for m in messages],[text for _,text,_ in support.support_sections('strom-gas')])
+        self.assertEqual(len(messages),2)
         self.assertTrue(all(m.pinned for m in messages))
-        self.assertEqual(channel.sends,7)
+        self.assertEqual(channel.sends,5)
 
     async def test_missing_id_recovers_pin_and_permission_error_does_not_repost(self):
         channel=await self.setup_board()
@@ -126,11 +126,11 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel.sends,1)
 
     async def test_conflicting_or_protected_partner_channels_fail_closed(self):
-        self.guild.add_channel('germany-services',self.staff)
+        self.guild.add_channel('strom-gas',self.staff)
         before=[c.id for c in self.guild.channels]
         with self.assertRaises(ServerMessageError):await support.repair_support(self.guild,[])
         self.assertEqual(before,[c.id for c in self.guild.channels])
-        self.guild.add_channel('germany-services',self.community)
+        self.guild.add_channel('strom-gas',self.community)
         with self.assertRaises(ServerMessageError):await support.repair_support(self.guild,[])
 
     async def test_empty_obsolete_category_removed_and_nonempty_preserved(self):
@@ -155,16 +155,20 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         channel=support.resolve(self.guild,'channel')
         intro=next(iter(channel.messages.values())).content
         self.assertIn('keine zusätzlichen Kosten allein',intro)
-        self.assertIn('Coming Soon',intro)
+        self.assertNotIn('Coming Soon',intro)
+        self.assertNotIn('GamerHQ ist kostenlos nutzbar.',intro)
+        self.assertIsNone(support.section_view('intro',None))
+        self.assertIsNone(support.section_view('direct',None))
+        for name in support.PARTNER_CHANNELS:self.assertIn(support.resource(self.guild,name).mention,intro)
         self.assertIn('Amazon',intro)
-        for forbidden in ('Strom & Gas','Finanzcheck','PixVerse','Instant Gaming','PayPal'):
+        for forbidden in ('Finanzcheck','PixVerse','Instant Gaming','PayPal'):
             self.assertNotIn(forbidden,intro)
         for _,text,_ in support.support_sections():self.assertLess(len(text),2000)
         self.assertNotIn('Provision',support.GERMANY_TEXT)
         self.assertNotIn('Empfehlungszugang',support.GERMANY_TEXT)
         self.assertIn('Dort erhältst du Zugang zum kostenlosen Kurs.',support.SALES_TEXT)
         self.assertNotIn('nächsten Schritte',support.SALES_TEXT)
-        self.assertIn('langfristigem Vermögensaufbau, Investments und Immobilien',support.FINANCE_TEXT)
+        self.assertIn('Vermögensaufbau, Investments und Immobilien',support.FINANCE_TEXT)
         guide=structure.guide_text(self.guild)
         self.assertLess(len(guide)+200,2000)
         for section,_,entry in support.support_sections():
@@ -173,3 +177,75 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(view.children[0].url,entry.url)
                 self.assertNotIn(entry.url,guide)
         self.assertEqual([support.section_view(k,e).children[0].label for k,_,e in support.support_sections() if e],['🛒 Amazon öffnen','🎮 Open Instant Gaming','🤖 Open PixVerse'])
+
+    def old_germany(self):
+        category=self.guild.add_category(support.PARTNER_CATEGORY)
+        channel=self.guild.add_channel('🇩🇪・germany-services',category)
+        db.set_setting(support.channel_key(self.guild,'germany-services'),channel.id)
+        messages={}
+        for section,heading in [('energy','# ⚡ Strom & Gas'),('energy_sales','# 🎓 Strom & Gas Vertrieb'),('finance','# 💶 Finanzcheck & Planung')]:
+            messages[section]=self.add_message(channel,heading+'\nOld managed copy',pinned=True)
+            db.set_setting(support.message_key(self.guild,section),messages[section].id)
+        return channel,messages
+
+    async def test_reuse_germany_channel_preserves_energy_ids_and_moves_finance(self):
+        channel,old=self.old_germany()
+        user=self.add_message(channel,'Manual history',author=20)
+        await self.setup_board()
+        self.assertIs(support.resource(self.guild,'strom-gas'),channel)
+        self.assertEqual(channel.name,'⚡・strom-gas')
+        for key in ('energy','energy_sales'):
+            self.assertEqual(db.get_setting(support.message_key(self.guild,key)),str(old[key].id))
+            self.assertFalse(old[key].deleted)
+        self.assertTrue(old['finance'].deleted)
+        self.assertFalse(user.deleted)
+        finance=support.resource(self.guild,'finanzberatung')
+        self.assertEqual(len(finance.messages),1)
+        self.assertIsNone(support.resource(self.guild,'germany-services'))
+        self.assertIsNone(support.legacy_review_channel(self.guild))
+        ids=[c.id for c in self.guild.channels]
+        await self.setup_board()
+        self.assertEqual(ids,[c.id for c in self.guild.channels])
+        for text in (support.GERMANY_TEXT,support.SALES_TEXT,support.FINANCE_TEXT):
+            self.assertIn('🇩🇪 Nur für Nutzer in Deutschland.',text)
+
+    async def test_existing_strom_target_keeps_manual_legacy_history_for_review(self):
+        channel,old=self.old_germany()
+        target=self.guild.add_channel('⚡・strom-gas',channel.category)
+        user=self.add_message(channel,'Manual history',author=20)
+        await self.setup_board()
+        self.assertIs(support.resource(self.guild,'strom-gas'),target)
+        self.assertTrue(all(m.deleted for m in old.values()))
+        self.assertFalse(user.deleted)
+        self.assertIs(support.legacy_review_channel(self.guild),channel)
+        from services.health_service import scan
+        self.guild.get_member=lambda uid:None
+        findings=await scan(self.guild)
+        self.assertEqual(next(f.state for f in findings if f.name=='Legacy germany-services'),'MANUAL_REVIEW')
+        await self.setup_board()
+        self.assertEqual(len(target.messages),2)
+        self.assertEqual(list(channel.messages),[user.id])
+
+    async def test_split_cleanup_failure_retains_snapshot_and_retries(self):
+        channel,old=self.old_germany()
+        error=discord.Forbidden(type('Response',(),{'status':403,'reason':'Forbidden'})(),'denied')
+        with patch.object(old['finance'],'delete',AsyncMock(side_effect=error)):
+            with self.assertRaises(discord.Forbidden):await support.repair_support(self.guild,[])
+        self.assertTrue(db.get_setting(f'partner_split:{self.guild.id}'))
+        finance=support.resource(self.guild,'finanzberatung')
+        self.assertEqual(finance.sends,1)
+        await support.repair_support(self.guild,[])
+        self.assertTrue(old['finance'].deleted)
+        self.assertEqual(finance.sends,1)
+        self.assertFalse(db.get_setting(f'partner_split:{self.guild.id}'))
+
+    async def test_split_captures_interrupted_three_topic_reorder(self):
+        channel,old=self.old_germany()
+        key=f'partner_reorder:{self.guild.id}'
+        extra=self.add_message(channel,'# 💶 Finanzcheck & Planung\nStaged old finance')
+        db.set_setting(key,json.dumps({'channel':channel.id,'phase':'create','generation':'previous','old':[m.id for m in old.values()]}))
+        db.set_setting(key+':previous:finance',extra.id)
+        await self.setup_board()
+        self.assertTrue(extra.deleted and old['finance'].deleted)
+        self.assertEqual(len(channel.messages),2)
+        self.assertFalse(db.get_setting(key))

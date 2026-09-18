@@ -247,4 +247,4 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 LICENSE is not configured. Owner decision required before making the repository public; no software license has been selected on the owner's behalf.
 
-Support GamerHQ stays in START HERE with Amazon and general support information. PARTNERS & BENEFITS contains read-only Germany Services, Gaming Deals and AI Tools. Owner `/server setup` repairs/migrates this structure; `/server sync-support` updates adopted boards. See [partner setup, final copy and tests](docs/PARTNERS.md).
+Support GamerHQ stays in START HERE as a short overview. PARTNERS & BENEFITS contains separate read-only Direct Support, Amazon, Strom & Gas, Finanzberatung, Gaming Deals and AI Tools channels. Owner `/server setup` safely migrates the former Germany Services layout; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).

@@ -45,7 +45,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("💡・suggestions"),
         ),
     ),
-    CategorySpec("🤝 PARTNERS & BENEFITS", (ChannelSpec("🇩🇪・germany-services"), ChannelSpec("🎮・gaming-deals"), ChannelSpec("🤖・ai-tools"))),
+    CategorySpec("🤝 PARTNERS & BENEFITS", (ChannelSpec("💜・direct-support"), ChannelSpec("🛒・amazon"), ChannelSpec("⚡・strom-gas"), ChannelSpec("💶・finanzberatung"), ChannelSpec("🎮・gaming-deals"), ChannelSpec("🤖・ai-tools"))),
     CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
     CategorySpec("🏆 EVENTS", (ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
     CategorySpec(

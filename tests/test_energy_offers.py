@@ -17,8 +17,8 @@ class EnergyOfferTests(unittest.IsolatedAsyncioTestCase):
     create = fixtures.TicketTests.create
 
     def request(self,member=None,kind='ENERGY_SUPPORT'):
-        channel=support.resource(self.guild,'germany-services')
         section={'ENERGY_SUPPORT':'energy','ENERGY_COURSE_REQUEST':'energy_sales','FINANCE_REQUEST':'finance'}[kind]
+        channel=support.resource(self.guild,support.section_channel(section))
         mid=int(db.get_setting(support.message_key(self.guild,section)))
         return SimpleNamespace(guild=self.guild,guild_id=self.guild.id,user=member or self.a,
             channel_id=channel.id,message=channel.messages[mid],
@@ -101,7 +101,7 @@ class EnergyOfferTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(support,'upsert_fixed_message',wraps=support.upsert_fixed_message) as publish:
             await support.refresh_support(self.guild)
             await support.refresh_support(self.guild)
-        self.assertEqual(publish.call_count,12)
+        self.assertEqual(publish.call_count,16)
         self.assertEqual([b.label for b in publish.call_args.kwargs['view'].children], ['🤖 Open PixVerse'])
         self.assertEqual(int(db.get_setting(support.message_key(self.guild))),mid)
         self.assertEqual(channel.sends,1)
