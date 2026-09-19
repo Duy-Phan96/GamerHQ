@@ -15,22 +15,13 @@ from services.music_bot_service import blocked_name
 CHANNEL_NAME = '💜・support-gamerhq'
 TITLE = '# 💜 Support GamerHQ'
 TELESON_URL = 'https://kundenportal.teleson.de/index.php?_url=register/karriere&reference=bFFQT1RPUHltMWVJb3REWXJDOWhwbzRNdXp5RTNhMUJWUkg4ckxZMHhVVjd5M0kvTWMvR3YrSkhCNWM4Z3ZiUnh2cDJSbFhEYUtjTHZKUWVlQWUrQnFPdWljOUpIbG5wc1drRk9KcXlhalU9'
-INTRO_TEXT = TITLE + """
-
-Wenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote.
-
-Dort findet ihr unter anderem:
-
-- Direct Support
-- Amazon
-- Strom & Gas
-- Finanzberatung
-- Gaming Deals
-- AI Tools
-
-Bei Partner- und Empfehlungslinks kann GamerHQ oder der jeweilige Partner eine Provision erhalten.
-
-Für euch entstehen dadurch keine zusätzlichen Kosten allein durch die Nutzung eines Empfehlungslinks."""
+INTRO_TEXT = TITLE + "\n\nWenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote."
+DISCLOSURE = 'ℹ️ Einige der dort verwendeten Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr damit GamerHQ.'
+PARTNER_NAVIGATION = (
+    ('direct-support', '💜', 'Direct Support'), ('amazon', '🛒', 'Amazon'),
+    ('strom-gas', '⚡', 'Strom & Gas'), ('finanzberatung', '💶', 'Finanzberatung'),
+    ('gaming-deals', '🎮', 'Gaming Deals'), ('ai-tools', '🤖', 'AI Tools'),
+)
 DIRECT_TEXT = """# 💜 Direct Support
 
 Wenn du GamerHQ direkt unterstützen möchtest, findest du hier künftig die Möglichkeit dazu.
@@ -128,7 +119,18 @@ def support_sections(channel_name=None):
     return [row for row in sections if channel_name is None or section_channel(row[0]) == channel_name]
 
 
-def support_text(): return INTRO_TEXT
+def support_text(channels=None):
+    """Render only channels already resolved from persisted managed IDs."""
+    channels = channels or {}
+    bullets = [f'- {emoji} {channels[name].mention} — {label}'
+               for name, emoji, label in PARTNER_NAVIGATION if name in channels]
+    parts = [INTRO_TEXT]
+    if bullets:
+        parts.append('Dort findet ihr:\n\n' + '\n'.join(bullets))
+    if len(bullets) != len(PARTNER_NAVIGATION):
+        parts.append('Weitere Partnerkanäle werden eingerichtet.')
+    parts.append(DISCLOSURE)
+    return '\n\n'.join(parts)
 
 
 def section_view(section, affiliate):
@@ -354,9 +356,18 @@ async def sync_support_messages(guild, channel=None):
         for name in ['support-gamerhq', *PARTNER_CHANNELS]:
             raw = db.get_setting(channel_key(guild, name))
             target = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
-            if target not in guild.text_channels:
-                return None
-            channels[name] = target
+            if target in guild.text_channels:
+                channels[name] = target
+        if len(channels) != 1 + len(PARTNER_CHANNELS):
+            # Never retain dangling navigation or adopt a name-only lookalike.
+            # Repair remains owner-controlled; sync reports the incomplete setup.
+            if 'support-gamerhq' in channels:
+                await upsert_fixed_message(
+                    channels['support-gamerhq'], setting_key=message_key(guild),
+                    content=support_text(channels), view=None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                    recover_match=lambda item: matches_section(item, INTRO_TEXT))
+            return None
         result = {'messages': [], 'pin_failures': [], 'retained_messages': []}
         pending = db.get_setting(f'partner_reorder:{guild.id}')
         if pending:
@@ -367,7 +378,7 @@ async def sync_support_messages(guild, channel=None):
         for section, content, affiliate in support_sections():
             target = channels[section_channel(section)]
             if section == 'intro':
-                content += '\n\n' + ' · '.join(channels[name].mention for name in PARTNER_CHANNELS)
+                content = support_text(channels)
             previous = db.get_setting(message_key(guild, section))
             message = await upsert_fixed_message(
                 target, setting_key=message_key(guild, section), content=content, pin=False,

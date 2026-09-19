@@ -25,7 +25,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Submit suggestions through a public entry point for private Staff review.
 - Open private support tickets with a short form. Staff can take tickets and mark them waiting; the creator or Staff can confirm closure. Closed tickets retain readable history.
 - Use managed welcome, rules, guide and role-selection channels.
-- Keep optional affiliate links in Support GamerHQ, with disclosure. This is separate from Need Support and does not process payments.
+- Use the Support GamerHQ overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
 - Provide tournaments/giveaways channels as an events foundation; event functionality remains Coming Soon.
 
 ### Administration
@@ -56,6 +56,14 @@ START HERE
 ├─ guide
 ├─ need-support
 └─ support-gamerhq
+
+PARTNERS & BENEFITS
+├─ direct-support
+├─ amazon
+├─ strom-gas
+├─ finanzberatung
+├─ gaming-deals
+└─ ai-tools
 
 COMMUNITY
 ├─ newbies
@@ -93,7 +101,7 @@ STAFF (private)
 
 Optional Game Areas, streamer areas, LFG resources and temporary voice rooms extend this layout. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
 
-**Need Support** opens a help ticket visible to its creator and authorized Staff. **Support GamerHQ** contains optional public affiliate links. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
+**Need Support** opens a help ticket visible to its creator and authorized Staff. **Support GamerHQ** links directly to the six channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
 
 ## Requirements
 
@@ -170,7 +178,7 @@ Starting the bot connects to Discord, initializes SQLite, synchronizes commands 
 
 ## Commands
 
-These commands are defined in the extensions loaded by `bot.py`. The [full command reference](docs/COMMANDS.md) describes all 30 registered slash commands; `/server health` Details shows the deployed inventory.
+These commands are defined in the extensions loaded by `bot.py`. The [full command reference](docs/COMMANDS.md) describes all 31 registered slash commands; `/server health` Details shows the deployed inventory.
 
 ### Member commands
 
@@ -188,6 +196,7 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | --- | --- |
 | `/server health` | Owner/admin read-only diagnostics |
 | `/server setup` | Owner-only inspection, preview and confirmed repairs |
+| `/server sync-support` | Refresh adopted support/partner messages without creating missing channels |
 | `/server cleanup-game-areas` | Preview unused managed areas before confirmed cleanup |
 | `/server music-bots-role` | Configure the existing dedicated Music Bots role |
 | `/server roles`, `/server pinned-messages` | Manage roles and supported information messages |
@@ -204,7 +213,8 @@ Staff review suggestions and take/mark waiting/close tickets through private but
 1. Prepare the existing base layout described in [setup](docs/SETUP.md). START HERE and COMMUNITY must already exist. A private STAFF category is needed for Staff review/log placement; configure the existing game-selector channel as well.
 2. Start the bot and run `/server health` to inspect missing resources, mappings and permissions without repairing them.
 3. As server owner, open `/server setup`, review its check/repair preview and confirm the intended changes.
-4. Run health again and perform the relevant [manual acceptance checks](RELEASE_CHECKLIST.md), including two-user ticket isolation and voice ownership.
+4. Confirm that each Support GamerHQ list item opens its partner channel. Missing mappings are omitted from navigation and reported by health; owner setup repairs them.
+5. Run health again and perform the relevant [manual acceptance checks](RELEASE_CHECKLIST.md), including two-user ticket isolation and voice ownership.
 
 Setup is an incremental maintenance workflow, not a complete empty-server installer. It reuses managed channels/messages, updates guides and permissions, and leaves ambiguous resources for manual review. Destructive Game Area cleanup has its own selection and confirmation; it is not an automatic consequence of opening health/setup.
 

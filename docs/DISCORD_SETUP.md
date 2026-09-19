@@ -7,6 +7,7 @@
 5. Set `DISCORD_TOKEN`, positive `GUILD_ID`, `CHOOSE_GAMES_CHANNEL_ID` and a separate `GAMERHQ_DB_PATH`. IDs are configuration, not example content; no live IDs are included in these docs.
 6. Follow [local setup](SETUP.md). Starting `bot.py` is a real connection and command/resource reconciliation, not a dry run. Never run two copies against the same guild/database.
 7. Run `/server health` and inspect missing resources. Owner `/server setup` is an incremental preview/confirmed repair workflow, requiring pre-existing START HERE and COMMUNITY; prepare the base channels and private STAFF category described in SETUP.md.
-8. Verify role assignment, public/private LFG, voice ownership, suggestions and two-user ticket isolation using the [release checklist](../RELEASE_CHECKLIST.md). Check that ordinary users cannot see other tickets or Staff logs.
+8. Verify that each support-gamerhq bullet opens its PARTNERS & BENEFITS channel. If a destination is missing, inspect health and run owner setup repair; do not manually paste raw IDs.
+9. Verify role assignment, public/private LFG, voice ownership, suggestions and two-user ticket isolation using the [release checklist](../RELEASE_CHECKLIST.md). Check that ordinary users cannot see other tickets or Staff logs.
 
 Slash-command permissions restrict who can operate maintenance commands; they are separate from the bot's own Discord permissions. Missing hierarchy/permissions should be corrected explicitly instead of granting everyone broad access.

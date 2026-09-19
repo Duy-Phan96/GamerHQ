@@ -40,9 +40,11 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 - `/server music-bots-role` — Admin: configure the existing dedicated Music Bots role.
 - `/server pinned-messages` — Admin: create or edit managed pinned channel messages.
 - `/server roles` — Admin: sync, review and safely clean up GamerHQ-managed roles.
-- `/server sync-support` — Admin: synchronize and pin the Support and partner messages in configured channels.
+- `/server sync-support` — Admin: synchronize and pin the Support and partner messages in configured channels; overview bullets use managed channel mentions.
 - `/server setup` — Owner only: inspect and repair core channels, guides and private suggestions.
 
 `/server setup` is owner-only. Health and cleanup check owner/admin access; other administrative commands retain their Administrator checks. Destructive Game Area/library actions require their existing previews/confirmations. General member commands never grant server administration.
 
 Persistent components include game/role selectors, LFG cards/invites/proposals, suggestions and support ticket entry/actions. Temporary Voice panels can be reopened after restart. Events remain Coming Soon; no XP commands exist.
+
+If a partner mapping/channel is missing, `/server sync-support` omits that destination from the overview and reports incomplete setup. `/server health` identifies missing mappings; owner `/server setup` repairs them. Sync does not create replacement channels.

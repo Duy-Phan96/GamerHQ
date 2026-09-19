@@ -106,9 +106,10 @@ async def scan(guild, bot=None, *, messages=True):
             ch = resource(guild, name)
             channels[name] = ch
             rights = ch.overwrites_for(guild.default_role) if ch else None
-            valid = ch and partners and ch.category_id == partners.id and ch.name == display
+            mapped_id = db.get_setting(f'managed_channel:{guild.id}:{name}')
+            valid = ch and str(ch.id) == mapped_id and partners and ch.category_id == partners.id and ch.name == display
             valid = valid and rights.view_channel is True and rights.read_message_history is True and rights.send_messages is False
-            add(name, 'PASS' if valid else 'REPAIRABLE', 'Partner placement and read-only permissions checked.')
+            add(name, 'PASS' if valid else 'REPAIRABLE', 'Managed channel ID, partner placement and read-only permissions checked; owner setup repairs missing mappings.')
     except ServerMessageError:
         add('PARTNERS & BENEFITS', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
     if bot is not None:

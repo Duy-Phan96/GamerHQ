@@ -20,6 +20,68 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any('support' in str(f).lower() or 'partner' in str(f).lower() for f in failed), failed)
         return support.resolve(self.guild,'channel')
 
+    async def test_navigation_mentions_are_unique_and_inside_their_bullets(self):
+        channel = await self.setup_board()
+        text = channel.messages[int(db.get_setting(support.message_key(self.guild)))].content
+        lines = text.splitlines()
+        for name, emoji, label in support.PARTNER_NAVIGATION:
+            mention = support.resource(self.guild, name).mention
+            self.assertIn(f'- {emoji} {mention} — {label}', lines)
+            self.assertEqual(text.count(mention), 1)
+        self.assertTrue(all(line.startswith('- ') for line in lines if '<#' in line))
+        self.assertIn('**PARTNERS & BENEFITS**', text)
+        self.assertTrue(text.endswith(support.DISCLOSURE))
+        self.assertLess(len(text), 1000)
+
+    async def test_persisted_identity_wins_over_name_only_lookalike(self):
+        channel = await self.setup_board()
+        actual = support.resource(self.guild, 'amazon')
+        actual.name = 'renamed-partner'
+        lookalike = self.guild.add_channel('🛒・amazon', self.community)
+        await support.sync_support_messages(self.guild)
+        text = channel.messages[int(db.get_setting(support.message_key(self.guild)))].content
+        self.assertIn(actual.mention, text)
+        self.assertNotIn(lookalike.mention, text)
+
+    async def test_missing_mapping_omits_mention_and_health_requires_repair(self):
+        from services.health_service import scan
+        channel = await self.setup_board()
+        target = support.resource(self.guild, 'amazon')
+        mid = int(db.get_setting(support.message_key(self.guild)))
+        db.set_setting(support.channel_key(self.guild, 'amazon'), '')
+        self.assertIsNone(await support.sync_support_messages(self.guild))
+        text = channel.messages[mid].content
+        self.assertNotIn(target.mention, text)
+        self.assertNotIn('#amazon', text)
+        self.assertIn('Weitere Partnerkanäle werden eingerichtet.', text)
+        findings = await scan(self.guild, messages=False)
+        self.assertEqual(next(f.state for f in findings if f.name == 'amazon'), 'REPAIRABLE')
+        await self.setup_board()
+        self.assertIn(target.mention, channel.messages[mid].content)
+        self.assertEqual(channel.sends, 1)
+
+    async def test_deleted_channel_is_not_rendered_and_unrelated_pins_survive(self):
+        channel = await self.setup_board()
+        target = support.resource(self.guild, 'ai-tools')
+        self.guild.text_channels.remove(target)
+        user = self.add_message(channel, 'Unrelated user pin', author=20, pinned=True)
+        bot = self.add_message(channel, 'Unrelated bot pin', pinned=True)
+        mid = int(db.get_setting(support.message_key(self.guild)))
+        await support.sync_support_messages(self.guild)
+        self.assertNotIn(target.mention, channel.messages[mid].content)
+        await self.setup_board()
+        await self.setup_board()
+        self.assertEqual(channel.sends, 1)
+        self.assertFalse(user.deleted or bot.deleted)
+        self.assertEqual(user.edits + bot.edits, 0)
+
+    def test_readme_documents_partner_structure(self):
+        from pathlib import Path
+        text = (Path(__file__).resolve().parents[1] / 'README.md').read_text(encoding='utf-8-sig')
+        structure_block = text.split('```text', 1)[1].split('```', 1)[0]
+        self.assertIn('PARTNERS & BENEFITS', structure_block)
+        for name in support.PARTNER_CHANNELS:self.assertIn(name, structure_block)
+
     async def test_structure_repeated_setup_preserves_ids_and_read_only(self):
         channel=await self.setup_board()
         before=[c.id for c in self.guild.channels]
@@ -154,7 +216,9 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         await self.setup_board()
         channel=support.resolve(self.guild,'channel')
         intro=next(iter(channel.messages.values())).content
-        self.assertIn('keine zusätzlichen Kosten allein',intro)
+        self.assertIn(support.DISCLOSURE,intro)
+        self.assertNotIn('keine zusätzlichen Kosten allein',intro)
+        self.assertNotIn('eine Provision erhalten',intro)
         self.assertNotIn('Coming Soon',intro)
         self.assertNotIn('GamerHQ ist kostenlos nutzbar.',intro)
         self.assertIsNone(support.section_view('intro',None))
