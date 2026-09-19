@@ -39,7 +39,7 @@ The empty obsolete SUPPORT GAMERHQ category may be removed after a fresh all-cha
 
 ## Final message texts
 
-Each block is one managed message. The overview appends actual mentions of all six partner channels. Buttons are attached only to their corresponding message.
+Each block is one managed message. Each overview list item contains its destination channel mention, resolved only from persisted managed IDs. There is no repeated footer. Missing or deleted destinations are omitted, with a brief setup notice; sync reports incomplete setup and health marks missing mappings REPAIRABLE. Owner setup creates/adopts the destinations. Buttons are attached only to their corresponding message.
 
 ### support-gamerhq / intro
 
@@ -48,21 +48,19 @@ Each block is one managed message. The overview appends actual mentions of all s
 
 Wenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote.
 
-Dort findet ihr unter anderem:
+Dort findet ihr:
 
-- Direct Support
-- Amazon
-- Strom & Gas
-- Finanzberatung
-- Gaming Deals
-- AI Tools
+- 💜 <direct-support channel mention> — Direct Support
+- 🛒 <amazon channel mention> — Amazon
+- ⚡ <strom-gas channel mention> — Strom & Gas
+- 💶 <finanzberatung channel mention> — Finanzberatung
+- 🎮 <gaming-deals channel mention> — Gaming Deals
+- 🤖 <ai-tools channel mention> — AI Tools
 
-Bei Partner- und Empfehlungslinks kann GamerHQ oder der jeweilige Partner eine Provision erhalten.
-
-Für euch entstehen dadurch keine zusätzlichen Kosten allein durch die Nutzung eines Empfehlungslinks.
+ℹ️ Einige der dort verwendeten Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr damit GamerHQ.
 ```
 
-No buttons.
+Channel mentions above are documentation placeholders; the runtime renders real clickable mentions, not these labels or raw IDs. PARTNERS & BENEFITS stays bold plain text, not a category link. No buttons.
 
 ### direct-support / direct
 

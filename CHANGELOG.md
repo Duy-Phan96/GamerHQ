@@ -152,3 +152,9 @@ All notable GamerHQ Bot changes are tracked here from the stable-release workflo
 - Validate essential startup settings without echoing values; resolve relative DB paths from the repository and create runtime directories only on database use.
 - Copy only explicit application sources into Docker; keep private data mounts separate from the public seed catalog.
 - Retain pinned dependencies and existing product behavior; no deployment, commit, push or live migration.
+
+## Support navigation polish — 2026-09-19
+
+- Put each managed partner channel mention directly in its Support GamerHQ list item; remove the repeated footer and simplify referral disclosure.
+- Omit missing/deleted mappings from navigation and flag them in health for owner setup repair; preserve canonical messages and unrelated pins.
+- Update the README server tree, command count, setup/architecture references and contribution documentation policy.

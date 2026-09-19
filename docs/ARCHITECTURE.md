@@ -25,3 +25,7 @@ Music Bots integration configures an existing dedicated role for external bots. 
 ## Operations boundaries
 
 Owner setup previews/repairs established server structure; health is read-only. Startup does synchronize commands and reconcile known resources, so a real start is not an offline check. Deploy one instance, separate code from runtime data and back up SQLite. Docker keeps the public seed under `/app/data` and mounts private SQLite under `/app/runtime/data` so the seed remains visible.
+
+## Support overview navigation
+
+START HERE / support-gamerhq is a short directory for six separate PARTNERS & BENEFITS channels. Each bullet renders the mention from its persisted `managed_channel:<guild>:<name>` mapping; the category name is plain bold text. Synchronization does not use name-only lookalikes for navigation. Missing destinations are omitted, health flags missing mappings, and owner repair handles creation/adoption. The canonical intro message is edited through the shared managed-message helper, with no duplicate navigation footer or additional overview message.

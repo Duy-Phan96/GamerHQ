@@ -56,3 +56,7 @@ Before core repair, create START HERE and COMMUNITY categories. Add the channels
 ## Maintenance utilities
 
 `python -m tools.backup_database <PRIVATE_BACKUP_PATH>` creates a verified SQLite backup from the configured DB. `python -m tools.production_preflight --db-path <EXISTING_PRIVATE_DB>` checks an already configured deployment; it is not a fresh-database installer. `tools/cleanup_catalog.py` is retained legacy maintenance source, not a setup step; it changes catalog/database data and must not be run casually. Local ignored root patch scripts and old README variants are not installation dependencies.
+
+## Partner navigation verification
+
+After owner setup, START HERE / support-gamerhq should have six clickable list entries pointing to the read-only PARTNERS & BENEFITS channels: direct-support, amazon, strom-gas, finanzberatung, gaming-deals and ai-tools. There is no separate mention footer. `/server sync-support` refreshes adopted messages; missing/deleted channel mappings are omitted from navigation and reported by `/server health`. Use owner `/server setup` → Repair to restore the structure/mappings, then verify the list again. Existing canonical message IDs and unrelated pins are preserved.
