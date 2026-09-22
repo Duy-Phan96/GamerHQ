@@ -57,7 +57,7 @@ Dort findet ihr:
 - 🎮 <gaming-deals channel mention> — Gaming Deals
 - 🤖 <ai-tools channel mention> — AI Tools
 
-ℹ️ Einige der dort verwendeten Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr damit GamerHQ.
+Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜
 ```
 
 Channel mentions above are documentation placeholders; the runtime renders real clickable mentions, not these labels or raw IDs. PARTNERS & BENEFITS stays bold plain text, not a category link. No buttons.

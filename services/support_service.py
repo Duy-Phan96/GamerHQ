@@ -16,7 +16,7 @@ CHANNEL_NAME = '💜・support-gamerhq'
 TITLE = '# 💜 Support GamerHQ'
 TELESON_URL = 'https://kundenportal.teleson.de/index.php?_url=register/karriere&reference=bFFQT1RPUHltMWVJb3REWXJDOWhwbzRNdXp5RTNhMUJWUkg4ckxZMHhVVjd5M0kvTWMvR3YrSkhCNWM4Z3ZiUnh2cDJSbFhEYUtjTHZKUWVlQWUrQnFPdWljOUpIbG5wc1drRk9KcXlhalU9'
 INTRO_TEXT = TITLE + "\n\nWenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote."
-DISCLOSURE = 'ℹ️ Einige der dort verwendeten Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr damit GamerHQ.'
+DISCLOSURE = 'Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜'
 PARTNER_NAVIGATION = (
     ('direct-support', '💜', 'Direct Support'), ('amazon', '🛒', 'Amazon'),
     ('strom-gas', '⚡', 'Strom & Gas'), ('finanzberatung', '💶', 'Finanzberatung'),
@@ -196,6 +196,25 @@ async def remove_empty_legacy_category(guild):
 
 
 async def rebuild_order(guild, channel, journal):
+    from contextlib import AsyncExitStack
+    from services import managed_message_service as managed
+    async with AsyncExitStack() as stack:
+        for section in ('energy', 'energy_sales'):
+            await stack.enter_async_context(managed.lock(message_key(guild, section)))
+        if any((managed.load(message_key(guild, section)) or {}).get('customized') for section in ('energy', 'energy_sales')):
+            raise ServerMessageError('Customized partner messages cannot be reordered by replacement; manual review required.')
+        result = await _rebuild_order(guild, channel, journal)
+        if not result['pin_failures']:
+            for section in ('energy', 'energy_sales'):
+                state = managed.load(message_key(guild, section))
+                if state:
+                    state['message_id'] = int(db.get_setting(state['key']))
+                    state['version'] += 1
+                    managed.store(state)
+        return result
+
+
+async def _rebuild_order(guild, channel, journal):
     """Resume a persisted create/pin → atomic ID switch → old-message cleanup."""
     sections = support_sections("strom-gas")
     journal_key = f'partner_reorder:{guild.id}'
@@ -395,7 +414,10 @@ async def sync_support_messages(guild, channel=None):
                 result['pin_failures'].append(section)
                 log.exception('Partner pin failed section=%s', section)
         germany = grouped['strom-gas']
-        if germany != sorted(germany):
+        from services.managed_message_service import load as managed_content
+        customized_energy = any((managed_content(message_key(guild, section)) or {}).get('customized')
+                                for section in ('energy', 'energy_sales'))
+        if germany != sorted(germany) and not customized_energy:
             journal = {'channel':channels['strom-gas'].id, 'phase':'create', 'generation':uuid.uuid4().hex, 'old':germany}
             db.set_setting(f'partner_reorder:{guild.id}', json.dumps(journal))
             ordered = await rebuild_order(guild, channels['strom-gas'], journal)

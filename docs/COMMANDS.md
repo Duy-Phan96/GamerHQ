@@ -38,12 +38,12 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 - `/server cleanup-game-areas` — Owner/admin: preview unused managed game areas before confirming cleanup.
 - `/server health` — Owner/admin: read-only diagnostics and acceptance-test details.
 - `/server music-bots-role` — Admin: configure the existing dedicated Music Bots role.
-- `/server pinned-messages` — Admin: create or edit managed pinned channel messages.
+- `/server pinned-messages` — Owner/admin: edit GamerHQ-managed pinned messages and buttons. Select channel → select message (automatic for one pin) → edit content/buttons → Preview → Save Changes. Multiple pins, persistent customization and confirmed Reset to Default are supported. See [managed message editing](MANAGED_MESSAGES.md).
 - `/server roles` — Admin: sync, review and safely clean up GamerHQ-managed roles.
 - `/server sync-support` — Admin: synchronize and pin the Support and partner messages in configured channels; overview bullets use managed channel mentions.
 - `/server setup` — Owner only: inspect and repair core channels, guides and private suggestions.
 
-`/server setup` is owner-only. Health and cleanup check owner/admin access; other administrative commands retain their Administrator checks. Destructive Game Area/library actions require their existing previews/confirmations. General member commands never grant server administration.
+`/server setup` is owner-only. Health, cleanup and the pinned-message editor check owner/admin access; other administrative commands retain their Administrator checks. Moderator permissions alone do not grant message-editor access. Destructive Game Area/library actions require their existing previews/confirmations. General member commands never grant server administration.
 
 Persistent components include game/role selectors, LFG cards/invites/proposals, suggestions and support ticket entry/actions. Temporary Voice panels can be reopened after restart. Events remain Coming Soon; no XP commands exist.
 
