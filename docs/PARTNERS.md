@@ -12,19 +12,21 @@ START HERE
 └─ 🤖・ai-tools
 ```
 
-Six canonical messages across the overview and five partner channels. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
+Six canonical messages across the overview and five partner channels. The overview, Direct Support, Amazon, Gaming Deals and AI Tools are English; only Haushaltscheck is German. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
 
 ## Owner rollout and migration
 
 Back up SQLite, restart reviewed code, inspect `/server health`, then owner `/server setup` → Repair. Repeat Repair and compare identities. Existing recorded strom-gas, germany-services or finanzberatung channels may be reused, in that preference order, if no Haushaltscheck exists. Reused channel IDs/history remain intact. Name-only legacy channels are retained for review rather than renamed automatically.
 
-A durable `household_migration:<guild>` journal captures recorded legacy message IDs and pending earlier reorder/split generations before renaming. Only after all replacement messages are pinned are recognized, bot-owned default energy/course/finance messages removed. Failures retain the journal for retry without duplicate replacement pins. Historical managed-content/audit records remain in SQLite, marked retired and excluded from the active editor. Ticket rows retain their original data and type.
+A durable `household_migration:<guild>` journal captures recorded legacy message IDs and pending earlier reorder/split generations before renaming. Only after all replacement messages are pinned are recognized, bot-owned default energy/course/finance messages removed. Failures retain the journal for retry without duplicate replacement pins. Historical managed-content/audit records remain in SQLite, marked retired and excluded from the active editor. Completed migrations move old channel/message IDs from active settings to `retired_partner_channel` / `retired_partner_message` settings. This also cleans up mappings left by the previous release, while keeping renamed legacy channels discoverable for manual review. Ticket rows retain their original data and type.
 
 Unknown/manual messages, customized legacy pins and uncertain fingerprints are preserved unchanged and flagged MANUAL_REVIEW. No legacy partner channel is automatically deleted, even when apparently empty: threads/history may exist. Old callbacks are no longer registered and ticket creation rejects old types. Retained buttons cannot open new requests. Owners must review/archive retained channels or remove obsolete custom pins themselves. This exception can leave old visible copy until review; preservation takes priority over destructive cleanup.
 
 Existing custom overview/Gaming Deals copy remains customized. Repair updates defaults without overwriting it; use the editor's confirmed Reset to Default to adopt new navigation/copy. `/server sync-support` refreshes adopted boards and can resume a previously authorized migration, but never creates missing channels. Missing navigation mappings are omitted and flagged by health.
 
 ## Final message texts
+
+Affiliate disclosures are the last line of the same message body, immediately above the Discord link button. The Amazon shortcut is a manual browser instruction; no button creates a bookmark.
 
 Mentions below are documentation placeholders. Runtime substitutes persisted Discord channel mentions once per bullet. Customized boards retain saved text until explicitly reset.
 
@@ -33,9 +35,9 @@ Mentions below are documentation placeholders. Runtime substitutes persisted Dis
 ```text
 # 💜 Support GamerHQ
 
-Wenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote.
+If you'd like to support GamerHQ, check out the options and partner offers under **PARTNERS & BENEFITS**.
 
-Dort findet ihr:
+You'll find:
 
 - 💜 <direct-support channel mention> — Direct Support
 - 🛒 <amazon channel mention> — Amazon
@@ -43,7 +45,7 @@ Dort findet ihr:
 - 🎮 <gaming-deals channel mention> — Gaming Deals
 - 🤖 <ai-tools channel mention> — AI Tools
 
-Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜
+Some links are affiliate or referral links. Using them helps support GamerHQ. Thank you 💜
 ```
 
 No buttons or duplicate footer.
@@ -53,7 +55,7 @@ No buttons or duplicate footer.
 ```text
 # 💜 Direct Support
 
-Wenn du GamerHQ direkt unterstützen möchtest, findest du hier künftig die Möglichkeit dazu.
+If you'd like to support GamerHQ directly, a direct support option will be available here soon.
 
 **Coming Soon**
 ```
@@ -65,12 +67,14 @@ No buttons. PayPal is not configured.
 ```text
 # 🛒 Amazon
 
-Du kannst GamerHQ unterstützen, indem du vor deinem normalen Amazon-Einkauf unseren Link verwendest.
+Support GamerHQ when you shop on Amazon using our link.
 
-Tipp: Speichere den Link als Lesezeichen in deinem Browser und nutze ihn einfach vor deinem nächsten Einkauf.
+Tip: Save the link as a browser bookmark with `Ctrl + D` and use it before your next purchase.
+
+Affiliate link — using it supports GamerHQ 💜
 ```
 
-Button: [🛒 Amazon öffnen](https://amzn.to/4dnxPXh).
+Button: [🛒 Open Amazon](https://amzn.to/4dnxPXh).
 
 ### haushaltscheck
 
@@ -103,14 +107,12 @@ Button: 🔍 Haushaltscheck anfragen → `HOUSEHOLD_CHECK_REQUEST`.
 ```text
 # 🎮 Gaming Deals
 
-Hier findest du aktuelle Gaming-Angebote und Aktionen von unseren Partnern.
+Find current gaming deals, promotions and releases here.
 
-Über die offizielle Instant Gaming Discord-Integration können hier nach Einrichtung aktuelle Aktionen und wichtige Releases erscheinen.
-
-Einige Links sind Affiliate-Links. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜
+Affiliate link — using it supports GamerHQ 💜
 ```
 
-Button: [🎮 Instant Gaming öffnen](https://www.instant-gaming.com/?igr=gamer-0a9671a). External posts require owner configuration.
+Button: [🎮 Open Instant Gaming](https://www.instant-gaming.com/?igr=gamer-0a9671a). External posts require owner configuration.
 
 ### ai-tools
 
@@ -121,9 +123,9 @@ Button: [🎮 Instant Gaming öffnen](https://www.instant-gaming.com/?igr=gamer-
 
 AI Video Generation
 
-Use PixVerse to create AI-generated videos and visual content.
+Create AI-generated videos and visual content with PixVerse.
 
-ℹ️ Affiliate Link
+Affiliate link — using it supports GamerHQ 💜
 ```
 
 Button: [🤖 Open PixVerse](https://motivaiprivatelimited.sjv.io/c/7668488/3811144/49478).

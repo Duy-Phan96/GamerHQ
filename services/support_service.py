@@ -13,8 +13,8 @@ from services.music_bot_service import blocked_name
 
 CHANNEL_NAME = '💜・support-gamerhq'
 TITLE = '# 💜 Support GamerHQ'
-INTRO_TEXT = TITLE + "\n\nWenn ihr GamerHQ unterstützen möchtet, findet ihr unter **PARTNERS & BENEFITS** verschiedene Möglichkeiten und Partnerangebote."
-DISCLOSURE = 'Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜'
+INTRO_TEXT = TITLE + "\n\nIf you'd like to support GamerHQ, check out the options and partner offers under **PARTNERS & BENEFITS**."
+DISCLOSURE = 'Some links are affiliate or referral links. Using them helps support GamerHQ. Thank you 💜'
 PARTNER_NAVIGATION = (
     ('direct-support', '💜', 'Direct Support'), ('amazon', '🛒', 'Amazon'),
     ('haushaltscheck', '🇩🇪', 'Haushaltscheck'),
@@ -22,14 +22,16 @@ PARTNER_NAVIGATION = (
 )
 DIRECT_TEXT = """# 💜 Direct Support
 
-Wenn du GamerHQ direkt unterstützen möchtest, findest du hier künftig die Möglichkeit dazu.
+If you'd like to support GamerHQ directly, a direct support option will be available here soon.
 
 **Coming Soon**"""
 AMAZON_TEXT = """# 🛒 Amazon
 
-Du kannst GamerHQ unterstützen, indem du vor deinem normalen Amazon-Einkauf unseren Link verwendest.
+Support GamerHQ when you shop on Amazon using our link.
 
-Tipp: Speichere den Link als Lesezeichen in deinem Browser und nutze ihn einfach vor deinem nächsten Einkauf."""
+Tip: Save the link as a browser bookmark with `Ctrl + D` and use it before your next purchase.
+
+Affiliate link — using it supports GamerHQ 💜"""
 HOUSEHOLD_TEXT = """# 🇩🇪 Haushaltscheck
 
 Nur für Nutzer in Deutschland.
@@ -51,11 +53,9 @@ Du bekommst mehrere passende Tarife übersichtlich zusammengestellt und als PDF 
 So kannst du Preis und Leistung in Ruhe vergleichen und selbst entscheiden, ob und welches Angebot für dich sinnvoll ist."""
 GAMING_TEXT = """# 🎮 Gaming Deals
 
-Hier findest du aktuelle Gaming-Angebote und Aktionen von unseren Partnern.
+Find current gaming deals, promotions and releases here.
 
-Über die offizielle Instant Gaming Discord-Integration können hier nach Einrichtung aktuelle Aktionen und wichtige Releases erscheinen.
-
-Einige Links sind Affiliate-Links. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜"""
+Affiliate link — using it supports GamerHQ 💜"""
 PARTNER_CATEGORY = '🤝 PARTNERS & BENEFITS'
 PARTNER_CHANNELS = {'direct-support':'💜・direct-support', 'amazon':'🛒・amazon', 'haushaltscheck':'🇩🇪・haushaltscheck', 'gaming-deals':'🎮・gaming-deals', 'ai-tools':'🤖・ai-tools'}
 LEGACY_SECTIONS = ('intro','transparency','instant_gaming','pixverse','amazon','energy','energy_sales')
@@ -81,7 +81,7 @@ AFFILIATES = (
               'Use this link when buying games on Instant Gaming.', '🎮'),
     Affiliate('PixVerse', 'AI', 'AI Video Generation',
               'https://motivaiprivatelimited.sjv.io/c/7668488/3811144/49478',
-              'Use PixVerse to create AI-generated videos and visual content.', '🤖'),
+              'Create AI-generated videos and visual content with PixVerse.', '🤖'),
     Affiliate('Amazon', 'Shopping', 'Shopping & Everyday Products',
               'https://amzn.to/4dnxPXh',
               'Use this link before shopping normally on Amazon.\n\nYou can also save the link as a browser bookmark and use it whenever you shop.', '🛒'),
@@ -107,7 +107,7 @@ def support_sections(channel_name=None):
     sections = [('intro', INTRO_TEXT, None), ('direct', DIRECT_TEXT, None), ('amazon', AMAZON_TEXT, AFFILIATES[2]),
                 ('household', HOUSEHOLD_TEXT, None),
                 ('instant_gaming', GAMING_TEXT, AFFILIATES[0]),
-                ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\nAI Video Generation\n\n' + AFFILIATES[1].copy + '\n\nℹ️ Affiliate Link', AFFILIATES[1])]
+                ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\nAI Video Generation\n\n' + AFFILIATES[1].copy + '\n\nAffiliate link — using it supports GamerHQ 💜', AFFILIATES[1])]
     return [row for row in sections if channel_name is None or section_channel(row[0]) == channel_name]
 
 
@@ -118,9 +118,9 @@ def support_text(channels=None):
                for name, emoji, label in PARTNER_NAVIGATION if name in channels]
     parts = [INTRO_TEXT]
     if bullets:
-        parts.append('Dort findet ihr:\n\n' + '\n'.join(bullets))
+        parts.append("You'll find:\n\n" + '\n'.join(bullets))
     if len(bullets) != len(PARTNER_NAVIGATION):
-        parts.append('Weitere Partnerkanäle werden eingerichtet.')
+        parts.append('More partner channels are being set up.')
     parts.append(DISCLOSURE)
     return '\n\n'.join(parts)
 
@@ -129,7 +129,7 @@ def section_view(section, affiliate):
     from cogs.tickets import SupportOffers
     if affiliate:
         view = discord.ui.View(timeout=None)
-        label = '🛒 Amazon öffnen' if section == 'amazon' else '🎮 Instant Gaming öffnen' if section == 'instant_gaming' else f'{affiliate.emoji} Open {affiliate.name}'
+        label = f'{affiliate.emoji} Open {affiliate.name}'
         view.add_item(discord.ui.Button(label=label, url=affiliate.url))
         return view
     return None if section in ('intro', 'direct') else SupportOffers(section)
@@ -161,7 +161,7 @@ def guide_reference(guild):
 def matches_section(message, content):
     heading = (message.content or '').split('\n', 1)[0]
     expected = content.split('\n', 1)[0]
-    return heading == expected or (expected == '# 💶 Finanzberatung' and heading == '# 💶 Finanzcheck & Planung')
+    return heading == expected
 
 
 async def remove_empty_legacy_category(guild):
@@ -233,6 +233,9 @@ def legacy_review_channels(guild):
     if previous_review and previous_review.isdigit():
         ids.add(int(previous_review))
     for name in LEGACY_CHANNELS:
+        retired = db.get_setting(f'retired_partner_channel:{guild.id}:{name}')
+        if retired and retired.isdigit() and retired != active:
+            ids.add(int(retired))
         channel = resource(guild, name)
         if channel and str(channel.id) != active:
             ids.add(channel.id)
@@ -241,6 +244,22 @@ def legacy_review_channels(guild):
 
 def legacy_review_channel(guild):
     return next(iter(legacy_review_channels(guild)), None)
+
+
+def retire_partner_mappings(guild):
+    """Remove obsolete active mappings, retaining identities for historical review."""
+    if not db.get_setting(f'household_migrated:{guild.id}') or db.get_setting(f'household_migration:{guild.id}'):
+        return
+    mappings = [(channel_key(guild, name), f'retired_partner_channel:{guild.id}:{name}')
+                for name in LEGACY_CHANNELS]
+    mappings += [(message_key(guild, section), f'retired_partner_message:{guild.id}:{section}')
+                 for section in ('energy', 'energy_sales', 'finance')]
+    with db.connect() as conn:
+        for current, retired in mappings:
+            row = conn.execute('SELECT value FROM settings WHERE key=?', (current,)).fetchone()
+            if row:
+                conn.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (retired, row['value']))
+                conn.execute('DELETE FROM settings WHERE key=?', (current,))
 
 
 async def prepare_household_migration(guild, legacy_channels):
@@ -354,6 +373,7 @@ async def sync_support_messages(guild, channel=None):
                 log.exception('Partner pin failed section=%s', section)
         if not result['pin_failures']:
             await finish_household_migration(guild)
+            retire_partner_mappings(guild)
             result['retained_messages'] = await retire_legacy_messages(guild, channels['support-gamerhq'], result['messages'])
         result['retained_categories'] = await remove_empty_legacy_category(guild)
         result['manual_review_channels'] = [c.id for c in legacy_review_channels(guild)]

@@ -59,3 +59,5 @@ Health reads registry state without changing it. It checks missing channels/mess
 The private audit table records actor, channel, stable key, content/buttons changed flags, time and before/after hashes. It does not store full edited content or URLs in audit entries. Keep the runtime database and backups out of Git; run only one bot instance against a guild/database.
 
 Retired energy/course/finance boards are excluded from editing after migration. Historical custom content and audit records remain stored. Custom legacy messages are left untouched for MANUAL_REVIEW; their old ticket actions cannot create new requests. See [partner migration](PARTNERS.md).
+
+Current default partner copy is English except for Haushaltscheck. Repair refreshes generated defaults in place and preserves customized text/buttons. To adopt the English wording on a customized board, preview and confirm Reset to Default; the existing message ID stays unchanged.
