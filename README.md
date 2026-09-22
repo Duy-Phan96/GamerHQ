@@ -25,7 +25,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Submit suggestions through a public entry point for private Staff review.
 - Open private support tickets with a short form. Staff can take tickets and mark them waiting; the creator or Staff can confirm closure. Closed tickets retain readable history.
 - Use managed welcome, rules, guide and role-selection channels.
-- Use the Support GamerHQ overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
+- Use the Partners & Benefits overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
 - Provide tournaments/giveaways channels as an events foundation; event functionality remains Coming Soon.
 
 Partner messages are English; Haushaltscheck remains German for its free, nonbinding Germany-focused household/contract requests. Gaming Deals highlights current deals, promotions and releases.
@@ -105,7 +105,7 @@ STAFF (private)
 
 Optional Game Areas, streamer areas, LFG resources and temporary voice rooms extend this layout. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
 
-**Need Support** opens a help ticket visible to its creator and authorized Staff. **Support GamerHQ** links directly to the five channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
+**Need Support** opens a help ticket visible to its creator and authorized Staff. **Partners & Benefits** in support-gamerhq links directly to the five channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
 
 ## Requirements
 
@@ -219,7 +219,7 @@ Staff review suggestions and take/mark waiting/close tickets through private but
 1. Prepare the existing base layout described in [setup](docs/SETUP.md). START HERE and COMMUNITY must already exist. A private STAFF category is needed for Staff review/log placement; configure the existing game-selector channel as well.
 2. Start the bot and run `/server health` to inspect missing resources, mappings and permissions without repairing them.
 3. As server owner, open `/server setup`, review its check/repair preview and confirm the intended changes.
-4. Confirm that each Support GamerHQ list item opens its partner channel. Missing mappings are omitted from navigation and reported by health; owner setup repairs them.
+4. Confirm that each Partners & Benefits list item opens its partner channel. Missing mappings are omitted from navigation and reported by health; owner setup repairs them.
 5. Run health again and perform the relevant [manual acceptance checks](RELEASE_CHECKLIST.md), including two-user ticket isolation and voice ownership.
 
 Setup is an incremental maintenance workflow, not a complete empty-server installer. It reuses managed channels/messages, updates guides and permissions, and leaves ambiguous resources for manual review. Destructive Game Area cleanup has its own selection and confirmation; it is not an automatic consequence of opening health/setup.
@@ -264,4 +264,4 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 LICENSE is not configured. The repository is public, but no software license has been selected; that remains an owner decision.
 
-Support GamerHQ stays in START HERE as a short overview. PARTNERS & BENEFITS contains separate read-only Direct Support, Amazon, Haushaltscheck, Gaming Deals and AI Tools channels. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
+support-gamerhq stays in START HERE as a benefits-first directory for useful deals, tools and services. Only Direct Support asks for financial support; affiliate disclosures are neutral. PARTNERS & BENEFITS contains separate read-only Direct Support, Amazon, Haushaltscheck, Gaming Deals and AI Tools channels. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).

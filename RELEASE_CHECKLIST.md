@@ -127,3 +127,7 @@ Ticket behavior and current limits are documented in [README](README.md) and [ar
 
 - [ ] Confirm English default copy/button labels for overview, Direct Support, Amazon, Gaming Deals and AI Tools; Haushaltscheck remains German. Amazon offers a manual Ctrl + D tip, not automatic bookmarking. Affiliate messages each have one short disclosure immediately above their link button; Gaming Deals has no integration wording.
 - [ ] Completed migrations remove obsolete finance/energy mappings from active settings while preserving historical IDs/custom content for review. Finance is not a required partner channel; repeated repair creates no replacement finance flow.
+
+- [ ] Verify benefits-first overview, five unique mentions, neutral affiliate labels and Direct Support as the only financial-support invitation.
+- [ ] Verify empty/known managed finanzberatung deletes only through owner Repair; health and sync leave it intact. Check exact MANUAL_REVIEW reasons for manual/custom content, missing identity, dependencies, threads, denied inspection and renamed/protected channels.
+- [ ] Verify stale finance editor/channel/message mappings retire while historical tickets/audit remain.

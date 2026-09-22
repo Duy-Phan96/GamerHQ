@@ -20,9 +20,11 @@ Back up SQLite, restart reviewed code, inspect `/server health`, then owner `/se
 
 A durable `household_migration:<guild>` journal captures recorded legacy message IDs and pending earlier reorder/split generations before renaming. Only after all replacement messages are pinned are recognized, bot-owned default energy/course/finance messages removed. Failures retain the journal for retry without duplicate replacement pins. Historical managed-content/audit records remain in SQLite, marked retired and excluded from the active editor. Completed migrations move old channel/message IDs from active settings to `retired_partner_channel` / `retired_partner_message` settings. This also cleans up mappings left by the previous release, while keeping renamed legacy channels discoverable for manual review. Ticket rows retain their original data and type.
 
-Unknown/manual messages, customized legacy pins and uncertain fingerprints are preserved unchanged and flagged MANUAL_REVIEW. No legacy partner channel is automatically deleted, even when apparently empty: threads/history may exist. Old callbacks are no longer registered and ticket creation rejects old types. Retained buttons cannot open new requests. Owners must review/archive retained channels or remove obsolete custom pins themselves. This exception can leave old visible copy until review; preservation takes priority over destructive cleanup.
+Unknown/manual messages, customized legacy pins and uncertain fingerprints are preserved unchanged and flagged MANUAL_REVIEW. Only explicit owner `/server setup` → Repair can delete legacy finanzberatung. It requires a recorded managed identity, unchanged channel name, a non-protected location, completed household migration, no stored resource dependencies, sufficient inspection permissions, no active or archived threads, and full history containing only recorded bot-owned default messages (or no messages). Unknown/manual/customized content, unexpected attachments, dependency conflicts, API failures or uncertainty produce MANUAL_REVIEW with the exact reason. Health performs the same read-only check and reports REPAIRABLE when safe. Startup and sync never delete this channel. Other legacy channels remain for owner review. Old callbacks are no longer registered and ticket creation rejects old types. Retained buttons cannot open new requests. Owners must review/archive retained channels or remove obsolete custom pins themselves. This exception can leave old visible copy until review; preservation takes priority over destructive cleanup.
 
 Existing custom overview/Gaming Deals copy remains customized. Repair updates defaults without overwriting it; use the editor's confirmed Reset to Default to adopt new navigation/copy. `/server sync-support` refreshes adopted boards and can resume a previously authorized migration, but never creates missing channels. Missing navigation mappings are omitted and flagged by health.
+
+The overview presents useful deals, tools and services first. Direct Support is the only explicit financial-support path; affiliate boards use neutral disclosure.
 
 ## Final message texts
 
@@ -33,11 +35,11 @@ Mentions below are documentation placeholders. Runtime substitutes persisted Dis
 ### support-gamerhq
 
 ```text
-# 💜 Support GamerHQ
+# 🤝 Partners & Benefits
 
-If you'd like to support GamerHQ, check out the options and partner offers under **PARTNERS & BENEFITS**.
+Looking for useful deals, tools or services?
 
-You'll find:
+Under **PARTNERS & BENEFITS** you'll find selected offers and resources that may be useful to you.
 
 - 💜 <direct-support channel mention> — Direct Support
 - 🛒 <amazon channel mention> — Amazon
@@ -45,7 +47,7 @@ You'll find:
 - 🎮 <gaming-deals channel mention> — Gaming Deals
 - 🤖 <ai-tools channel mention> — AI Tools
 
-Some links are affiliate or referral links. Using them helps support GamerHQ. Thank you 💜
+Some links may be affiliate or referral links.
 ```
 
 No buttons or duplicate footer.
@@ -55,7 +57,9 @@ No buttons or duplicate footer.
 ```text
 # 💜 Direct Support
 
-If you'd like to support GamerHQ directly, a direct support option will be available here soon.
+Want to support GamerHQ directly?
+
+A direct support option will be available here soon.
 
 **Coming Soon**
 ```
@@ -67,11 +71,11 @@ No buttons. PayPal is not configured.
 ```text
 # 🛒 Amazon
 
-Support GamerHQ when you shop on Amazon using our link.
+Use the link below when shopping on Amazon.
 
-Tip: Save the link as a browser bookmark with `Ctrl + D` and use it before your next purchase.
+Tip: Save it as a browser bookmark with `Ctrl + D` so it's easy to find later.
 
-Affiliate link — using it supports GamerHQ 💜
+Affiliate / referral link
 ```
 
 Button: [🛒 Open Amazon](https://amzn.to/4dnxPXh).
@@ -109,7 +113,7 @@ Button: 🔍 Haushaltscheck anfragen → `HOUSEHOLD_CHECK_REQUEST`.
 
 Find current gaming deals, promotions and releases here.
 
-Affiliate link — using it supports GamerHQ 💜
+Affiliate / referral link
 ```
 
 Button: [🎮 Open Instant Gaming](https://www.instant-gaming.com/?igr=gamer-0a9671a). External posts require owner configuration.
@@ -121,11 +125,9 @@ Button: [🎮 Open Instant Gaming](https://www.instant-gaming.com/?igr=gamer-0a9
 
 ## PixVerse
 
-AI Video Generation
-
 Create AI-generated videos and visual content with PixVerse.
 
-Affiliate link — using it supports GamerHQ 💜
+Affiliate / referral link
 ```
 
 Button: [🤖 Open PixVerse](https://motivaiprivatelimited.sjv.io/c/7668488/3811144/49478).

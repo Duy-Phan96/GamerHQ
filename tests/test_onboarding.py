@@ -43,6 +43,16 @@ class FakeMessage:
 
 
 class FakeChannel:
+    def permissions_for(self, member):
+        return discord.Permissions.all()
+
+    async def delete(self, **kwargs):
+        self.guild.text_channels.remove(self)
+
+    async def archived_threads(self, **kwargs):
+        for thread in getattr(self, 'archived', []):
+            yield thread
+
     def __init__(self, guild, name, category, cid):
         self.guild, self.name, self.category, self.id = guild, name, category, cid
         self.topic = None
@@ -112,6 +122,9 @@ class FakeCategory:
 
 
 class FakeGuild:
+    async def active_threads(self):
+        return getattr(self, 'threads', [])
+
     async def fetch_channels(self):
         return list(self.channels)
 

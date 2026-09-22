@@ -34,7 +34,7 @@ def digest(value):
 def specs(guild):
     from services.support_service import message_key, section_channel
     result = {}
-    for section, label in [('intro', 'Support Overview'), ('direct', 'Direct Support'),
+    for section, label in [('intro', 'Benefits Overview'), ('direct', 'Direct Support'),
                            ('amazon', 'Amazon'), ('household', 'Haushaltscheck'),
                            ('instant_gaming', 'Gaming Deals'), ('pixverse', 'AI Tools')]:
         action = 'HOUSEHOLD_CHECK_REQUEST' if section == 'household' else None
