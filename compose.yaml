@@ -2,17 +2,27 @@ services:
   gamerhq:
     build:
       context: .
-    image: gamerhq-bot:${GAMERHQ_VERSION:-local}
+    image: gamerhq-bot:local
     container_name: gamerhq-bot
     restart: unless-stopped
     init: true
     env_file:
-      - .env
+      - ../.env
     environment:
       GAMERHQ_DB_PATH: /app/runtime/data/gamerhq.db
     volumes:
-      - ./runtime/data:/app/runtime/data
-      - ./runtime/backups:/app/backups
+      - ../data:/app/runtime/data:z
+      - ../backups:/app/backups:z
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     stop_grace_period: 30s
     security_opt:
       - no-new-privileges:true

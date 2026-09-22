@@ -53,7 +53,7 @@ async def scan(guild, bot=None, *, messages=True):
         add('Runtime / commands','WARN' if missing else 'PASS','Missing registrations: '+', '.join(sorted(missing)) if missing else f'{len(inventory)} supported commands registered.')
         views = list(getattr(bot,'persistent_views',[]))
         ids = {getattr(child,'custom_id',None) for view in views for child in view.children}
-        required = {'gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:energy-support','gamerhq:offers:energy-course'}
+        required = {'gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:household-check'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],
@@ -97,9 +97,9 @@ async def scan(guild, bot=None, *, messages=True):
     try:
         legacy = legacy_review_channel(guild)
         if legacy:
-            add('Legacy germany-services', 'MANUAL_REVIEW', 'Old channel/history retained; inspect before manual removal. Never delete unknown content.')
-        if db.get_setting(f'partner_split:{guild.id}'):
-            add('Partner migration', 'REPAIRABLE', 'Split migration pending; repair permissions and rerun setup/sync.')
+            add('Legacy partner channels', 'MANUAL_REVIEW', 'Old channel/history retained; inspect before manual removal. Never delete unknown content.')
+        if any(db.get_setting(f'{key}:{guild.id}') for key in ('partner_split', 'partner_reorder', 'household_migration')):
+            add('Partner migration', 'REPAIRABLE', 'Partner migration pending; repair permissions and rerun setup/sync.')
         partners = resource(guild, 'partners-benefits', True)
         add('PARTNERS & BENEFITS', 'PASS' if partners and partners.name == PARTNER_CATEGORY else 'REPAIRABLE', 'Owner setup creates/reuses the partner category.')
         for name, display in PARTNER_CHANNELS.items():
@@ -114,8 +114,9 @@ async def scan(guild, bot=None, *, messages=True):
         add('PARTNERS & BENEFITS', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
     if bot is not None:
         registered = {item.custom_id for view in getattr(bot, 'persistent_views', []) for item in view.children if getattr(item, 'custom_id', None)}
-        expected = {'gamerhq:offers:energy-support', 'gamerhq:offers:energy-course', 'gamerhq:offers:finance'}
-        add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent energy, course and finance handlers checked; restart after updating if missing.')
+        expected = {'gamerhq:offers:household-check'}
+        add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent HOUSEHOLD_CHECK_REQUEST handler checked; restart after updating if missing.')
+    add('Instant Gaming integration', 'INFO', 'Optional external configuration; see docs/INSTANT_GAMING.md. No external bot is required for GamerHQ health.')
     from services import ticket_service as tickets
     from services.onboarding_service import is_staff
     add('Ticket Staff access','PASS' if any(is_staff(r) for r in guild.roles) else 'WARN','Uses current moderation roles and server owner; review role policy.')

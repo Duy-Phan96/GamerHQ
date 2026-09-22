@@ -1,0 +1,13 @@
+[Unit]
+Description=Verified GamerHQ SQLite daily backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=gamerhq
+Group=gamerhq
+SupplementaryGroups=docker
+WorkingDirectory=/opt/gamerhq/app
+UMask=0077
+ExecStart=/usr/bin/bash /opt/gamerhq/app/scripts/backup.sh

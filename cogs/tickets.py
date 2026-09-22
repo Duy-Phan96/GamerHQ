@@ -113,22 +113,16 @@ class TicketActions(SafeView):
 class SupportOffers(SafeView):
     """Persistent, canonical-board-bound routes into the existing ticket service."""
     def __init__(self, section=None):
-        from services.support_service import TELESON_URL
         super().__init__(timeout=None)
-        requests = list(self.children)
-        self.clear_items()
-        if section in (None, 'energy'):
-            self.add_item(discord.ui.Button(label='⚡ Strom & Gas starten',style=discord.ButtonStyle.link,url=TELESON_URL))
-        for button in requests:
-            if section is None or (section == 'energy' and button.custom_id.endswith('energy-support')) or (section == 'energy_sales' and button.custom_id.endswith('energy-course')) or (section == 'finance' and button.custom_id.endswith('finance')):
-                self.add_item(button)
+        if section not in (None, 'household'):
+            self.clear_items()
 
     async def request(self, interaction, kind):
         from services import support_service as support
         await interaction.response.defer(ephemeral=True)
         try:
             guild = interaction.guild
-            section = {'ENERGY_SUPPORT': 'energy', 'ENERGY_COURSE_REQUEST': 'energy_sales', 'FINANCE_REQUEST': 'finance'}.get(kind)
+            section = {'HOUSEHOLD_CHECK_REQUEST': 'household'}.get(kind)
             if section is None:
                 raise ValueError('Unbekannte Support-Anfrage.')
             if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild, support.section_channel(section)))
@@ -146,14 +140,10 @@ class SupportOffers(SafeView):
         except Exception as error:
             await reply_error(interaction,error)
 
-    @discord.ui.button(label='🆘 Support anfragen',style=discord.ButtonStyle.primary,custom_id='gamerhq:offers:energy-support')
-    async def energy_support(self,interaction,button):await self.request(interaction,'ENERGY_SUPPORT')
-
-    @discord.ui.button(label='🎓 Kurs anfragen',style=discord.ButtonStyle.secondary,custom_id='gamerhq:offers:energy-course')
-    async def energy_course(self,interaction,button):await self.request(interaction,'ENERGY_COURSE_REQUEST')
-
-    @discord.ui.button(label='💬 Finanzcheck anfragen',style=discord.ButtonStyle.primary,custom_id='gamerhq:offers:finance')
-    async def finance(self,interaction,button):await self.request(interaction,'FINANCE_REQUEST')
+    @discord.ui.button(label='🔍 Haushaltscheck anfragen', style=discord.ButtonStyle.primary,
+                       custom_id='gamerhq:offers:household-check')
+    async def household_check(self, interaction, button):
+        await self.request(interaction, 'HOUSEHOLD_CHECK_REQUEST')
 
 
 class Tickets(commands.Cog):

@@ -21,11 +21,16 @@ ENTRY_TEXT = ('# 🆘 Need Support?\n\nNeed help with GamerHQ?\n\n'
     'Please do not include passwords, payment details or other sensitive information.')
 TICKET_TYPES = {
     'GENERAL_SUPPORT': 'General Support',
+    'HOUSEHOLD_CHECK_REQUEST': 'Haushaltscheck',
     'ENERGY_SUPPORT': 'Energy Support',
     'ENERGY_COURSE_REQUEST': 'Energy Course Request',
     'FINANCE_REQUEST': 'Finance Request',
 }
+ACTIVE_TICKET_TYPES = {'GENERAL_SUPPORT', 'HOUSEHOLD_CHECK_REQUEST'}
+# Legacy types remain readable/closable, but cannot open new requests.
 REQUEST_COPY = {
+    'HOUSEHOLD_CHECK_REQUEST': ('🇩🇪 Haushaltscheck',
+        'Deine private Anfrage wurde erstellt.\n\nBeschreibe hier kurz, welche Verträge oder Bereiche du prüfen lassen möchtest.'),
     'ENERGY_SUPPORT': ('⚡ Strom & Gas Support',
         'Deine private Support-Anfrage wurde erstellt.\n\nBeschreibe hier kurz, wobei du Unterstützung brauchst oder welche Fragen du hast.'),
     'ENERGY_COURSE_REQUEST': ('🎓 Kursanfrage – Strom & Gas Vertrieb',
@@ -150,7 +155,7 @@ async def audit(guild,item,actor_id,action):
 
 
 async def open_ticket(guild,member,subject,description,feature='Other', *, ticket_type='GENERAL_SUPPORT'):
-    if ticket_type not in TICKET_TYPES:
+    if ticket_type not in ACTIVE_TICKET_TYPES:
         raise ValueError('Unknown ticket type.')
     subject,description,feature=subject.strip(),description.strip(),feature.strip() or 'Other'
     feature = next((value for value in FEATURES if value.casefold()==feature.casefold()),feature)

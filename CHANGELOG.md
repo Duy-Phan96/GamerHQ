@@ -4,6 +4,11 @@ All notable GamerHQ Bot changes are tracked here from the stable-release workflo
 
 ## [Unreleased] - 2026-09-22
 
+- Replace standalone energy, finance and course public flows with Haushaltscheck and private `HOUSEHOLD_CHECK_REQUEST` tickets. Preserve historical tickets and custom/manual content; journal legacy cleanup for retry and report retained channels for manual review. Update five-channel navigation, editor actions, setup and health.
+- Prepare optional official Instant Gaming bot posting in gaming-deals with a verified bot ID and scoped permissions; document marketing/release configuration with purchase notifications and buyer ranking disabled. No scraper or live integration activation.
+- Complete deployment/restore documentation and self-contained release acceptance checks; fix the health test's POSIX process probe isolation on Windows.
+
+- Prepare AlmaLinux deployment with locked container dependencies, external persistent storage, local health checks, verified backups/retention, offline migration preflight, owner-run updates and a systemd backup timer. Align deployment and rollback instructions with `/opt/gamerhq/{app,data,backups}`; host image build and live Discord acceptance remain owner gates.
 - Replace the generic `/server pinned-messages` flow with an owner/admin editor for registered public boards, including both Strom & Gas messages. Add Markdown drafts, structured link/allowlisted action buttons, inert previews, in-place confirmed saves and confirmed Reset to Default.
 - Persist custom content/buttons through restart and repair using the existing managed-message helper. Add version conflicts, shared edit/refresh locks, metadata/hash audits, pending-delivery recovery and read-only registry health checks.
 - Use the friendly Support GamerHQ affiliate disclosure and document editor permissions, supported boards, recovery and owner acceptance steps.

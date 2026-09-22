@@ -654,7 +654,7 @@ class ServerAdmin(commands.Cog):
         else:
             text = f'Synchronized {len(result["messages"])} support/partner messages.'
             if result.get('manual_review_channels'):
-                text += ' MANUAL_REVIEW: old germany-services/history retained; inspect before removing.'
+                text += ' MANUAL_REVIEW: legacy partner channels/custom content retained; inspect before removing.'
             if result.get('retained_messages'):
                 text += ' Unrelated legacy message mappings retained for manual review.'
             if result.get('retained_categories'):

@@ -28,6 +28,8 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Use the Support GamerHQ overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
 - Provide tournaments/giveaways channels as an events foundation; event functionality remains Coming Soon.
 
+Haushaltscheck opens a private, free and nonbinding Germany-focused household/contract request. Gaming Deals can use the [official Instant Gaming Discord integration](docs/INSTANT_GAMING.md); external setup is optional.
+
 ### Administration
 
 - Preview and confirm incremental server setup/repair, preserving managed channel identities where possible.
@@ -61,8 +63,7 @@ START HERE
 PARTNERS & BENEFITS
 ├─ direct-support
 ├─ amazon
-├─ strom-gas
-├─ finanzberatung
+├─ haushaltscheck
 ├─ gaming-deals
 └─ ai-tools
 
@@ -102,7 +103,7 @@ STAFF (private)
 
 Optional Game Areas, streamer areas, LFG resources and temporary voice rooms extend this layout. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
 
-**Need Support** opens a help ticket visible to its creator and authorized Staff. **Support GamerHQ** links directly to the six channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
+**Need Support** opens a help ticket visible to its creator and authorized Staff. **Support GamerHQ** links directly to the five channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
 
 ## Requirements
 
@@ -150,6 +151,7 @@ Edit your private `.env` before starting the bot. Existing process environment v
 | --- | --- |
 | `DISCORD_TOKEN` | Required to start; your private bot token |
 | `GUILD_ID` | Required positive Discord server ID; target for guild command registration |
+| `INSTANT_GAMING_BOT_ID` | Optional verified external bot user ID; owner repair grants posting only in gaming-deals |
 | `GAMERHQ_DB_PATH` | Private SQLite path; the example uses `runtime/data/gamerhq.db` |
 | `CHOOSE_GAMES_CHANNEL_ID` | Existing game-selector channel; configure before using its overview |
 | `GAME_SUGGESTIONS_CHANNEL_ID` | Optional legacy setting; current suggestions use managed private Staff mappings |
@@ -232,7 +234,7 @@ From the repository root:
 
 On Linux/macOS, use `.venv/bin/python` with the same module commands. The test runner disables local `.env` loading, uses temporary SQLite and blocks Discord HTTP requests. Coverage includes business rules, persistence, permissions and mocked Discord interactions. The repository audit reports potential secrets by location/type without printing their values.
 
-The prepared GitHub Actions workflow runs offline tests and repository checks; it does not deploy. No separate live integration/web suite, linter, formatter or type checker is configured. See [contributing](CONTRIBUTING.md) for the development workflow.
+The GitHub Actions workflow runs offline tests on Python 3.12/3.14, repository and shell checks, Compose validation and a production image build; it does not deploy. No separate live integration/web suite, linter, formatter or type checker is configured. See [contributing](CONTRIBUTING.md) for the development workflow.
 
 ## Planned work and current limits
 
@@ -251,12 +253,13 @@ Do not include real ticket text, private invite codes or unredacted user data in
 ## Further documentation
 
 - [Architecture](docs/ARCHITECTURE.md): interaction layer, services, persistence and managed Discord resources.
+- Production uses Docker Compose on AlmaLinux, external private configuration/data, a non-root container, daily verified backups (14 daily snapshots), log rotation and owner-run updates from `main`.
 - [Deployment](DEPLOY.md) and [rollback](ROLLBACK.md): owner-controlled operations with separate runtime storage.
 - [Release checklist](RELEASE_CHECKLIST.md): manual Discord acceptance before a release.
 - [Changelog](CHANGELOG.md): development history.
 
 ## License
 
-LICENSE is not configured. Owner decision required before making the repository public; no software license has been selected on the owner's behalf.
+LICENSE is not configured. The repository is public, but no software license has been selected; that remains an owner decision.
 
-Support GamerHQ stays in START HERE as a short overview. PARTNERS & BENEFITS contains separate read-only Direct Support, Amazon, Strom & Gas, Finanzberatung, Gaming Deals and AI Tools channels. Owner `/server setup` safely migrates the former Germany Services layout; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
+Support GamerHQ stays in START HERE as a short overview. PARTNERS & BENEFITS contains separate read-only Direct Support, Amazon, Haushaltscheck, Gaming Deals and AI Tools channels. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).

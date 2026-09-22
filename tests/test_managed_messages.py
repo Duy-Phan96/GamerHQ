@@ -32,7 +32,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.members = {u.id: u for u in (self.admin, self.owner, self.mod, self.member)}
         self.guild.get_member = self.members.get
         await repair_server(self.guild, self.bot)
-        self.key = support.message_key(self.guild, 'energy')
+        self.key = support.message_key(self.guild, 'household')
 
     def interaction(self, user=None):
         return SimpleNamespace(guild=self.guild, user=user or self.admin,
@@ -59,18 +59,22 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ServerMessageError):
             await managed.save(self.guild, self.admin, self.draft(), confirmed=True)
 
-    async def test_channel_single_autoselect_and_energy_selection(self):
+    async def test_channel_single_autoselect_and_multiple_selection(self):
         states = await managed.available(self.guild)
-        self.assertEqual(len(states), 12)
+        self.assertEqual(len(states), 10)
         view = ui.Channels(ui.Session(self.guild, self.admin.id), states)
         interaction = self.interaction()
         amazon = self.draft(support.message_key(self.guild, 'amazon'))
         await view.choose(interaction, str(amazon['channel_id']))
         self.assertIsInstance(interaction.response.edit_message.call_args.kwargs['view'], ui.Main)
+        # Exercise the generic multi-message menu with two supported boards mapped to one channel.
+        other = copy.deepcopy(amazon)
+        other['channel_id'] = self.draft()['channel_id']
+        view = ui.Channels(ui.Session(self.guild, self.admin.id), [self.draft(), other])
         await view.choose(interaction, str(self.draft()['channel_id']))
         menu = interaction.response.edit_message.call_args.kwargs['view']
         self.assertIsInstance(menu, ui.Messages)
-        self.assertEqual({o.label for o in menu.children[0].options}, {'Strom & Gas', 'Strom & Gas Vertrieb'})
+        self.assertEqual({o.label for o in menu.children[0].options}, {'Haushaltscheck', 'Amazon'})
 
     async def test_unknown_manual_pins_and_wrong_author_excluded(self):
         state = self.draft()
@@ -86,10 +90,10 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
             await managed.save(self.guild, self.admin, state, confirmed=True)
         self.assertEqual(manual.content, 'Manual admin pin')
 
-    async def test_markdown_saved_in_place_independent_energy_course_and_audit(self):
+    async def test_markdown_saved_in_place_independent_partner_and_audit(self):
         draft = self.draft()
         message = self.message(draft)
-        other = self.draft(support.message_key(self.guild, 'energy_sales'))
+        other = self.draft(support.message_key(self.guild, 'amazon'))
         channel = message.channel
         count = channel.sends
         draft['content'] = '# Neues Angebot\n\n**Markdown** und `code`\n- Item\n<#123> @everyone'
@@ -147,7 +151,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
     async def test_custom_content_buttons_survive_restart_repair_and_health(self):
         draft = self.draft()
         draft['content'] = '# Completely different heading\n\nCustom offer'
-        draft['buttons'] = [draft['buttons'][1], link('New public link')]
+        draft['buttons'] = [draft['buttons'][0], link('New public link')]
         draft['buttons'][0]['label'] = 'Contact us'
         draft['buttons'][0]['enabled'] = False
         await managed.save(self.guild, self.admin, draft, confirmed=True)
@@ -163,7 +167,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await managed.health(self.guild), [])
         from services.health_service import scan
         findings = await scan(self.guild)
-        self.assertTrue(all(f.state == 'PASS' for f in findings if f.name in {'strom-gas pin', 'Managed message registry'}))
+        self.assertTrue(all(f.state == 'PASS' for f in findings if f.name in {'haushaltscheck pin', 'Managed message registry'}))
 
     async def test_reset_confirmation_restores_latest_defaults(self):
         draft = self.draft()
@@ -194,7 +198,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
     async def test_defaults_update_invalidates_open_draft(self):
         draft = self.draft()
         from services.server_service import upsert_fixed_message
-        await upsert_fixed_message(self.message(draft).channel, setting_key=self.key, content='New default', view=support.section_view('energy', None))
+        await upsert_fixed_message(self.message(draft).channel, setting_key=self.key, content='New default', view=support.section_view('household', None))
         with self.assertRaisesRegex(ServerMessageError, 'stale'):
             await managed.save(self.guild, self.admin, draft, confirmed=True)
 
@@ -210,7 +214,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ServerMessageError):
                 managed.validate(self.guild, self.key, draft['content'], [dict(label='Action', emoji='', type='ACTION', target=target, enabled=True)])
         with self.assertRaises(ServerMessageError):
-            managed.validate(self.guild, self.key, draft['content'], [draft['buttons'][1]] * 2)
+            managed.validate(self.guild, self.key, draft['content'], [draft['buttons'][0]] * 2)
         with self.assertRaises(ServerMessageError):
             managed.validate(self.guild, self.key, draft['content'], [link()] * 26)
 
@@ -226,17 +230,17 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         await modal.on_submit(interaction)
         view = interaction.response.edit_message.call_args.kwargs['view']
         self.assertEqual(draft['buttons'][-1]['label'], 'Added')
-        view.selected = 2
-        modal = ui.ButtonModal(view, draft['buttons'][2], 2)
+        view.selected = 1
+        modal = ui.ButtonModal(view, draft['buttons'][1], 1)
         modal.label_input._value, modal.emoji_input._value = 'Edited', ''
         modal.url_input._value = 'https://example.com/edited'
         await modal.on_submit(interaction)
         view = interaction.response.edit_message.call_args.kwargs['view']
         await view.up(interaction)
-        self.assertEqual(draft['buttons'][1]['label'], 'Edited')
+        self.assertEqual(draft['buttons'][0]['label'], 'Edited')
         view = interaction.response.edit_message.call_args.kwargs['view']
         await view.toggle(interaction)
-        self.assertFalse(draft['buttons'][1]['enabled'])
+        self.assertFalse(draft['buttons'][0]['enabled'])
         view = interaction.response.edit_message.call_args.kwargs['view']
         await view.remove(interaction)
         self.assertEqual(draft['buttons'], before['buttons'])
@@ -249,11 +253,11 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         for state in await managed.available(self.guild):
             rendered = managed.render(state['buttons'])
             self.assertTrue(all(b.custom_id in registered for b in rendered.children if not b.url))
-        action = self.draft()['buttons'][1]
+        action = self.draft()['buttons'][0]
         view = managed.render([action])
         with patch.object(SupportOffers, 'request', AsyncMock()) as request:
             await view.children[0].callback(self.interaction())
-            self.assertEqual(request.call_args.args[1], 'ENERGY_SUPPORT')
+            self.assertEqual(request.call_args.args[1], 'HOUSEHOLD_CHECK_REQUEST')
 
     async def test_http_failure_durable_pending_then_repair(self):
         draft = self.draft()
@@ -299,7 +303,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_detects_bad_registry_and_remains_read_only(self):
         state = self.draft()
-        state['buttons'][1]['target'] = 'ARBITRARY_CALLBACK'
+        state['buttons'][0]['target'] = 'ARBITRARY_CALLBACK'
         managed.store(state)
         before = managed.records(self.guild)
         self.assertTrue(await managed.health(self.guild))
@@ -321,9 +325,9 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         draft = self.draft()
         draft['buttons'] = []
         view = ui.Actions(ui.Session(self.guild, self.admin.id), draft)
-        self.assertEqual([o.value for o in view.children[0].options], ['ENERGY_SUPPORT'])
-        await view.choose(self.interaction(), 'ENERGY_SUPPORT')
-        self.assertEqual(draft['buttons'][0]['target'], 'ENERGY_SUPPORT')
+        self.assertEqual([o.value for o in view.children[0].options], ['HOUSEHOLD_CHECK_REQUEST'])
+        await view.choose(self.interaction(), 'HOUSEHOLD_CHECK_REQUEST')
+        self.assertEqual(draft['buttons'][0]['target'], 'HOUSEHOLD_CHECK_REQUEST')
 
     async def test_support_disclosure_exact(self):
         self.assertEqual(support.DISCLOSURE, 'Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜')
@@ -337,7 +341,8 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.guild.text_channels.remove(channel)
         self.assertTrue(await managed.health(self.guild, messages=False))
         self.guild.text_channels.append(channel)
-        other = self.draft(support.message_key(self.guild, 'energy_sales'))
+        other = self.draft(support.message_key(self.guild, 'amazon'))
+        other['channel_id'] = state['channel_id']
         other['message_id'] = state['message_id']
         other['content_hash'] = state['content_hash']
         db.set_setting(other['key'], state['message_id'])
@@ -357,7 +362,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current['content'], state['content'])
         self.assertNotEqual(current['message_id'], state['message_id'])
         self.assertTrue(self.message(current).pinned)
-        other = self.draft(support.message_key(self.guild, 'energy_sales'))
+        other = self.draft(support.message_key(self.guild, 'amazon'))
         self.assertGreater(current['message_id'], other['message_id'])
         # Customized messages are not replaced just to restore chronological order.
         await support.sync_support_messages(self.guild)

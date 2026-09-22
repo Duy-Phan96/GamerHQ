@@ -48,3 +48,5 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 Persistent components include game/role selectors, LFG cards/invites/proposals, suggestions and support ticket entry/actions. Temporary Voice panels can be reopened after restart. Events remain Coming Soon; no XP commands exist.
 
 If a partner mapping/channel is missing, `/server sync-support` omits that destination from the overview and reports incomplete setup. `/server health` identifies missing mappings; owner `/server setup` repairs them. Sync does not create replacement channels.
+
+Haushaltscheck uses the persistent `HOUSEHOLD_CHECK_REQUEST` button and existing private ticket actions, not a new slash command. Old energy/course/finance entry actions are retired. The optional external Instant Gaming bot has its own `/config`; it is not a GamerHQ command.
