@@ -2,6 +2,12 @@
 
 All notable GamerHQ Bot changes are tracked here from the stable-release workflow onward.
 
+## [Unreleased] - 2026-09-22
+
+- Replace the generic `/server pinned-messages` flow with an owner/admin editor for registered public boards, including both Strom & Gas messages. Add Markdown drafts, structured link/allowlisted action buttons, inert previews, in-place confirmed saves and confirmed Reset to Default.
+- Persist custom content/buttons through restart and repair using the existing managed-message helper. Add version conflicts, shared edit/refresh locks, metadata/hash audits, pending-delivery recovery and read-only registry health checks.
+- Use the friendly Support GamerHQ affiliate disclosure and document editor permissions, supported boards, recovery and owner acceptance steps.
+
 ## [Unreleased] - 2026-09-12
 
 - Added ID-based Music Bots role configuration and least-privilege access sync in

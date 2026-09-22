@@ -6,6 +6,24 @@ from config import DB_PATH, SEED_PATH
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS managed_message_content (
+    setting_key TEXT PRIMARY KEY,
+    guild_id INTEGER NOT NULL,
+    state_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS managed_message_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    actor_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    setting_key TEXT NOT NULL,
+    content_changed INTEGER NOT NULL,
+    buttons_changed INTEGER NOT NULL,
+    before_hash TEXT NOT NULL,
+    after_hash TEXT NOT NULL,
+    action TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS support_tickets (
     ticket_type TEXT NOT NULL DEFAULT 'GENERAL_SUPPORT',
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -28,10 +28,12 @@ class FakeMessage:
         self.type = discord.MessageType.default
         self.deleted = False
         self.edits = 0
+        self.view = None
 
     async def edit(self, **kwargs):
         self.content = kwargs.get('content', self.content)
         self.edits += 1
+        if 'view' in kwargs: self.view = kwargs['view']
         if 'embed' in kwargs: self.embeds = []
 
     async def pin(self, **kwargs): self.pinned = True
@@ -70,6 +72,7 @@ class FakeChannel:
         self.sends += 1
         self.guild.sequence += 1
         message = FakeMessage(self, self.guild.sequence, content)
+        message.view = kwargs.get('view')
         self.messages[message.id] = message
         return message
 

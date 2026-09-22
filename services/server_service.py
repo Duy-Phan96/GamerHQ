@@ -77,7 +77,62 @@ async def pin_managed_message(
         )
 
 
-async def upsert_fixed_message(
+async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view=None,
+                               recover_match=None, allowed_mentions=None):
+    """Refresh canonical defaults while preserving explicitly customized boards."""
+    from services import managed_message_service as managed
+    spec = managed.specs(channel.guild).get(setting_key)
+    if not spec:
+        return await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
+                                          pin=pin, view=view, recover_match=recover_match,
+                                          allowed_mentions=allowed_mentions)
+    async with managed.lock(setting_key):
+        state = managed.load(setting_key)
+        defaults = managed.serialize_view(view)
+        managed.validate(channel.guild, setting_key, content, defaults)
+        default_content = content
+        if state and state['customized']:
+            managed.validate(channel.guild, setting_key, state['content'], state['buttons'])
+            content, view = state['content'], managed.render(state['buttons'])
+        original_match = recover_match
+
+        def match(message):
+            if state and state['channel_id'] == channel.id and state['message_id'] == message.id:
+                # Accept only the last delivered body or an unconfirmed saved body.
+                return (managed.owns(state, channel, message) or
+                        (state.get('pending') and managed.digest(message.content) == managed.digest(state['content'])))
+            return bool(original_match and original_match(message))
+
+        current_id = db.get_setting(setting_key)
+        if state and current_id and str(state['message_id']) == current_id:
+            try:
+                current = await channel.fetch_message(int(current_id))
+            except discord.NotFound:
+                current = None
+            except discord.HTTPException:
+                raise ServerMessageError('Could not inspect the managed message. Check permissions and retry.') from None
+            if current and (not channel.guild.me or current.author.id != channel.guild.me.id or not match(current)):
+                raise ServerMessageError('Managed message fingerprint changed; manual review required. Message preserved.')
+        elif state and state['customized']:
+            raise ServerMessageError('Customized message mapping changed; manual review required. Content retained.')
+        message = await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
+                                             pin=pin, view=view, recover_match=match,
+                                             allowed_mentions=discord.AllowedMentions.none())
+        buttons = state['buttons'] if state and state['customized'] else defaults
+        version = state['version'] if state else 0
+        if state and any((state['content'] != content, state['buttons'] != buttons,
+                          state['message_id'] != message.id, state['default_content'] != default_content,
+                          state['default_buttons'] != defaults)):
+            version += 1
+        managed.store(dict(key=setting_key, guild_id=channel.guild.id, channel_id=channel.id,
+                           message_id=message.id, label=spec[0], content=content, buttons=buttons,
+                           default_content=default_content, default_buttons=defaults,
+                           customized=bool(state and state['customized']), version=version,
+                           content_hash=managed.digest(content), pending=False))
+        return message
+
+
+async def _upsert_fixed_message(
     channel: discord.TextChannel,
     *,
     setting_key: str,

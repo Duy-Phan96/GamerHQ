@@ -11,3 +11,5 @@
 9. Verify role assignment, public/private LFG, voice ownership, suggestions and two-user ticket isolation using the [release checklist](../RELEASE_CHECKLIST.md). Check that ordinary users cannot see other tickets or Staff logs.
 
 Slash-command permissions restrict who can operate maintenance commands; they are separate from the bot's own Discord permissions. Missing hierarchy/permissions should be corrected explicitly instead of granting everyone broad access.
+
+For `/server pinned-messages`, verify an owner/admin can select and preview a managed pin, while ordinary members and moderators without Administrator cannot edit it. Access is rechecked on components, modal submission and save. The editor only lists registered, bot-authored public boards with matching IDs/fingerprints and an existing pin; arbitrary pins and private tickets are excluded. See [managed message editing](MANAGED_MESSAGES.md).

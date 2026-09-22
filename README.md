@@ -34,6 +34,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Inspect read-only server health diagnostics and the deployed command inventory.
 - Add or remove multiple Game Areas, with dependency checks and explicit removal confirmation.
 - Manage game-library entries, managed roles, information messages and Music Bots role configuration.
+- Edit GamerHQ-managed pinned messages with `/server pinned-messages` (owner/admin): Markdown, configurable link/action buttons, Preview → Save, and independent selection of multiple messages in a channel. Customizations survive restart and repair; confirmed Reset to Default restores generated content. See the [editor guide](docs/MANAGED_MESSAGES.md).
 
 ### Streamers
 
@@ -199,7 +200,8 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | `/server sync-support` | Refresh adopted support/partner messages without creating missing channels |
 | `/server cleanup-game-areas` | Preview unused managed areas before confirmed cleanup |
 | `/server music-bots-role` | Configure the existing dedicated Music Bots role |
-| `/server roles`, `/server pinned-messages` | Manage roles and supported information messages |
+| `/server roles` | Manage GamerHQ roles |
+| `/server pinned-messages` | Owner/admin: edit managed pinned Markdown messages and buttons with preview/confirmation |
 | `/area manage` | Add or safely remove multiple Game Areas |
 | `/game-admin create`, `/game-admin rename`, `/game-admin delete` | Administer game-library entries |
 | `/game-admin add-area`, `/game-admin remove-area`, `/game-admin setup` | Manage optional game areas |

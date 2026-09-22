@@ -36,7 +36,7 @@ async def scan(guild, bot=None, *, messages=True):
     try:
         with db.connect() as conn:
             conn.execute('SELECT ticket_type FROM support_tickets LIMIT 1').fetchone()
-            for table in ('games','settings','lfg_events','lfg_event_members','temp_voice_channels','suggestions','lfg_time_proposals','support_tickets','ticket_audit'):
+            for table in ('games','settings','lfg_events','lfg_event_members','temp_voice_channels','suggestions','lfg_time_proposals','support_tickets','ticket_audit','managed_message_content','managed_message_audit'):
                 conn.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
             events = [dict(r) for r in conn.execute('SELECT * FROM lfg_events WHERE guild_id=?',(guild.id,))]
             temps = [dict(r) for r in conn.execute('SELECT * FROM temp_voice_channels')]
@@ -163,6 +163,7 @@ async def scan(guild, bot=None, *, messages=True):
         add('Staff suggestions privacy','MANUAL_REVIEW','Missing, ambiguous or unsafe inbox; review STAFF and run setup.')
     if messages:
         from services.support_service import support_sections, message_key, section_channel
+        from services import managed_message_service as managed
         support_checks = [(section_channel(section), message_key(guild, section), content.split('\n', 1)[0])
                           for section, content, _ in support_sections()]
         for name,key,prefix in [('guide',f'central_guide:{guild.id}','# 📘 GamerHQ Guide'),('suggestions',f'suggestions_entry:{guild.id}','💡 Suggestions'),('bot-commands','server_community_commands_message_1_id','🤖 Bot Commands'),('need-support',f'ticket_entry:{guild.id}','# 🆘 Need Support?')] + support_checks:
@@ -171,10 +172,19 @@ async def scan(guild, bot=None, *, messages=True):
                 add(f'{name} pin','REPAIRABLE','Canonical mapping missing; setup can recover/create the managed message.'); continue
             try:
                 message=await channel.fetch_message(int(raw))
-                valid=guild.me and message.author.id==guild.me.id and (message.content or '').startswith(prefix)
+                try:
+                    state = managed.load(key)
+                except (ValueError, TypeError):
+                    add(f'{name} pin', 'MANUAL_REVIEW', 'Malformed managed configuration; manual review required.')
+                    continue
+                valid=guild.me and message.author.id==guild.me.id and (managed.owns(state, channel, message) if state else (message.content or '').startswith(prefix))
                 add(f'{name} pin','PASS' if valid and message.pinned else 'REPAIRABLE' if valid else 'MANUAL_REVIEW','Canonical author/content/pin checked.')
             except discord.NotFound: add(f'{name} pin','REPAIRABLE','Managed message deleted; setup can recreate it.')
             except discord.HTTPException: add(f'{name} pin','WARN','Could not inspect message; check permissions and retry.')
+    from services.managed_message_service import health as managed_health
+    registry_issues = await managed_health(guild, messages=messages)
+    add('Managed message registry', 'MANUAL_REVIEW' if registry_issues else 'PASS',
+        f'{len(registry_issues)} board issues; check mappings/configuration and pending delivery.' if registry_issues else 'Managed identity, custom configuration and allowlisted actions checked.')
     role,error=resolve_music_role(guild,persist=False)
     if error: add('Music Bots','MANUAL_REVIEW',error)
     else:

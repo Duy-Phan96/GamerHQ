@@ -60,3 +60,9 @@ Before core repair, create START HERE and COMMUNITY categories. Add the channels
 ## Partner navigation verification
 
 After owner setup, START HERE / support-gamerhq should have six clickable list entries pointing to the read-only PARTNERS & BENEFITS channels: direct-support, amazon, strom-gas, finanzberatung, gaming-deals and ai-tools. There is no separate mention footer. `/server sync-support` refreshes adopted messages; missing/deleted channel mappings are omitted from navigation and reported by `/server health`. Use owner `/server setup` → Repair to restore the structure/mappings, then verify the list again. Existing canonical message IDs and unrelated pins are preserved.
+
+## Managed message editor upgrade
+
+Restart the updated bot to initialize the additive managed-content/audit tables, then run `/server health` and owner `/server setup` → Repair to register the supported public boards. No new environment variables are required. Owner/admin `/server pinned-messages` selects a channel, then a message when there are multiple pins. Test both Strom & Gas messages independently: edit Markdown/buttons, Preview, Save Changes, and verify the selected message ID and pin are unchanged. Run Repair again to verify that customization persists. See [editor usage and recovery](MANAGED_MESSAGES.md).
+
+Default boards keep receiving generated navigation updates. Customized boards retain their complete saved body and button configuration, including any manually written mentions; review those links after changing server structure or explicitly Reset to Default. Keep the private SQLite database through deployments.
