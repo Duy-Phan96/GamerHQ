@@ -1,4 +1,6 @@
 import logging
+import asyncio
+from contextlib import suppress
 import discord
 from discord.ext import commands
 
@@ -20,8 +22,14 @@ class GamerHQBot(commands.Bot):
         intents.members = True
         intents.voice_states = True
         super().__init__(command_prefix="!", intents=intents)
+        self.health_task = None
 
     async def setup_hook(self):
+        # Container-only, ephemeral heartbeat. Local development needs no /tmp.
+        from pathlib import Path
+        if Path('/.dockerenv').exists():
+            from tools.container_health import heartbeat
+            self.health_task = asyncio.create_task(heartbeat(self))
         from config import DB_PATH
         print(f"[GamerHQ] Runtime database: {DB_PATH.resolve()}")
         db.init_db()
@@ -52,6 +60,13 @@ class GamerHQBot(commands.Bot):
         print(f"Synced {len(guild_synced)} command group(s) to GamerHQ.")
         print(f"Cleared global commands: {len(global_synced)} remaining.")
         logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Use /server health for acceptance diagnostics; owner /server setup for repairs.", len(self.extensions), len(self.persistent_views))
+
+    async def close(self):
+        if self.health_task:
+            self.health_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.health_task
+        await super().close()
 
 bot = GamerHQBot()
 

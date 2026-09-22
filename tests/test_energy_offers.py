@@ -1,4 +1,4 @@
-"""Energy offers route to the existing private ticket lifecycle without external calls."""
+"""Household requests route to the existing private ticket lifecycle without external calls."""
 import asyncio
 from pathlib import Path
 import tempfile
@@ -11,31 +11,29 @@ from cogs.tickets import SupportOffers, Tickets
 from database import db
 from services import support_service as support, ticket_service as tickets
 
-class EnergyOfferTests(unittest.IsolatedAsyncioTestCase):
+class HouseholdRequestTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = fixtures.TicketTests.asyncSetUp
     member = fixtures.TicketTests.member
     create = fixtures.TicketTests.create
 
-    def request(self,member=None,kind='ENERGY_SUPPORT'):
-        section={'ENERGY_SUPPORT':'energy','ENERGY_COURSE_REQUEST':'energy_sales','FINANCE_REQUEST':'finance'}[kind]
+    def request(self,member=None,kind='HOUSEHOLD_CHECK_REQUEST'):
+        section={'HOUSEHOLD_CHECK_REQUEST':'household'}[kind]
         channel=support.resource(self.guild,support.section_channel(section))
         mid=int(db.get_setting(support.message_key(self.guild,section)))
         return SimpleNamespace(guild=self.guild,guild_id=self.guild.id,user=member or self.a,
             channel_id=channel.id,message=channel.messages[mid],
             response=SimpleNamespace(defer=AsyncMock(),is_done=lambda:True),followup=SimpleNamespace(send=AsyncMock()))
 
-    async def test_exact_energy_button_and_separate_request_controls(self):
-        expected='https://kundenportal.teleson.de/index.php?_url=register/karriere&reference=bFFQT1RPUHltMWVJb3REWXJDOWhwbzRNdXp5RTNhMUJWUkg4ckxZMHhVVjd5M0kvTWMvR3YrSkhCNWM4Z3ZiUnh2cDJSbFhEYUtjTHZKUWVlQWUrQnFPdWljOUpIbG5wc1drRk9KcXlhalU9'
-        button=SupportOffers('energy').children[0]
-        self.assertEqual(button.url,expected)
-        self.assertIsNone(button.custom_id)
-        self.assertEqual([b.label for b in SupportOffers('energy').children],['⚡ Strom & Gas starten','🆘 Support anfragen'])
-        self.assertEqual([b.label for b in SupportOffers('energy_sales').children],['🎓 Kurs anfragen'])
-        self.assertEqual([b.label for b in SupportOffers('finance').children],['💬 Finanzcheck anfragen'])
+    async def test_only_household_entry_is_exposed(self):
+        self.assertEqual([b.label for b in SupportOffers('household').children],['🔍 Haushaltscheck anfragen'])
+        self.assertEqual([b.custom_id for b in SupportOffers().children],['gamerhq:offers:household-check'])
+        for kind in ('ENERGY_SUPPORT','ENERGY_COURSE_REQUEST','FINANCE_REQUEST'):
+            with self.assertRaises(ValueError):
+                await tickets.open_ticket(self.guild,self.a,'Subject','Body',ticket_type=kind)
         self.assertEqual(tickets.list_tickets(self.guild.id),[])
 
     async def test_both_buttons_create_private_typed_tickets_and_staff_logs(self):
-        for kind,method in [('ENERGY_SUPPORT','energy_support'),('ENERGY_COURSE_REQUEST','energy_course'),('FINANCE_REQUEST','finance')]:
+        for kind,method in [('HOUSEHOLD_CHECK_REQUEST','household_check')]:
             request=self.request(kind=kind)
             await getattr(SupportOffers(),method).callback(request)
             item=next(row for row in tickets.list_tickets(self.guild.id) if row['ticket_type']==kind)
@@ -58,19 +56,19 @@ class EnergyOfferTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_per_type_limit_and_simultaneous_clicks(self):
         general=await self.create()
-        for kind in tickets.REQUEST_COPY:
+        for kind in ('HOUSEHOLD_CHECK_REQUEST',):
             await asyncio.gather(*(SupportOffers().request(self.request(kind=kind),kind) for _ in range(4)))
         rows=tickets.list_tickets(self.guild.id)
-        self.assertEqual(len(rows),4)
-        self.assertEqual({r['ticket_type'] for r in rows},set(tickets.TICKET_TYPES))
+        self.assertEqual(len(rows),2)
+        self.assertEqual({r['ticket_type'] for r in rows},tickets.ACTIVE_TICKET_TYPES)
         self.assertEqual(tickets.get(general['id'])['ticket_type'],'GENERAL_SUPPORT')
         response=self.request()
-        await SupportOffers().request(response,'ENERGY_SUPPORT')
+        await SupportOffers().request(response,'HOUSEHOLD_CHECK_REQUEST')
         self.assertIn('bereits eine offene Anfrage dieser Art',response.followup.send.call_args.args[0])
-        self.assertEqual(len(tickets.list_tickets(self.guild.id)),4)
+        self.assertEqual(len(tickets.list_tickets(self.guild.id)),2)
 
     async def test_existing_take_close_and_restart_preserve_type_and_identity(self):
-        for kind in tickets.REQUEST_COPY:
+        for kind in ('HOUSEHOLD_CHECK_REQUEST',):
             await SupportOffers().request(self.request(kind=kind),kind)
         before=tickets.list_tickets(self.guild.id)
         for item in before:
@@ -95,35 +93,48 @@ class EnergyOfferTests(unittest.IsolatedAsyncioTestCase):
         views=[c.args[0] for c in bot.add_view.call_args_list]
         offers=next(v for v in views if isinstance(v,SupportOffers))
         self.assertTrue(offers.is_persistent())
-        self.assertEqual([c.label for c in offers.children],['⚡ Strom & Gas starten','🆘 Support anfragen','🎓 Kurs anfragen','💬 Finanzcheck anfragen'])
+        self.assertEqual([c.label for c in offers.children],['🔍 Haushaltscheck anfragen'])
         channel=support.resolve(self.guild,'channel');mid=int(db.get_setting(support.message_key(self.guild)))
         db.set_setting(support.message_key(self.guild),'')
         with patch.object(support,'upsert_fixed_message',wraps=support.upsert_fixed_message) as publish:
             await support.refresh_support(self.guild)
             await support.refresh_support(self.guild)
-        self.assertEqual(publish.call_count,16)
+        self.assertEqual(publish.call_count,12)
         self.assertEqual([b.label for b in publish.call_args.kwargs['view'].children], ['🤖 Open PixVerse'])
         self.assertEqual(int(db.get_setting(support.message_key(self.guild))),mid)
         self.assertEqual(channel.sends,1)
         self.assertFalse(channel.overwrites_for(self.guild.default_role).send_messages)
-        await offers.energy_course.callback(self.request(kind='ENERGY_COURSE_REQUEST'))
-        self.assertEqual(tickets.list_tickets(self.guild.id)[0]['ticket_type'],'ENERGY_COURSE_REQUEST')
+        await offers.household_check.callback(self.request())
+        self.assertEqual(tickets.list_tickets(self.guild.id)[0]['ticket_type'],'HOUSEHOLD_CHECK_REQUEST')
 
     async def test_stale_board_and_unknown_type_do_not_create(self):
         request=self.request();request.message=SimpleNamespace(id=123)
-        await SupportOffers().request(request,'ENERGY_SUPPORT')
+        await SupportOffers().request(request,'HOUSEHOLD_CHECK_REQUEST')
         self.assertEqual(tickets.list_tickets(self.guild.id),[])
         with self.assertRaises(ValueError):await tickets.open_ticket(self.guild,self.a,'Subject','Body',ticket_type='UNKNOWN')
         self.assertEqual(tickets.list_tickets(self.guild.id),[])
 
-    async def test_ticket_button_rejects_other_section_and_intro(self):
-        request=self.request(kind='ENERGY_COURSE_REQUEST')
-        await SupportOffers().request(request,'ENERGY_SUPPORT')
+    async def test_ticket_button_rejects_intro_and_retired_type(self):
+        request=self.request()
+        await SupportOffers().request(request,'ENERGY_COURSE_REQUEST')
         self.assertEqual(tickets.list_tickets(self.guild.id),[])
         channel=support.resolve(self.guild,'channel')
         request.message=channel.messages[int(db.get_setting(support.message_key(self.guild)))]
-        await SupportOffers().request(request,'ENERGY_COURSE_REQUEST')
+        await SupportOffers().request(request,'HOUSEHOLD_CHECK_REQUEST')
         self.assertEqual(tickets.list_tickets(self.guild.id),[])
+
+    async def test_historical_types_remain_readable_and_closable(self):
+        for kind in ('ENERGY_SUPPORT','ENERGY_COURSE_REQUEST','FINANCE_REQUEST'):
+            item=await self.create()
+            with db.connect() as conn:
+                conn.execute('UPDATE support_tickets SET ticket_type=? WHERE id=?',(kind,item['id']))
+            await tickets.publish(self.guild,tickets.get(item['id']))
+            await tickets.change(self.guild,self.a,item['id'],'close')
+            await tickets.recover(self.guild)
+            saved=tickets.get(item['id'])
+            self.assertEqual(saved['ticket_type'],kind)
+            self.assertEqual(saved['status'],'CLOSED')
+            self.assertIsNotNone(self.guild.get_channel(saved['channel_id']))
 
     async def test_legacy_schema_migration_preserves_existing_closed_ticket(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(db,'DB_PATH',Path(folder)/'legacy.db'):

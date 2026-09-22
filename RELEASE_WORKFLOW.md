@@ -17,7 +17,7 @@
 6. Merge into `develop` only after the feature works.
 7. Create a release candidate and run `RELEASE_CHECKLIST.md`.
 8. Merge/tag on `main` only after the release candidate passes.
-9. Deploy the tagged release.
+9. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
 
 ## Versioning
 
@@ -45,7 +45,7 @@ Git source + tagged releases are the source of truth for code. The production `g
 
 ## Repository policy
 
-Keep the repository private during Beta. Protect `main`, require the test suite
+The repository is public. Protect `main`, require the test suite
 before merging, and never force-push release tags. Before every commit, inspect
 `git status` and confirm that `.env`, databases, `runtime/`, `backups/` and logs
 are absent. Tags use the exact `VERSION` value prefixed with `v`, for example

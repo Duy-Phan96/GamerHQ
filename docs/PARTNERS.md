@@ -1,47 +1,34 @@
 # Support and Partners & Benefits
 
-Support GamerHQ is a short overview in START HERE. Every offer has its own destination; energy and course remain separate messages within Strom & Gas.
-
 ```text
 START HERE
+├─ 🆘・need-support
 └─ 💜・support-gamerhq
 🤝 PARTNERS & BENEFITS
 ├─ 💜・direct-support
 ├─ 🛒・amazon
-├─ ⚡・strom-gas
-├─ 💶・finanzberatung
+├─ 🇩🇪・haushaltscheck
 ├─ 🎮・gaming-deals
 └─ 🤖・ai-tools
 ```
 
-Normal members can view/read/use buttons but cannot post or create threads. Staff and bot rights use the existing read-only helper. Setup preflights conflicting names/IDs and protected locations. No PayPal, payment system or inactive Donate button is introduced.
+Six canonical messages across the overview and five partner channels. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
 
-## Owner rollout
+## Owner rollout and migration
 
-1. Deploy/restart the updated GamerHQ bot through the existing process.
-2. Run `/server health` and review findings.
-3. Owner: run `/server setup`, review the preview and choose Repair.
-4. Verify seven public channels, eight managed pinned messages and the three private request buttons.
-5. Repeat setup: channel/message IDs should remain stable.
-6. Admin: `/server sync-support` refreshes adopted channels. Startup never creates missing partner structure.
+Back up SQLite, restart reviewed code, inspect `/server health`, then owner `/server setup` → Repair. Repeat Repair and compare identities. Existing recorded strom-gas, germany-services or finanzberatung channels may be reused, in that preference order, if no Haushaltscheck exists. Reused channel IDs/history remain intact. Name-only legacy channels are retained for review rather than renamed automatically.
 
-## Safe migration
+A durable `household_migration:<guild>` journal captures recorded legacy message IDs and pending earlier reorder/split generations before renaming. Only after all replacement messages are pinned are recognized, bot-owned default energy/course/finance messages removed. Failures retain the journal for retry without duplicate replacement pins. Historical managed-content/audit records remain in SQLite, marked retired and excluded from the active editor. Ticket rows retain their original data and type.
 
-If only the old germany-services channel exists, owner repair reuses/renames it to strom-gas. Energy and course message IDs and channel history are preserved where possible. Finance is published in finanzberatung, pinned, and only then removed from the source. A snapshot in the existing settings table records source message IDs before destination IDs change; interrupted sends/pins/deletions can be retried. Pending three-topic reorder generations from the previous version are captured and retired through the same migration.
+Unknown/manual messages, customized legacy pins and uncertain fingerprints are preserved unchanged and flagged MANUAL_REVIEW. No legacy partner channel is automatically deleted, even when apparently empty: threads/history may exist. Old callbacks are no longer registered and ticket creation rejects old types. Retained buttons cannot open new requests. Owners must review/archive retained channels or remove obsolete custom pins themselves. This exception can leave old visible copy until review; preservation takes priority over destructive cleanup.
 
-If strom-gas already exists separately, use it and remove only recognized managed source messages after all destinations are ready. The old channel is retained for MANUAL_REVIEW because uncached/manual/archived thread history may exist. Health and sync report this case. Unknown/user messages are never deleted. In the normal reuse path there is no remaining germany-services channel. Sources with missing stored message IDs use the existing bot-author/heading recovery convention over pins and the latest 100 messages.
-
-The earlier seven-message support layout is still migrated: obsolete recorded offers are removed after all destinations are pinned. Existing support intro, Gaming Deals and AI Tools IDs are retained when reusable. The overview's former Amazon button is removed; Amazon has its own link button on its separate message.
-
-Persistence remains in SQLite settings: existing per-topic `partner_message:<guild>:<section>` keys, new `direct` and `amazon` topic keys, and a resumable `partner_split:<guild>` journal. Ticket tables/types/lifecycle are unchanged. Strom & Gas ordering is energy then course; if deletion/recreation breaks order, the shared create/pin/atomic-switch/cleanup reorder flow restores it. Operate one bot instance per database; locks are process-local.
-
-The empty obsolete SUPPORT GAMERHQ category may be removed after a fresh all-channel check. Nonempty categories and their child channels are retained. The separate private SUPPORT TICKETS category is unaffected.
+Existing custom overview/Gaming Deals copy remains customized. Repair updates defaults without overwriting it; use the editor's confirmed Reset to Default to adopt new navigation/copy. `/server sync-support` refreshes adopted boards and can resume a previously authorized migration, but never creates missing channels. Missing navigation mappings are omitted and flagged by health.
 
 ## Final message texts
 
-Each block is one managed message. Each overview list item contains its destination channel mention, resolved only from persisted managed IDs. There is no repeated footer. Missing or deleted destinations are omitted, with a brief setup notice; sync reports incomplete setup and health marks missing mappings REPAIRABLE. Owner setup creates/adopts the destinations. Buttons are attached only to their corresponding message.
+Mentions below are documentation placeholders. Runtime substitutes persisted Discord channel mentions once per bullet. Customized boards retain saved text until explicitly reset.
 
-### support-gamerhq / intro
+### support-gamerhq
 
 ```text
 # 💜 Support GamerHQ
@@ -52,17 +39,16 @@ Dort findet ihr:
 
 - 💜 <direct-support channel mention> — Direct Support
 - 🛒 <amazon channel mention> — Amazon
-- ⚡ <strom-gas channel mention> — Strom & Gas
-- 💶 <finanzberatung channel mention> — Finanzberatung
+- 🇩🇪 <haushaltscheck channel mention> — Haushaltscheck
 - 🎮 <gaming-deals channel mention> — Gaming Deals
 - 🤖 <ai-tools channel mention> — AI Tools
 
 Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜
 ```
 
-Channel mentions above are documentation placeholders; the runtime renders real clickable mentions, not these labels or raw IDs. PARTNERS & BENEFITS stays bold plain text, not a category link. No buttons.
+No buttons or duplicate footer.
 
-### direct-support / direct
+### direct-support
 
 ```text
 # 💜 Direct Support
@@ -72,9 +58,9 @@ Wenn du GamerHQ direkt unterstützen möchtest, findest du hier künftig die Mö
 **Coming Soon**
 ```
 
-No buttons.
+No buttons. PayPal is not configured.
 
-### amazon / amazon
+### amazon
 
 ```text
 # 🛒 Amazon
@@ -84,75 +70,49 @@ Du kannst GamerHQ unterstützen, indem du vor deinem normalen Amazon-Einkauf uns
 Tipp: Speichere den Link als Lesezeichen in deinem Browser und nutze ihn einfach vor deinem nächsten Einkauf.
 ```
 
-Link button: [🛒 Amazon öffnen](https://amzn.to/4dnxPXh).
+Button: [🛒 Amazon öffnen](https://amzn.to/4dnxPXh).
 
-### strom-gas / energy
-
-```text
-# ⚡ Strom & Gas
-
-🇩🇪 Nur für Nutzer in Deutschland.
-
-Du möchtest deinen Strom- oder Gasvertrag optimieren?
-
-Über den Button erhältst du Zugang zu einem Netzwerk, über das du dir selbst einen passenden Strom- oder Gastarif auswählen kannst.
-
-Brauchst du Unterstützung oder hast Fragen?
-```
-
-Buttons: [⚡ Strom & Gas starten](https://kundenportal.teleson.de/index.php?_url=register/karriere&reference=bFFQT1RPUHltMWVJb3REWXJDOWhwbzRNdXp5RTNhMUJWUkg4ckxZMHhVVjd5M0kvTWMvR3YrSkhCNWM4Z3ZiUnh2cDJSbFhEYUtjTHZKUWVlQWUrQnFPdWljOUpIbG5wc1drRk9KcXlhalU9); 🆘 Support anfragen → ENERGY_SUPPORT.
-
-### strom-gas / energy_sales
+### haushaltscheck
 
 ```text
-# 🎓 Strom & Gas Vertrieb
+# 🇩🇪 Haushaltscheck
 
-🇩🇪 Nur für Nutzer in Deutschland.
+Nur für Nutzer in Deutschland.
 
-Du möchtest dich im Strom- & Gasvertrieb weiterbilden und selbst damit starten?
+Viele Themen rund um Verträge, Tarife und laufende Kosten werden einem im Alltag kaum erklärt – und in der Schule meistens auch nicht.
 
-Dafür steht ein kompletter kostenloser Kurs zur Verfügung.
+Wenn du möchtest, kannst du deinen Haushalt kostenlos und unverbindlich prüfen lassen.
 
-Über **Kurs anfragen** wird eine private Anfrage erstellt. Dort erhältst du Zugang zum kostenlosen Kurs.
+Dabei können zum Beispiel Bereiche wie:
+
+- 🚗 KFZ
+- ⚡ Strom & Gas
+- 📄 laufende Verträge & Tarife
+
+gecheckt werden.
+
+Du bekommst mehrere passende Tarife übersichtlich zusammengestellt und als PDF zum Vergleichen.
+
+So kannst du Preis und Leistung in Ruhe vergleichen und selbst entscheiden, ob und welches Angebot für dich sinnvoll ist.
 ```
 
-Button: 🎓 Kurs anfragen → ENERGY_COURSE_REQUEST.
+Button: 🔍 Haushaltscheck anfragen → `HOUSEHOLD_CHECK_REQUEST`.
 
-### finanzberatung / finance
-
-```text
-# 💶 Finanzberatung
-
-🇩🇪 Nur für Nutzer in Deutschland.
-
-Du möchtest deine Finanzen strukturiert überprüfen und langfristig besser aufstellen?
-
-Ein persönlicher Finanzcheck kann helfen, Einnahmen und Ausgaben besser zu überblicken, bestehende Strukturen zu prüfen und finanzielle Ziele sinnvoll zu planen.
-
-Ein besonderer Fokus kann dabei auf Vermögensaufbau, Investments und Immobilien liegen.
-
-Eine feste Ansprechperson für Finanzfragen an der Seite zu haben, kann bei langfristigen Entscheidungen sehr hilfreich sein.
-```
-
-Button: 💬 Finanzcheck anfragen → FINANCE_REQUEST.
-
-### gaming-deals / instant_gaming
+### gaming-deals
 
 ```text
 # 🎮 Gaming Deals
 
-## Instant Gaming
+Hier findest du aktuelle Gaming-Angebote und Aktionen von unseren Partnern.
 
-Games & Deals
+Über die offizielle Instant Gaming Discord-Integration können hier nach Einrichtung aktuelle Aktionen und wichtige Releases erscheinen.
 
-Use this link when buying games on Instant Gaming.
-
-ℹ️ Affiliate Link
+Einige Links sind Affiliate-Links. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜
 ```
 
-Link button: [🎮 Open Instant Gaming](https://www.instant-gaming.com/?igr=gamer-0a9671a).
+Button: [🎮 Instant Gaming öffnen](https://www.instant-gaming.com/?igr=gamer-0a9671a). External posts require owner configuration.
 
-### ai-tools / pixverse
+### ai-tools
 
 ```text
 # 🤖 AI & Creator Tools
@@ -166,22 +126,24 @@ Use PixVerse to create AI-generated videos and visual content.
 ℹ️ Affiliate Link
 ```
 
-Link button: [🤖 Open PixVerse](https://motivaiprivatelimited.sjv.io/c/7668488/3811144/49478).
+Button: [🤖 Open PixVerse](https://motivaiprivatelimited.sjv.io/c/7668488/3811144/49478).
 
-## Existing private ticket lifecycle
+## Private requests
 
-ENERGY_SUPPORT, ENERGY_COURSE_REQUEST and FINANCE_REQUEST reuse support_tickets, per-user/per-type limits, staff access, audit logs, take/wait/close actions and restart recovery. Requests must match their current canonical message and topic channel. General support remains unchanged. Tickets are private to creator, authorized staff and bot (subject to Discord's normal administrator permissions).
+`HOUSEHOLD_CHECK_REQUEST` uses existing private tickets, per-user/per-type limits, Staff take/wait/close controls, audit and restart recovery. The entry checks canonical message/channel identity before creation. The user describes the areas in the private conversation; no extra category form is needed.
 
-Opening copy remains:
+```text
+# 🇩🇪 Haushaltscheck
 
-- Energy: “Deine private Support-Anfrage wurde erstellt. Beschreibe hier kurz, wobei du Unterstützung brauchst oder welche Fragen du hast.”
-- Course: “Deine Anfrage wurde erstellt. Hier erhältst du Zugang zum kostenlosen Kurs.”
-- Finance: “Deine private Anfrage wurde erstellt. Beschreibe hier kurz, welche Themen oder Ziele du besprechen möchtest.”
+Deine private Anfrage wurde erstellt.
 
-Each includes its existing heading, OPEN status, ticket metadata and actions. Closing retains readable history. No new transcript/export framework is introduced.
+Beschreibe hier kurz, welche Verträge oder Bereiche du prüfen lassen möchtest.
 
-## Verification
+Status: OPEN
+```
 
-Install test dependencies with `python -m pip install -r requirements-dev.txt`. Run `python -m pytest` or `python -m tools.test`. Both share temporary database isolation, disabled dotenv and blocked live Discord HTTP.
+The real opening also includes existing ticket number, creator, type and assignment metadata. Creator, authorized Staff and GamerHQ can access it; unrelated members cannot (Discord administrators retain their platform permissions). Closing retains readable history. `GENERAL_SUPPORT` remains unchanged. Historical `ENERGY_SUPPORT`, `ENERGY_COURSE_REQUEST` and `FINANCE_REQUEST` tickets retain their type and lifecycle, but new requests of those types are rejected.
 
-Manual rollout checks: inspect overview mentions and each button/URL; verify Direct Support is only Coming Soon; create each private request as a member; confirm staff access and unrelated-member denial; close/restart/retry; repeat setup and check IDs; inspect any MANUAL_REVIEW legacy channel before manually removing it. No live Discord deployment or verification is implied by offline tests.
+## Acceptance
+
+Run `python -m pytest`. Live checks: compare IDs across two repairs; inspect all six pins and exact links; create a household ticket with user A and confirm user B cannot view it; take/wait/close/restart; confirm customized pins survive; inspect each MANUAL_REVIEW finding. Verify external posting permission and attribution separately. Offline tests do not imply live Discord verification.

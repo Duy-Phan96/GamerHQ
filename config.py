@@ -22,6 +22,8 @@ def discord_id(name):
     return int(raw)
 
 
+INSTANT_GAMING_BOT_ID = discord_id("INSTANT_GAMING_BOT_ID")
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")
 CHOOSE_GAMES_CHANNEL_ID = discord_id("CHOOSE_GAMES_CHANNEL_ID")

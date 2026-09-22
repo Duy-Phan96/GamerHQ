@@ -17,9 +17,7 @@ from services.server_service import ServerMessageError
 
 _locks = {}
 ACTIONS = {
-    'ENERGY_SUPPORT': ('Support anfragen', 'gamerhq:offers:energy-support'),
-    'ENERGY_COURSE_REQUEST': ('Kurs anfragen', 'gamerhq:offers:energy-course'),
-    'FINANCE_REQUEST': ('Finanzcheck anfragen', 'gamerhq:offers:finance'),
+    'HOUSEHOLD_CHECK_REQUEST': ('🔍 Haushaltscheck anfragen', 'gamerhq:offers:household-check'),
     'CREATE_SUPPORT_TICKET': ('Create Support Ticket', 'gamerhq:tickets:create'),
     'SUBMIT_SUGGESTION': ('Submit Suggestion', 'gamerhq:suggestions:submit'),
 }
@@ -37,11 +35,9 @@ def specs(guild):
     from services.support_service import message_key, section_channel
     result = {}
     for section, label in [('intro', 'Support Overview'), ('direct', 'Direct Support'),
-                           ('amazon', 'Amazon'), ('energy', 'Strom & Gas'),
-                           ('energy_sales', 'Strom & Gas Vertrieb'), ('finance', 'Finanzberatung'),
+                           ('amazon', 'Amazon'), ('household', 'Haushaltscheck'),
                            ('instant_gaming', 'Gaming Deals'), ('pixverse', 'AI Tools')]:
-        action = {'energy': 'ENERGY_SUPPORT', 'energy_sales': 'ENERGY_COURSE_REQUEST',
-                  'finance': 'FINANCE_REQUEST'}.get(section)
+        action = 'HOUSEHOLD_CHECK_REQUEST' if section == 'household' else None
         result[message_key(guild, section)] = (label, f'managed_channel:{guild.id}:{section_channel(section)}', [action] if action else [])
     for key, name, label, action in [('central_guide', 'guide', 'Guide', None),
                                     ('suggestions_entry', 'suggestions', 'Suggestions', 'SUBMIT_SUGGESTION'),
@@ -83,7 +79,7 @@ def store(state, audit=None):
 def records(guild):
     with db.connect() as conn:
         rows = conn.execute('SELECT state_json FROM managed_message_content WHERE guild_id=?', (guild.id,)).fetchall()
-    return [json.loads(row['state_json']) for row in rows]
+    return [state for row in rows if not (state := json.loads(row['state_json'])).get('retired')]
 
 
 def validate_url(url):
@@ -185,7 +181,7 @@ def mapped(guild, state):
 
 
 async def inspect(guild, state):
-    if state['key'].startswith('partner_message:') and any(db.get_setting(f'{name}:{guild.id}') for name in ('partner_reorder', 'partner_split')):
+    if state['key'].startswith('partner_message:') and any(db.get_setting(f'{name}:{guild.id}') for name in ('partner_reorder', 'partner_split', 'household_migration')):
         raise ServerMessageError('Partner migration is pending. Complete owner setup Repair before editing.')
     if not mapped(guild, state):
         raise ServerMessageError('Managed mapping changed or is missing. Run health and owner setup Repair.')

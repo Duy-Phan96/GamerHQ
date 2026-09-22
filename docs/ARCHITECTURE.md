@@ -28,7 +28,7 @@ Owner setup previews/repairs established server structure; health is read-only. 
 
 ## Support overview navigation
 
-START HERE / support-gamerhq is a short directory for six separate PARTNERS & BENEFITS channels. Each bullet renders the mention from its persisted `managed_channel:<guild>:<name>` mapping; the category name is plain bold text. Synchronization does not use name-only lookalikes for navigation. Missing destinations are omitted, health flags missing mappings, and owner repair handles creation/adoption. The canonical intro message is edited through the shared managed-message helper, with no duplicate navigation footer or additional overview message.
+START HERE / support-gamerhq is a short directory for five separate PARTNERS & BENEFITS channels. Each bullet renders the mention from its persisted `managed_channel:<guild>:<name>` mapping; the category name is plain bold text. Synchronization does not use name-only lookalikes for navigation. Missing destinations are omitted, health flags missing mappings, and owner repair handles creation/adoption. The canonical intro message is edited through the shared managed-message helper, with no duplicate navigation footer or additional overview message.
 
 ## Managed message customization
 
@@ -36,6 +36,16 @@ START HERE / support-gamerhq is a short directory for six separate PARTNERS & BE
 
 SQLite `managed_message_content` stores each board's latest generated defaults, canonical Markdown, ordered structured buttons, identity, content hash, customization flag, delivery state and version. `managed_message_audit` records actor/channel/key, timestamp, edit/reset, content/buttons changed flags and before/after hashes, without bodies or URLs. Treat both tables as private runtime data.
 
-Refresh and editor saves share per-key asyncio locks within the single supported bot process. Draft versions detect changes since opening; UI generations invalidate previous menus/modals. Saves validate and recheck current owner/admin access and mapped bot-owned pinned-message fingerprints, persist canonical intent/audit, then edit that exact Discord message. Failed/uncertain HTTP leaves pending delivery for health and normal repair to reconcile using the old or intended content fingerprint. The editor never sends a replacement pin. Normal repair can recover an actually deleted message; customized partner pins are excluded from replacement-based chronological reordering.
+Refresh and editor saves share per-key asyncio locks within the single supported bot process. Draft versions detect changes since opening; UI generations invalidate previous menus/modals. Saves validate and recheck current owner/admin access and mapped bot-owned pinned-message fingerprints, persist canonical intent/audit, then edit that exact Discord message. Failed/uncertain HTTP leaves pending delivery for health and normal repair to reconcile using the old or intended content fingerprint. The editor never sends a replacement pin. Normal repair can recover an actually deleted message; customized retired partner pins are retained for manual review.
 
 Normal startup/setup/sync preserves customized bodies and buttons while recording new defaults for a later confirmed reset. Allowlisted action buttons keep existing persistent custom IDs and callbacks, restricted to their canonical board so ticket-source checks still apply after restart. Link buttons accept public HTTPS URLs and reject credential-bearing configuration. Preview components are inert; live mentions never ping on editor saves. Read-only health checks mappings, duplicate identities, fingerprints, pin state, configuration/action allowlists and pending delivery; changed custom headings are valid.
+
+## Haushaltscheck migration and external deal posting
+
+Owner repair journals recorded legacy energy/course/finance message IDs before reusing a channel for Haushaltscheck. Once all replacement pins exist, it retires known default messages; uncertain/customized content and all historical tickets remain. Old ticket types are read-only compatibility types for existing ticket lifecycle actions, never accepted for creation. Retired managed registry rows remain in SQLite but are excluded from active editing/health. The new request type uses the existing ticket service, per-type limit, privacy, audit and persistent buttons.
+
+Optional `INSTANT_GAMING_BOT_ID` identifies an externally installed bot member. Owner repair grants only that member posting/embed/attachment access in gaming-deals. Other boards remain read-only. Marketing configuration and affiliate attribution belong to the official external bot; GamerHQ does not scrape, publish deals or enable purchase notifications.
+
+## Production operations
+
+Compose reads `/opt/gamerhq/.env` and mounts sibling data/backups outside the checkout. A local gateway/event-loop heartbeat supplies container health with no exposed port. The systemd timer invokes a one-off backup container with an update/backup lock; verified daily snapshots alone are eligible for explicit 14-snapshot retention. Production preflight rehearses schema initialization on disposable SQLite. See [deployment](../DEPLOY.md) and [rollback](../ROLLBACK.md).

@@ -13,3 +13,9 @@
 Slash-command permissions restrict who can operate maintenance commands; they are separate from the bot's own Discord permissions. Missing hierarchy/permissions should be corrected explicitly instead of granting everyone broad access.
 
 For `/server pinned-messages`, verify an owner/admin can select and preview a managed pin, while ordinary members and moderators without Administrator cannot edit it. Access is rechecked on components, modal submission and save. The editor only lists registered, bot-authored public boards with matching IDs/fingerprints and an existing pin; arbitrary pins and private tickets are excluded. See [managed message editing](MANAGED_MESSAGES.md).
+
+## Haushaltscheck and Gaming Deals
+
+Owner setup maintains five PARTNERS & BENEFITS channels and a separate START HERE overview. Haushaltscheck requests use private ticket overwrites; verify creator/Staff access and unrelated-member denial. Retained legacy channels/custom content require manual review rather than automatic channel deletion. See [migration](PARTNERS.md).
+
+The optional official Instant Gaming bot should have no Administrator or broad management role. Set its verified user ID as `INSTANT_GAMING_BOT_ID`; owner repair grants View Channel, Read History, Send Messages, Embed Links and Attach Files in gaming-deals only. Leave external threads and role mentions disabled. Repair reapplies this explicit allowance while ordinary members remain read-only. See [external setup](INSTANT_GAMING.md).

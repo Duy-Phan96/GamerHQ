@@ -11,8 +11,7 @@ The editor uses existing GamerHQ message/channel mappings, bot ownership and a s
 | support-gamerhq | Support Overview |
 | direct-support | Direct Support |
 | amazon | Amazon |
-| strom-gas | Strom & Gas; Strom & Gas Vertrieb |
-| finanzberatung | Finanzberatung |
+| haushaltscheck | Haushaltscheck |
 | gaming-deals | Gaming Deals |
 | ai-tools | AI Tools |
 | welcome | Welcome |
@@ -25,7 +24,7 @@ Game/role selectors, generated command inventories, LFG dashboards and private t
 ## Edit and save
 
 1. Open `/server pinned-messages` and select a channel.
-2. Select a message if the channel has several. A single managed message opens automatically. Strom & Gas and Strom & Gas Vertrieb have separate stable keys and drafts.
+2. Select a message if the channel has several. A single managed message opens automatically. Each board has its own stable key and draft; the UI also supports multiple registered boards sharing a channel.
 3. Choose **Edit Content** for ordinary Discord Markdown. Newlines, headings, emphasis, lists, code, mentions and URLs are preserved verbatim. No placeholder markup is interpreted. The limit is 2000 Discord characters; emoji can consume two character units. Empty or oversized content is rejected before saving.
 4. Choose **Manage Buttons** to add a Link or an allowlisted Action, select a button, edit its label/emoji, remove it, toggle enabled/disabled, or move it up/down. To change type, remove it and add the desired type. Button order is row-major, with at most 25 buttons (five per row). Labels have at most 80 Discord characters.
 5. Choose **Preview** or **Save**. Both show the complete draft and inert buttons, followed by the target channel, board label and **Save Changes / Back / Cancel**. Preview buttons do not open URLs or trigger tickets. Link destinations can be reviewed in the button edit modal.
@@ -37,9 +36,7 @@ Action choices are limited to the board's existing registered handler:
 
 | Board | Action |
 | --- | --- |
-| Strom & Gas | `ENERGY_SUPPORT` |
-| Strom & Gas Vertrieb | `ENERGY_COURSE_REQUEST` |
-| Finanzberatung | `FINANCE_REQUEST` |
+| Haushaltscheck | `HOUSEHOLD_CHECK_REQUEST` |
 | Need Support | `CREATE_SUPPORT_TICKET` |
 | Suggestions | `SUBMIT_SUGGESTION` |
 
@@ -60,3 +57,5 @@ If Discord definitively rejects the payload as invalid (HTTP 400), the previous 
 Health reads registry state without changing it. It checks missing channels/messages, duplicate mappings, ownership, fingerprints, button configuration/action IDs and pending delivery. Customized headings are healthy. Repair may recreate a genuinely deleted pin, but editor saves and resets never recreate messages.
 
 The private audit table records actor, channel, stable key, content/buttons changed flags, time and before/after hashes. It does not store full edited content or URLs in audit entries. Keep the runtime database and backups out of Git; run only one bot instance against a guild/database.
+
+Retired energy/course/finance boards are excluded from editing after migration. Historical custom content and audit records remain stored. Custom legacy messages are left untouched for MANUAL_REVIEW; their old ticket actions cannot create new requests. See [partner migration](PARTNERS.md).
