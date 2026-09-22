@@ -4,6 +4,8 @@ All notable GamerHQ Bot changes are tracked here from the stable-release workflo
 
 ## [Unreleased] - 2026-09-22
 
+- Polish partner defaults in English while keeping Haushaltscheck German. Simplify Amazon/Gaming Deals/PixVerse copy and add concise disclosures beside unchanged affiliate links; retain manual Ctrl + D guidance and remove public integration wording. Preserve custom edits and all ticket behavior. Retire obsolete active legacy channel/message mappings while retaining historical IDs for manual review.
+
 - Replace standalone energy, finance and course public flows with Haushaltscheck and private `HOUSEHOLD_CHECK_REQUEST` tickets. Preserve historical tickets and custom/manual content; journal legacy cleanup for retry and report retained channels for manual review. Update five-channel navigation, editor actions, setup and health.
 - Prepare optional official Instant Gaming bot posting in gaming-deals with a verified bot ID and scoped permissions; document marketing/release configuration with purchase notifications and buyer ranking disabled. No scraper or live integration activation.
 - Complete deployment/restore documentation and self-contained release acceptance checks; fix the health test's POSIX process probe isolation on Windows.

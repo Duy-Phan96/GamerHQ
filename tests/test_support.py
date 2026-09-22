@@ -53,7 +53,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         text = channel.messages[mid].content
         self.assertNotIn(target.mention, text)
         self.assertNotIn('#amazon', text)
-        self.assertIn('Weitere Partnerkanäle werden eingerichtet.', text)
+        self.assertIn('More partner channels are being set up.', text)
         findings = await scan(self.guild, messages=False)
         self.assertEqual(next(f.state for f in findings if f.name == 'amazon'), 'REPAIRABLE')
         await self.setup_board()
@@ -238,7 +238,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
                 view=support.section_view(section,entry)
                 self.assertEqual(view.children[0].url,entry.url)
                 self.assertNotIn(entry.url,guide)
-        self.assertEqual([support.section_view(k,e).children[0].label for k,_,e in support.support_sections() if e],['🛒 Amazon öffnen','🎮 Instant Gaming öffnen','🤖 Open PixVerse'])
+        self.assertEqual([support.section_view(k,e).children[0].label for k,_,e in support.support_sections() if e],['🛒 Open Amazon','🎮 Open Instant Gaming','🤖 Open PixVerse'])
 
     def old_germany(self):
         category=self.guild.add_category(support.PARTNER_CATEGORY)
@@ -354,6 +354,63 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         external=(root/'docs/INSTANT_GAMING.md').read_text(encoding='utf-8')
         for value in ('INSTANT_GAMING_BOT_ID','Marketing campaigns','Purchase notification','Buyer ranking','disabled'):
             self.assertIn(value,external)
+
+    async def test_english_defaults_disclosure_and_german_household(self):
+        await self.setup_board()
+        intro=support.resource(self.guild,'support-gamerhq')
+        self.assertIs(intro.category,self.start)
+        text=intro.messages[int(db.get_setting(support.message_key(self.guild)))].content
+        self.assertIn("If you'd like to support GamerHQ",text)
+        self.assertIn("You'll find:",text)
+        self.assertNotIn('finanzberatung',text)
+        self.assertIn("If you'd like to support GamerHQ directly",support.DIRECT_TEXT)
+        self.assertIn('`Ctrl + D`',support.AMAZON_TEXT)
+        self.assertNotIn('automatically',support.AMAZON_TEXT)
+        self.assertEqual(support.GAMING_TEXT,'# 🎮 Gaming Deals\n\nFind current gaming deals, promotions and releases here.\n\nAffiliate link — using it supports GamerHQ 💜')
+        for section,content,affiliate in support.support_sections():
+            if affiliate:
+                self.assertTrue(content.endswith('Affiliate link — using it supports GamerHQ 💜'))
+                self.assertEqual(content.count('Affiliate link —'),1)
+                for word in ('Discord','integration','configuration','scraper','öffnen'):
+                    self.assertNotIn(word,content)
+            if section!='household':
+                for word in ('Wenn ', 'Hier findest', 'unterstützt', 'Tipp:', 'Du kannst'):
+                    self.assertNotIn(word,content)
+        self.assertIn('Nur für Nutzer in Deutschland.',support.HOUSEHOLD_TEXT)
+
+    async def test_completed_legacy_mappings_retire_without_losing_review_identity(self):
+        channel,old=self.old_germany()
+        target=self.guild.add_channel('🇩🇪・haushaltscheck',channel.category)
+        manual=self.add_message(channel,'Manual history',author=20)
+        await self.setup_board()
+        self.assertFalse(db.get_setting(support.channel_key(self.guild,'germany-services')))
+        self.assertEqual(db.get_setting(f'retired_partner_channel:{self.guild.id}:germany-services'),str(channel.id))
+        for section,message in old.items():
+            self.assertFalse(db.get_setting(support.message_key(self.guild,section)))
+            self.assertEqual(db.get_setting(f'retired_partner_message:{self.guild.id}:{section}'),str(message.id))
+        channel.name='Owner archive'
+        self.assertIn(channel,support.legacy_review_channels(self.guild))
+        await self.setup_board()
+        self.assertFalse(manual.deleted)
+        self.assertEqual(target.sends,1)
+
+    async def test_existing_completed_migration_cleans_stale_finance_mapping(self):
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        manual=self.add_message(finance,'Keep this',author=20,pinned=True)
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        db.set_setting(support.message_key(self.guild,'finance'),manual.id)
+        await self.setup_board()
+        self.assertFalse(db.get_setting(support.channel_key(self.guild,'finanzberatung')))
+        self.assertFalse(db.get_setting(support.message_key(self.guild,'finance')))
+        self.assertEqual(manual.edits,0)
+        self.assertFalse(manual.deleted)
+        self.assertIn(finance,support.legacy_review_channels(self.guild))
+        from services.health_service import scan
+        self.guild.get_member=lambda uid:None
+        findings=await scan(self.guild)
+        self.assertNotIn('finanzberatung',[f.name for f in findings])
+        self.assertEqual(next(f.state for f in findings if f.name=='Legacy partner channels'),'MANUAL_REVIEW')
 
     async def test_unknown_legacy_mapping_is_preserved_for_review(self):
         channel,old=self.old_germany()

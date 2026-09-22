@@ -330,7 +330,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(draft['buttons'][0]['target'], 'HOUSEHOLD_CHECK_REQUEST')
 
     async def test_support_disclosure_exact(self):
-        self.assertEqual(support.DISCLOSURE, 'Einige Links sind Affiliate- oder Empfehlungslinks. Wenn ihr sie nutzt, unterstützt ihr GamerHQ direkt. Danke euch dafür 💜')
+        self.assertEqual(support.DISCLOSURE, 'Some links are affiliate or referral links. Using them helps support GamerHQ. Thank you 💜')
 
     async def test_health_missing_message_channel_and_duplicate_mapping(self):
         state = self.draft()

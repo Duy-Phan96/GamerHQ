@@ -68,3 +68,5 @@ Restart the updated bot to initialize the additive managed-content/audit tables,
 Default boards keep receiving generated navigation updates. Customized boards retain their complete saved body and button configuration, including any manually written mentions; review those links after changing server structure or explicitly Reset to Default. Keep the private SQLite database through deployments.
 
 For optional deal posting, follow [Instant Gaming setup](INSTANT_GAMING.md). Set the verified external bot ID in private configuration; restart and run owner Repair to grant its narrow posting access. No partner-account credentials belong in GamerHQ.
+
+Verify partner language after repair: overview, Direct Support, Amazon, Gaming Deals and AI Tools are English; Haushaltscheck stays German. Amazon has a manual `Ctrl + D` bookmark tip. Gaming Deals contains no integration instructions. Existing custom messages require an explicit editor Reset to Default to adopt changed copy. Legacy Finanzberatung is not a required public channel; uncertain history remains MANUAL_REVIEW, with obsolete active mappings retired.

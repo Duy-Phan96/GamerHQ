@@ -28,9 +28,11 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Use the Support GamerHQ overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
 - Provide tournaments/giveaways channels as an events foundation; event functionality remains Coming Soon.
 
-Haushaltscheck opens a private, free and nonbinding Germany-focused household/contract request. Gaming Deals can use the [official Instant Gaming Discord integration](docs/INSTANT_GAMING.md); external setup is optional.
+Partner messages are English; Haushaltscheck remains German for its free, nonbinding Germany-focused household/contract requests. Gaming Deals highlights current deals, promotions and releases.
 
 ### Administration
+
+- Optional [Instant Gaming setup](docs/INSTANT_GAMING.md) is an external owner configuration.
 
 - Preview and confirm incremental server setup/repair, preserving managed channel identities where possible.
 - Inspect read-only server health diagnostics and the deployed command inventory.

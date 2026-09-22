@@ -124,3 +124,6 @@ Ticket behavior and current limits are documented in [README](README.md) and [ar
 - [ ] Customized legacy overview/deal copy is reviewed explicitly before Reset to Default; normal repair does not silently replace it.
 - [ ] Optional Instant Gaming setup follows docs/INSTANT_GAMING.md. Verified bot ID has posting permission only in gaming-deals, ordinary members remain read-only, external attribution is correct and purchase notifications/buyer ranking remain disabled.
 - [ ] Host build, Compose health, SELinux mounts, daily timer, off-host backup and restore drill pass before stable VPS release.
+
+- [ ] Confirm English default copy/button labels for overview, Direct Support, Amazon, Gaming Deals and AI Tools; Haushaltscheck remains German. Amazon offers a manual Ctrl + D tip, not automatic bookmarking. Affiliate messages each have one short disclosure immediately above their link button; Gaming Deals has no integration wording.
+- [ ] Completed migrations remove obsolete finance/energy mappings from active settings while preserving historical IDs/custom content for review. Finance is not a required partner channel; repeated repair creates no replacement finance flow.
