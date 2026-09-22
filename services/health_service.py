@@ -93,10 +93,16 @@ async def scan(guild, bot=None, *, messages=True):
                 add('Support permissions','REPAIRABLE','Support board needs public read-only permissions.')
     except ServerMessageError:
         add('Support GamerHQ','MANUAL_REVIEW','Ambiguous support resources; no automatic merge.')
-    from services.support_service import resource, PARTNER_CHANNELS, PARTNER_CATEGORY, legacy_review_channel
+    from services.support_service import resource, PARTNER_CHANNELS, PARTNER_CATEGORY
     try:
-        legacy = legacy_review_channel(guild)
-        if legacy:
+        from services import legacy_finance_service as finance
+        from services.support_service import legacy_review_channels
+        finance_channels = finance.candidates(guild)
+        for channel in finance_channels:
+            reason = await finance.inspect(guild, channel)
+            add('Legacy partner channels', 'MANUAL_REVIEW' if reason else 'REPAIRABLE',
+                f'finanzberatung — {reason}' if reason else 'finanzberatung — safe retirement available through owner setup Repair.')
+        if any(c not in finance_channels for c in legacy_review_channels(guild)):
             add('Legacy partner channels', 'MANUAL_REVIEW', 'Old channel/history retained; inspect before manual removal. Never delete unknown content.')
         if any(db.get_setting(f'{key}:{guild.id}') for key in ('partner_split', 'partner_reorder', 'household_migration')):
             add('Partner migration', 'REPAIRABLE', 'Partner migration pending; repair permissions and rerun setup/sync.')

@@ -360,17 +360,17 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         intro=support.resource(self.guild,'support-gamerhq')
         self.assertIs(intro.category,self.start)
         text=intro.messages[int(db.get_setting(support.message_key(self.guild)))].content
-        self.assertIn("If you'd like to support GamerHQ",text)
-        self.assertIn("You'll find:",text)
+        self.assertIn("Looking for useful deals, tools or services?",text)
+        self.assertIn("selected offers and resources",text)
         self.assertNotIn('finanzberatung',text)
-        self.assertIn("If you'd like to support GamerHQ directly",support.DIRECT_TEXT)
+        self.assertIn("Want to support GamerHQ directly?",support.DIRECT_TEXT)
         self.assertIn('`Ctrl + D`',support.AMAZON_TEXT)
         self.assertNotIn('automatically',support.AMAZON_TEXT)
-        self.assertEqual(support.GAMING_TEXT,'# 🎮 Gaming Deals\n\nFind current gaming deals, promotions and releases here.\n\nAffiliate link — using it supports GamerHQ 💜')
+        self.assertEqual(support.GAMING_TEXT,'# 🎮 Gaming Deals\n\nFind current gaming deals, promotions and releases here.\n\nAffiliate / referral link')
         for section,content,affiliate in support.support_sections():
             if affiliate:
-                self.assertTrue(content.endswith('Affiliate link — using it supports GamerHQ 💜'))
-                self.assertEqual(content.count('Affiliate link —'),1)
+                self.assertTrue(content.endswith('Affiliate / referral link'))
+                self.assertEqual(content.count('Affiliate / referral link'),1)
                 for word in ('Discord','integration','configuration','scraper','öffnen'):
                     self.assertNotIn(word,content)
             if section!='household':
@@ -449,3 +449,111 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rights.send_messages is True, name=='gaming-deals')
         rights=support.resource(self.guild,'gaming-deals').overwrites_for(external)
         self.assertFalse(rights.manage_channels or rights.manage_roles or rights.manage_messages or rights.mention_everyone)
+
+    async def test_finance_cleanup_only_explicit_repair_and_health_read_only(self):
+        from services.health_service import scan
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        self.guild.get_member=lambda uid:None
+        findings=await scan(self.guild)
+        self.assertTrue(any(f.state=='REPAIRABLE' and 'finanzberatung' in f.detail for f in findings))
+        await support.sync_support_messages(self.guild)
+        self.assertIs(self.guild.get_channel(finance.id),finance)
+        changed=[]
+        await support.repair_support(self.guild,changed)
+        self.assertIsNone(self.guild.get_channel(finance.id))
+        self.assertIn('Deleted legacy channels: ✅ finanzberatung',changed)
+        self.assertFalse(db.get_setting(support.channel_key(self.guild,'finanzberatung')))
+        await support.repair_support(self.guild,[])
+
+    async def test_finance_known_recorded_content_can_be_deleted(self):
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        message=self.add_message(finance,'# 💶 Finanzberatung\nLegacy default',pinned=True)
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        db.set_setting(support.message_key(self.guild,'finance'),message.id)
+        await support.repair_support(self.guild,[])
+        self.assertIsNone(self.guild.get_channel(finance.id))
+        self.assertFalse(db.get_setting(support.message_key(self.guild,'finance')))
+
+    async def test_finance_manual_content_and_uncertain_identity_have_exact_reasons(self):
+        from services import legacy_finance_service as finance_service
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        self.assertEqual(await finance_service.inspect(self.guild,finance),'managed channel identity is not recorded')
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        manual=self.add_message(finance,'Keep my history',author=20)
+        changed=[]
+        await support.repair_support(self.guild,changed)
+        self.assertIn('MANUAL_REVIEW: ⚠️ finanzberatung — contains unexpected/manual content',changed)
+        self.assertFalse(manual.deleted)
+        self.assertIs(self.guild.get_channel(finance.id),finance)
+
+    async def test_finance_threads_dependencies_and_permissions_block_deletion(self):
+        from services import legacy_finance_service as finance_service
+        from types import SimpleNamespace
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        finance.archived=[SimpleNamespace(id=999)]
+        self.assertEqual(await finance_service.inspect(self.guild,finance),'archived threads exist')
+        finance.archived=[]
+        self.guild.threads=[SimpleNamespace(parent_id=finance.id)]
+        self.assertEqual(await finance_service.inspect(self.guild,finance),'active threads exist')
+        self.guild.threads=[]
+        db.set_setting('some_active_resource',finance.id)
+        self.assertIn('stored setting dependency',await finance_service.inspect(self.guild,finance))
+        db.set_setting('some_active_resource','')
+        with db.connect() as conn:
+            conn.execute('INSERT INTO temp_voice_channels VALUES (?,?,?)',(finance.id,20,1))
+        self.assertEqual(await finance_service.inspect(self.guild,finance),'stored resource dependency: temp_voice_channels.channel_id')
+        with db.connect() as conn:
+            conn.execute('DELETE FROM temp_voice_channels')
+        finance.permissions_for=lambda member:discord.Permissions.none()
+        self.assertIn('insufficient permissions',await finance_service.inspect(self.guild,finance))
+
+    async def test_old_overview_heading_recovers_without_duplicate(self):
+        await self.setup_board()
+        channel=support.resource(self.guild,'support-gamerhq')
+        key=support.message_key(self.guild)
+        message=channel.messages[int(db.get_setting(key))]
+        message.content='# 💜 Support GamerHQ\nOld default overview'
+        with db.connect() as conn:
+            conn.execute('DELETE FROM managed_message_content WHERE setting_key=?',(key,))
+            conn.execute('DELETE FROM settings WHERE key=?',(key,))
+        await support.repair_support(self.guild,[])
+        self.assertEqual(db.get_setting(key),str(message.id))
+        self.assertEqual(channel.sends,1)
+        self.assertTrue(message.content.startswith('# 🤝 Partners & Benefits'))
+
+    async def test_finance_custom_state_and_ticket_dependency_remain_preserved(self):
+        from services import legacy_finance_service as finance_service, managed_message_service as managed
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        message=self.add_message(finance,'# 💶 Finanzberatung\nCustom owner text')
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        key=support.message_key(self.guild,'finance')
+        state={'key':key,'guild_id':self.guild.id,'channel_id':finance.id,
+               'message_id':message.id,'customized':True,'content_hash':managed.digest(message.content)}
+        managed.store(state)
+        changed=[]
+        await support.repair_support(self.guild,changed)
+        self.assertTrue(any('customized or changed' in line for line in changed))
+        self.assertTrue(managed.load(key)['retired'])
+        self.assertFalse(message.deleted)
+        with db.connect() as conn:
+            conn.execute("INSERT INTO support_tickets (guild_id,channel_id,creator_discord_id,subject,description,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+                         (self.guild.id,finance.id,20,'Historical ticket','Keep history',1,1))
+        self.assertEqual(await finance_service.inspect(self.guild,finance),'stored resource dependency: support_tickets.channel_id')
+
+    async def test_finance_history_api_failure_is_manual_review(self):
+        from services import legacy_finance_service as finance_service
+        await self.setup_board()
+        finance=self.guild.add_channel('💶・finanzberatung',self.community)
+        db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
+        async def denied(**kwargs):
+            raise discord.Forbidden(type('Response',(),{'status':403,'reason':'Forbidden'})(),'denied')
+            yield
+        finance.history=denied
+        self.assertEqual(await finance_service.inspect(self.guild,finance),'cannot inspect all history/threads: Forbidden')

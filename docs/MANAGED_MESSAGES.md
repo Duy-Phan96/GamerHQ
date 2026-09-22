@@ -8,7 +8,7 @@ The editor uses existing GamerHQ message/channel mappings, bot ownership and a s
 
 | Channel | Managed messages |
 | --- | --- |
-| support-gamerhq | Support Overview |
+| support-gamerhq | Benefits Overview |
 | direct-support | Direct Support |
 | amazon | Amazon |
 | haushaltscheck | Haushaltscheck |
@@ -61,3 +61,5 @@ The private audit table records actor, channel, stable key, content/buttons chan
 Retired energy/course/finance boards are excluded from editing after migration. Historical custom content and audit records remain stored. Custom legacy messages are left untouched for MANUAL_REVIEW; their old ticket actions cannot create new requests. See [partner migration](PARTNERS.md).
 
 Current default partner copy is English except for Haushaltscheck. Repair refreshes generated defaults in place and preserves customized text/buttons. To adopt the English wording on a customized board, preview and confirm Reset to Default; the existing message ID stays unchanged.
+
+Default overview copy is benefits-first; affiliate boards use one neutral disclosure. Only Direct Support explicitly invites financial support. Existing custom copy stays saved until an explicit Reset to Default. The old overview heading can be recovered in place if its registry is missing.

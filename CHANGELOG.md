@@ -1,5 +1,7 @@
 # GamerHQ Changelog
 
+- Refine Partners & Benefits defaults to lead with useful offers and neutral disclosures. Explicit owner Repair safely retires recorded legacy finanzberatung after full dependency/content/thread checks; health reports repair availability or exact review reasons. Preserve custom messages, IDs, household privacy and historical records.
+
 All notable GamerHQ Bot changes are tracked here from the stable-release workflow onward.
 
 ## [Unreleased] - 2026-09-22

@@ -12,9 +12,9 @@ from services.server_service import ServerMessageError, upsert_fixed_message, pi
 from services.music_bot_service import blocked_name
 
 CHANNEL_NAME = '💜・support-gamerhq'
-TITLE = '# 💜 Support GamerHQ'
-INTRO_TEXT = TITLE + "\n\nIf you'd like to support GamerHQ, check out the options and partner offers under **PARTNERS & BENEFITS**."
-DISCLOSURE = 'Some links are affiliate or referral links. Using them helps support GamerHQ. Thank you 💜'
+TITLE = '# 🤝 Partners & Benefits'
+INTRO_TEXT = TITLE + "\n\nLooking for useful deals, tools or services?\n\nUnder **PARTNERS & BENEFITS** you'll find selected offers and resources that may be useful to you."
+DISCLOSURE = 'Some links may be affiliate or referral links.'
 PARTNER_NAVIGATION = (
     ('direct-support', '💜', 'Direct Support'), ('amazon', '🛒', 'Amazon'),
     ('haushaltscheck', '🇩🇪', 'Haushaltscheck'),
@@ -22,16 +22,18 @@ PARTNER_NAVIGATION = (
 )
 DIRECT_TEXT = """# 💜 Direct Support
 
-If you'd like to support GamerHQ directly, a direct support option will be available here soon.
+Want to support GamerHQ directly?
+
+A direct support option will be available here soon.
 
 **Coming Soon**"""
 AMAZON_TEXT = """# 🛒 Amazon
 
-Support GamerHQ when you shop on Amazon using our link.
+Use the link below when shopping on Amazon.
 
-Tip: Save the link as a browser bookmark with `Ctrl + D` and use it before your next purchase.
+Tip: Save it as a browser bookmark with `Ctrl + D` so it's easy to find later.
 
-Affiliate link — using it supports GamerHQ 💜"""
+Affiliate / referral link"""
 HOUSEHOLD_TEXT = """# 🇩🇪 Haushaltscheck
 
 Nur für Nutzer in Deutschland.
@@ -55,11 +57,11 @@ GAMING_TEXT = """# 🎮 Gaming Deals
 
 Find current gaming deals, promotions and releases here.
 
-Affiliate link — using it supports GamerHQ 💜"""
+Affiliate / referral link"""
 PARTNER_CATEGORY = '🤝 PARTNERS & BENEFITS'
 PARTNER_CHANNELS = {'direct-support':'💜・direct-support', 'amazon':'🛒・amazon', 'haushaltscheck':'🇩🇪・haushaltscheck', 'gaming-deals':'🎮・gaming-deals', 'ai-tools':'🤖・ai-tools'}
 LEGACY_SECTIONS = ('intro','transparency','instant_gaming','pixverse','amazon','energy','energy_sales')
-LEGACY_HEADINGS = {TITLE, '## ℹ️ Transparency', '## 🎮 Instant Gaming', '## 🤖 PixVerse', '## 🛒 Amazon', '## 🇩🇪 For Germany', '## 🇩🇪 For Germans', '## 🎓 Strom & Gas Vertrieb'}
+LEGACY_HEADINGS = {TITLE, '# 💜 Support GamerHQ', '## ℹ️ Transparency', '## 🎮 Instant Gaming', '## 🤖 PixVerse', '## 🛒 Amazon', '## 🇩🇪 For Germany', '## 🇩🇪 For Germans', '## 🎓 Strom & Gas Vertrieb'}
 _locks = {}
 log = logging.getLogger(__name__)
 
@@ -107,7 +109,7 @@ def support_sections(channel_name=None):
     sections = [('intro', INTRO_TEXT, None), ('direct', DIRECT_TEXT, None), ('amazon', AMAZON_TEXT, AFFILIATES[2]),
                 ('household', HOUSEHOLD_TEXT, None),
                 ('instant_gaming', GAMING_TEXT, AFFILIATES[0]),
-                ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\nAI Video Generation\n\n' + AFFILIATES[1].copy + '\n\nAffiliate link — using it supports GamerHQ 💜', AFFILIATES[1])]
+                ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\n' + AFFILIATES[1].copy + '\n\nAffiliate / referral link', AFFILIATES[1])]
     return [row for row in sections if channel_name is None or section_channel(row[0]) == channel_name]
 
 
@@ -118,7 +120,7 @@ def support_text(channels=None):
                for name, emoji, label in PARTNER_NAVIGATION if name in channels]
     parts = [INTRO_TEXT]
     if bullets:
-        parts.append("You'll find:\n\n" + '\n'.join(bullets))
+        parts.append('\n'.join(bullets))
     if len(bullets) != len(PARTNER_NAVIGATION):
         parts.append('More partner channels are being set up.')
     parts.append(DISCLOSURE)
@@ -155,13 +157,13 @@ def resolve(guild, kind):
 def guide_reference(guild):
     channel = resolve(guild, 'channel')
     link = channel.mention if channel else '#support-gamerhq'
-    return f'## 💜 Support GamerHQ\nWant to support GamerHQ? Check **{link}** for optional ways to support the server and find partner offers.'
+    return f'## 🤝 Partners & Benefits\nFind useful deals, tools and services in **{link}**.'
 
 
 def matches_section(message, content):
     heading = (message.content or '').split('\n', 1)[0]
     expected = content.split('\n', 1)[0]
-    return heading == expected
+    return heading == expected or (expected == TITLE and heading == '# 💜 Support GamerHQ')
 
 
 async def remove_empty_legacy_category(guild):
@@ -250,6 +252,12 @@ def retire_partner_mappings(guild):
     """Remove obsolete active mappings, retaining identities for historical review."""
     if not db.get_setting(f'household_migrated:{guild.id}') or db.get_setting(f'household_migration:{guild.id}'):
         return
+    from services import managed_message_service as managed
+    for section in ('energy', 'energy_sales', 'finance'):
+        state = managed.load(message_key(guild, section))
+        if state and not state.get('retired'):
+            state['retired'] = True
+            managed.store(state)
     mappings = [(channel_key(guild, name), f'retired_partner_channel:{guild.id}:{name}')
                 for name in LEGACY_CHANNELS]
     mappings += [(message_key(guild, section), f'retired_partner_message:{guild.id}:{section}')
@@ -433,8 +441,11 @@ async def repair_support(guild, changed):
                     manage_roles=False, manage_messages=False, mention_everyone=False),
                     reason='Configured external Instant Gaming publisher, gaming-deals only')
     result = await sync_support_messages(guild)
-    changed.append('Updated Support and Partners & Benefits; existing channels/history retained')
-    if result and result.get('manual_review_channels'):
-        changed.append('MANUAL_REVIEW: legacy partner channels/custom content retained; inspect manually.')
+    changed.append('Updated Partners & Benefits messages and navigation')
     if result and result['pin_failures']:
         raise ServerMessageError('Partner messages saved, but pinning failed: ' + ', '.join(result['pin_failures']) + '. Restore permissions and retry.')
+    from services import legacy_finance_service as finance
+    await finance.repair(guild, changed)
+    finance_ids = {c.id for c in finance.candidates(guild)}
+    if any(c.id not in finance_ids for c in legacy_review_channels(guild)):
+        changed.append('MANUAL_REVIEW: other legacy partner channels/custom content retained; inspect manually.')
