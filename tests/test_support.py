@@ -15,6 +15,68 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
     setUp = fixtures.OnboardingTests.setUp
     add_message = fixtures.OnboardingTests.add_message
 
+    async def test_direct_support_retired_and_existing_overview_updated_in_place(self):
+        from services import managed_message_service as managed
+        overview = await self.setup_board()
+        overview_id = db.get_setting(support.message_key(self.guild))
+        category = support.resource(self.guild, 'partners-benefits', True)
+        direct = self.guild.add_channel('💜・direct-support', category)
+        pin = self.add_message(direct, support.DIRECT_TEXT, pinned=True)
+        db.set_setting(support.channel_key(self.guild, 'direct-support'), direct.id)
+        db.set_setting(support.message_key(self.guild, 'direct'), pin.id)
+        manual = self.add_message(overview, 'Unrelated support note', author=123, pinned=True)
+        ids = {name: support.resource(self.guild, name).id for name in support.PARTNER_CHANNELS}
+        await self.setup_board()
+        await self.setup_board()
+        await support.sync_support_messages(self.guild, order=True)
+        self.assertNotIn(direct, self.guild.text_channels)
+        self.assertIsNone(db.get_setting(support.channel_key(self.guild, 'direct-support')))
+        self.assertIsNone(db.get_setting(support.message_key(self.guild, 'direct')))
+        self.assertNotIn(support.message_key(self.guild, 'direct'), managed.specs(self.guild))
+        self.assertEqual(db.get_setting(support.message_key(self.guild)), overview_id)
+        self.assertEqual(overview.sends, 1)
+        text = overview.messages[int(overview_id)].content
+        self.assertIn('# 💙 Support GamerHQ', text)
+        self.assertIn('support us directly', text)
+        self.assertIn('partner and deal links', text)
+        self.assertIn('No extra purchase is required', text)
+        self.assertFalse(manual.deleted)
+        self.assertEqual(manual.edits, 0)
+        self.assertEqual(ids, {name: support.resource(self.guild, name).id for name in support.PARTNER_CHANNELS})
+        ordered = sorted(category.text_channels, key=lambda c: (c.position, c.id))
+        self.assertEqual([c.id for c in ordered], list(ids.values()))
+
+    async def test_direct_support_unmapped_or_custom_content_is_not_deleted(self):
+        await self.setup_board()
+        category = support.resource(self.guild, 'partners-benefits', True)
+        direct = self.guild.add_channel('💜・direct-support', category)
+        self.assertIsNone(await support.retire_direct_support(self.guild))
+        db.set_setting(support.channel_key(self.guild, 'direct-support'), direct.id)
+        self.add_message(direct, 'Human contribution', author=123)
+        result = await support.retire_direct_support(self.guild)
+        self.assertIn('MANUAL_REVIEW', result)
+        self.assertIn(direct, self.guild.text_channels)
+        self.assertEqual(db.get_setting(support.channel_key(self.guild, 'direct-support')), str(direct.id))
+
+    async def test_direct_support_delete_failure_keeps_mapping_for_retry(self):
+        await self.setup_board()
+        direct = self.guild.add_channel('💜・direct-support', support.resource(self.guild, 'partners-benefits', True))
+        db.set_setting(support.channel_key(self.guild, 'direct-support'), direct.id)
+        error = discord.Forbidden(type('Response', (), {'status':403, 'reason':'Forbidden'})(), 'denied')
+        with patch.object(direct, 'delete', AsyncMock(side_effect=error)):
+            self.assertIn('retry Repair', await support.retire_direct_support(self.guild))
+        self.assertEqual(db.get_setting(support.channel_key(self.guild, 'direct-support')), str(direct.id))
+        await support.retire_direct_support(self.guild)
+        self.assertIsNone(db.get_setting(support.channel_key(self.guild, 'direct-support')))
+
+    async def test_direct_support_dependency_prevents_deletion(self):
+        await self.setup_board()
+        direct = self.guild.add_channel('💜・direct-support', support.resource(self.guild, 'partners-benefits', True))
+        db.set_setting(support.channel_key(self.guild, 'direct-support'), direct.id)
+        db.set_setting('unrelated-channel', direct.id)
+        self.assertIn('dependency', await support.retire_direct_support(self.guild))
+        self.assertIn(direct, self.guild.text_channels)
+
     async def setup_board(self):
         changed, failed = await repair_server(self.guild,self.bot)
         self.assertFalse(any('support' in str(f).lower() or 'partner' in str(f).lower() for f in failed), failed)
@@ -29,7 +91,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'- {emoji} {mention} — {label}', lines)
             self.assertEqual(text.count(mention), 1)
         self.assertTrue(all(line.startswith('- ') for line in lines if '<#' in line))
-        self.assertIn('**PARTNERS & BENEFITS**', text)
+        self.assertIn('**🤝 PARTNERS & BENEFITS**', text)
         self.assertTrue(text.endswith(support.DISCLOSURE))
         self.assertLess(len(text), 1000)
 
@@ -92,7 +154,8 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(partners.name,support.PARTNER_CATEGORY)
         for name in ['support-gamerhq',*support.PARTNER_CHANNELS]:
             ch=support.resource(self.guild,name)
-            if name!='support-gamerhq':self.assertIs(ch.category,partners)
+            if name != 'support-gamerhq':self.assertIs(ch.category,partners)
+            else:self.assertIs(ch.category,self.start)
             rights=ch.overwrites_for(self.guild.default_role)
             self.assertTrue(rights.view_channel and rights.read_message_history)
             self.assertFalse(rights.send_messages or rights.create_public_threads or rights.create_private_threads)
@@ -360,15 +423,16 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         intro=support.resource(self.guild,'support-gamerhq')
         self.assertIs(intro.category,self.start)
         text=intro.messages[int(db.get_setting(support.message_key(self.guild)))].content
-        self.assertIn("Looking for useful deals, tools or services?",text)
-        self.assertIn("selected offers and resources",text)
+        self.assertIn("Want to support GamerHQ?",text)
+        self.assertIn("partner and deal links",text)
         self.assertNotIn('finanzberatung',text)
         self.assertIn("Want to support GamerHQ directly?",support.DIRECT_TEXT)
         self.assertIn('`Ctrl + D`',support.AMAZON_TEXT)
         self.assertNotIn('automatically',support.AMAZON_TEXT)
-        self.assertEqual(support.GAMING_TEXT,'# 🎮 Gaming Deals\n\nFind current gaming deals, promotions and releases here.\n\nAffiliate / referral link')
+        from services.instant_gaming_service import CHANNELS
+        self.assertEqual(support.GAMING_TEXT, CHANNELS['gaming-deals'][1])
         for section,content,affiliate in support.support_sections():
-            if affiliate:
+            if affiliate and section != 'instant_gaming':
                 self.assertTrue(content.endswith('Affiliate / referral link'))
                 self.assertEqual(content.count('Affiliate / referral link'),1)
                 for word in ('Discord','integration','configuration','scraper','öffnen'):
@@ -438,15 +502,15 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_external_bot_permission_is_scoped_and_survives_repair(self):
         from types import SimpleNamespace
-        from unittest.mock import MagicMock
-        external=MagicMock(id=4321,bot=True)
+        from unittest.mock import AsyncMock, MagicMock
+        external=MagicMock(id=4321,bot=True,roles=[],add_roles=AsyncMock())
         self.guild.get_member=lambda uid:external if uid==4321 else None
         with patch('config.INSTANT_GAMING_BOT_ID',4321):
             await self.setup_board()
             await self.setup_board()
         for name in support.PARTNER_CHANNELS:
             rights=support.resource(self.guild,name).overwrites_for(external)
-            self.assertEqual(rights.send_messages is True, name=='gaming-deals')
+            self.assertEqual(rights.send_messages is True, name in {'gaming-news', 'gaming-deals'})
         rights=support.resource(self.guild,'gaming-deals').overwrites_for(external)
         self.assertFalse(rights.manage_channels or rights.manage_roles or rights.manage_messages or rights.mention_everyone)
 
@@ -525,7 +589,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         await support.repair_support(self.guild,[])
         self.assertEqual(db.get_setting(key),str(message.id))
         self.assertEqual(channel.sends,1)
-        self.assertTrue(message.content.startswith('# 🤝 Partners & Benefits'))
+        self.assertTrue(message.content.startswith(support.TITLE))
 
     async def test_finance_custom_state_and_ticket_dependency_remain_preserved(self):
         from services import legacy_finance_service as finance_service, managed_message_service as managed

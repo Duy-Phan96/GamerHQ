@@ -45,7 +45,8 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("💡・suggestions"),
         ),
     ),
-    CategorySpec("🤝 PARTNERS & BENEFITS", (ChannelSpec("💜・direct-support"), ChannelSpec("🛒・amazon"), ChannelSpec("🇩🇪・haushaltscheck"), ChannelSpec("🎮・gaming-deals"), ChannelSpec("🤖・ai-tools"))),
+    CategorySpec("🤝 PARTNERS & BENEFITS", (ChannelSpec("📰・gaming-news"), ChannelSpec("🔥・gaming-deals"), ChannelSpec("🎁・free-games"), ChannelSpec("🛒・amazon"), ChannelSpec("🤖・ai-tools"), ChannelSpec("🇩🇪・haushaltscheck"))),
+    CategorySpec("🔒 AFFILIATE STATS", (ChannelSpec("💸・purchases"), ChannelSpec("🏆・buyer-ranking")), private=True),
     CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
     CategorySpec("🏆 EVENTS", (ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
     CategorySpec(
@@ -79,6 +80,13 @@ def normalize_name(name: str) -> str:
 
 def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.CategoryChannel | None:
     wanted = normalize_name(spec.name)
+    if wanted == 'partners-benefits':
+        from services.support_service import resource
+        from services.server_service import ServerMessageError
+        try:
+            return resource(guild, wanted, True)
+        except ServerMessageError:
+            return None
     for category in guild.categories:
         if normalize_name(category.name) == wanted:
             return category
@@ -87,6 +95,22 @@ def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.Category
 
 def _find_channel(category: discord.CategoryChannel, spec: ChannelSpec):
     wanted = normalize_name(spec.name)
+    from services.channel_adoption_service import supported
+    if wanted in supported():
+        from services.support_service import resource
+        from services.server_service import ServerMessageError
+        try:
+            return resource(category.guild, wanted)
+        except ServerMessageError:
+            return None
+    wanted = {'purchases': 'ig-purchases', 'buyer-ranking': 'ig-buyer-ranking'}.get(wanted, wanted)
+    if wanted in {'gaming-news', 'gaming-deals', 'ig-purchases', 'ig-buyer-ranking'}:
+        from services.instant_gaming_service import resolve
+        from services.server_service import ServerMessageError
+        try:
+            return resolve(category.guild, wanted)
+        except ServerMessageError:
+            return None
     candidates = category.voice_channels if spec.kind == "voice" else category.text_channels
     for channel in candidates:
         if normalize_name(channel.name) == wanted:
@@ -99,7 +123,9 @@ def analyze_server(guild: discord.Guild) -> dict:
     missing_categories = 0
     missing_channels = 0
 
+    from services.channel_change_service import removed
     for spec in SERVER_BLUEPRINT:
+        spec = CategorySpec(spec.name, tuple(c for c in spec.channels if not removed(guild, {'purchases':'ig-purchases', 'buyer-ranking':'ig-buyer-ranking'}.get(normalize_name(c.name), normalize_name(c.name)))), spec.private)
         category = _find_category(guild, spec)
         channel_rows = []
         if category is None:
@@ -114,6 +140,21 @@ def analyze_server(guild: discord.Guild) -> dict:
                     missing_channels += 1
                 channel_rows.append({"spec": channel_spec, "channel": channel})
         categories.append({"spec": spec, "category": category, "channels": channel_rows})
+
+    # Reflect explicitly adopted public board labels/parents in the inventory.
+    from services.channel_adoption_service import supported, desired, stored
+    rows_by_category = {row['category'].id: row for row in categories if row['category']}
+    for row in list(categories):
+        for channel_row in list(row['channels']):
+            name = normalize_name(channel_row['spec'].name)
+            if name not in supported() or not stored(guild, name):
+                continue
+            target = desired(guild, name)
+            channel_row['spec'] = ChannelSpec(target['name'])
+            parent = rows_by_category.get(target['category'])
+            if parent and parent is not row:
+                row['channels'].remove(channel_row)
+                parent['channels'].append(channel_row)
 
     # Optional modules are reported only; /server setup does not create or delete them.
     streamer_category = next((c for c in guild.categories if normalize_name(c.name) == "streamers"), None)
@@ -170,7 +211,7 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
         )
     lines.extend([
         "",
-        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It also repairs Support and PARTNERS & BENEFITS with read-only channels and separate messages, and refreshes existing Music Bots access.",
+        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and PARTNERS & BENEFITS, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID.",
     ])
     return "\n".join(lines)
 
@@ -196,8 +237,25 @@ def render_details(report: dict) -> str:
 
 async def repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list[str]]:
     """Focused onboarding update. Unrelated categories/resources remain untouched."""
+    from services.bot_group_service import sync as sync_bot_groups
+    group_notes = await sync_bot_groups(guild)
     from services.onboarding_service import migrate_onboarding
-    return await migrate_onboarding(guild, bot)
+    changed, failed = await migrate_onboarding(guild, bot)
+    changed.extend(group_notes)
+    from services.instant_gaming_service import sync
+    from services.server_service import ServerMessageError
+    try:
+        await sync(guild)
+        changed.append('Synchronized four Instant Gaming feeds and pins; /server instant-gaming shows per-channel results, /server health reports remaining issues.')
+    except (discord.HTTPException, ServerMessageError) as exc:
+        failed.append(str(exc))
+    from services.role_panel_service import sync as sync_roles
+    try:
+        await sync_roles(guild)
+        changed.append('Updated optional profile/notification roles and separate managed settings panels.')
+    except (discord.HTTPException, ServerMessageError, ValueError) as exc:
+        failed.append(str(exc))
+    return changed, failed
 
 
 async def migrate_v27_community_and_game_channels(guild: discord.Guild) -> tuple[list[str], list[str]]:

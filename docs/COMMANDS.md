@@ -35,12 +35,14 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 - `/game-admin set-visible` — Admin: show/hide a library game in Choose Your Games without changing its area.
 - `/game-admin setup` — Admin: inspect/reconcile Discord areas enabled in the Game Library.
 - `/game-admin status` — Admin: inspect one game's DB state and linked Discord resources.
+- `/server adopt channel:<managed channel> aspect:<name|category|position|all>` — Owner/admin: compare current Discord layout with desired state, then explicitly confirm selected properties. Initial scope: Support GamerHQ and the five public partner/feed channels. Permissions are not imported. See [desired state and adoption](SERVER_STRUCTURE.md#explicit-channel-adoption).
 - `/server cleanup-game-areas` — Owner/admin: preview unused managed game areas before confirming cleanup.
 - `/server health` — Owner/admin: read-only diagnostics and acceptance-test details.
+- `/server instant-gaming` — Admin: sync public gaming-news/gaming-deals and private Affiliate Stats purchases/buyer-ranking. Reports channels, permissions, pins and bot access using INSTANT_GAMING_BOT_ID.
 - `/server music-bots-role` — Admin: configure the existing dedicated Music Bots role.
 - `/server pinned-messages` — Owner/admin: edit GamerHQ-managed pinned messages and buttons. Select channel → select message (automatic for one pin) → edit content/buttons → Preview → Save Changes. Multiple pins, persistent customization and confirmed Reset to Default are supported. See [managed message editing](MANAGED_MESSAGES.md).
 - `/server roles` — Admin: sync, review and safely clean up GamerHQ-managed roles.
-- `/server sync-support` — Admin: synchronize and pin the Support and partner messages in configured channels; overview bullets use managed channel mentions.
+- `/server sync-support` — Admin: reconcile existing Support/partner names, parents and order with desired state, and synchronize their pinned messages; overview bullets use managed channel mentions.
 - `/server setup` — Owner only: inspect and repair core channels, guides and private suggestions.
 
 `/server setup` is owner-only. Health, cleanup and the pinned-message editor check owner/admin access; other administrative commands retain their Administrator checks. Moderator permissions alone do not grant message-editor access. Destructive Game Area/library actions require their existing previews/confirmations. General member commands never grant server administration.
@@ -50,3 +52,5 @@ Persistent components include game/role selectors, LFG cards/invites/proposals, 
 If a partner mapping/channel is missing, `/server sync-support` omits that destination from the overview and reports incomplete setup. `/server health` identifies missing mappings; owner `/server setup` repairs them. Sync does not create replacement channels.
 
 Haushaltscheck uses the persistent `HOUSEHOLD_CHECK_REQUEST` button and existing private ticket actions, not a new slash command. Old energy/course/finance entry actions are retired. The optional external Instant Gaming bot has its own `/config`; it is not a GamerHQ command.
+
+Owner `/server setup` Repair also ensures Free Games immediately below Gaming Deals, a private AFFILIATE STATS category, and hoisted Music Bots/Gaming Bots roles for explicitly configured bot user IDs. `/server health` reports missing optional bot identities and unsafe hierarchy/access without changing state.

@@ -56,6 +56,7 @@ class FakeChannel:
     def __init__(self, guild, name, category, cid):
         self.guild, self.name, self.category, self.id = guild, name, category, cid
         self.topic = None
+        self.position = len(guild.text_channels)
         self.overwrites = {}
         self.messages = {}
         self.edits = []
@@ -99,6 +100,8 @@ class FakeChannel:
 
 
 class FakeCategory:
+    __class__ = discord.CategoryChannel
+    set_permissions = FakeChannel.set_permissions
     async def delete(self, **kwargs):
         self.guild.categories.remove(self)
 
@@ -114,6 +117,8 @@ class FakeCategory:
     def text_channels(self): return [c for c in self.guild.text_channels if c.category is self]
     @property
     def voice_channels(self): return []
+    @property
+    def channels(self): return self.text_channels + self.voice_channels
     async def create_text_channel(self, name, **kwargs):
         channel = self.guild.add_channel(name, self)
         channel.overwrites = kwargs.get('overwrites', {})
@@ -122,6 +127,11 @@ class FakeCategory:
 
 
 class FakeGuild:
+    async def bulk_channel_update(self, guild_id, payload, **kwargs):
+        self.position_updates.append(payload)
+        for entry in payload:
+            self.get_channel(entry['id']).position = entry['position']
+
     async def active_threads(self):
         return getattr(self, 'threads', [])
 
@@ -131,6 +141,8 @@ class FakeGuild:
     def __init__(self):
         self.id, self.sequence = 1, 1000
         self.categories, self.text_channels = [], []
+        self.position_updates = []
+        self._state = SimpleNamespace(http=SimpleNamespace(bulk_channel_update=self.bulk_channel_update))
         self.default_role = self.role(1, default=True)
         self.mod = self.role(2, manage_messages=True)
         self.custom = self.role(3)
@@ -140,9 +152,31 @@ class FakeGuild:
     def role(rid, default=False, **permissions):
         result = MagicMock(spec=discord.Role)
         result.id, result.managed = rid, False
+        result.name = f"Role {rid}"
+        result.position, result.hoist, result.members = rid, False, []
+        async def edit_role(**kwargs):
+            for field in ('name', 'hoist', 'position', 'permissions'):
+                if field in kwargs: setattr(result, field, kwargs[field])
+            return result
+        result.edit.side_effect = edit_role
+        result.__lt__.return_value = True
         result.is_default.return_value = default
         result.permissions = discord.Permissions(**permissions)
         return result
+    def get_role(self, rid): return next((r for r in self.roles if r.id == rid), None)
+    async def create_role(self, *, name, **kwargs):
+        self.sequence += 1
+        role = self.role(self.sequence)
+        role.name = name
+        role.hoist = kwargs.get('hoist', False)
+        role.permissions = kwargs.get('permissions', discord.Permissions.none())
+        self.roles.append(role)
+        return role
+
+    async def edit_role_positions(self, *, positions, **kwargs):
+        for role, position in positions.items(): role.position = position
+        return self.roles
+
     @property
     def channels(self): return self.categories + self.text_channels
     def get_channel(self, cid): return next((c for c in self.channels if c.id == cid), None)

@@ -59,7 +59,7 @@ Before core repair, create START HERE and COMMUNITY categories. Add the channels
 
 ## Partner navigation verification
 
-After owner setup, START HERE / support-gamerhq should have five clickable list entries pointing to the read-only PARTNERS & BENEFITS channels: direct-support, amazon, haushaltscheck, gaming-deals and ai-tools. There is no separate mention footer. `/server sync-support` refreshes adopted messages; missing/deleted channel mappings are omitted from navigation and reported by `/server health`. Use owner `/server setup` → Repair to restore the structure/mappings, then verify the list again. Existing canonical message IDs and unrelated pins are preserved.
+After owner setup, START HERE / support-gamerhq should have five clickable list entries pointing to the read-only PARTNERS & BENEFITS channels: gaming-news, gaming-deals, amazon, ai-tools and haushaltscheck. There is no separate mention footer. `/server sync-support` refreshes adopted messages; missing/deleted channel mappings are omitted from navigation and reported by `/server health`. Use owner `/server setup` → Repair to restore the structure/mappings, then verify the list again. Existing canonical message IDs and unrelated pins are preserved.
 
 ## Managed message editor upgrade
 
@@ -69,6 +69,8 @@ Default boards keep receiving generated navigation updates. Customized boards re
 
 For optional deal posting, follow [Instant Gaming setup](INSTANT_GAMING.md). Set the verified external bot ID in private configuration; restart and run owner Repair to grant its narrow posting access. No partner-account credentials belong in GamerHQ.
 
-Verify partner language after repair: overview, Direct Support, Amazon, Gaming Deals and AI Tools are English; Haushaltscheck stays German. Amazon has a manual `Ctrl + D` bookmark tip. Gaming Deals contains no integration instructions. Existing custom messages require an explicit editor Reset to Default to adopt changed copy. Legacy Finanzberatung is not a required public channel; uncertain history remains MANUAL_REVIEW, with obsolete active mappings retired.
+Verify partner language after repair: overview, Gaming News, Amazon, Gaming Deals and AI Tools are English; Haushaltscheck stays German. Amazon has a manual `Ctrl + D` bookmark tip. Gaming Deals contains no integration instructions. Existing custom messages require an explicit editor Reset to Default to adopt changed copy. Legacy Finanzberatung is not a required public channel; uncertain history remains MANUAL_REVIEW, with obsolete active mappings retired.
 
 Legacy finanzberatung retirement is restricted to explicit owner setup Repair after replacement pins and mapping migration complete. `legacy_finance_service` shares read-only safety inspection with health: persisted identity, channel name/location, all stored resource dependencies, managed fingerprints, full message history, active/public/private archived threads and inspection permissions. Safe channels are REPAIRABLE; uncertainty is MANUAL_REVIEW with an exact reason. Sync/startup never call finance deletion. Historical tickets and audit/retired records remain stored. See [partner rollout and benefits-first copy](PARTNERS.md).
+
+Bot grouping and private Affiliate Stats setup use verified `INSTANT_GAMING_BOT_ID`, `DEALGECKO_BOT_ID`, `JOCKIE_MUSIC_BOT_ID`, `PANCAKE_BOT_ID`. After restart, owner Repair creates/reuses groups, migrates existing private IG channel IDs and inserts gift-emoji Free Games under Deals. Configure the external targets manually after health/privacy checks; see [Discord setup](DISCORD_SETUP.md).

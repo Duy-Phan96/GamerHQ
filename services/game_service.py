@@ -325,6 +325,8 @@ def build_choose_games_message():
         "**Select Games**\n"
         "Want to manage several games at once? Use the **Select Games** button below. "
         "You can also use `/game select` in chat for a quick single-game change.\n\n"
+        "**LFG Notifications**\n"
+        "Opt into LFG notifications for individual games separately. Selecting a game does not enable pings.\n\n"
         "**Suggest Game**\n"
         "Can't find the game you're looking for? Use **Suggest Game** below or `/game suggest` in chat.\n\n"
         "You can change your games anytime."

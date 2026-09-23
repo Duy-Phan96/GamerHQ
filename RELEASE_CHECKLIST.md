@@ -14,6 +14,8 @@ Run this after every release candidate before declaring it stable.
 
 ## Startup & persistence
 
+- [ ] Instant Gaming: follow `docs/INSTANT_GAMING.md`; sync twice, verify four stable channel/pin IDs and restart persistence. News/Deals are public read-only; Purchases/Buyer Ranking are staff-only. Test Affiliate Stats category policy and bot access, links/embeds/attachments before enabling external feeds.
+
 - [ ] Bot starts without traceback/errors.
 - [ ] `/game-admin database` points to the expected persistent database.
 - [ ] Custom games such as Elden Ring/Baldurs Gate 3 are still present after restart.
@@ -116,18 +118,20 @@ Ticket behavior and current limits are documented in [README](README.md) and [ar
 ## Haushaltscheck, managed editor and external deal posting
 
 - [ ] START HERE retains need-support and support-gamerhq; overview has five unique mapped mentions and the short affiliate disclosure.
-- [ ] PARTNERS & BENEFITS contains Direct Support, Amazon, Haushaltscheck, Gaming Deals and AI Tools; verify all canonical texts/links against docs/PARTNERS.md.
+- [ ] PARTNERS & BENEFITS is ordered Gaming News, Gaming Deals, Amazon, AI Tools, Haushaltscheck. Repair retires managed direct-support safely; the existing support-gamerhq pin explains both ways to support. Verify texts/links against docs/PARTNERS.md.
 - [ ] Test migration from separate strom-gas/finanzberatung and older germany-services. Recorded channels are reused when appropriate; default old flows retire only after new pins exist. Unknown/manual/customized content survives and retained channels are reported for MANUAL_REVIEW.
 - [ ] Confirm new course/energy/finance requests cannot be created; existing tickets keep readable history and close/restart behavior.
 - [ ] Haushaltscheck creates HOUSEHOLD_CHECK_REQUEST, private to creator/Staff/bot. User B cannot view user A's request; repeated clicks do not duplicate it.
 - [ ] Owner/admin can edit Markdown/buttons, preview, save in place and explicitly reset each supported board. Member/moderator without admin is denied. Repeated repair/restart preserves custom text/buttons and IDs; unrelated pins remain untouched.
 - [ ] Customized legacy overview/deal copy is reviewed explicitly before Reset to Default; normal repair does not silently replace it.
-- [ ] Optional Instant Gaming setup follows docs/INSTANT_GAMING.md. Verified bot ID has posting permission only in gaming-deals, ordinary members remain read-only, external attribution is correct and purchase notifications/buyer ranking remain disabled.
+- [ ] Instant Gaming setup follows docs/INSTANT_GAMING.md. Verified bot ID can post in all four feeds. Purchase notifications/buyer ranking remain disabled externally until private-channel acceptance; then route only to their respective Affiliate Stats channels.
 - [ ] Host build, Compose health, SELinux mounts, daily timer, off-host backup and restore drill pass before stable VPS release.
 
-- [ ] Confirm English default copy/button labels for overview, Direct Support, Amazon, Gaming Deals and AI Tools; Haushaltscheck remains German. Amazon offers a manual Ctrl + D tip, not automatic bookmarking. Affiliate messages each have one short disclosure immediately above their link button; Gaming Deals has no integration wording.
+- [ ] Confirm English defaults/buttons; Haushaltscheck remains German. Amazon offers a manual Ctrl + D tip. Gaming Deals uses the requested automatic-feed text and retains its affiliate button; overview disclosure remains.
 - [ ] Completed migrations remove obsolete finance/energy mappings from active settings while preserving historical IDs/custom content for review. Finance is not a required partner channel; repeated repair creates no replacement finance flow.
 
-- [ ] Verify benefits-first overview, five unique mentions, neutral affiliate labels and Direct Support as the only financial-support invitation.
+- [ ] Verify the updated support explanation, five unique mentions, neutral affiliate labels and retirement of the separate direct-support channel.
 - [ ] Verify empty/known managed finanzberatung deletes only through owner Repair; health and sync leave it intact. Check exact MANUAL_REVIEW reasons for manual/custom content, missing identity, dependencies, threads, denied inspection and renamed/protected channels.
 - [ ] Verify stale finance editor/channel/message mappings retire while historical tickets/audit remain.
+
+- [ ] Bot organization: verify gift-emoji Free Games immediately below Deals, DealGecko scoped access, private Affiliate Stats inherited/explicit IG access, both hoisted groups below Staff and no duplicate resources after repeated Repair.

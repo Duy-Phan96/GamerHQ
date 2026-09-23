@@ -9,8 +9,9 @@ from services.server_service import ServerMessageError, upsert_fixed_message
 
 WELCOME_COPY = (
     "# 👋 Welcome to GamerHQ!\n\n"
-    "🎮 Choose the games you play in {choose-your-games}\n"
-    "👤 Select your platform & playstyle in {choose-your-roles}\n"
+    "Start below: Gender (optional) → Age group (optional) → Choose Games.\n"
+    "🎮 Choose the games you play in {choose-your-games} anytime.\n"
+    "👤 Optional notifications, languages and profile settings: {choose-your-roles}\n"
     "📅 Find or create gaming sessions in {looking-for-group}\n"
     "🤖 Use bot commands in {bot-commands}\n\n"
     "Have fun & see you in game! 🚀"
@@ -117,8 +118,12 @@ def guide_overwrites(channel):
 
 async def set_read_only(channel):
     overwrites = guide_overwrites(channel)
+    from services.channel_change_service import identify, public_policy, edit
+    name = identify(channel.guild, channel.id)
+    if name:
+        overwrites = public_policy(channel.guild, name, overwrites)
     if overwrites != channel.overwrites:
-        await channel.edit(overwrites=overwrites, reason='GamerHQ START HERE guide permissions')
+        await edit(channel, overwrites=overwrites, reason='GamerHQ START HERE guide permissions')
 
 
 async def set_writable(channel):
@@ -130,10 +135,11 @@ async def set_writable(channel):
 
 
 async def canonical_welcome(channel):
+    from cogs.roles import OnboardingEntry
     content = welcome_text(channel.guild)
     def match(message):
         return old_onboarding(message) or ((message.content or '').startswith('# 👋 Welcome to GamerHQ!') and 'Choose the games you play' in message.content)
-    return await upsert_fixed_message(channel, setting_key=f'server_pinned_message_{channel.id}', content=content, pin=True, recover_match=match)
+    return await upsert_fixed_message(channel, setting_key=f'server_pinned_message_{channel.id}', content=content, pin=True, view=OnboardingEntry(), recover_match=match)
 
 
 async def refresh_onboarding(guild):
@@ -146,10 +152,14 @@ async def refresh_onboarding(guild):
     channel = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if channel and alias(channel.name) == 'welcome' and channel.category and alias(channel.category.name) == 'start-here':
         await canonical_welcome(channel)
+    from services.role_panel_service import refresh as refresh_roles
+    await refresh_roles(guild)
     from services.community_structure_service import refresh_boards
     await refresh_boards(guild)
     from services.support_service import refresh_support
     await refresh_support(guild)
+    from services.instant_gaming_service import refresh
+    await refresh(guild)
 
 
 async def migrate_onboarding(guild, bot=None):

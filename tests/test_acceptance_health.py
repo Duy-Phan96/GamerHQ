@@ -41,11 +41,27 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         fake=SimpleNamespace(persistent_views=[SupportOffers()],tree=SimpleNamespace(get_commands=lambda **kw:[]))
         result=await health.scan(self.guild,fake)
         self.assertEqual(next(f.state for f in result if f.name=='Instant Gaming integration'),'INFO')
-        for name in ('PARTNERS & BENEFITS','direct-support','amazon','haushaltscheck','gaming-deals','ai-tools','Partner ticket handlers'):
+        for name in ('PARTNERS & BENEFITS','Partner channel order','gaming-news','amazon','haushaltscheck','gaming-deals','ai-tools','Partner ticket handlers'):
             self.assertEqual(next(f.state for f in result if f.name==name),'PASS')
         fake.persistent_views=[]
         result=await health.scan(self.guild,fake)
         self.assertEqual(next(f.state for f in result if f.name=='Partner ticket handlers'),'WARN')
+
+    async def test_partner_order_drift_and_direct_retirement_are_read_only(self):
+        from services import support_service as support
+        partners = support.resource(self.guild, 'partners-benefits', True)
+        news = support.resource(self.guild, 'gaming-news')
+        news.position = 999
+        direct = self.guild.add_channel('💜・direct-support', partners)
+        db.set_setting(support.channel_key(self.guild, 'direct-support'), direct.id)
+        before = len(self.guild.position_updates)
+        result = await health.scan(self.guild, messages=False)
+        self.assertEqual(next(f.state for f in result if f.name == 'Partner channel order'), 'REPAIRABLE')
+        self.assertEqual(next(f.state for f in result if f.name == 'Retired direct-support'), 'REPAIRABLE')
+        self.assertIn(direct, self.guild.text_channels)
+        self.assertEqual(len(self.guild.position_updates), before)
+        await support.sync_support_messages(self.guild, order=True)
+        self.assertEqual(sorted(partners.text_channels, key=lambda c: (c.position, c.id))[0], news)
 
     async def test_renamed_guide_deleted_pin_repaired_without_duplicates(self):
         guide=structure.core_channel(self.guild,'guide')

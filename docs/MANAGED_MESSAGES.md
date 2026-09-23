@@ -9,17 +9,19 @@ The editor uses existing GamerHQ message/channel mappings, bot ownership and a s
 | Channel | Managed messages |
 | --- | --- |
 | support-gamerhq | Benefits Overview |
-| direct-support | Direct Support |
 | amazon | Amazon |
 | haushaltscheck | Haushaltscheck |
 | gaming-deals | Gaming Deals |
+| gaming-news | Gaming News |
+| free-games | Free Games |
 | ai-tools | AI Tools |
 | welcome | Welcome |
+| choose-your-roles | Optional Settings, Notifications, Gaming Content, Language, Platform |
 | guide | Guide |
 | suggestions | Suggestions |
 | need-support | Need Support |
 
-Game/role selectors, generated command inventories, LFG dashboards and private tickets retain their existing feature-specific management flows. This command edits existing healthy pins; it does not create arbitrary channel messages.
+Dynamic game selectors, generated command inventories, LFG dashboards and private tickets retain their existing feature-specific management flows. This command edits existing healthy pins; it does not create arbitrary channel messages.
 
 ## Edit and save
 
@@ -62,4 +64,41 @@ Retired energy/course/finance boards are excluded from editing after migration. 
 
 Current default partner copy is English except for Haushaltscheck. Repair refreshes generated defaults in place and preserves customized text/buttons. To adopt the English wording on a customized board, preview and confirm Reset to Default; the existing message ID stays unchanged.
 
-Default overview copy is benefits-first; affiliate boards use one neutral disclosure. Only Direct Support explicitly invites financial support. Existing custom copy stays saved until an explicit Reset to Default. The old overview heading can be recovered in place if its registry is missing.
+The support-gamerhq overview explains direct support and support through partner/deal links; the separate direct-support board is retired. Existing custom copy stays saved until an explicit Reset to Default. The old overview heading can be recovered in place if its registry is missing.
+
+## Developer contract: adding or changing a managed pin
+
+This is the canonical pin architecture document; there is no separate PINNED_MESSAGES.md.
+Start in [server_service.py](../services/server_service.py), then the feature service
+that supplies its default text and existing setting key.
+
+1. Resolve/persist the owning channel using the feature's ID mapping. Keep canonical
+   default copy in that feature service; do not copy it into the command callback.
+2. Reuse upsert_fixed_message with a stable setting_key, pin=True, the feature view
+   and a narrow recover_match for known bot-owned content. It fetches the stored
+   message, can search pins/recent history for recovery, updates in place and stores
+   a replacement ID for a genuinely deleted message. API failures are not proof
+   that the message is absent. Unrelated user/moderator/bot pins must survive.
+3. For an editable public board, add its label, channel-setting key and allowed
+   actions to managed_message_service.specs. That layers canonical content/buttons,
+   versions, hashes, customized/pending state and audit onto the same message ID.
+   Fixed private notices may use the shared helper without entering the public editor.
+4. Hook the feature's authorized setup/repair/sync and existing startup refresh as
+   appropriate; health only inspects. Repeated execution must not create duplicate
+   managed pins. Use the feature lock for non-editor fixed-message concurrency;
+   registered editor boards share per-key locks with saves.
+5. Test repeat sync, missing/deleted message, failed fetch, custom content, concurrent
+   edits and preservation of unrelated pins. Reuse test_managed_messages.py and the
+   affected feature tests; do not connect to Discord for routine validation.
+
+Instant Gaming reuses partner_message:<guild>:instant_gaming for Deals and uses
+instant_gaming_message:<guild>:<name> for its other feeds. Purchases/Buyer Ranking
+are private fixed notices, not public editor boards. See [IG](INSTANT_GAMING.md).
+The requested Deals feed default differs from the older affiliate copy; its existing
+affiliate button remains. Unknown duplicate-looking pins are reported for manual
+review rather than blindly removed.
+
+Game selectors and LFG dashboards have specialized message lifecycles; reuse those
+feature renderers instead of registering every generated message in the pin editor.
+
+Free Games uses `partner_message:<guild>:free_games` with Markdown/buttons/preview/save/reset and custom-content persistence. Its default has no affiliate text. Private purchases/buyer-ranking retain their old internal IG keys but now live in AFFILIATE STATS.

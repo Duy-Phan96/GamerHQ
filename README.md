@@ -8,7 +8,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 
 ### Gaming & LFG
 
-- Select game roles and platform/playstyle roles.
+- Start with optional gender/age groups, select games, and manage separate notification/profile preferences. See [role settings](docs/ROLE_SETTINGS.md).
 - Create public or private Looking for Group sessions, invite players and join private sessions with access codes.
 - Manage active lobbies: hosts can edit details, manage participants, review proposed times and close or cancel sessions.
 - Maintain a game library with optional dedicated Game Areas. Game selection and a game's Discord area are separate: removing an area can preserve the game and its role.
@@ -62,12 +62,13 @@ START HERE
 ├─ need-support
 └─ support-gamerhq
 
-PARTNERS & BENEFITS
-├─ direct-support
-├─ amazon
-├─ haushaltscheck
-├─ gaming-deals
-└─ ai-tools
+🤝 PARTNERS & BENEFITS
+├─ 📰・gaming-news
+├─ 🔥・gaming-deals
+├─ 🎁・free-games
+├─ 🛒・amazon
+├─ 🤖・ai-tools
+└─ 🇩🇪・haushaltscheck
 
 COMMUNITY
 ├─ newbies
@@ -94,6 +95,10 @@ VOICE CHANNELS
 SUPPORT TICKETS (private)
 └─ ticket-0042 (example; created on demand)
 
+🔒 AFFILIATE STATS (private)
+├─ 💸・purchases
+└─ 🏆・buyer-ranking
+
 STAFF (private)
 ├─ staff-chat
 ├─ staff-suggestions
@@ -105,7 +110,11 @@ STAFF (private)
 
 Optional Game Areas, streamer areas, LFG resources and temporary voice rooms extend this layout. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
 
-**Need Support** opens a help ticket visible to its creator and authorized Staff. **Partners & Benefits** in support-gamerhq links directly to the five channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
+**Need Support** opens a help ticket visible to its creator and authorized Staff. **Partners & Benefits** in support-gamerhq links directly to the six channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
+
+Gaming News covers news/releases; Gaming Deals covers discounts, promotions and Instant Gaming offers; Free Games covers free/free-to-keep offers from DealGecko. Free Games is not an affiliate promotion board.
+
+The intended bot stack is GamerHQ, **🤖 Gaming Bots** (Instant Gaming, DealGecko), and **🎵 Music Bots** (Jockie Music, Pancake). Group roles are hoisted below Staff and grant no blanket private access. Set verified bot IDs; owner Repair handles grouping and scoped permissions. See [Discord setup](docs/DISCORD_SETUP.md).
 
 ## Requirements
 
@@ -153,7 +162,8 @@ Edit your private `.env` before starting the bot. Existing process environment v
 | --- | --- |
 | `DISCORD_TOKEN` | Required to start; your private bot token |
 | `GUILD_ID` | Required positive Discord server ID; target for guild command registration |
-| `INSTANT_GAMING_BOT_ID` | Optional verified external bot user ID; owner repair grants posting only in gaming-deals |
+| `DEALGECKO_BOT_ID`, `JOCKIE_MUSIC_BOT_ID`, `PANCAKE_BOT_ID` | Optional verified external bot user IDs for scoped access/grouping; `0` disables identity resolution |
+| `INSTANT_GAMING_BOT_ID` | Optional verified external bot user ID; repair grants posting in gaming-news/gaming-deals and private Affiliate Stats purchases/buyer-ranking |
 | `GAMERHQ_DB_PATH` | Private SQLite path; the example uses `runtime/data/gamerhq.db` |
 | `CHOOSE_GAMES_CHANNEL_ID` | Existing game-selector channel; configure before using its overview |
 | `GAME_SUGGESTIONS_CHANNEL_ID` | Optional legacy setting; current suggestions use managed private Staff mappings |
@@ -201,7 +211,8 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | --- | --- |
 | `/server health` | Owner/admin read-only diagnostics |
 | `/server setup` | Owner-only inspection, preview and confirmed repairs |
-| `/server sync-support` | Refresh adopted support/partner messages without creating missing channels |
+| `/server sync-support` | Reconcile existing support/partner layout and pins without creating missing channels |
+| `/server adopt` | Owner/admin preview and confirmation: persist selected current public board layout as desired state |
 | `/server cleanup-game-areas` | Preview unused managed areas before confirmed cleanup |
 | `/server music-bots-role` | Configure the existing dedicated Music Bots role |
 | `/server roles` | Manage GamerHQ roles |
@@ -254,6 +265,8 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 ## Further documentation
 
+- [Repository instructions](AGENTS.md) and [development workflow](docs/DEVELOPMENT_WORKFLOW.md): selective context, validation and reusable task prompts.
+
 - [Architecture](docs/ARCHITECTURE.md): interaction layer, services, persistence and managed Discord resources.
 - Production uses Docker Compose on AlmaLinux, external private configuration/data, a non-root container, daily verified backups (14 daily snapshots), log rotation and owner-run updates from `main`.
 - [Deployment](DEPLOY.md) and [rollback](ROLLBACK.md): owner-controlled operations with separate runtime storage.
@@ -264,4 +277,4 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 LICENSE is not configured. The repository is public, but no software license has been selected; that remains an owner decision.
 
-support-gamerhq stays in START HERE as a benefits-first directory for useful deals, tools and services. Only Direct Support asks for financial support; affiliate disclosures are neutral. PARTNERS & BENEFITS contains separate read-only Direct Support, Amazon, Haushaltscheck, Gaming Deals and AI Tools channels. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
+support-gamerhq stays in START HERE and explains direct support and support through useful partner/deal links. PARTNERS & BENEFITS has this managed order: Gaming News, Gaming Deals, Amazon, AI Tools, Haushaltscheck. Owner Repair safely removes the recorded direct-support channel; unknown content or dependencies remain for review. Instant Gaming purchases and buyer ranking remain staff-only. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).

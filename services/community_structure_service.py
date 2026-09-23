@@ -29,7 +29,7 @@ def guide_text(guild):
     streamer_link = streamer.mention if streamer else '#streamer-guide'
     return (
         '# 📘 GamerHQ Guide\n\nHere are GamerHQ’s main features and how to use them.\n\n'
-        f'## 🎮 Games & Roles\nChoose games in **{mention(guild, "choose-your-games")}** and your platform/playstyle in **{mention(guild, "choose-your-roles")}**. \n\n'
+        f'## 🎮 Games & Roles\nChoose games in **{mention(guild, "choose-your-games")}** and optional notifications, languages and profile settings in **{mention(guild, "choose-your-roles")}**. \n\n'
         f'## 🎯 Looking for Group\nFind players and open sessions in **{mention(guild, "looking-for-group")}**.\n'
         '`/lfg create` — create a session\n`/lfg manage` — view/manage your sessions\n`/lfg join-code` — join a private session\nHosts can invite players and change session details.\n\n'
         f'## 🤖 Bot Commands\nUse **{mention(guild, "bot-commands")}** for bot commands.\n\n'
