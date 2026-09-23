@@ -37,9 +37,8 @@ def candidates(guild, name):
 
 
 def configured_bot(guild):
-    from config import INSTANT_GAMING_BOT_ID
-    member = guild.get_member(INSTANT_GAMING_BOT_ID) if INSTANT_GAMING_BOT_ID else None
-    return member if member and member.bot and member != guild.me else None
+    from services.bot_group_service import member
+    return member(guild, 'instant-gaming')
 
 
 def resolve(guild, name, *, mapped_only=False):
@@ -234,9 +233,10 @@ async def sync(guild):
 
 async def diagnostics(guild, *, messages=True, channels=None):
     rows = []
-    from config import INSTANT_GAMING_BOT_ID
-    rows.append(('Instant Gaming bot ID', 'PASS' if INSTANT_GAMING_BOT_ID else 'WARN',
-                 'Configured in environment.' if INSTANT_GAMING_BOT_ID else 'INSTANT_GAMING_BOT_ID is missing.'))
+    from services.bot_group_service import member_id
+    identity = member_id(guild, 'instant-gaming')
+    rows.append(('Instant Gaming bot ID', 'PASS' if identity else 'WARN',
+                 'Configured user ID.' if identity else 'INSTANT_GAMING_BOT_ID or stored identity is missing.'))
     if not configured_bot(guild):
         rows.append(('Instant Gaming bot', 'WARN', 'INSTANT_GAMING_BOT_ID is not configured or does not identify an available external bot.'))
     try:

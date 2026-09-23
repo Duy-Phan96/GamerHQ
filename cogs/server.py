@@ -516,7 +516,9 @@ class ConfirmServerRepairView(SafeView):
         areas, _ = scan_areas(self.guild)
         report = analyze_server(self.guild)
 
-        lines = ["# GamerHQ Server Repair Finished", "", render_music_result(music_result), "",
+        role_notes = [entry.removeprefix('[BOT ROLES] ') for entry in created if entry.startswith('[BOT ROLES] ')]
+        created = [entry for entry in created if not entry.startswith('[BOT ROLES] ')]
+        lines = ["# GamerHQ Server Repair Finished", "", "**BOT ROLE ASSIGNMENT**", *role_notes, "", render_music_result(music_result), "",
                  f"**GAME AREA CLEANUP**\nCandidates available: {sum(row['safe'] for row in areas)}\nUse `/server cleanup-game-areas` to review them. Nothing was deleted.", ""]
         if created:
             lines.append(f"**Updated ({len(created)}):**")

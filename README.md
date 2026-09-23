@@ -114,7 +114,7 @@ Optional Game Areas, streamer areas, LFG resources and temporary voice rooms ext
 
 Gaming News covers news/releases; Gaming Deals covers discounts, promotions and Instant Gaming offers; Free Games covers free/free-to-keep offers from DealGecko. Free Games is not an affiliate promotion board.
 
-The intended bot stack is GamerHQ, **🤖 Gaming Bots** (Instant Gaming, DealGecko), and **🎵 Music Bots** (Jockie Music, Pancake). Group roles are hoisted below Staff and grant no blanket private access. Set verified bot IDs; owner Repair handles grouping and scoped permissions. See [Discord setup](docs/DISCORD_SETUP.md).
+The intended bot stack is GamerHQ, **🤖 Gaming Bots** (Instant Gaming, DealGecko), and **🎵 Music Bots** (Jockie Music, Pancake). Group roles are hoisted below Staff and grant no blanket private access. Known DealGecko/Jockie/Pancake IDs are built in; the existing Instant Gaming identity remains configurable. Owner Repair handles grouping and scoped permissions. See [Discord setup](docs/DISCORD_SETUP.md).
 
 ## Requirements
 
@@ -162,7 +162,7 @@ Edit your private `.env` before starting the bot. Existing process environment v
 | --- | --- |
 | `DISCORD_TOKEN` | Required to start; your private bot token |
 | `GUILD_ID` | Required positive Discord server ID; target for guild command registration |
-| `DEALGECKO_BOT_ID`, `JOCKIE_MUSIC_BOT_ID`, `PANCAKE_BOT_ID` | Optional verified external bot user IDs for scoped access/grouping; `0` disables identity resolution |
+| `DEALGECKO_BOT_ID`, `JOCKIE_MUSIC_BOT_ID`, `PANCAKE_BOT_ID` | Optional positive overrides for the built-in public bot IDs; unset/`0` uses the known identity |
 | `INSTANT_GAMING_BOT_ID` | Optional verified external bot user ID; repair grants posting in gaming-news/gaming-deals and private Affiliate Stats purchases/buyer-ranking |
 | `GAMERHQ_DB_PATH` | Private SQLite path; the example uses `runtime/data/gamerhq.db` |
 | `CHOOSE_GAMES_CHANNEL_ID` | Existing game-selector channel; configure before using its overview |
