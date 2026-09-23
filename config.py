@@ -23,9 +23,15 @@ def discord_id(name):
 
 
 INSTANT_GAMING_BOT_ID = discord_id("INSTANT_GAMING_BOT_ID")
-DEALGECKO_BOT_ID = discord_id("DEALGECKO_BOT_ID")
-JOCKIE_MUSIC_BOT_ID = discord_id("JOCKIE_MUSIC_BOT_ID")
-PANCAKE_BOT_ID = discord_id("PANCAKE_BOT_ID")
+# Public user IDs, centrally defined; explicit positive environment IDs override.
+THIRD_PARTY_BOTS = {
+    "dealgecko": 1550051214035517450,
+    "jockie": 411916947773587456,
+    "pancake": 239631525350604801,
+}
+DEALGECKO_BOT_ID = discord_id("DEALGECKO_BOT_ID") or THIRD_PARTY_BOTS["dealgecko"]
+JOCKIE_MUSIC_BOT_ID = discord_id("JOCKIE_MUSIC_BOT_ID") or THIRD_PARTY_BOTS["jockie"]
+PANCAKE_BOT_ID = discord_id("PANCAKE_BOT_ID") or THIRD_PARTY_BOTS["pancake"]
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")

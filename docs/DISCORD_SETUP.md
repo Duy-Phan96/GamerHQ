@@ -20,14 +20,14 @@ Owner Repair preserves News, Deals, Amazon, AI Tools and the German Haushaltsche
 
 The Free Games adjacency rule takes precedence over older adopted absolute positions. If health reports an adopted-position conflict after repair, review the resulting order and adopt the intended positions again; unrelated channels retain their relative order.
 
-Set verified Discord **user IDs**, not display names or role IDs, in the private environment:
+Instant Gaming retains its verified environment/stored user-ID mapping. DealGecko, Jockie Music and Pancake have central public defaults in `config.THIRD_PARTY_BOTS`; no environment changes are needed when these IDs are unset or `0`. Positive environment values explicitly override the defaults. Configuration keys:
 
 - `INSTANT_GAMING_BOT_ID`
 - `DEALGECKO_BOT_ID`
 - `JOCKIE_MUSIC_BOT_ID`
 - `PANCAKE_BOT_ID`
 
-Missing optional bots are warnings, not blockers. GamerHQ never guesses bot identity from a name. Existing explicit `bot_member:<guild>:<integration>` mappings can supply the three grouping identities when environment IDs are unset; Instant Gaming posting still uses its established environment ID.
+Missing optional bots are warnings, not blockers. GamerHQ never guesses bot identity from a name. The existing `bot_member:<guild>:instant-gaming` mapping remains a fallback when its environment ID is unset; both grouping and private access use that same identity. Repair tries the member cache, then fetches an uncached exact ID, caching results for 60 seconds. Health stays read-only and never fetches. Each assignment reports success or a concise warning; one failed assignment does not prevent the others.
 
 `/server setup` → **Repair / Setup → Confirm Repair** creates/reuses **🎵 Music Bots** (Jockie/Pancake) and **🤖 Gaming Bots** (Instant Gaming/DealGecko), enables hoist and assigns verified bot members. Roles are moved only below Staff/Admin and GamerHQ's manageable ceiling; Staff's relative order is preserved. If there is insufficient space or an uneditable higher hoisted integration role, health reports owner review. Do not elevate groups above Staff or grant Administrator. Existing Music Bots channel allow-list and voice permissions remain in place.
 

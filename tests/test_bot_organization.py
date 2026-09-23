@@ -11,6 +11,15 @@ from services.channel_adoption_service import children
 from services.health_service import scan
 
 
+class KnownBotConfigurationTests(unittest.TestCase):
+    def test_public_defaults_are_exact_integer_ids(self):
+        import config
+        for name, uid in config.THIRD_PARTY_BOTS.items():
+            self.assertIs(type(uid), int)
+            self.assertGreater(uid, 2**53)
+            self.assertEqual(getattr(config, groups.CONFIG[name]), uid)
+
+
 class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
     setUp = fixtures.OnboardingTests.setUp
     add_message = fixtures.OnboardingTests.add_message
@@ -32,6 +41,8 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = list(self.members.values())
         self.guild.get_member = lambda mid: next((m for m in self.guild.members if m.id == mid), None)
         groups._locks.clear()
+        groups._members.clear()
+        groups._assigned.clear()
 
     async def test_setup_preserves_channels_adds_free_games_and_repeats(self):
         _, failed = await repair_server(self.guild, self.bot)
@@ -166,3 +177,69 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
         text = (Path(__file__).resolve().parents[1] / 'README.md').read_text(encoding='utf-8')
         self.assertIn('🤝 PARTNERS & BENEFITS\n├─ 📰・gaming-news\n├─ 🔥・gaming-deals\n├─ 🎁・free-games\n├─ 🛒・amazon\n├─ 🤖・ai-tools\n└─ 🇩🇪・haushaltscheck', text)
         self.assertIn('🔒 AFFILIATE STATS (private)\n├─ 💸・purchases\n└─ 🏆・buyer-ranking', text)
+
+    async def test_known_ids_without_names_and_uncached_members(self):
+        import config
+        for name, uid in config.THIRD_PARTY_BOTS.items():
+            self.members[name].id = uid
+            self.members[name].name = 'unrelated display label'
+            patcher = patch('config.' + groups.CONFIG[name], uid)
+            patcher.start(); self.addCleanup(patcher.stop)
+        self.guild.get_member = lambda uid: None
+        async def fetch(uid):
+            return next(m for m in self.members.values() if m.id == uid)
+        self.guild.fetch_member = AsyncMock(side_effect=fetch)
+        unrelated = self.guild.role(321)
+        self.members['jockie'].roles.append(unrelated)
+        notes = await groups.sync(self.guild)
+        await groups.sync(self.guild)
+        self.assertEqual(self.guild.fetch_member.await_count, 4)
+        for group, (_, names) in groups.GROUPS.items():
+            role = groups.resolve(self.guild, group)
+            for name in names:
+                self.assertIn(role, self.members[name].roles)
+                self.members[name].add_roles.assert_awaited_once()
+                self.assertTrue(any(groups.LABELS[name] in text and '✅' in text for text in notes))
+        self.assertIn(unrelated, self.members['jockie'].roles)
+        await repair_server(self.guild, self.bot)
+        free = support.resource(self.guild, 'free-games')
+        self.assertTrue(free.overwrites_for(self.members['dealgecko']).send_messages)
+        stats = ig.affiliate_category(self.guild)
+        self.assertTrue(stats.overwrites_for(self.members['instant-gaming']).view_channel)
+        self.assertIsNot(stats.overwrites_for(self.members['dealgecko']).view_channel, True)
+
+    async def test_missing_fetch_cached_and_other_assignments_continue(self):
+        gecko = self.members['dealgecko']
+        self.guild.members.remove(gecko)
+        response = MagicMock(status=404, reason='Not Found')
+        self.guild.fetch_member = AsyncMock(side_effect=discord.NotFound(response, 'missing'))
+        notes = await groups.sync(self.guild)
+        await groups.sync(self.guild)
+        self.guild.fetch_member.assert_awaited_once_with(gecko.id)
+        self.assertTrue(any('DealGecko not found' in text for text in notes))
+        self.assertIn(groups.resolve(self.guild, 'music'), self.members['pancake'].roles)
+        self.assertTrue(any('DealGecko →' in row[0] and row[1] == 'WARN' for row in groups.diagnostics(self.guild)))
+
+    async def test_one_assignment_failure_does_not_skip_peer_or_leak_exception(self):
+        response = MagicMock(status=403, reason='Forbidden')
+        self.members['jockie'].add_roles.side_effect = discord.Forbidden(response, 'PRIVATE_ERROR_DETAIL')
+        notes = await groups.sync(self.guild)
+        self.assertIn(groups.resolve(self.guild, 'music'), self.members['pancake'].roles)
+        self.assertNotIn('PRIVATE_ERROR_DETAIL', ' '.join(notes))
+        self.assertTrue(any('Jockie Music assignment failed' in text for text in notes))
+
+    async def test_existing_instant_mapping_preserved_for_group_and_private_access(self):
+        db.set_setting(f'bot_member:{self.guild.id}:instant-gaming', self.members['instant-gaming'].id)
+        with patch('config.INSTANT_GAMING_BOT_ID', 0):
+            await repair_server(self.guild, self.bot)
+            instant = self.members['instant-gaming']
+            self.assertIn(groups.resolve(self.guild, 'gaming'), instant.roles)
+            self.assertTrue(ig.affiliate_category(self.guild).overwrites_for(instant).send_messages)
+
+    async def test_health_explicit_success_rows_and_no_fetch(self):
+        await groups.sync(self.guild)
+        self.guild.fetch_member = AsyncMock()
+        rows = groups.diagnostics(self.guild)
+        for label in groups.LABELS.values():
+            self.assertTrue(any(row[0].startswith(label + ' →') and row[1] == 'PASS' for row in rows))
+        self.guild.fetch_member.assert_not_called()

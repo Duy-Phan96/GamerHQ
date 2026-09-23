@@ -120,3 +120,5 @@ or perform a cleanup/refactor simply to make this architecture diagram stricter.
 Optional onboarding and role boards are owned by `cogs/roles.py`, `role_service.py` and `role_panel_service.py`; per-game LFG preferences reuse the Games selector. See [role settings and migration](ROLE_SETTINGS.md).
 
 `bot_group_service` orchestrates verified-identity Music Bots/Gaming Bots grouping during explicit owner Repair, reusing `music_bot_service` mappings and access logic. `instant_gaming_service` retains private IG resource keys while migrating channel IDs into AFFILIATE STATS. `support_service` owns Free Games and its independent editor pin; only DealGecko receives its scoped posting grant. No external bot API or automatic kick is used.
+
+Bot identity defaults live only in `config.THIRD_PARTY_BOTS`. `bot_group_service` reuses persisted role IDs, performs bounded exact-ID member fetches during Repair, and exposes the fetched identity to existing feed/private permission helpers. Health reports each membership without network fetches. Short-lived successful assignment tracking covers Discord gateway cache lag; integration roles are preserved.

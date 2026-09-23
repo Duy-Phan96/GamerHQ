@@ -164,6 +164,7 @@ class FakeGuild:
         result.permissions = discord.Permissions(**permissions)
         return result
     def get_role(self, rid): return next((r for r in self.roles if r.id == rid), None)
+    def get_member(self, uid): return next((m for m in getattr(self, 'members', []) if m.id == uid), None)
     async def create_role(self, *, name, **kwargs):
         self.sequence += 1
         role = self.role(self.sequence)

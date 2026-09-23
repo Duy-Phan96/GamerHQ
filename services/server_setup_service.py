@@ -241,7 +241,7 @@ async def repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list
     group_notes = await sync_bot_groups(guild)
     from services.onboarding_service import migrate_onboarding
     changed, failed = await migrate_onboarding(guild, bot)
-    changed.extend(group_notes)
+    changed[0:0] = ['[BOT ROLES] ' + note for note in group_notes]
     from services.instant_gaming_service import sync
     from services.server_service import ServerMessageError
     try:
