@@ -121,4 +121,8 @@ Optional onboarding and role boards are owned by `cogs/roles.py`, `role_service.
 
 `bot_group_service` orchestrates verified-identity Music Bots/Gaming Bots grouping during explicit owner Repair, reusing `music_bot_service` mappings and access logic. `instant_gaming_service` retains private IG resource keys while migrating channel IDs into AFFILIATE STATS. `support_service` owns Free Games and its independent editor pin; only DealGecko receives its scoped posting grant. No external bot API or automatic kick is used.
 
+GoCDKeys comparisons: `cogs/gocdkeys.py` listens additively; `services/gocdkeys_service.py` owns extraction, validated HTTP resolution and compact replies; `database/affiliate_deals.py` uses the existing DB connection for durable unique delivery claims. See [integration contract](GOCDKEYS.md).
+
 Bot identity defaults live only in `config.THIRD_PARTY_BOTS`. `bot_group_service` reuses persisted role IDs, performs bounded exact-ID member fetches during Repair, and exposes the fetched identity to existing feed/private permission helpers. Health reports each membership without network fetches. Short-lived successful assignment tracking covers Discord gateway cache lag; integration roles are preserved.
+
+The existing GoCdKeysService is the shared paid-deal pipeline for trusted bot identities: price classification precedes validated lookup; scoped raw edits update the owned persisted companion. No second provider or channel registry is introduced.

@@ -508,6 +508,23 @@ async def refresh_support(guild, channel=None):
     return await sync_support_messages(guild, channel)
 
 
+def partner_overwrites(category):
+    from services.bot_group_service import member, resolve, safe
+    rights = guide_overwrites(category)
+    # Keep unrelated overrides; only the public policy and known bot visibility change.
+    from services.onboarding_service import is_staff
+    for target, value in category.overwrites.items():
+        if target != category.guild.default_role and target != category.guild.me and not (target in category.guild.roles and is_staff(target)):
+            rights[target] = discord.PermissionOverwrite.from_pair(*value.pair())
+    role = resolve(category.guild, 'gaming')
+    for target in (role if role and safe(role) and role.permissions.value == 0 else None, member(category.guild, 'dealgecko')):
+        if target:
+            value = rights.setdefault(target, discord.PermissionOverwrite())
+            value.view_channel = value.read_message_history = True
+            value.send_messages = False  # Posting is granted only on selected feed children.
+    return rights
+
+
 async def repair_partner_permissions(guild, category, *, feed_ids=()):
     """Repair the category and mapped information boards, never unknown interactions."""
     known_ids = set(feed_ids)
@@ -515,7 +532,7 @@ async def repair_partner_permissions(guild, category, *, feed_ids=()):
         raw = db.get_setting(channel_key(guild, name))
         if raw and raw.isdigit():
             known_ids.add(int(raw))
-    rights = guide_overwrites(category)
+    rights = partner_overwrites(category)
     if category.overwrites != rights:
         # Discord propagates category updates to permission-synced children.
         # Keep unknown interactions/private children unchanged; known boards can

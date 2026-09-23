@@ -278,3 +278,5 @@ Do not include real ticket text, private invite codes or unredacted user data in
 LICENSE is not configured. The repository is public, but no software license has been selected; that remains an owner decision.
 
 support-gamerhq stays in START HERE and explains direct support and support through useful partner/deal links. PARTNERS & BENEFITS has this managed order: Gaming News, Gaming Deals, Amazon, AI Tools, Haushaltscheck. Owner Repair safely removes the recorded direct-support channel; unknown content or dependencies remain for review. Instant Gaming purchases and buyer ranking remain staff-only. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
+
+Optional: [GoCDKeys comparison replies](docs/GOCDKEYS.md) add a compact, validated price-comparison button to confirmed paid Instant Gaming/DealGecko deals. Disabled by default; Free Games remains separate.

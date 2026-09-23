@@ -152,6 +152,11 @@ async def scan(guild, bot=None, *, messages=True):
         expected = {'gamerhq:offers:household-check'}
         add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent HOUSEHOLD_CHECK_REQUEST handler checked; restart after updating if missing.')
     add('Instant Gaming integration', 'INFO', 'Optional external configuration; see docs/INSTANT_GAMING.md. No external bot is required for GamerHQ health.')
+    from services.gocdkeys_service import status as comparison_status
+    try:
+        add(*comparison_status(guild, bot))
+    except ServerMessageError:
+        add('GoCDKeys', 'WARN', 'Ambiguous managed deals channel; owner review required.')
     from services.bot_group_service import diagnostics as bot_groups_health, member as bot_member
     for row in bot_groups_health(guild):
         add(*row)
@@ -164,6 +169,14 @@ async def scan(guild, bot=None, *, messages=True):
         dealgecko = bot_member(guild, 'dealgecko')
         access = free and dealgecko and all(getattr(free.overwrites_for(dealgecko), bit) is True and getattr(free.permissions_for(dealgecko), bit) for bit in BOT_RIGHTS)
         add('DealGecko free-games access', 'PASS' if access else 'WARN', 'Optional bot posting access checked; configure verified DEALGECKO_BOT_ID and owner Repair if missing.')
+        from services.bot_group_service import resolve as group_role
+        deals = resource(guild, 'gaming-deals')
+        gaming_role = group_role(guild, 'gaming')
+        for label, target in [('DealGecko', dealgecko), ('Gaming Bots', gaming_role)]:
+            access = deals and target and all(getattr(deals.overwrites_for(target), bit) is True and getattr(deals.permissions_for(target), bit) for bit in BOT_RIGHTS)
+            parent_ok = deals and target and deals.category and deals.category.overwrites_for(target).view_channel is not False
+            add(label + ' gaming-deals access', 'PASS' if access and parent_ok else 'WARN',
+                'Public posting/embed access and parent visibility checked; owner Repair can restore access. External dashboard routing is optional.')
     except ServerMessageError as exc:
         add('Affiliate/free-games resources', 'MANUAL_REVIEW', str(exc))
     from services import ticket_service as tickets

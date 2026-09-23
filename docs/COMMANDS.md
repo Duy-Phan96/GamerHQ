@@ -54,3 +54,5 @@ If a partner mapping/channel is missing, `/server sync-support` omits that desti
 Haushaltscheck uses the persistent `HOUSEHOLD_CHECK_REQUEST` button and existing private ticket actions, not a new slash command. Old energy/course/finance entry actions are retired. The optional external Instant Gaming bot has its own `/config`; it is not a GamerHQ command.
 
 Owner `/server setup` Repair also ensures Free Games immediately below Gaming Deals, a private AFFILIATE STATS category, and hoisted Music Bots/Gaming Bots roles for explicitly configured bot user IDs. `/server health` reports missing optional bot identities and unsafe hierarchy/access without changing state.
+
+`/server health` checks DealGecko/Gaming Bots paid-channel access and comparison configuration. `/server setup` Repair restores scoped feed permissions; it does not configure the external DealGecko dashboard.

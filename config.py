@@ -33,6 +33,10 @@ DEALGECKO_BOT_ID = discord_id("DEALGECKO_BOT_ID") or THIRD_PARTY_BOTS["dealgecko
 JOCKIE_MUSIC_BOT_ID = discord_id("JOCKIE_MUSIC_BOT_ID") or THIRD_PARTY_BOTS["jockie"]
 PANCAKE_BOT_ID = discord_id("PANCAKE_BOT_ID") or THIRD_PARTY_BOTS["pancake"]
 
+GOCDKEYS_ENABLED = os.getenv("GOCDKEYS_ENABLED", "false").lower() == "true"
+GOCDKEYS_REFERRAL_CODE = os.getenv("GOCDKEYS_REFERRAL_CODE", "kas66b").strip()
+SUPPORTED_DEAL_SOURCES = ('instant-gaming', 'dealgecko')  # Identities reuse existing bot configuration.
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")
 CHOOSE_GAMES_CHANNEL_ID = discord_id("CHOOSE_GAMES_CHANNEL_ID")

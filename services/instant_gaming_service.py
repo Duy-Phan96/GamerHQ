@@ -111,6 +111,12 @@ def overwrites(guild, name, existing=None, category=None):
               for target, value in (existing or {}).items()}
     bot = configured_bot(guild)
     allowed = {guild.me, bot} - {None}
+    feed_targets = set()
+    if name == 'gaming-deals':
+        from services.bot_group_service import member, resolve as group_role, safe
+        role = group_role(guild, 'gaming')
+        feed_targets = {member(guild, 'dealgecko'), role if role and safe(role) and role.permissions.value == 0 else None} - {None}
+        allowed.update(feed_targets)
     previous_bot = db.get_setting(f'instant_gaming_bot:{guild.id}')
     if name in PUBLIC:
         allowed.update(target for target, value in result.items() if isinstance(target, discord.Member)
@@ -121,8 +127,10 @@ def overwrites(guild, name, existing=None, category=None):
                    and any(is_staff(role) for role in target.roles))
     for target in set(result) | allowed | {guild.default_role}:
         value = result.setdefault(target, discord.PermissionOverwrite())
+        if name == 'gaming-deals' and target not in allowed and target != guild.default_role and str(target.id) != previous_bot:
+            continue  # Preserve unrelated channel overrides.
         if target in allowed:
-            if isinstance(target, discord.Member) and target.bot and target not in {guild.me, bot} and name in PUBLIC:
+            if isinstance(target, discord.Member) and target.bot and target not in {guild.me, bot} | feed_targets and name in PUBLIC:
                 continue  # Retain an already approved posting bot's exact grants.
             rights = BOT_RIGHTS if name in PUBLIC or target in {guild.me, bot} else ('view_channel', 'read_message_history')
             for right in rights:
@@ -140,7 +148,7 @@ def overwrites(guild, name, existing=None, category=None):
                 value.read_message_history = True
             for right in POSTING:
                 setattr(value, right, False)
-        if target == bot:
+        if target == bot or target in feed_targets:
             from services.music_bot_service import DENIED_RIGHTS
             for bit in DENIED_RIGHTS:
                 setattr(value, bit, False)
@@ -241,9 +249,9 @@ async def diagnostics(guild, *, messages=True, channels=None):
         rows.append(('Instant Gaming bot', 'WARN', 'INSTANT_GAMING_BOT_ID is not configured or does not identify an available external bot.'))
     try:
         categories = targets(guild)
-        from services.onboarding_service import guide_overwrites
+        from services.support_service import partner_overwrites
         public = categories['gaming-news']
-        category_ok = public.overwrites == guide_overwrites(public)
+        category_ok = public.overwrites == partner_overwrites(public)
         rows.append(('Partner category permissions', 'PASS' if category_ok else 'REPAIRABLE',
                      'Public read-only category.' if category_ok else 'Repair partner category permissions; preserve interactive exceptions.'))
         for name in CHANNELS:

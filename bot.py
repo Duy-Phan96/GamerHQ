@@ -20,6 +20,8 @@ class GamerHQBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
+        from config import GOCDKEYS_ENABLED
+        intents.message_content = GOCDKEYS_ENABLED
         intents.voice_states = True
         super().__init__(command_prefix="!", intents=intents)
         self.health_task = None
@@ -41,6 +43,7 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.area")
         await self.load_extension("cogs.server")
         await self.load_extension("cogs.server_changes")
+        await self.load_extension("cogs.gocdkeys")
         await self.load_extension("cogs.roles")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
