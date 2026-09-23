@@ -31,7 +31,7 @@ Missing optional bots are warnings, not blockers. GamerHQ never guesses bot iden
 
 `/server setup` → **Repair / Setup → Confirm Repair** creates/reuses **🎵 Music Bots** (Jockie/Pancake) and **🤖 Gaming Bots** (Instant Gaming/DealGecko), enables hoist and assigns verified bot members. Roles are moved only below Staff/Admin and GamerHQ's manageable ceiling; Staff's relative order is preserved. If there is insufficient space or an uneditable higher hoisted integration role, health reports owner review. Do not elevate groups above Staff or grant Administrator. Existing Music Bots channel allow-list and voice permissions remain in place.
 
-Gaming Bots is a grouping role with no global permissions; it grants neither bot blanket private access. DealGecko gets explicit View, Send, Read History, Embed Links and Attach Files only in Free Games. Configure its external posting target manually; GamerHQ does not control its campaigns.
+Gaming Bots is a grouping role with no global permissions; it grants neither bot blanket private access. DealGecko gets explicit View, Send, Read History, Embed Links and Attach Files in Free Games and Gaming Deals. Gaming Bots also gets these rights specifically in Gaming Deals; the public category grants visibility without category-wide posting. Configure its external posting target manually; GamerHQ does not control its campaigns.
 
 ## Private Affiliate Stats
 

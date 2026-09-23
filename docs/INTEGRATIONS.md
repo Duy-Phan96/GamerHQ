@@ -15,3 +15,5 @@ Do not introduce scraping, third-party credentials, webhook servers or backgroun
 
 
 Bot grouping uses verified optional user IDs: Instant Gaming/DealGecko → Gaming Bots, Jockie/Pancake → Music Bots. Free Games belongs to DealGecko; IG private destinations retain keys but move to AFFILIATE STATS. See [current Discord setup](DISCORD_SETUP.md).
+
+GoCDKeys optionally observes configured paid Instant Gaming and DealGecko posts in the managed gaming-deals channel. It validates product pages before replying and persists at-most-once claims. See [configuration, limits and acceptance](GOCDKEYS.md).

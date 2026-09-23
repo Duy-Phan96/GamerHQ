@@ -2,8 +2,11 @@
 
 ## [Unreleased] - 2026-09-23
 
+- Reuse GoCDKeys for trusted paid Instant Gaming/DealGecko posts; skip free/unknown offers, update owned companions on price edits, and repair scoped Gaming Bots/DealGecko paid-channel access.
+
 - Fix third-party bot grouping with central public IDs, repair-only exact-member fetch fallback, per-bot outcomes and read-only membership checks; preserve Instant Gaming identity and scoped private access.
 
+- Add optional GoCDKeys comparison replies scoped to managed Instant Gaming deals, validated product pages, persistent duplicate protection and read-only health status.
 - Preserve News/Deals and insert gift-emoji Free Games for DealGecko; migrate existing private IG IDs to AFFILIATE STATS purchases/buyer-ranking. Owner Repair ensures hoisted, least-privilege Music Bots/Gaming Bots groups using verified bot IDs, with read-only health checks and manual external configuration.
 
 - Separate optional gender/age onboarding from game selection and five independent settings boards. Add managed Gaming News/Deals opt-ins and per-game LFG notification roles, persistent controls, narrow migration and read-only health checks; retain existing IDs and retire global playstyle/LFG preferences without deleting member roles.

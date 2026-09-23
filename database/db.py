@@ -6,6 +6,16 @@ from config import DB_PATH, SEED_PATH
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS processed_affiliate_deals (
+    source_message_id INTEGER PRIMARY KEY,
+    guild_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    gocdkeys_url TEXT NOT NULL,
+    processed_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    response_message_id INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS managed_message_content (
     setting_key TEXT PRIMARY KEY,
     guild_id INTEGER NOT NULL,
@@ -211,6 +221,10 @@ def connect():
 def init_db():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        affiliate_cols = {row['name'] for row in conn.execute('PRAGMA table_info(processed_affiliate_deals)')}
+        for name in ('normalized_game', 'source_key'):
+            if name not in affiliate_cols:
+                conn.execute(f'ALTER TABLE processed_affiliate_deals ADD COLUMN {name} TEXT')
         # Existing tickets keep their identity/state and become general support.
         ticket_cols = {row['name'] for row in conn.execute('PRAGMA table_info(support_tickets)')}
         if 'ticket_type' not in ticket_cols:

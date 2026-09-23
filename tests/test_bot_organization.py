@@ -106,7 +106,7 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(channel.overwrites_for(self.guild.default_role).read_message_history)
         gecko = self.members['dealgecko']
         self.assertTrue(all(getattr(channel.overwrites_for(gecko), bit) for bit in ig.BOT_RIGHTS))
-        self.assertIsNot(ig.resolve(self.guild, 'gaming-deals').overwrites_for(gecko).send_messages, True)
+        self.assertTrue(ig.resolve(self.guild, 'gaming-deals').overwrites_for(gecko).send_messages)
         self.assertIsNot(ig.resolve(self.guild, 'gaming-news').overwrites_for(gecko).send_messages, True)
         key = support.message_key(self.guild, 'free_games')
         state = managed.load(key)
@@ -243,3 +243,31 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
         for label in groups.LABELS.values():
             self.assertTrue(any(row[0].startswith(label + ' →') and row[1] == 'PASS' for row in rows))
         self.guild.fetch_member.assert_not_called()
+
+    async def test_deals_role_access_parent_denies_and_unrelated_overwrites(self):
+        await repair_server(self.guild, self.bot)
+        deals = ig.resolve(self.guild, 'gaming-deals')
+        gecko = self.members['dealgecko']
+        role = groups.resolve(self.guild, 'gaming')
+        custom = self.guild.role(987)
+        custom.name = 'Custom interaction'
+        original = discord.PermissionOverwrite(view_channel=False, send_messages=True, attach_files=False)
+        deals.overwrites[custom] = original
+        deals.category.overwrites[custom] = original
+        for target in (role, gecko):
+            deals.overwrites[target] = discord.PermissionOverwrite(view_channel=False, send_messages=False)
+            deals.category.overwrites[target] = discord.PermissionOverwrite(view_channel=False)
+        await repair_server(self.guild, self.bot)
+        for target in (role, gecko):
+            self.assertTrue(all(getattr(deals.overwrites_for(target), bit) is True for bit in ig.BOT_RIGHTS))
+            self.assertTrue(deals.category.overwrites_for(target).view_channel)
+            self.assertFalse(deals.overwrites_for(target).administrator)
+            self.assertIsNot(ig.affiliate_category(self.guild).overwrites_for(target).view_channel, True)
+        self.assertEqual(deals.overwrites_for(custom), original)
+        self.assertEqual(deals.category.overwrites_for(custom), original)
+        before = dict(deals.overwrites)
+        await repair_server(self.guild, self.bot)
+        self.assertEqual(deals.overwrites, before)
+        deals.permissions_for = lambda target: discord.Permissions.none() if target == gecko else discord.Permissions.all()
+        findings = await scan(self.guild, self.bot, messages=False)
+        self.assertTrue(any(f.name == 'DealGecko gaming-deals access' and f.state == 'WARN' for f in findings))
