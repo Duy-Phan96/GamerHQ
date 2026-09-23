@@ -40,6 +40,7 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.voice_controls")
         await self.load_extension("cogs.area")
         await self.load_extension("cogs.server")
+        await self.load_extension("cogs.server_changes")
         await self.load_extension("cogs.roles")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")

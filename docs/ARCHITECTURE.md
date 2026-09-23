@@ -1,53 +1,122 @@
 # Architecture
 
-Python/discord.py interaction layer (`cogs/`) → services (`services/`) → SQLite persistence (`database/db.py`) → managed Discord channels, roles and messages.
+This map describes the current working tree, not a deployed release.
+[Development workflow](DEVELOPMENT_WORKFLOW.md) routes validation; read only the
+feature references needed for the task.
 
-- `bot.py`: intents, extensions, guild command synchronization and restart reconciliation. Importing it does not log in.
-- `config.py`: private environment loading and portable runtime path configuration. Essential settings are validated before login.
-- `database/db.py`: schema, additive initialization/migrations, transactions and application state. `data/games_seed.json` is a public game catalog with no users or server resource IDs.
-- `cogs/`: commands, buttons, modals and event listeners; authorization is rechecked on actions.
-- `services/`: business rules, permissions, resource identity, message rendering and safe repair.
-- `tools/`: offline tests/publication audit and explicitly invoked operational utilities.
-- `tests/`: synthetic Discord fakes and temporary SQLite. No live data fixtures.
+## Layers and ownership
 
-## Source of truth
+| Area | Responsibility / extension point |
+| --- | --- |
+| bot.py | Bot construction, intents, extension loading, guild command sync and on_ready reconciliation |
+| config.py | Environment/.env loading, typed IDs, startup validation and DB/seed paths |
+| cogs/ | Slash commands, buttons, modals, event listeners, scheduling and authorization at interaction boundaries |
+| services/ | Feature rules, permissions, identity resolution, rendering and Discord/DB coordination |
+| database/db.py | SQLite schema, additive initialization/migrations and domain data-access functions |
+| data/games_seed.json | Public seed catalog; no live server IDs, members or private state |
+| tools/ | Offline runner/audit, verified backups, migration preflight and container heartbeat |
+| tests/ | unittest/IsolatedAsyncioTestCase tests run through pytest or tools.test with synthetic Discord and temporary SQLite |
 
-Git is the source of truth for code. Private SQLite is the source of truth for live application state; Discord is its integration/rendered state. Resource IDs in settings and domain tables preserve identity through rename/move/restart. Reconciliation does not turn every unknown Discord resource into a managed resource. Ambiguous mappings require owner review.
+There is no separate repository layer, ORM or universal domain-model package.
+Rows are commonly dictionaries/sqlite3.Row; a few modules use dataclasses.
+db.connect is a context manager that opens SQLite, commits on success and closes.
+Several services and cogs contain direct SQL and Discord effects: the layers are
+an orientation, not an enforced purity boundary. Extend the existing owner before
+introducing abstractions.
 
-A **Game** is a library/selection/role record. A **Game Area** is an optional Discord category with linked channels. Removing an area does not inherently remove the game or its role/selection. Explicit destructive maintenance retains its existing confirmation rules.
+## Startup and bootstrap
 
-LFG persists events, participants, private invitations/share codes and time proposals. Dashboard messages render that state. Temporary Voice stores owner/room/game mappings; owner controls use bot-managed permissions and empty-room cleanup. Streamer voice/resources have their own lifecycle.
+1. config loads the repo .env with process-environment precedence; DB_PATH is
+   relative to BASE_DIR when configured relatively, otherwise the legacy
+   project-local gamerhq.db fallback. Deployment overrides it outside source.
+2. The __main__ path validates token/guild before bot.run. Import is not a login,
+   but config import still reads local environment unless tests disable it.
+3. setup_hook initializes SQLite and seeds the catalog, loads games/voice/area/
+   server/roles/suggestions/tickets/LFG/streamer extensions and persistent views.
+   It synchronizes guild commands and clears legacy global commands.
+4. In a container, a local heartbeat reports event-loop/gateway readiness.
+5. on_ready cleans empty tracked voice and refreshes known guides/selectors/
+   managed boards. It can run again after reconnect. Startup is not read-only
+   and must never be treated as a smoke test against production.
 
-Support tickets persist metadata, creator, assignment, status and private channel/message IDs. Creator/Staff access is ticket-specific. Closure preserves history and locks creator posting; no automatic transcript export/deletion. Suggestions enter a private Staff inbox and persist review state. Runtime ticket text, user activity and invite codes belong in private storage, never Git.
+The supported deployment is one bot instance per guild/database. Per-key/event
+asyncio locks are process-local; they are not a distributed coordination system.
 
-Music Bots integration configures an existing dedicated role for external bots. GamerHQ does not play music or collect third-party music credentials. Affiliate URLs and their disclosure are intentionally public content in `services/support_service.py`.
+## Feature map
 
-## Operations boundaries
+| Feature | Start reading | Contract / tests |
+| --- | --- | --- |
+| Server structure | server_setup_service → onboarding_service → community_structure_service | [Structure](SERVER_STRUCTURE.md); test_onboarding, test_community_structure |
+| Read-only diagnostics | health_service.scan; cogs/health.py | test_acceptance_health; health must not repair |
+| Fixed pins/editor | server_service.upsert_fixed_message + managed_message_service; cogs/managed_messages.py | [Managed messages](MANAGED_MESSAGES.md); test_managed_messages |
+| Games/areas | game_service, area_management_service, game_area_safety/cleanup; cogs/games.py and area.py | [Games](GAME_SYSTEM.md); test_voice_area, test_music_cleanup |
+| LFG | lobby_service, lobby_dashboard, lfg_service; cogs/lfg.py and lobby_management.py | [LFG](LFG_EVENTS.md); test_lobby_management, test_stability |
+| Temporary voice | temp_voice_service; cogs/voice.py and voice_controls.py | [Permissions](PERMISSIONS.md); test_voice_area |
+| Tickets/household requests | ticket_service; cogs/tickets.py | test_tickets, test_energy_offers; private creator/Staff access and retained closed history |
+| Suggestions | cogs/suggestions.py + community_structure_service | test_community_structure; private Staff delivery/review state |
+| Partner boards/migration | support_service and legacy_finance_service | [Partners](PARTNERS.md); test_support |
+| Instant Gaming | instant_gaming_service + existing partner deals pin | [IG](INSTANT_GAMING.md); test_instant_gaming |
+| Music / streamer | music_bot_service; cogs/streamer.py | [Integrations](INTEGRATIONS.md); test_music_cleanup |
 
-Owner setup previews/repairs established server structure; health is read-only. Startup does synchronize commands and reconcile known resources, so a real start is not an offline check. Deploy one instance, separate code from runtime data and back up SQLite. Docker keeps the public seed under `/app/data` and mounts private SQLite under `/app/runtime/data` so the seed remains visible.
+Service paths are under services/, cog paths under cogs/, and named tests under
+tests/ with .py extensions. [Commands](COMMANDS.md) documents the public entry points.
 
-## Support overview navigation
+## State and resource management
 
-START HERE / support-gamerhq is a short directory for five separate PARTNERS & BENEFITS channels. Each bullet renders the mention from its persisted `managed_channel:<guild>:<name>` mapping; the category name is plain bold text. Synchronization does not use name-only lookalikes for navigation. Missing destinations are omitted, health flags missing mappings, and owner repair handles creation/adoption. The canonical intro message is edited through the shared managed-message helper, with no duplicate navigation footer or additional overview message.
+Git owns code; runtime SQLite/config owns persisted application state. Discord
+is the external resource/rendering surface. Resource IDs live in settings and
+feature tables; name fallback policies differ by feature. See
+[identity/repair contracts](SERVER_STRUCTURE.md), including the legacy exceptions.
 
-## Managed message customization
+A game record/role is independent of an optional Game Area. LFG cards render
+transactional event/member state. Ticket storage holds metadata/state/private
+IDs; closure keeps Discord history and locks posting, with no implemented
+automatic transcript export. Suggestions and streamer resources have their own
+tables/lifecycles. Never add live content as source fixtures.
 
-`services/server_service.py::upsert_fixed_message` remains the only fixed-message creation/refresh abstraction. Its explicit editable-board registry in `services/managed_message_service.py` layers customization onto existing setting keys and message IDs. `cogs/managed_messages.py` replaces the former generic pin editor under `/server pinned-messages`; it does not create arbitrary pins.
+Owner /server setup inspects then confirms focused repair. /server health is
+read-only. Targeted sync commands have narrower contracts: sync-support refreshes
+adopted boards, while instant-gaming can create/recover its four channels. Do not
+assume all commands named sync have identical side effects.
 
-SQLite `managed_message_content` stores each board's latest generated defaults, canonical Markdown, ordered structured buttons, identity, content hash, customization flag, delivery state and version. `managed_message_audit` records actor/channel/key, timestamp, edit/reset, content/buttons changed flags and before/after hashes, without bodies or URLs. Treat both tables as private runtime data.
+`cogs/server_changes.py` adds persistent staff approval buttons over
+`services/channel_change_service.py`. Channel update/delete events compare monitored
+support/IG IDs with existing desired state; exact expected edits suppress self-events.
+Four-second coalescing, persisted pending records and existing owner/admin checks keep
+adoption explicit. High-risk private/bot permission drift invokes the existing safe
+permission helpers immediately. See [scope, actions and recovery](SERVER_STRUCTURE.md#detected-changes-and-approval).
 
-Refresh and editor saves share per-key asyncio locks within the single supported bot process. Draft versions detect changes since opening; UI generations invalidate previous menus/modals. Saves validate and recheck current owner/admin access and mapped bot-owned pinned-message fingerprints, persist canonical intent/audit, then edit that exact Discord message. Failed/uncertain HTTP leaves pending delivery for health and normal repair to reconcile using the old or intended content fingerprint. The editor never sends a replacement pin. Normal repair can recover an actually deleted message; customized retired partner pins are retained for manual review.
+Partner overview mentions come from persisted channel mappings; missing
+destinations are omitted and reported. Gaming News and Gaming Deals lead PARTNERS & BENEFITS, followed by Amazon, AI Tools and Haushaltscheck,
+while retaining the partner message key/affiliate button. Instant Gaming also
+owns News and private Purchases/Buyer Ranking; missing external bot config must
+not prevent channel preparation.
 
-Normal startup/setup/sync preserves customized bodies and buttons while recording new defaults for a later confirmed reset. Allowlisted action buttons keep existing persistent custom IDs and callbacks, restricted to their canonical board so ticket-source checks still apply after restart. Link buttons accept public HTTPS URLs and reject credential-bearing configuration. Preview components are inert; live mentions never ping on editor saves. Read-only health checks mappings, duplicate identities, fingerprints, pin state, configuration/action allowlists and pending delivery; changed custom headings are valid.
+Fixed-message customization uses existing IDs plus managed_message_content and
+managed_message_audit. Locks, version checks, canonical intent, pending delivery,
+ownership/fingerprint checks and confirmed reset are detailed once in
+[Managed messages](MANAGED_MESSAGES.md). Selectors/LFG cards retain their own
+specialized renderers; do not force them into the public pin editor.
 
-## Haushaltscheck migration and external deal posting
+Legacy Haushaltscheck migration journals IDs and retires known defaults while
+preserving custom/uncertain content and old tickets. legacy_finance_service can
+delete a recorded, dependency-free, fully inspected legacy finanzberatung only
+during explicit owner repair. Health shares inspection, not deletion. See
+[partner migration](PARTNERS.md) for its full safety contract.
 
-Owner repair journals recorded legacy energy/course/finance message IDs before reusing a channel for Haushaltscheck. Once all replacement pins exist, it retires known default messages; uncertain/customized content and all historical tickets remain. Old ticket types are read-only compatibility types for existing ticket lifecycle actions, never accepted for creation. Retired managed registry rows remain in SQLite but are excluded from active editing/health. Completed migrations retire obsolete active channel/message settings into historical `retired_partner_channel` / `retired_partner_message` identities, retaining legacy-channel manual-review tracking. The new request type uses the existing ticket service, per-type limit, privacy, audit and persistent buttons.
+## Operations and current constraints
 
-Optional `INSTANT_GAMING_BOT_ID` identifies an externally installed bot member. Owner repair grants only that member posting/embed/attachment access in gaming-deals. Other boards remain read-only. Marketing configuration and affiliate attribution belong to the official external bot; GamerHQ does not scrape, publish deals or enable purchase notifications.
+Compose separates /opt/gamerhq/app from private environment, data and backups;
+the seed stays visible inside the image. Backup uses SQLite backup/verification,
+and production preflight rehearses migrations on a temporary copy. Host locks
+coordinate updates/backups. See [deployment](../DEPLOY.md) and
+[rollback](../ROLLBACK.md); do not duplicate their operational commands here.
 
-## Production operations
+Identity resolution and permission logic are feature-specific; some legacy/global
+setting keys coexist with guild-scoped keys. Cross-feature changes must inspect
+both callers and tests. Do not silently rename keys, assume multi-process safety
+or perform a cleanup/refactor simply to make this architecture diagram stricter.
 
-Compose reads `/opt/gamerhq/.env` and mounts sibling data/backups outside the checkout. A local gateway/event-loop heartbeat supplies container health with no exposed port. The systemd timer invokes a one-off backup container with an update/backup lock; verified daily snapshots alone are eligible for explicit 14-snapshot retention. Production preflight rehearses schema initialization on disposable SQLite. See [deployment](../DEPLOY.md) and [rollback](../ROLLBACK.md).
+Optional onboarding and role boards are owned by `cogs/roles.py`, `role_service.py` and `role_panel_service.py`; per-game LFG preferences reuse the Games selector. See [role settings and migration](ROLE_SETTINGS.md).
 
-Legacy finanzberatung retirement is restricted to explicit owner setup Repair after replacement pins and mapping migration complete. `legacy_finance_service` shares read-only safety inspection with health: persisted identity, channel name/location, all stored resource dependencies, managed fingerprints, full message history, active/public/private archived threads and inspection permissions. Safe channels are REPAIRABLE; uncertainty is MANUAL_REVIEW with an exact reason. Sync/startup never call finance deletion. Historical tickets and audit/retired records remain stored. See [partner rollout and benefits-first copy](PARTNERS.md).
+`bot_group_service` orchestrates verified-identity Music Bots/Gaming Bots grouping during explicit owner Repair, reusing `music_bot_service` mappings and access logic. `instant_gaming_service` retains private IG resource keys while migrating channel IDs into AFFILIATE STATS. `support_service` owns Free Games and its independent editor pin; only DealGecko receives its scoped posting grant. No external bot API or automatic kick is used.

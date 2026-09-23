@@ -23,6 +23,9 @@ def discord_id(name):
 
 
 INSTANT_GAMING_BOT_ID = discord_id("INSTANT_GAMING_BOT_ID")
+DEALGECKO_BOT_ID = discord_id("DEALGECKO_BOT_ID")
+JOCKIE_MUSIC_BOT_ID = discord_id("JOCKIE_MUSIC_BOT_ID")
+PANCAKE_BOT_ID = discord_id("PANCAKE_BOT_ID")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")

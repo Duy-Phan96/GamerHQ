@@ -23,7 +23,7 @@ def resolve_music_role(guild, *, persist=True):
         if role is None:
             return None, 'Configured Music Bots role is missing; configure it with /server music-bots-role.'
     else:
-        matches = [r for r in guild.roles if r.name.casefold() == 'music bots']
+        matches = [r for r in guild.roles if re.sub(r'[^a-z0-9]+', ' ', r.name.casefold()).strip() == 'music bots']
         if len(matches) != 1:
             return None, 'Music Bots role not found uniquely; configure it with /server music-bots-role.'
         role = matches[0]
@@ -41,7 +41,7 @@ def music_overwrite(kind):
 
 def blocked_name(obj):
     words = set(re.sub(r'[^a-z0-9]+', ' ', obj.name.casefold()).split())
-    return bool(words & {'staff', 'admin', 'admins', 'administration', 'moderation', 'moderator', 'management', 'private', 'ticket', 'tickets', 'support'})
+    return bool(words & {'staff', 'admin', 'admins', 'administration', 'moderation', 'moderator', 'management', 'private', 'affiliate', 'ticket', 'tickets', 'support'})
 
 
 def should_allow_music_bots(channel):

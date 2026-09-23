@@ -47,6 +47,8 @@ async def scan(guild, bot=None, *, messages=True):
     except sqlite3.Error:
         add('Database','CRITICAL','Storage unavailable or schema incomplete; check runtime logs before repair.')
         return findings
+    from services.instant_gaming_service import diagnostics
+    findings.extend(Finding(*row) for row in await diagnostics(guild, messages=messages))
     if bot:
         inventory = command_inventory(bot,guild)
         missing = {'server health','server setup','area manage','voice manage','lfg create','lfg manage','lfg join-code'} - {name for name,_ in inventory}
@@ -85,14 +87,20 @@ async def scan(guild, bot=None, *, messages=True):
         category = next((c for c in guild.categories if alias(c.name)=='start-here'),None)
         support = support_resource(guild, 'channel')
         channels['support-gamerhq'] = support
-        valid = category and support and support.name == CHANNEL_NAME and support.category_id == category.id
-        add('Support GamerHQ', 'PASS' if valid else 'REPAIRABLE', 'Affiliate board structure checked; owner setup creates/repairs it.')
+        from services.channel_adoption_service import placement as adopted_placement
+        display, category = adopted_placement(guild, 'support-gamerhq', CHANNEL_NAME, category)
+        valid = category and support and support.name == display and support.category_id == category.id
+        from services.channel_change_service import removed
+        add('Support GamerHQ', 'PASS' if valid or removed(guild, 'support-gamerhq') else 'REPAIRABLE', 'Affiliate board structure checked; owner setup creates/repairs it.')
         if support:
             overwrite = support.overwrites_for(guild.default_role)
-            if overwrite.send_messages is not False or overwrite.view_channel is not True or overwrite.read_message_history is not True:
+            from services.channel_adoption_service import stored
+            expected_send = stored(guild, 'support-gamerhq').get('send_messages', False)
+            if overwrite.send_messages is not expected_send or overwrite.view_channel is not True or overwrite.read_message_history is not True:
                 add('Support permissions','REPAIRABLE','Support board needs public read-only permissions.')
     except ServerMessageError:
         add('Support GamerHQ','MANUAL_REVIEW','Ambiguous support resources; no automatic merge.')
+    from services.channel_adoption_service import stored as adoption_stored
     from services.support_service import resource, PARTNER_CHANNELS, PARTNER_CATEGORY
     try:
         from services import legacy_finance_service as finance
@@ -107,14 +115,35 @@ async def scan(guild, bot=None, *, messages=True):
         if any(db.get_setting(f'{key}:{guild.id}') for key in ('partner_split', 'partner_reorder', 'household_migration')):
             add('Partner migration', 'REPAIRABLE', 'Partner migration pending; repair permissions and rerun setup/sync.')
         partners = resource(guild, 'partners-benefits', True)
-        add('PARTNERS & BENEFITS', 'PASS' if partners and partners.name == PARTNER_CATEGORY else 'REPAIRABLE', 'Owner setup creates/reuses the partner category.')
+        from services.support_service import direct_support_retirement_reason, channel_key
+        direct_id = db.get_setting(channel_key(guild, 'direct-support'))
+        direct = guild.get_channel(int(direct_id)) if direct_id and direct_id.isdigit() else None
+        if direct_id:
+            try:
+                reason = await direct_support_retirement_reason(guild, direct) if direct else None
+            except discord.HTTPException as exc:
+                reason = f'Cannot inspect direct-support: {type(exc).__name__}'
+            add('Retired direct-support', 'MANUAL_REVIEW' if reason else 'REPAIRABLE',
+                reason or 'Owner setup Repair removes the obsolete managed channel/mappings.')
+        from services.channel_adoption_service import order_plans, diagnostics as adoption_diagnostics
+        snapshot = await guild.fetch_channels()
+        for row in adoption_diagnostics(guild, snapshot):
+            add(*row)
+        plans = order_plans(guild, snapshot)
+        correct = all([c.id for c in current] == [c.id for c in ordered] for current, ordered in plans)
+        add('Partner channel order', 'PASS' if correct else 'REPAIRABLE',
+            'Compared to default/adopted order; explicit sync restores desired state.')
+        add('PARTNERS & BENEFITS', 'PASS' if partners else 'REPAIRABLE', 'Owner setup creates/reuses the mapped partner category.')
         for name, display in PARTNER_CHANNELS.items():
+            if removed(guild, name):
+                continue
             ch = resource(guild, name)
             channels[name] = ch
             rights = ch.overwrites_for(guild.default_role) if ch else None
             mapped_id = db.get_setting(f'managed_channel:{guild.id}:{name}')
-            valid = ch and str(ch.id) == mapped_id and partners and ch.category_id == partners.id and ch.name == display
-            valid = valid and rights.view_channel is True and rights.read_message_history is True and rights.send_messages is False
+            display, placement = adopted_placement(guild, name, display, partners)
+            valid = ch and str(ch.id) == mapped_id and placement and ch.category_id == placement.id and ch.name == display
+            valid = valid and rights.view_channel is True and rights.read_message_history is True and rights.send_messages is adoption_stored(guild, name).get('send_messages', False)
             add(name, 'PASS' if valid else 'REPAIRABLE', 'Managed channel ID, partner placement and read-only permissions checked; owner setup repairs missing mappings.')
     except ServerMessageError:
         add('PARTNERS & BENEFITS', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
@@ -123,6 +152,20 @@ async def scan(guild, bot=None, *, messages=True):
         expected = {'gamerhq:offers:household-check'}
         add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent HOUSEHOLD_CHECK_REQUEST handler checked; restart after updating if missing.')
     add('Instant Gaming integration', 'INFO', 'Optional external configuration; see docs/INSTANT_GAMING.md. No external bot is required for GamerHQ health.')
+    from services.bot_group_service import diagnostics as bot_groups_health, member as bot_member
+    for row in bot_groups_health(guild):
+        add(*row)
+    from services.instant_gaming_service import affiliate_category, overwrites as ig_overwrites, BOT_RIGHTS
+    try:
+        stats = affiliate_category(guild)
+        valid = stats and stats.overwrites == ig_overwrites(guild, 'ig-purchases', stats.overwrites)
+        add('Affiliate Stats', 'PASS' if valid else 'REPAIRABLE', 'Private category and explicit Instant Gaming discovery access checked.')
+        free = resource(guild, 'free-games')
+        dealgecko = bot_member(guild, 'dealgecko')
+        access = free and dealgecko and all(getattr(free.overwrites_for(dealgecko), bit) is True and getattr(free.permissions_for(dealgecko), bit) for bit in BOT_RIGHTS)
+        add('DealGecko free-games access', 'PASS' if access else 'WARN', 'Optional bot posting access checked; configure verified DEALGECKO_BOT_ID and owner Repair if missing.')
+    except ServerMessageError as exc:
+        add('Affiliate/free-games resources', 'MANUAL_REVIEW', str(exc))
     from services import ticket_service as tickets
     from services.onboarding_service import is_staff
     add('Ticket Staff access','PASS' if any(is_staff(r) for r in guild.roles) else 'WARN','Uses current moderation roles and server owner; review role policy.')
@@ -254,6 +297,17 @@ async def scan(guild, bot=None, *, messages=True):
     add('LFG persistence','PASS',f'{len(events)} stored lobbies readable; history retained.')
     missing=sum(not r['staff_message_id'] for r in suggestions)
     add('Suggestion persistence','WARN' if missing else 'PASS',f'{len(suggestions)} records; {missing} deliveries not confirmed. Recovery does not blindly repost.')
+    from services.channel_change_service import records as change_records
+    pending = change_records(guild.id)
+    for status in ('pending', 'ignored', 'repair_failed', 'auto_repaired', 'expired'):
+        count = sum(r['status'] == status for r in pending)
+        if count:
+            add('Managed changes: ' + status, 'CRITICAL' if status == 'repair_failed' else 'INFO' if status == 'auto_repaired' else 'WARN', f'{count} change(s); review the private bot-log notification.')
+    if any(not r.get('message_id') for r in pending):
+        add('Managed change delivery', 'WARN', 'Undelivered changes; configure an existing private bot-log and verify bot access.')
+    from services.role_panel_service import diagnostics as role_diagnostics
+    role_issues = await role_diagnostics(guild, messages=messages)
+    add('Role settings', 'WARN' if role_issues else 'PASS', '; '.join(role_issues) if role_issues else 'Managed role panels and notification mappings valid.')
     return findings
 
 
@@ -261,5 +315,5 @@ def summary(findings):
     counts={s:sum(f.state==s for f in findings) for s in ('PASS','WARN','REPAIRABLE','MANUAL_REVIEW','CRITICAL')}
     lines=['# GamerHQ Health',f'✅ {counts["PASS"]} passed · 🔧 {counts["REPAIRABLE"]} repairable · ⚠️ {counts["WARN"]+counts["MANUAL_REVIEW"]} warnings/review · ❌ {counts["CRITICAL"]} critical']
     for f in [f for f in findings if f.state!='PASS'][:9]: lines.append(f'• {f.name}: {f.detail[:120]}')
-    lines.append('Health is read-only. Owner `/server setup` previews known repairs; unknown resources require review.')
+    lines.append('Health is read-only. `/server setup` previews repairs; `/server adopt` keeps intentional supported changes.')
     return '\n'.join(lines)[:1900]

@@ -11,22 +11,22 @@ from services.onboarding_service import alias, unique, guide_overwrites, set_rea
 from services.server_service import ServerMessageError, upsert_fixed_message, pin_managed_message
 from services.music_bot_service import blocked_name
 
+async def tracked_edit(channel, **kwargs):
+    from services.channel_change_service import edit
+    return await edit(channel, **kwargs)
+
+
 CHANNEL_NAME = '💜・support-gamerhq'
-TITLE = '# 🤝 Partners & Benefits'
-INTRO_TEXT = TITLE + "\n\nLooking for useful deals, tools or services?\n\nUnder **PARTNERS & BENEFITS** you'll find selected offers and resources that may be useful to you."
+TITLE = '# 💙 Support GamerHQ'
+INTRO_TEXT = TITLE + "\n\nWant to support GamerHQ?\n\nYou can support us directly, or simply use one of our partner and deal links when you are planning to buy something anyway.\n\nEvery bit of support helps us keep GamerHQ running and improve the community. 💙\n\nCheck out our partner offers in **🤝 PARTNERS & BENEFITS**:"
 DISCLOSURE = 'Some links may be affiliate or referral links.'
+FREE_GAMES_TEXT = '# 🎁 Free Games\n\nFree games and limited-time free-to-keep offers will be posted here automatically.\n\nKeep an eye on the channel so you don\'t miss them. 🎮'
 PARTNER_NAVIGATION = (
-    ('direct-support', '💜', 'Direct Support'), ('amazon', '🛒', 'Amazon'),
+    ('gaming-news', '📰', 'Gaming News'), ('gaming-deals', '🔥', 'Gaming Deals'), ('free-games', '🎁', 'Free Games'),
+    ('amazon', '🛒', 'Amazon'), ('ai-tools', '🤖', 'AI Tools'),
     ('haushaltscheck', '🇩🇪', 'Haushaltscheck'),
-    ('gaming-deals', '🎮', 'Gaming Deals'), ('ai-tools', '🤖', 'AI Tools'),
 )
-DIRECT_TEXT = """# 💜 Direct Support
-
-Want to support GamerHQ directly?
-
-A direct support option will be available here soon.
-
-**Coming Soon**"""
+DIRECT_TEXT = "# 💜 Direct Support\n\nWant to support GamerHQ directly?\n\nA direct support option will be available here soon.\n\n**Coming Soon**"  # Retirement fingerprint only.
 AMAZON_TEXT = """# 🛒 Amazon
 
 Use the link below when shopping on Amazon.
@@ -53,15 +53,12 @@ gecheckt werden.
 Du bekommst mehrere passende Tarife übersichtlich zusammengestellt und als PDF zum Vergleichen.
 
 So kannst du Preis und Leistung in Ruhe vergleichen und selbst entscheiden, ob und welches Angebot für dich sinnvoll ist."""
-GAMING_TEXT = """# 🎮 Gaming Deals
-
-Find current gaming deals, promotions and releases here.
-
-Affiliate / referral link"""
+from services.instant_gaming_service import CHANNELS as INSTANT_GAMING_CHANNELS
+GAMING_TEXT = INSTANT_GAMING_CHANNELS['gaming-deals'][1]
 PARTNER_CATEGORY = '🤝 PARTNERS & BENEFITS'
-PARTNER_CHANNELS = {'direct-support':'💜・direct-support', 'amazon':'🛒・amazon', 'haushaltscheck':'🇩🇪・haushaltscheck', 'gaming-deals':'🎮・gaming-deals', 'ai-tools':'🤖・ai-tools'}
+PARTNER_CHANNELS = {'gaming-news':'📰・gaming-news', 'gaming-deals':'🔥・gaming-deals', 'free-games':'🎁・free-games', 'amazon':'🛒・amazon', 'ai-tools':'🤖・ai-tools', 'haushaltscheck':'🇩🇪・haushaltscheck'}
 LEGACY_SECTIONS = ('intro','transparency','instant_gaming','pixverse','amazon','energy','energy_sales')
-LEGACY_HEADINGS = {TITLE, '# 💜 Support GamerHQ', '## ℹ️ Transparency', '## 🎮 Instant Gaming', '## 🤖 PixVerse', '## 🛒 Amazon', '## 🇩🇪 For Germany', '## 🇩🇪 For Germans', '## 🎓 Strom & Gas Vertrieb'}
+LEGACY_HEADINGS = {TITLE, '# 🤝 Partners & Benefits', '# 💜 Support GamerHQ', '## ℹ️ Transparency', '## 🎮 Instant Gaming', '## 🤖 PixVerse', '## 🛒 Amazon', '## 🇩🇪 For Germany', '## 🇩🇪 For Germans', '## 🎓 Strom & Gas Vertrieb'}
 _locks = {}
 log = logging.getLogger(__name__)
 
@@ -102,11 +99,11 @@ def legacy_message_key(guild, section='intro'):
 
 
 def section_channel(section):
-    return {'intro':'support-gamerhq', 'direct':'direct-support', 'amazon':'amazon', 'household':'haushaltscheck', 'instant_gaming':'gaming-deals', 'pixverse':'ai-tools'}[section]
+    return {'intro':'support-gamerhq', 'free_games':'free-games', 'amazon':'amazon', 'household':'haushaltscheck', 'instant_gaming':'gaming-deals', 'pixverse':'ai-tools'}[section]
 
 
 def support_sections(channel_name=None):
-    sections = [('intro', INTRO_TEXT, None), ('direct', DIRECT_TEXT, None), ('amazon', AMAZON_TEXT, AFFILIATES[2]),
+    sections = [('intro', INTRO_TEXT, None), ('free_games', FREE_GAMES_TEXT, None), ('amazon', AMAZON_TEXT, AFFILIATES[2]),
                 ('household', HOUSEHOLD_TEXT, None),
                 ('instant_gaming', GAMING_TEXT, AFFILIATES[0]),
                 ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\n' + AFFILIATES[1].copy + '\n\nAffiliate / referral link', AFFILIATES[1])]
@@ -121,8 +118,12 @@ def support_text(channels=None):
     parts = [INTRO_TEXT]
     if bullets:
         parts.append('\n'.join(bullets))
-    if len(bullets) != len(PARTNER_NAVIGATION):
+    from services.channel_change_service import removed
+    guild = next(iter(channels.values())).guild if channels else None
+    expected = sum(not guild or not removed(guild, name) for name, _, _ in PARTNER_NAVIGATION)
+    if len(bullets) != expected:
         parts.append('More partner channels are being set up.')
+    parts.append('No extra purchase is required — just use the links whenever they are useful to you.')
     parts.append(DISCLOSURE)
     return '\n\n'.join(parts)
 
@@ -134,14 +135,26 @@ def section_view(section, affiliate):
         label = f'{affiliate.emoji} Open {affiliate.name}'
         view.add_item(discord.ui.Button(label=label, url=affiliate.url))
         return view
-    return None if section in ('intro', 'direct') else SupportOffers(section)
+    return None if section in ('intro', 'direct', 'free_games') else SupportOffers(section)
 
 
 def resource(guild, name, category=False):
+    from services.channel_change_service import removed
+    if not category and removed(guild, name):
+        return None
     collection = guild.categories if category else guild.text_channels
     key = f'managed_category:{guild.id}:{name}' if category else channel_key(guild, name)
     raw = db.get_setting(key)
     stored = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+    if category and name == 'partners-benefits':
+        if stored in collection:
+            if blocked_name(stored):
+                raise ServerMessageError('Mapped partner category is protected/private; review manually.')
+            return stored
+        matches = [c for c in collection if alias(c.name) in {'partners-benefits', 'partner-benefits'}]
+        if len(matches) > 1:
+            raise ServerMessageError('Multiple partner categories found; review manually. No category created.')
+        return matches[0] if matches else None
     named = unique(collection, name)
     if stored in collection:
         if named and named.id != stored.id:
@@ -163,7 +176,7 @@ def guide_reference(guild):
 def matches_section(message, content):
     heading = (message.content or '').split('\n', 1)[0]
     expected = content.split('\n', 1)[0]
-    return heading == expected or (expected == TITLE and heading == '# 💜 Support GamerHQ')
+    return heading == expected or (expected == TITLE and heading in {'# 💜 Support GamerHQ', '# 🤝 Partners & Benefits'}) or (expected == '# 🔥 Gaming Deals' and heading == '# 🎮 Gaming Deals')
 
 
 async def remove_empty_legacy_category(guild):
@@ -341,16 +354,116 @@ async def finish_household_migration(guild):
         conn.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (f'household_migrated:{guild.id}', '1'))
 
 
-async def sync_support_messages(guild, channel=None):
+async def order_partner_channels(guild):
+    from services.channel_adoption_service import apply_order
+    await apply_order(guild)
+
+
+def free_games_overwrites(channel):
+    from services.bot_group_service import member
+    from services.instant_gaming_service import BOT_RIGHTS
+    from services.music_bot_service import DENIED_RIGHTS
+    rights = guide_overwrites(channel)
+    bot = member(channel.guild, 'dealgecko')
+    if bot:
+        rights[bot] = discord.PermissionOverwrite(**{**dict.fromkeys(DENIED_RIGHTS, False),
+                                                     **dict.fromkeys(BOT_RIGHTS, True)})
+    return rights
+
+
+async def repair_free_games(channel):
+    rights = free_games_overwrites(channel)
+    if channel.overwrites != rights:
+        await tracked_edit(channel, overwrites=rights, reason='GamerHQ read-only free games with DealGecko posting')
+
+
+async def direct_support_retirement_reason(guild, channel):
+    """Inspect only the recorded obsolete channel; never adopt by display name."""
+    from services import managed_message_service as managed
+    if channel.id not in {c.id for c in guild.text_channels}:
+        return 'recorded resource is not a text channel'
+    if alias(channel.name) != 'direct-support' or (channel.category and blocked_name(channel.category)):
+        return 'recorded channel was renamed or moved to a protected category'
+    identity = channel_key(guild, 'direct-support')
+    pin_key = message_key(guild, 'direct')
+    with db.connect() as conn:
+        for row in conn.execute('SELECT key,value FROM settings'):
+            if row['value'] == str(channel.id) and row['key'] != identity:
+                return f'stored setting dependency: {row["key"]}'
+        for table in ('games', 'support_tickets', 'suggestions', 'lfg_events',
+                      'lfg_event_messages', 'temp_voice_channels', 'streamer_profiles', 'streamer_channels'):
+            fields = [r['name'] for r in conn.execute(f'PRAGMA table_info({table})')
+                      if r['name'].endswith('channel_id') or r['name'] == 'category_id']
+            for field in fields:
+                if conn.execute(f'SELECT 1 FROM {table} WHERE {field}=?', (channel.id,)).fetchone():
+                    return f'stored resource dependency: {table}.{field}'
+    if any(s.get('channel_id') == channel.id and s['key'] != pin_key for s in managed.records(guild)):
+        return 'another managed message depends on this channel'
+    state = managed.load(pin_key)
+    raw = db.get_setting(pin_key)
+    ids = {int(raw)} if raw and raw.isdigit() else set()
+    if state and state.get('channel_id') == channel.id:
+        ids.add(state['message_id'])
+    permissions = channel.permissions_for(guild.me)
+    if not (permissions.view_channel and permissions.read_message_history and permissions.manage_threads):
+        return 'insufficient permissions to inspect history and threads'
+    if any(t.parent_id == channel.id for t in await guild.active_threads()):
+        return 'active threads exist'
+    for private in (False, True):
+        async for thread in channel.archived_threads(limit=None, private=private):
+            return 'archived threads exist'
+    async for message in channel.history(limit=None):
+        if (message.type == discord.MessageType.pins_add and message.author.id == guild.me.id
+                and getattr(getattr(message, 'reference', None), 'message_id', None) in ids):
+            continue
+        if (message.id not in ids or message.author.id != guild.me.id
+                or message.content != DIRECT_TEXT or message.embeds or getattr(message, 'attachments', None)):
+            return 'contains custom or unrelated content; preserve for manual review'
+        if state and (state.get('customized') or state.get('pending') or not managed.owns(state, channel, message)):
+            return 'contains customized or pending managed content'
+    return None
+
+
+async def retire_direct_support(guild):
+    raw = db.get_setting(channel_key(guild, 'direct-support'))
+    if not raw or not raw.isdigit():
+        return None
+    from services import managed_message_service as managed
+    try:
+        channel = next((c for c in await guild.fetch_channels() if c.id == int(raw)), None)
+        if channel:
+            reason = await direct_support_retirement_reason(guild, channel)
+            if reason:
+                return 'MANUAL_REVIEW: direct-support — ' + reason
+            await channel.delete(reason='GamerHQ Repair: direct support is now in support-gamerhq')
+    except discord.HTTPException as exc:
+        return f'MANUAL_REVIEW: direct-support — {type(exc).__name__}; retry Repair'
+    state = managed.load(message_key(guild, 'direct'))
+    if state:
+        state['retired'] = True
+        managed.store(state)
+    with db.connect() as conn:
+        for key in (channel_key(guild, 'direct-support'), message_key(guild, 'direct')):
+            conn.execute('DELETE FROM settings WHERE key=?', (key,))
+    return 'Retired direct-support channel and active mappings; support remains in support-gamerhq.'
+
+
+async def sync_support_messages(guild, channel=None, *, order=False):
     """Refresh adopted channels only; owner repair creates the structure."""
     async with _locks.setdefault(guild.id, asyncio.Lock()):
         channels = {}
-        for name in ['support-gamerhq', *PARTNER_CHANNELS]:
+        from services.channel_change_service import removed
+        active = [name for name in ['support-gamerhq', *PARTNER_CHANNELS] if not removed(guild, name)]
+        for name in active:
             raw = db.get_setting(channel_key(guild, name))
-            target = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
-            if target in guild.text_channels:
+            target = channel if channel and str(channel.id) == raw else guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+            if target in guild.text_channels or target is channel and channel is not None:
                 channels[name] = target
-        if len(channels) != 1 + len(PARTNER_CHANNELS):
+        if order:
+            from services.channel_adoption_service import apply_layout
+            await apply_layout(guild)
+            await order_partner_channels(guild)
+        if len(channels) != len(active):
             # Never retain dangling navigation or adopt a name-only lookalike.
             # Repair remains owner-controlled; sync reports the incomplete setup.
             if 'support-gamerhq' in channels:
@@ -362,6 +475,8 @@ async def sync_support_messages(guild, channel=None):
             return None
         result = {'messages': [], 'pin_failures': [], 'retained_messages': []}
         for section, content, affiliate in support_sections():
+            if removed(guild, section_channel(section)):
+                continue
             target = channels[section_channel(section)]
             if section == 'intro':
                 content = support_text(channels)
@@ -382,7 +497,8 @@ async def sync_support_messages(guild, channel=None):
         if not result['pin_failures']:
             await finish_household_migration(guild)
             retire_partner_mappings(guild)
-            result['retained_messages'] = await retire_legacy_messages(guild, channels['support-gamerhq'], result['messages'])
+            if 'support-gamerhq' in channels:
+                result['retained_messages'] = await retire_legacy_messages(guild, channels['support-gamerhq'], result['messages'])
         result['retained_categories'] = await remove_empty_legacy_category(guild)
         result['manual_review_channels'] = [c.id for c in legacy_review_channels(guild)]
         return result
@@ -392,15 +508,43 @@ async def refresh_support(guild, channel=None):
     return await sync_support_messages(guild, channel)
 
 
+async def repair_partner_permissions(guild, category, *, feed_ids=()):
+    """Repair the category and mapped information boards, never unknown interactions."""
+    known_ids = set(feed_ids)
+    for name in (*PARTNER_CHANNELS, 'gaming-news'):
+        raw = db.get_setting(channel_key(guild, name))
+        if raw and raw.isdigit():
+            known_ids.add(int(raw))
+    rights = guide_overwrites(category)
+    if category.overwrites != rights:
+        # Discord propagates category updates to permission-synced children.
+        # Keep unknown interactions/private children unchanged; known boards can
+        # still be repaired individually and health reports category drift.
+        children = [c for c in await guild.fetch_channels() if getattr(c, 'category_id', None) == category.id]
+        if any(c.id not in known_ids and c.overwrites == category.overwrites for c in children):
+            log.warning('Partner category has unknown permission-synced children; category permissions retained. Review their intended policy before category repair.')
+        else:
+            await tracked_edit(category, overwrites=rights, reason='GamerHQ public read-only partner category')
+    db.set_setting(f'managed_category:{guild.id}:partners-benefits', category.id)
+    for name in PARTNER_CHANNELS:
+        if name in {'gaming-news', 'gaming-deals', 'free-games'}:
+            continue  # IG repairs feeds with their explicit bot grants.
+        raw = db.get_setting(channel_key(guild, name))
+        channel = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+        if channel in guild.text_channels and channel.category_id == category.id:
+            await set_read_only(channel)
+
+
 async def repair_support(guild, changed):
     # Resolve every collision/private target before creating or moving resources.
     start = unique(guild.categories, 'start-here')
     if start is None:
         raise ServerMessageError('START HERE must exist before support setup.')
     partners = resource(guild, 'partners-benefits', True)
-    channels = {name:resource(guild,name) for name in ['support-gamerhq', *PARTNER_CHANNELS]}
+    from services.channel_change_service import removed
+    channels = {name:resource(guild,name) for name in ['support-gamerhq', *PARTNER_CHANNELS] if not removed(guild, name)}
     legacy = [resource(guild, name) for name in LEGACY_CHANNELS]
-    if channels['haushaltscheck'] is None:
+    if 'haushaltscheck' in channels and channels['haushaltscheck'] is None:
         channels['haushaltscheck'] = next((c for name, c in zip(LEGACY_CHANNELS, legacy)
             if c and db.get_setting(channel_key(guild, name)) == str(c.id)), None)
     if partners and blocked_name(partners):
@@ -419,31 +563,34 @@ async def repair_support(guild, changed):
     if partners is None:
         partners = await guild.create_category(PARTNER_CATEGORY, overwrites=overwrites, reason='GamerHQ partner information')
         changed.append('Created PARTNERS & BENEFITS')
-    else:
-        await partners.edit(name=PARTNER_CATEGORY, reason='GamerHQ partner category naming')
+    await repair_partner_permissions(guild, partners, feed_ids=[c.id for c in channels.values() if c])
     db.set_setting(f'managed_category:{guild.id}:partners-benefits', partners.id)
     for name, channel in channels.items():
         target = start if name == 'support-gamerhq' else partners
         display = CHANNEL_NAME if name == 'support-gamerhq' else PARTNER_CHANNELS[name]
+        from services.channel_adoption_service import placement
+        display, target = placement(guild, name, display, target)
         if channel is None:
             channel = await target.create_text_channel(display, overwrites=overwrites, reason='GamerHQ read-only partner board')
         elif channel.name != display or channel.category_id != target.id:
-            channel = await channel.edit(name=display, category=target, sync_permissions=False, reason='GamerHQ partner board placement')
+            channel = await tracked_edit(channel, name=display, category=target, sync_permissions=False, reason='GamerHQ partner board placement')
         db.set_setting(channel_key(guild,name), channel.id)
-        await set_read_only(channel)
-        if name == 'gaming-deals':
-            from config import INSTANT_GAMING_BOT_ID
-            external = guild.get_member(INSTANT_GAMING_BOT_ID) if INSTANT_GAMING_BOT_ID else None
-            if external and external.bot and external.id != guild.me.id:
-                await channel.set_permissions(external, overwrite=discord.PermissionOverwrite(
-                    view_channel=True, read_message_history=True, send_messages=True,
-                    embed_links=True, attach_files=True, manage_channels=False,
-                    manage_roles=False, manage_messages=False, mention_everyone=False),
-                    reason='Configured external Instant Gaming publisher, gaming-deals only')
-    result = await sync_support_messages(guild)
+        if name in {'gaming-news', 'gaming-deals'}:
+            from services.instant_gaming_service import overwrites as feed_overwrites
+            rights = feed_overwrites(guild, name, channel.overwrites, target)
+            if channel.overwrites != rights:
+                await tracked_edit(channel, overwrites=rights, reason='GamerHQ public feed permissions')
+        elif name == 'free-games':
+            await repair_free_games(channel)
+        else:
+            await set_read_only(channel)
+    result = await sync_support_messages(guild, order=True)
     changed.append('Updated Partners & Benefits messages and navigation')
     if result and result['pin_failures']:
         raise ServerMessageError('Partner messages saved, but pinning failed: ' + ', '.join(result['pin_failures']) + '. Restore permissions and retry.')
+    retirement = await retire_direct_support(guild)
+    if retirement:
+        changed.append(retirement)
     from services import legacy_finance_service as finance
     await finance.repair(guild, changed)
     finance_ids = {c.id for c in finance.candidates(guild)}

@@ -17,10 +17,17 @@ from services.server_service import ServerMessageError
 
 _locks = {}
 ACTIONS = {
+    'START_ONBOARDING': ('Get Started', 'gamerhq:onboarding:start'),
     'HOUSEHOLD_CHECK_REQUEST': ('🔍 Haushaltscheck anfragen', 'gamerhq:offers:household-check'),
     'CREATE_SUPPORT_TICKET': ('Create Support Ticket', 'gamerhq:tickets:create'),
     'SUBMIT_SUGGESTION': ('Submit Suggestion', 'gamerhq:suggestions:submit'),
 }
+from services.role_service import ROLE_GROUPS
+ACTIONS.update({f'ROLE_{option.key}': (option.label, f'gamerhq:preference:base:{option.key}')
+                for options in ROLE_GROUPS.values() for option in options})
+ACTIONS.update({'ROLE_PROFILE': ('Update Profile', 'gamerhq:roles:select'),
+                'ROLE_SUGGEST': ('Suggest Role', 'gamerhq:roles:suggest')})
+
 
 
 def lock(key):
@@ -34,7 +41,8 @@ def digest(value):
 def specs(guild):
     from services.support_service import message_key, section_channel
     result = {}
-    for section, label in [('intro', 'Benefits Overview'), ('direct', 'Direct Support'),
+    result[f'instant_gaming_message:{guild.id}:gaming-news'] = ('Gaming News', f'managed_channel:{guild.id}:gaming-news', [])
+    for section, label in [('intro', 'Support GamerHQ'), ('free_games', 'Free Games'),
                            ('amazon', 'Amazon'), ('household', 'Haushaltscheck'),
                            ('instant_gaming', 'Gaming Deals'), ('pixverse', 'AI Tools')]:
         action = 'HOUSEHOLD_CHECK_REQUEST' if section == 'household' else None
@@ -43,10 +51,19 @@ def specs(guild):
                                     ('suggestions_entry', 'suggestions', 'Suggestions', 'SUBMIT_SUGGESTION'),
                                     ('ticket_entry', 'need-support', 'Need Support', 'CREATE_SUPPORT_TICKET')]:
         result[f'{key}:{guild.id}'] = (label, f'managed_channel:{guild.id}:{name}', [action] if action else [])
+    from services.role_panel_service import channel as role_channel, message_keys, SECTIONS
+    board = role_channel(guild)
+    if board:
+        keys = message_keys(guild, board)
+        mapping = f'managed_channel:{guild.id}:choose-your-roles'
+        result[keys['intro']] = ('Optional Settings', mapping, ['ROLE_PROFILE', 'ROLE_SUGGEST'])
+        for section, group, _ in SECTIONS:
+            result[keys[section]] = (group, mapping, [f'ROLE_{o.key}' for o in ROLE_GROUPS[group]])
     welcome = db.get_setting(f'onboarding:{guild.id}:welcome')
     if welcome and welcome.isdigit():
-        result[f'server_pinned_message_{welcome}'] = ('Welcome', f'onboarding:{guild.id}:welcome', [])
-    return result
+        result[f'server_pinned_message_{welcome}'] = ('Welcome', f'onboarding:{guild.id}:welcome', ['START_ONBOARDING'])
+    from services.channel_change_service import removed
+    return {key: spec for key, spec in result.items() if not removed(guild, spec[1].split(':')[-1])}
 
 
 def authorized(guild, user):
@@ -152,7 +169,13 @@ def render(buttons, *, preview=False):
             from cogs.tickets import SupportOffers, TicketEntry
             from cogs.suggestions import SuggestionEntryView
             action = config['target']
-            source = TicketEntry() if action == 'CREATE_SUPPORT_TICKET' else SuggestionEntryView() if action == 'SUBMIT_SUGGESTION' else SupportOffers()
+            from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView
+            source = OnboardingEntry() if action == 'START_ONBOARDING' else TicketEntry() if action == 'CREATE_SUPPORT_TICKET' else SuggestionEntryView() if action == 'SUBMIT_SUGGESTION' else SupportOffers()
+            if action in {'ROLE_PROFILE', 'ROLE_SUGGEST'}:
+                source = ChooseRolesHubView()
+            elif action.startswith('ROLE_'):
+                group = next(g for g, options in ROLE_GROUPS.items() if any('ROLE_' + o.key == action for o in options))
+                source = RoleToggleView(group)
             original = next(b for b in source.children if b.custom_id == ACTIONS[action][1])
             item = discord.ui.Button(style=original.style, custom_id=original.custom_id)
             item.callback = original.callback

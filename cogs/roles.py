@@ -182,7 +182,7 @@ class RoleSelectionSession(discord.ui.View):
 class SuggestRoleModal(discord.ui.Modal, title="💡 Suggest a Role"):
     role_type = discord.ui.TextInput(
         label="Type",
-        placeholder="Language, Platform, Playstyle, Notification or Other",
+        placeholder="Language, Platform, Notification or Other",
         required=True,
         max_length=40,
     )
@@ -214,7 +214,7 @@ class ChooseRolesHubView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="Select Roles",
+        label="Update Profile",
         emoji="👤",
         style=discord.ButtonStyle.primary,
         custom_id="gamerhq:roles:select",
@@ -223,8 +223,8 @@ class ChooseRolesHubView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
             return
-        session = RoleSelectionSession(interaction.user)
-        await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
+        session = ProfileStep(interaction.user.id)
+        await interaction.response.send_message(session.text(), view=session, ephemeral=True)
 
     @discord.ui.button(
         label="Suggest Role",
@@ -240,6 +240,82 @@ def build_choose_roles_view() -> discord.ui.View:
     return ChooseRolesHubView()
 
 
+class RoleToggleView(discord.ui.View):
+    def __init__(self, group):
+        super().__init__(timeout=None)
+        for option in ROLE_GROUPS[group]:
+            button = discord.ui.Button(label=option.label, emoji=option.emoji,
+                custom_id=f'gamerhq:preference:base:{option.key}')
+            async def callback(interaction, key=option.key, label=option.label):
+                from services.role_service import toggle_preference
+                await interaction.response.defer(ephemeral=True)
+                try:
+                    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+                        raise ValueError('Use these settings inside GamerHQ.')
+                    enabled = await toggle_preference(interaction.user, 'base', key)
+                    await interaction.followup.send(f'{"✅" if enabled else "❌"} {label} {"enabled" if enabled else "disabled"}.', ephemeral=True)
+                except (ValueError, discord.HTTPException) as exc:
+                    await interaction.followup.send(f'Could not update your preference: {exc}', ephemeral=True)
+            button.callback = callback
+            self.add_item(button)
+
+
+class ProfileStep(discord.ui.View):
+    """Optional profile steps; games are delegated to the existing selector."""
+    def __init__(self, member_id, step=0):
+        super().__init__(timeout=300)
+        self.member_id, self.step = member_id, step
+        group = ('Gender', 'Age group')[step]
+        for option in ROLE_GROUPS[group]:
+            button = discord.ui.Button(label=option.label, emoji=option.emoji)
+            async def callback(interaction, key=option.key):
+                await self.advance(interaction, key)
+            button.callback = callback
+            self.add_item(button)
+        skip = discord.ui.Button(label='Skip', style=discord.ButtonStyle.secondary)
+        skip.callback = self.advance
+        self.add_item(skip)
+
+    def text(self):
+        return f'**{("Gender", "Age group")[self.step]} (optional)**\nChoose a broad profile role or skip. Roles are visible on your server profile. No free-text data or birth date is collected.'
+
+    async def advance(self, interaction, key=None):
+        from services.role_service import toggle_preference
+        if not interaction.guild or interaction.user.id != self.member_id:
+            await interaction.response.send_message('This onboarding belongs to another member.', ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            if key:
+                await toggle_preference(interaction.user, 'base', key, exclusive=('Gender', 'Age group')[self.step])
+        except (ValueError, discord.HTTPException) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        if self.step == 0:
+            view = ProfileStep(self.member_id, 1)
+            await interaction.edit_original_response(content=view.text(), view=view)
+        else:
+            from cogs.games import GameSelectionSession
+            from database import db
+            games = [g for g in db.get_selectable_games() if g.get('role_id')]
+            view = GameSelectionSession(interaction.user, games)
+            await interaction.edit_original_response(content=view.status_text(), view=view)
+        self.stop()
+
+
+class OnboardingEntry(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label='Get Started', emoji='👋', custom_id='gamerhq:onboarding:start')
+    async def start(self, interaction, button):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message('Use this inside GamerHQ.', ephemeral=True)
+            return
+        view = ProfileStep(interaction.user.id)
+        await interaction.response.send_message(view.text(), view=view, ephemeral=True)
+
+
 class Roles(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -247,6 +323,10 @@ class Roles(commands.Cog):
     async def cog_load(self):
         # Persistent custom IDs keep the buttons working after bot restarts.
         self.bot.add_view(ChooseRolesHubView())
+        self.bot.add_view(OnboardingEntry())
+        from services.role_panel_service import SECTIONS
+        for _, group, _ in SECTIONS:
+            self.bot.add_view(RoleToggleView(group))
 
 
 async def setup(bot: commands.Bot):

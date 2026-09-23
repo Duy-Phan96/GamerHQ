@@ -21,7 +21,7 @@ def check(values, *, allow_new=False, db_path=None, backup_dir=None):
     token = str(values.get('DISCORD_TOKEN') or '').strip()
     if len(token) < 30 or any(word in token.lower() for word in ('your_token', 'placeholder', 'changeme', 'example')):
         errors.append('DISCORD_TOKEN is missing or an obvious placeholder')
-    for name in ('GUILD_ID', 'CHOOSE_GAMES_CHANNEL_ID', 'GAME_SUGGESTIONS_CHANNEL_ID', 'INTRODUCTIONS_CHANNEL_ID', 'INSTANT_GAMING_BOT_ID'):
+    for name in ('GUILD_ID', 'CHOOSE_GAMES_CHANNEL_ID', 'GAME_SUGGESTIONS_CHANNEL_ID', 'INTRODUCTIONS_CHANNEL_ID', 'INSTANT_GAMING_BOT_ID', 'DEALGECKO_BOT_ID', 'JOCKIE_MUSIC_BOT_ID', 'PANCAKE_BOT_ID'):
         raw = str(values.get(name) or '0').strip()
         if not raw.isdigit() or int(raw) < (1 if name in ('GUILD_ID', 'CHOOSE_GAMES_CHANNEL_ID') else 0):
             errors.append(f'{name} is not a valid Discord ID')

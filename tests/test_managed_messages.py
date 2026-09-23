@@ -61,12 +61,16 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_channel_single_autoselect_and_multiple_selection(self):
         states = await managed.available(self.guild)
-        self.assertEqual(len(states), 10)
+        self.assertEqual(len(states), 16)
         view = ui.Channels(ui.Session(self.guild, self.admin.id), states)
         interaction = self.interaction()
         amazon = self.draft(support.message_key(self.guild, 'amazon'))
         await view.choose(interaction, str(amazon['channel_id']))
         self.assertIsInstance(interaction.response.edit_message.call_args.kwargs['view'], ui.Main)
+        from services.role_panel_service import channel as role_channel
+        await view.choose(interaction, str(role_channel(self.guild).id))
+        self.assertIsInstance(interaction.response.edit_message.call_args.kwargs['view'], ui.Messages)
+        self.assertEqual(len(interaction.response.edit_message.call_args.kwargs['view'].children[0].options), 5)
         # Exercise the generic multi-message menu with two supported boards mapped to one channel.
         other = copy.deepcopy(amazon)
         other['channel_id'] = self.draft()['channel_id']
@@ -249,7 +253,11 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
     async def test_registered_callbacks_and_restart_custom_ids(self):
         from cogs.tickets import SupportOffers, TicketEntry
         from cogs.suggestions import SuggestionEntryView
-        registered = {b.custom_id for view in (SupportOffers(), TicketEntry(), SuggestionEntryView()) for b in view.children if b.custom_id}
+        from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView
+        from services.role_panel_service import SECTIONS
+        views = [SupportOffers(), TicketEntry(), SuggestionEntryView(), OnboardingEntry(), ChooseRolesHubView()]
+        views.extend(RoleToggleView(group) for _, group, _ in SECTIONS)
+        registered = {b.custom_id for view in views for b in view.children if b.custom_id}
         for state in await managed.available(self.guild):
             rendered = managed.render(state['buttons'])
             self.assertTrue(all(b.custom_id in registered for b in rendered.children if not b.url))

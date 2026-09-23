@@ -683,7 +683,8 @@ class CategoryGameSelect(discord.ui.Select):
         self.group = group
         games = session.games_by_group.get(group, [])
         options = []
-        for game in games[:25]:
+        self.visible_games = games[session.page * 25:(session.page + 1) * 25]
+        for game in self.visible_games:
             options.append(discord.SelectOption(
                 label=game["name"][:100],
                 value=str(game["id"]),
@@ -702,7 +703,7 @@ class CategoryGameSelect(discord.ui.Select):
         if interaction.user.id != self.session.member_id:
             await interaction.response.send_message("This game selector belongs to another user.", ephemeral=True)
             return
-        group_ids = {g["id"] for g in self.session.games_by_group.get(self.group, [])}
+        group_ids = {g["id"] for g in self.visible_games}
         self.session.pending_ids.difference_update(group_ids)
         self.session.pending_ids.update(int(value) for value in self.values)
         self.session.rebuild()
@@ -724,27 +725,41 @@ class CategoryButton(discord.ui.Button):
             await interaction.response.send_message("This game selector belongs to another user.", ephemeral=True)
             return
         self.session.current_group = self.group
+        self.session.page = 0
         self.session.rebuild()
         await interaction.response.edit_message(content=self.session.status_text(), view=self.session)
 
 
 class GameSelectionSession(discord.ui.View):
-    def __init__(self, member, games):
+    def __init__(self, member, games, *, notifications=False):
         super().__init__(timeout=300)
         self.member_id = member.id
         self.guild = member.guild
+        self.notifications = notifications
         self.games = games
         self.games_by_group = {group: [] for group in DISPLAY_GROUP_ORDER}
         for game in games:
             self.games_by_group.setdefault(game["display_group"], []).append(game)
         self.original_ids = set()
         for game in games:
-            role = self.guild.get_role(int(game["role_id"])) if game.get("role_id") else None
+            role = self.selected_role(game)
             if role and role in member.roles:
                 self.original_ids.add(game["id"])
+        self.page = 0
         self.pending_ids = set(self.original_ids)
         self.current_group = next((g for g in DISPLAY_GROUP_ORDER if self.games_by_group.get(g)), None)
         self.rebuild()
+
+    def selected_role(self, game):
+        from services.role_service import preference_role, assignable
+        if self.notifications:
+            try:
+                return preference_role(self.guild, 'lfg', str(game['id']))
+            except ValueError:
+                return None
+        fresh = next((g for g in db.get_selectable_games() if g['id'] == game['id']), None)
+        role = self.guild.get_role(int(fresh['role_id'])) if fresh and fresh.get('role_id') else None
+        return role if assignable(role, self.guild) else None
 
     def rebuild(self):
         self.clear_items()
@@ -753,6 +768,19 @@ class GameSelectionSession(discord.ui.View):
             self.add_item(CategoryButton(self, group, row=index // 5))
         if self.current_group:
             self.add_item(CategoryGameSelect(self, self.current_group))
+            pages = (len(self.games_by_group[self.current_group]) + 24) // 25
+            if pages > 1:
+                for label, delta in [('Previous', -1), ('Next', 1)]:
+                    button = discord.ui.Button(label=label, row=2, disabled=not 0 <= self.page + delta < pages)
+                    async def turn(interaction, delta=delta):
+                        if interaction.user.id != self.member_id:
+                            await interaction.response.send_message('This selector belongs to another member.', ephemeral=True)
+                            return
+                        self.page = max(0, min(pages - 1, self.page + delta))
+                        self.rebuild()
+                        await interaction.response.edit_message(content=self.status_text(), view=self)
+                    button.callback = turn
+                    self.add_item(button)
         confirm = discord.ui.Button(label="Confirm Selection", emoji="✅", style=discord.ButtonStyle.success, row=4)
         confirm.callback = self.confirm_selection
         self.add_item(confirm)
@@ -762,7 +790,7 @@ class GameSelectionSession(discord.ui.View):
 
     def status_text(self):
         return (
-            "🎮 **Select Games**\n"
+            ("🔔 **Game LFG Notifications**\n" if self.notifications else "🎮 **Select Games**\n") +
             "Choose a category, then select all games you want from it. You can switch categories freely; "
             "your choices stay saved until you confirm.\n\n"
             f"**Current category:** {self.current_group or 'None'}\n"
@@ -779,11 +807,14 @@ class GameSelectionSession(discord.ui.View):
         by_id = {g["id"]: g for g in self.games}
         add_roles, remove_roles, added, removed = [], [], [], []
         for gid in self.pending_ids-self.original_ids:
-            game=by_id.get(gid); role=self.guild.get_role(int(game["role_id"])) if game and game.get("role_id") else None
+            game=by_id.get(gid); role=self.selected_role(game) if game else None
             if role: add_roles.append(role); added.append(game["name"])
         for gid in self.original_ids-self.pending_ids:
-            game=by_id.get(gid); role=self.guild.get_role(int(game["role_id"])) if game and game.get("role_id") else None
+            game=by_id.get(gid); role=self.selected_role(game) if game else None
             if role: remove_roles.append(role); removed.append(game["name"])
+        if len(add_roles) + len(remove_roles) != len(self.pending_ids ^ self.original_ids):
+            await interaction.edit_original_response(content='A game role is missing or unsafe. Ask staff to sync roles, then reopen this selector.', view=None)
+            return
         try:
             if add_roles: await interaction.user.add_roles(*add_roles, reason="GamerHQ confirmed multi-game selection")
             if remove_roles: await interaction.user.remove_roles(*remove_roles, reason="GamerHQ confirmed multi-game selection")
@@ -791,7 +822,8 @@ class GameSelectionSession(discord.ui.View):
             await interaction.edit_original_response(content="❌ I could not update your game roles. Please ask staff to check the bot role position/permissions.", view=None); self.stop(); return
         except discord.HTTPException as exc:
             await interaction.edit_original_response(content=f"❌ Discord could not save the selection: `{exc}`", view=None); self.stop(); return
-        lines=["✅ **Your game selection has been saved.**"]
+        lines=["✅ **LFG notification preferences saved.**" if self.notifications else
+               "✅ **You're ready!**\nYou can customize notifications, languages and other preferences anytime in #choose-your-roles.\nGame LFG notifications are a separate opt-in in #choose-your-games."]
         if added: lines.append("\n**Added:** "+", ".join(sorted(added)))
         if removed: lines.append("\n**Removed:** "+", ".join(sorted(removed)))
         if not added and not removed: lines.append("\nNo roles needed to be changed.")
@@ -814,6 +846,15 @@ class ChooseGamesButtons(discord.ui.View):
         if not games:
             await interaction.response.send_message("No games are currently available for selection.", ephemeral=True); return
         session = GameSelectionSession(interaction.user, games)
+        await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
+
+    @discord.ui.button(label="LFG Notifications", emoji="🔔", custom_id="gamerhq:game_lfg_settings")
+    async def lfg_notifications(self, interaction, button):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message('Use this inside GamerHQ.', ephemeral=True)
+            return
+        games = db.get_selectable_games()
+        session = GameSelectionSession(interaction.user, games, notifications=True)
         await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
 
     @discord.ui.button(label="Suggest Game", emoji="💡", style=discord.ButtonStyle.secondary, custom_id="gamerhq:suggest_game")

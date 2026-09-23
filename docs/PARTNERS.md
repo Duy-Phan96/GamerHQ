@@ -5,16 +5,24 @@ START HERE
 ├─ 🆘・need-support
 └─ 💜・support-gamerhq
 🤝 PARTNERS & BENEFITS
-├─ 💜・direct-support
+├─ 📰・gaming-news
+├─ 🔥・gaming-deals
+├─ 🎁・free-games
 ├─ 🛒・amazon
-├─ 🇩🇪・haushaltscheck
-├─ 🎮・gaming-deals
-└─ 🤖・ai-tools
+├─ 🤖・ai-tools
+└─ 🇩🇪・haushaltscheck
 ```
 
-Six canonical messages across the overview and five partner channels. The overview, Direct Support, Amazon, Gaming Deals and AI Tools are English; only Haushaltscheck is German. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
+Seven canonical messages across the overview and six partner channels. The overview, Gaming News, Amazon, Gaming Deals and AI Tools are English; only Haushaltscheck is German. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
 
 ## Owner rollout and migration
+
+The existing 🤝 PARTNERS & BENEFITS category keeps the managed order shown above:
+News, Deals, Free Games, Amazon, AI Tools, Haushaltscheck by default. Explicitly adopted layout overrides are respected; other children retain their relative order.
+Its existing channel/message IDs, customization and affiliate button are retained.
+The overview still links it. Partner repair and Instant Gaming sync share the
+same defaults and message key; neither moves it back to START HERE.
+Purchases and Buyer Ranking are separate private AFFILIATE STATS feeds; see INSTANT_GAMING.md.
 
 Back up SQLite, restart reviewed code, inspect `/server health`, then owner `/server setup` → Repair. Repeat Repair and compare identities. Existing recorded strom-gas, germany-services or finanzberatung channels may be reused, in that preference order, if no Haushaltscheck exists. Reused channel IDs/history remain intact. Name-only legacy channels are retained for review rather than renamed automatically.
 
@@ -24,7 +32,7 @@ Unknown/manual messages, customized legacy pins and uncertain fingerprints are p
 
 Existing custom overview/Gaming Deals copy remains customized. Repair updates defaults without overwriting it; use the editor's confirmed Reset to Default to adopt new navigation/copy. `/server sync-support` refreshes adopted boards and can resume a previously authorized migration, but never creates missing channels. Missing navigation mappings are omitted and flagged by health.
 
-The overview presents useful deals, tools and services first. Direct Support is the only explicit financial-support path; affiliate boards use neutral disclosure.
+Support GamerHQ explains both direct support and support through useful partner/deal links. Owner Repair retires the recorded direct-support channel after publishing the overview, clears its active channel/pin mappings and retires editor state. Unknown/custom content, threads, dependencies or API failures retain the channel for manual review. No replacement is created.
 
 ## Final message texts
 
@@ -35,36 +43,28 @@ Mentions below are documentation placeholders. Runtime substitutes persisted Dis
 ### support-gamerhq
 
 ```text
-# 🤝 Partners & Benefits
+# 💙 Support GamerHQ
 
-Looking for useful deals, tools or services?
+Want to support GamerHQ?
 
-Under **PARTNERS & BENEFITS** you'll find selected offers and resources that may be useful to you.
+You can support us directly, or simply use one of our partner and deal links when you are planning to buy something anyway.
 
-- 💜 <direct-support channel mention> — Direct Support
+Every bit of support helps us keep GamerHQ running and improve the community. 💙
+
+Check out our partner offers in **🤝 PARTNERS & BENEFITS**:
+
+- 📰 <gaming-news channel mention> — Gaming News
+- 🔥 <gaming-deals channel mention> — Gaming Deals
 - 🛒 <amazon channel mention> — Amazon
-- 🇩🇪 <haushaltscheck channel mention> — Haushaltscheck
-- 🎮 <gaming-deals channel mention> — Gaming Deals
 - 🤖 <ai-tools channel mention> — AI Tools
+- 🇩🇪 <haushaltscheck channel mention> — Haushaltscheck
+
+No extra purchase is required — just use the links whenever they are useful to you.
 
 Some links may be affiliate or referral links.
 ```
 
-No buttons or duplicate footer.
-
-### direct-support
-
-```text
-# 💜 Direct Support
-
-Want to support GamerHQ directly?
-
-A direct support option will be available here soon.
-
-**Coming Soon**
-```
-
-No buttons. PayPal is not configured.
+The existing pin is updated in place. No new payment link or duplicate pin is created.
 
 ### amazon
 
@@ -109,9 +109,9 @@ Button: 🔍 Haushaltscheck anfragen → `HOUSEHOLD_CHECK_REQUEST`.
 ### gaming-deals
 
 ```text
-# 🎮 Gaming Deals
+# 🔥 Gaming Deals
 
-Find current gaming deals, promotions and releases here.
+Find current gaming deals, promotions and special offers here.
 
 Affiliate / referral link
 ```
@@ -150,4 +150,16 @@ The real opening also includes existing ticket number, creator, type and assignm
 
 ## Acceptance
 
-Run `python -m pytest`. Live checks: compare IDs across two repairs; inspect all six pins and exact links; create a household ticket with user A and confirm user B cannot view it; take/wait/close/restart; confirm customized pins survive; inspect each MANUAL_REVIEW finding. Verify external posting permission and attribution separately. Offline tests do not imply live Discord verification.
+Run `python -m pytest`. Live checks: compare IDs across two repairs; inspect all seven pins and exact links; create a household ticket with user A and confirm user B cannot view it; take/wait/close/restart; confirm customized pins survive; inspect each MANUAL_REVIEW finding. Verify external posting permission and attribution separately. Offline tests do not imply live Discord verification.
+
+## Free Games default (member benefit, not affiliate promotion)
+
+```text
+# 🎁 Free Games
+
+Free games and limited-time free-to-keep offers will be posted here automatically.
+
+Keep an eye on the channel so you don't miss them. 🎮
+```
+
+DealGecko posts here using its configured user ID and scoped posting rights. It is separate from Instant Gaming's discounted/commercial offers in Gaming Deals and releases/news in Gaming News.

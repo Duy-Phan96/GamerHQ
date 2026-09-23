@@ -25,26 +25,8 @@ def default_copy_for(channel: discord.TextChannel) -> str:
         from services.onboarding_service import WELCOME_COPY
         return WELCOME_COPY
     if _channel_alias(channel.name) == "choose-your-roles":
-        return (
-            "# 👤 Choose Your Roles\n\n"
-            "Customize your GamerHQ profile and choose what you want to be notified about.\n\n"
-            "Your roles help other players learn more about you and control which GamerHQ notifications you receive.\n\n"
-            "## 🖥️ PLATFORM\n"
-            "Choose the platforms you play on.\n\n"
-            "🖥️ PC  •  🎮 PlayStation  •  🟩 Xbox  •  🔴 Nintendo  •  📱 Mobile\n\n"
-            "## 🎯 PLAYSTYLE\n"
-            "🏆 Competitive  •  😎 Casual\n\n"
-            "You can select both if you enjoy both playstyles.\n\n"
-            "## 🗣️ LANGUAGE\n"
-            "🇬🇧 English  •  🇩🇪 German\n\n"
-            "Can't find your language? Use **Suggest Role** below.\n\n"
-            "## 🔔 NOTIFICATIONS\n"
-            "Choose what GamerHQ is allowed to notify you about.\n\n"
-            "🎮 LFG Pings  •  🏆 Community Events\n"
-            "🔴 Stream Updates  •  🎁 Giveaways\n\n"
-            "You can change your roles and notification preferences anytime.\n\n"
-            "**Choose your roles below to get started.**"
-        )
+        from services.role_panel_service import INTRO
+        return INTRO
     if _channel_alias(channel.name) == "looking-for-group":
         return (
             "# 🎮 Looking for Group\n\n"
@@ -319,7 +301,11 @@ class ConfirmRoleSyncView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             resolved, created = await ensure_base_roles(self.guild)
-        except (discord.Forbidden, discord.HTTPException) as exc:
+            from services.role_service import ensure_lfg_roles
+            from services.role_panel_service import refresh
+            await ensure_lfg_roles(self.guild)
+            await refresh(self.guild)
+        except (discord.HTTPException, ServerMessageError, ValueError) as exc:
             await interaction.edit_original_response(content=f"❌ Role sync failed.\n`{exc}`", view=None)
             return
         created_text = ", ".join(role.name for role in created) if created else "None"
@@ -353,7 +339,7 @@ class RoleAdminView(discord.ui.View):
 
     @discord.ui.button(label="Sync Roles", emoji="🔄", style=discord.ButtonStyle.primary)
     async def sync_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from services.role_service import base_role_status
+        from services.role_service import base_role_status, ROLE_GROUPS
         present, missing = base_role_status(self.guild)
         lines = ["**🔄 Role Sync Preview**", ""]
         lines.append(f"✅ Existing/reusable: **{len(present)}**")
@@ -390,12 +376,12 @@ class RoleAdminView(discord.ui.View):
 
     @discord.ui.button(label="View Roles", emoji="📋", style=discord.ButtonStyle.secondary)
     async def view_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from services.role_service import base_role_status
+        from services.role_service import base_role_status, ROLE_GROUPS
         from database import db
         present, missing = base_role_status(self.guild)
         active_games = [g for g in db.get_selectable_games() if g.get("role_id")]
         lines = ["**📋 GamerHQ Managed Roles**", "", f"**Base roles:** {len(present)} configured / {len(missing)} missing"]
-        for group in ("🖥️ Platform", "🎯 Playstyle", "🗣️ Language", "🔔 Notifications"):
+        for group in ROLE_GROUPS:
             names = [role.mention for g, option, role in present if g == group]
             if names:
                 lines.append(f"**{group}:** " + " • ".join(names))
@@ -556,6 +542,47 @@ class ConfirmServerRepairView(SafeView):
         await interaction.response.edit_message(content="✖️ Repair cancelled. Nothing was changed.", view=None)
         self.stop()
 
+class AdoptChannelView(SafeView):
+    def __init__(self, guild, draft):
+        super().__init__(timeout=180)
+        self.guild, self.draft = guild, draft
+        self.finished = False
+
+    async def interaction_check(self, interaction):
+        from services.channel_adoption_service import authorize
+        try:
+            authorize(self.guild, interaction.user)
+            if self.finished or interaction.user.id != self.draft['actor_id']:
+                raise ServerMessageError('Only the preview author can use this active adoption session.')
+        except ServerMessageError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label='Confirm Adoption', emoji='✅', style=discord.ButtonStyle.success)
+    async def confirm_adoption(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        from services.channel_adoption_service import confirm
+        self.finished = True
+        await interaction.response.defer()
+        try:
+            changed = await confirm(self.guild, interaction.user, self.draft, confirmed=True)
+            text = 'Desired state saved. Discord was not changed.' if changed else 'No differences to adopt. Nothing changed.'
+        except (ServerMessageError, discord.HTTPException) as exc:
+            text = str(exc)
+        await interaction.edit_original_response(content=text, view=None)
+        self.stop()
+
+    @discord.ui.button(label='Cancel', style=discord.ButtonStyle.secondary)
+    async def cancel_adoption(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.finished = True
+        await interaction.response.edit_message(content='Adoption cancelled. Nothing changed.', view=None)
+        self.stop()
+
+
 class ServerAdmin(commands.Cog):
     cog_app_command_error = command_error
     def __init__(self, bot: commands.Bot):
@@ -581,6 +608,34 @@ class ServerAdmin(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         findings = await scan(interaction.guild, interaction.client)
         await interaction.followup.send(summary(findings), view=HealthView(interaction.guild, interaction.user.id, findings), ephemeral=True)
+
+    @server.command(name='adopt', description='Owner/admin: preview and adopt selected public managed channel properties.')
+    @app_commands.guild_only()
+    @app_commands.choices(aspect=[app_commands.Choice(name=label, value=value) for label, value in
+        [('Name / emoji', 'name'), ('Category', 'category'), ('Position', 'position'), ('All supported properties', 'all')]])
+    async def adopt(self, interaction: discord.Interaction, channel: discord.TextChannel, aspect: str = 'all'):
+        from services.channel_adoption_service import preview, render
+        await interaction.response.defer(ephemeral=True)
+        try:
+            draft = await preview(interaction.guild, interaction.user, channel.id, aspect)
+            await interaction.followup.send(render(interaction.guild, draft),
+                view=AdoptChannelView(interaction.guild, draft), ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none())
+        except (ServerMessageError, discord.HTTPException) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+    @server.command(name='instant-gaming', description='Admin: sync four Instant Gaming feeds, permissions and managed pins.')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def instant_gaming(self, interaction: discord.Interaction):
+        from services.instant_gaming_service import sync
+        if not interaction.guild or not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message('Administrator access required.', ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            text = await sync(interaction.guild)
+        except (discord.HTTPException, ServerMessageError) as exc:
+            text = str(exc)
+        await interaction.followup.send(text, ephemeral=True)
 
     @server.command(name='music-bots-role', description='Admin: configure the existing dedicated Music Bots role.')
     @app_commands.checks.has_permissions(administrator=True)
@@ -648,7 +703,7 @@ class ServerAdmin(commands.Cog):
             return await interaction.response.send_message('Administrator access required.', ephemeral=True)
         from services.support_service import sync_support_messages
         await interaction.response.defer(ephemeral=True)
-        result = await sync_support_messages(interaction.guild)
+        result = await sync_support_messages(interaction.guild, order=True)
         if result is None:
             text = 'Support channel is not configured. Ask the owner to run `/server setup` first.'
         else:

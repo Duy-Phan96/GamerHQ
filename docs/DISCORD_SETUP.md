@@ -14,8 +14,33 @@ Slash-command permissions restrict who can operate maintenance commands; they ar
 
 For `/server pinned-messages`, verify an owner/admin can select and preview a managed pin, while ordinary members and moderators without Administrator cannot edit it. Access is rechecked on components, modal submission and save. The editor only lists registered, bot-authored public boards with matching IDs/fingerprints and an existing pin; arbitrary pins and private tickets are excluded. See [managed message editing](MANAGED_MESSAGES.md).
 
-## Haushaltscheck and Gaming Deals
+## Partner feeds and bot groups
 
-Owner setup maintains five PARTNERS & BENEFITS channels and a separate START HERE overview. Haushaltscheck requests use private ticket overwrites; verify creator/Staff access and unrelated-member denial. Retained legacy channels/custom content require manual review rather than automatic channel deletion. See [migration](PARTNERS.md).
+Owner Repair preserves News, Deals, Amazon, AI Tools and the German Haushaltscheck, inserting **🎁・free-games** directly below Deals. Each public feed is read-only for normal members. Free Games is for free/free-to-keep offers (DealGecko); Gaming Deals is for discounted/commercial offers (Instant Gaming); Gaming News remains separate. Existing channel history, IDs, pins, buttons and customized content are preserved.
 
-The optional official Instant Gaming bot should have no Administrator or broad management role. Set its verified user ID as `INSTANT_GAMING_BOT_ID`; owner repair grants View Channel, Read History, Send Messages, Embed Links and Attach Files in gaming-deals only. Leave external threads and role mentions disabled. Repair reapplies this explicit allowance while ordinary members remain read-only. See [external setup](INSTANT_GAMING.md).
+The Free Games adjacency rule takes precedence over older adopted absolute positions. If health reports an adopted-position conflict after repair, review the resulting order and adopt the intended positions again; unrelated channels retain their relative order.
+
+Set verified Discord **user IDs**, not display names or role IDs, in the private environment:
+
+- `INSTANT_GAMING_BOT_ID`
+- `DEALGECKO_BOT_ID`
+- `JOCKIE_MUSIC_BOT_ID`
+- `PANCAKE_BOT_ID`
+
+Missing optional bots are warnings, not blockers. GamerHQ never guesses bot identity from a name. Existing explicit `bot_member:<guild>:<integration>` mappings can supply the three grouping identities when environment IDs are unset; Instant Gaming posting still uses its established environment ID.
+
+`/server setup` → **Repair / Setup → Confirm Repair** creates/reuses **🎵 Music Bots** (Jockie/Pancake) and **🤖 Gaming Bots** (Instant Gaming/DealGecko), enables hoist and assigns verified bot members. Roles are moved only below Staff/Admin and GamerHQ's manageable ceiling; Staff's relative order is preserved. If there is insufficient space or an uneditable higher hoisted integration role, health reports owner review. Do not elevate groups above Staff or grant Administrator. Existing Music Bots channel allow-list and voice permissions remain in place.
+
+Gaming Bots is a grouping role with no global permissions; it grants neither bot blanket private access. DealGecko gets explicit View, Send, Read History, Embed Links and Attach Files only in Free Games. Configure its external posting target manually; GamerHQ does not control its campaigns.
+
+## Private Affiliate Stats
+
+Repair creates/reuses **🔒 AFFILIATE STATS**, then moves/renames existing mapped `ig-purchases` and `ig-buyer-ranking` channels to **💸・purchases** and **🏆・buyer-ranking**. Their internal mapping keys and Discord IDs stay unchanged. It does not create replacements or move unrelated STAFF channels.
+
+Category permissions deny @everyone and unauthorized identities visibility, allow authorized Staff to view/read, and grant the verified Instant Gaming member the five posting/read/embed/attachment rights. GamerHQ retains the access needed for managed pins and health. Matching children inherit the category policy; legacy child-specific restrictions remain explicit where necessary. Gaming Bots and DealGecko receive no shared private grants.
+
+Check `/server health`, repeat Repair to verify idempotency, then inspect using an ordinary member. Re-open Instant Gaming configuration and select **Purchase Notification → purchases**, **Buyer Ranking → buyer-ranking**. Until privacy/access acceptance, leave these external features disabled. Existing server-level Administrator permissions bypass channel denies: remove unnecessary broad permissions manually instead of making the channels public.
+
+Repository audit found no runtime/config dependency on Carl-bot. It is not in the intended bot stack. A cached name match produces only a health warning; no code kicks any bot. After checking any live manual automations not represented in this repository, remove it manually: **right-click Carl-bot → Kick Carl-bot → Confirm**.
+
+See [partner migration](PARTNERS.md), [Instant Gaming](INSTANT_GAMING.md) and [managed pin editing](MANAGED_MESSAGES.md).

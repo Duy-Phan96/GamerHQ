@@ -821,9 +821,11 @@ class EventDraftView(discord.ui.View):
             if not isinstance(channel, discord.TextChannel):
                 continue
             try:
+                from services.role_service import lfg_notification
+                prefix, mentions = lfg_notification(interaction.guild, b.game['id'], private=b.visibility == 'private', already_posted=bool(posts))
                 post = await channel.send(
-                    render_event(interaction.guild, event), view=view,
-                    allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+                    prefix + render_event(interaction.guild, event), view=view,
+                    allowed_mentions=mentions,
                 )
                 db.add_lfg_event_message(event["id"], channel_id=channel.id, message_id=post.id)
                 posts.append(post)

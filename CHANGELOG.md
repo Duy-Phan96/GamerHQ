@@ -1,5 +1,21 @@
 # GamerHQ Changelog
 
+## [Unreleased] - 2026-09-23
+
+- Preserve News/Deals and insert gift-emoji Free Games for DealGecko; migrate existing private IG IDs to AFFILIATE STATS purchases/buyer-ranking. Owner Repair ensures hoisted, least-privilege Music Bots/Gaming Bots groups using verified bot IDs, with read-only health checks and manual external configuration.
+
+- Separate optional gender/age onboarding from game selection and five independent settings boards. Add managed Gaming News/Deals opt-ins and per-game LFG notification roles, persistent controls, narrow migration and read-only health checks; retain existing IDs and retire global playstyle/LFG preferences without deleting member roles.
+
+- Detect persisted support/partner/Instant Gaming channel drift with private owner/admin approval buttons, exact self-change suppression and four-second coalescing. Persist decisions and deletion tombstones, immediately repair private/bot access drift, and report unresolved records in read-only health. Public posting-policy adoption is limited to the managed @everyone Send Messages bit.
+
+- Default support channel name is 💜・support-gamerhq, retaining its stored ID. Add explicit owner/admin `/server adopt` previews and confirmation for selected public board names, parents and order; store overrides in existing settings and respect them in repair/sync/health. Permissions remain outside adoption.
+
+- Explain direct support and partner/deal support in the existing Support GamerHQ pin; safely retire the managed direct-support channel during owner Repair without recreating it.
+
+- Extend Instant Gaming to four persisted feeds: news/deals at the top of the existing PARTNERS & BENEFITS category, followed by Amazon, AI Tools and Haushaltscheck and private purchases/buyer ranking in existing STAFF. Reuse the partner deals pin/affiliate button, respect Staff-category posting policy, report per-channel health/duplicates and log missing bot configuration without blocking setup.
+
+- Prepare persisted public gaming-news and staff-only ig-purchases destinations with managed pins, the existing INSTANT_GAMING_BOT_ID configuration, targeted permission repair, setup inventory and health checks. See `docs/INSTANT_GAMING.md` for configuration and acceptance.
+
 - Refine Partners & Benefits defaults to lead with useful offers and neutral disclosures. Explicit owner Repair safely retires recorded legacy finanzberatung after full dependency/content/thread checks; health reports repair availability or exact review reasons. Preserve custom messages, IDs, household privacy and historical records.
 
 All notable GamerHQ Bot changes are tracked here from the stable-release workflow onward.
