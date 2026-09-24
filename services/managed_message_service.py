@@ -28,6 +28,8 @@ ACTIONS.update({f'ROLE_{option.key}': (option.label, f'gamerhq:preference:base:{
                 for options in ROLE_GROUPS.values() for option in options})
 ACTIONS.update({'ROLE_PROFILE': ('Update Profile', 'gamerhq:roles:select'),
                 'ROLE_SUGGEST': ('Suggest Role', 'gamerhq:roles:suggest'),
+                'ROLE_english': ('English', 'gamerhq:preference:base:english'),
+                'ROLE_german': ('German', 'gamerhq:preference:base:german'),
                 'ROLE_gender-unspecified': ('Prefer not to say', 'gamerhq:preference:base:gender-unspecified')})
 
 
@@ -53,14 +55,14 @@ def specs(guild):
                                     ('suggestions_entry', 'suggestions', 'Suggestions', 'SUBMIT_SUGGESTION'),
                                     ('ticket_entry', 'need-support', 'Need Support', 'CREATE_SUPPORT_TICKET')]:
         result[f'{key}:{guild.id}'] = (label, f'managed_channel:{guild.id}:{name}', [action] if action else [])
-    from services.role_panel_service import channel as role_channel, message_keys, SECTIONS, PANEL_GROUPS
+    from services.role_panel_service import channel as role_channel, message_keys, SECTIONS, panel_groups
     board = role_channel(guild)
     if board:
         keys = message_keys(guild, board)
         mapping = f'managed_channel:{guild.id}:choose-your-roles'
         result[keys['intro']] = ('Profile Settings', mapping, ['ROLE_PROFILE', 'ROLE_SUGGEST', 'STREAMER_ROLE'])
         for section, group, _ in SECTIONS:
-            actions = [f'ROLE_{o.key}' for name in PANEL_GROUPS.get(group, ()) for o in ROLE_GROUPS[name]]
+            actions = [f'ROLE_{o.key}' for name in (() if section == 'platform' else panel_groups(group)) for o in ROLE_GROUPS[name]]
             if section == 'notifications':
                 actions.append('ROLE_gender-unspecified')
             if section == 'platform':
@@ -68,7 +70,7 @@ def specs(guild):
             # Keep old customized controls valid until the owner resets that pin.
             legacy = {'notifications': '🔔 Notifications', 'gaming_content': '📰 Gaming Content',
                       'language': '🗣️ Language', 'platform': '🖥️ Platform'}[section]
-            result[keys[section]] = (group, mapping, list(dict.fromkeys(actions + [f'ROLE_{o.key}' for o in ROLE_GROUPS[legacy]])))
+            result[keys[section]] = (group, mapping, list(dict.fromkeys(actions + ([f'ROLE_{o.key}' for o in ROLE_GROUPS.get(legacy, ())]) + (['ROLE_english', 'ROLE_german'] if section == 'language' else []))))
     welcome = db.get_setting(f'onboarding:{guild.id}:welcome')
     if welcome and welcome.isdigit():
         result[f'server_pinned_message_{welcome}'] = ('Welcome', f'onboarding:{guild.id}:welcome', ['START_ONBOARDING'])
@@ -179,6 +181,8 @@ def render(buttons, *, preview=False):
             from cogs.tickets import SupportOffers, TicketEntry
             from cogs.suggestions import SuggestionEntryView
             action = config['target']
+            if action in {'ROLE_english', 'ROLE_german'}:
+                continue  # Legacy controls are inert; explicit Repair removes their stored configuration.
             from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView, RoleSuggestionView
             source = OnboardingEntry() if action == 'START_ONBOARDING' else TicketEntry() if action == 'CREATE_SUPPORT_TICKET' else SuggestionEntryView() if action == 'SUBMIT_SUGGESTION' else SupportOffers()
             if action == 'STREAMER_ROLE':

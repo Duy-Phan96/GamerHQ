@@ -61,7 +61,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_channel_single_autoselect_and_multiple_selection(self):
         states = await managed.available(self.guild)
-        self.assertEqual(len(states), 16)
+        self.assertEqual(len(states), 15)
         view = ui.Channels(ui.Session(self.guild, self.admin.id), states)
         interaction = self.interaction()
         amazon = self.draft(support.message_key(self.guild, 'amazon'))
@@ -70,7 +70,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         from services.role_panel_service import channel as role_channel
         await view.choose(interaction, str(role_channel(self.guild).id))
         self.assertIsInstance(interaction.response.edit_message.call_args.kwargs['view'], ui.Messages)
-        self.assertEqual(len(interaction.response.edit_message.call_args.kwargs['view'].children[0].options), 5)
+        self.assertEqual(len(interaction.response.edit_message.call_args.kwargs['view'].children[0].options), 4)
         # Exercise the generic multi-message menu with two supported boards mapped to one channel.
         other = copy.deepcopy(amazon)
         other['channel_id'] = self.draft()['channel_id']

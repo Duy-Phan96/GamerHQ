@@ -130,10 +130,6 @@ ROLE_GROUPS: dict[str, tuple[RoleOption, ...]] = {
         RoleOption("age-25-34", "25–34", "🔹"),
         RoleOption("age-35plus", "35+", "🔹"),
     ),
-    "🗣️ Language": (
-        RoleOption("english", "English", "🇬🇧", ("en",)),
-        RoleOption("german", "German", "🇩🇪", ("de", "deutsch")),
-    ),
     "🔔 Notifications": (
         RoleOption("community-events", "Community Events", "🏆", ("events", "event notifications")),
         RoleOption("stream-updates", "Stream Updates", "🔴", ("stream notifications", "streams")),
@@ -142,22 +138,30 @@ ROLE_GROUPS: dict[str, tuple[RoleOption, ...]] = {
 }
 
 
-# Playstyle roles are retired in this repository. Keep the step informative until
-# a supported role group is explicitly introduced; never revive deprecated roles.
-PROFILE_STEPS = (
-    ('Gender', ('Gender',)),
-    ('Age', ('Age group',)),
-    ('Language', ('🗣️ Language',)),
-    ('Platform', ('🖥️ Platform',)),
-    ('Playstyle', ()),
-    ('Interests & Notifications', ('🔔 Notifications', '📰 Gaming Content')),
-)
+# Personal onboarding/correction only; gaming preferences are independent quick controls.
+PROFILE_STEPS = (('Gender', ('Gender',)), ('Age', ('Age group',)))
+PERSONAL_GROUPS = ('Gender', 'Age group')
+LEGACY_LANGUAGES = ('english', 'german')
+# No active playstyles are configured; retired Casual/Competitive stay retired.
+PLAYSTYLE_GROUP = '🎯 Playstyle'
+
+
+def personal_keys():
+    return {o.key for group in PERSONAL_GROUPS for o in ROLE_GROUPS[group]}
+
+
+def retire_language_mappings():
+    """Explicit Repair only. Retain Discord roles/memberships and their legacy IDs."""
+    with db.connect() as conn:
+        for key in LEGACY_LANGUAGES:
+            conn.execute("UPDATE managed_roles SET role_kind='legacy-profile', role_group='Legacy language' "
+                         "WHERE role_kind='base' AND role_key=?", (key,))
 
 
 def profile_roles(guild):
     """Registry-only allowlist; reject unsafe, aliased or game-access mappings."""
     result = {o.key: preference_role(guild, 'base', o.key)
-              for options in ROLE_GROUPS.values() for o in options}
+              for group in PERSONAL_GROUPS for o in ROLE_GROUPS[group]}
     legacy = db.get_managed_role_by_key('base', 'gender-unspecified')
     if legacy:
         role = guild.get_role(int(legacy['role_id']))
@@ -180,7 +184,7 @@ async def save_profile(member, mapping_ids, original_ids, selected_keys):
         mapping = profile_roles(member.guild)
         if mapping_ids != {key: role.id for key, role in mapping.items()}:
             raise ValueError('Profile mappings changed. Reopen Update Profile.')
-        if not selected_keys <= _expected_base_keys():
+        if not selected_keys <= personal_keys():
             raise ValueError('Unsupported profile option.')
         for group in ('Gender', 'Age group'):
             if len(selected_keys & {o.key for o in ROLE_GROUPS[group]}) > 1:

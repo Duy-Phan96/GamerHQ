@@ -1,3 +1,4 @@
+import logging
 import discord
 from discord.ext import commands
 
@@ -67,8 +68,8 @@ class RoleSelectionSession(discord.ui.View):
         if self.step < len(PROFILE_STEPS) and PROFILE_STEPS[self.step][1]:
             self.add_item(RoleCategorySelect(self))
         for label, callback, disabled in [
-            ('Save Profile' if self.step == 6 else 'Review' if self.step == 5 else 'Next',
-             self.confirm_selection if self.step == 6 else self.next_step, False),
+            ('Save Profile' if self.step == 2 else 'Review' if self.step == 1 else 'Next',
+             self.confirm_selection if self.step == 2 else self.next_step, False),
             ('Back', self.back, self.step == 0), ('Cancel', self.cancel_selection, False)]:
             button = discord.ui.Button(label=label, row=1, disabled=disabled,
                         style=discord.ButtonStyle.success if label == 'Save Profile' else discord.ButtonStyle.secondary)
@@ -77,33 +78,25 @@ class RoleSelectionSession(discord.ui.View):
 
     def status_text(self):
         from services.role_service import PROFILE_STEPS
-        if self.step < 6:
+        if self.step < 2:
             name, groups = PROFILE_STEPS[self.step]
             selected = [o.label for group in groups for o in ROLE_GROUPS[group] if o.key in self.selected_keys]
-            detail = 'No active playstyle options are configured. Continue to interests.' if not groups else (
-                'Current selection: ' + (', '.join(selected) or 'Not specified'))
-            return (f'# 👤 Update Profile · {self.step + 1}/6 — {name}\n\n{detail}\n\n'
-                    'Choices are optional and visible as server roles. Clear the selection to remove a choice. '
-                    'Nothing changes until Review → Save Profile. Games belong in #choose-your-games.')
+            detail = 'Current selection: ' + (', '.join(selected) or 'Not specified')
+            return (f'# 👤 Update Profile · {self.step + 1}/2 — {name}\n\n{detail}\n\n'
+                    'Both choices are optional and visible as server roles. '
+                    'Nothing changes until you review and save.')
         lines = ['# 👤 Profile Review']
-        for heading, indexes in [('👤 About You', (0, 1, 2)), ('🎮 Gaming Setup', (3, 4)),
-                                 ('🔔 Interests & Notifications', (5,))]:
-            rows = []
-            for index in indexes:
-                label, groups = PROFILE_STEPS[index]
-                values = [o.label for group in groups for o in ROLE_GROUPS[group] if o.key in self.selected_keys]
-                if values:
-                    rows.append(f'{label}: ' + ', '.join(values))
-            if rows:
-                lines.extend(['', '**' + heading + '**', *rows])
+        for label, groups in PROFILE_STEPS:
+            values = [o.label for group in groups for o in ROLE_GROUPS[group] if o.key in self.selected_keys]
+            if values:
+                lines.extend(['', f'**{label}:**', ', '.join(values)])
         if len(lines) == 1:
-            lines.extend(['', 'No optional profile roles selected.'])
-        lines.extend(['', 'Save Profile applies only these profile settings. Your game and unrelated roles stay unchanged.'])
+            lines.extend(['', 'No personal details selected.'])
         return '\n'.join(lines)
 
     async def next_step(self, interaction):
         if await self.interaction_check(interaction):
-            self.step = min(6, self.step + 1)
+            self.step = min(2, self.step + 1)
             self.rebuild()
             await interaction.response.edit_message(content=self.status_text(), view=self)
 
@@ -116,7 +109,7 @@ class RoleSelectionSession(discord.ui.View):
     async def confirm_selection(self, interaction):
         if not await self.interaction_check(interaction):
             return
-        if self.step != 6:
+        if self.step != 2:
             return await interaction.response.send_message('Review your profile before saving.', ephemeral=True)
         self.used = True
         self.stop()
@@ -126,11 +119,11 @@ class RoleSelectionSession(discord.ui.View):
             added, removed = await save_profile(interaction.user, self.mapping_ids,
                                                self.original_role_ids, self.selected_keys)
             text = f'✅ Profile saved. Added: {added}; removed: {removed}.'
-        except ValueError as exc:
-            text = str(exc)
+        except ValueError:
+            text = 'Your profile could not be saved. Reopen Update Profile and try again, or ask staff for help.'
         except discord.HTTPException:
             text = ('Discord could not confirm the complete save. Some confirmed changes may already be applied. '
-                    'Reopen Update Profile to review your current roles; ask staff to check bot permissions if needed.')
+                    'Reopen Update Profile to review your current roles; ask staff for help if needed.')
         await interaction.edit_original_response(content=text, view=None)
 
     async def cancel_selection(self, interaction):
@@ -152,19 +145,19 @@ async def open_profile(interaction):
         session = RoleSelectionSession(member)
         await interaction.followup.send(session.status_text(), view=session, ephemeral=True)
     except (ValueError, discord.HTTPException):
-        await interaction.followup.send('Profile settings are unavailable. Ask staff to run /server health.', ephemeral=True)
+        await interaction.followup.send('Please try again shortly, or ask staff for help updating your profile.', ephemeral=True)
 
 
 class SuggestRoleModal(discord.ui.Modal, title="💡 Suggest a Role"):
     role_type = discord.ui.TextInput(
         label="Type",
-        placeholder="Language, Platform, Notification or Other",
+        placeholder="Platform, Notification or Other",
         required=True,
         max_length=40,
     )
     suggestion = discord.ui.TextInput(
         label="Suggestion",
-        placeholder="e.g. French",
+        placeholder="e.g. a new notification option",
         required=True,
         max_length=100,
     )
@@ -235,12 +228,12 @@ def build_choose_roles_view() -> discord.ui.View:
 class RoleToggleView(discord.ui.View):
     def __init__(self, group):
         super().__init__(timeout=None)
-        from services.role_panel_service import PANEL_GROUPS
+        from services.role_panel_service import panel_groups
         if group == '💡 Missing something?':
             button = RoleSuggestionView().children[0]
             self.add_item(button)
             return
-        groups = PANEL_GROUPS.get(group, (group,))
+        groups = panel_groups(group)
         options = [o for name in groups for o in ROLE_GROUPS[name]]
         if 'Gender' in groups:
             from services.role_service import RoleOption
@@ -258,7 +251,8 @@ class RoleToggleView(discord.ui.View):
                     text = 'Gender hidden. No visible gender role is selected.' if key == 'gender-unspecified' else f'{"✅" if enabled else "❌"} {label} {"enabled" if enabled else "disabled"}.'
                     await interaction.followup.send(text, ephemeral=True)
                 except (ValueError, discord.HTTPException) as exc:
-                    await interaction.followup.send(f'Could not update your preference: {exc}', ephemeral=True)
+                    logging.getLogger(__name__).warning('Preference update failed for %s (%s)', key, type(exc).__name__)
+                    await interaction.followup.send('Please try again shortly, or ask staff for help with this setting.', ephemeral=True)
             button.callback = callback
             self.add_item(button)
 
