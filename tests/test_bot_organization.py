@@ -236,6 +236,74 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(groups.resolve(self.guild, 'gaming'), instant.roles)
             self.assertTrue(ig.affiliate_category(self.guild).overwrites_for(instant).send_messages)
 
+    async def test_legacy_identity_and_uncached_member_repair_private_access(self):
+        instant = self.members['instant-gaming']
+        db.set_setting(f'instant_gaming_bot:{self.guild.id}', instant.id)
+        with patch('config.INSTANT_GAMING_BOT_ID', 0):
+            await repair_server(self.guild, self.bot)
+            self.guild.get_member = lambda uid: None
+            groups._members.clear()
+            self.guild.fetch_member = AsyncMock(return_value=instant)
+            for channel in (ig.affiliate_category(self.guild), ig.resolve(self.guild, 'ig-purchases'),
+                            ig.resolve(self.guild, 'ig-buyer-ranking')):
+                channel.overwrites[instant] = discord.PermissionOverwrite(view_channel=False, send_messages=False)
+            await ig.sync(self.guild)
+            self.guild.fetch_member.assert_awaited_once_with(instant.id)
+            for channel in (ig.affiliate_category(self.guild), ig.resolve(self.guild, 'ig-purchases'),
+                            ig.resolve(self.guild, 'ig-buyer-ranking')):
+                self.assertTrue(all(getattr(channel.overwrites_for(instant), bit) for bit in ig.BOT_RIGHTS))
+                self.assertFalse(channel.overwrites_for(self.guild.default_role).view_channel)
+                self.assertTrue(channel.overwrites_for(self.guild.mod).view_channel)
+            self.assertTrue(all(row[1] == 'PASS' for row in ig.affiliate_access_diagnostics(self.guild)))
+            ranking = ig.resolve(self.guild, 'ig-buyer-ranking')
+            ranking.permissions_for = lambda target: discord.Permissions.none() if target == instant else discord.Permissions.all()
+            self.assertTrue(any('buyer-ranking' in row[0] and row[1] == 'WARN' and 'send_messages' in row[2]
+                                for row in ig.affiliate_access_diagnostics(self.guild)))
+
+    async def test_private_parent_does_not_expose_unknown_synced_child(self):
+        await repair_server(self.guild, self.bot)
+        stats = ig.affiliate_category(self.guild)
+        instant = self.members['instant-gaming']
+        stats.overwrites[instant] = discord.PermissionOverwrite(view_channel=False)
+        custom = self.guild.add_channel('private-custom', stats)
+        custom.overwrites = dict(stats.overwrites)
+        await ig.sync(self.guild)
+        self.assertFalse(stats.overwrites_for(instant).view_channel)
+        self.assertFalse(custom.overwrites_for(instant).view_channel)
+        self.assertTrue(ig.resolve(self.guild, 'ig-purchases').overwrites_for(instant).send_messages)
+        self.assertTrue(any(row[0] == 'Affiliate Stats category' and row[1] == 'WARN'
+                            for row in ig.affiliate_access_diagnostics(self.guild)))
+
+    async def test_discord_effective_private_overwrites(self):
+        # Use discord.py's actual permission resolver, not the permissive channel fake.
+        state = MagicMock(self_id=9)
+        state.store_user.side_effect = lambda data, **kwargs: discord.User(state=state, data=data)
+        role_data = [dict(id=str(uid), name=name, permissions=str(permissions.value), position=index)
+                     for index, (uid, name, permissions) in enumerate([
+                         (1, '@everyone', discord.Permissions(view_channel=True, send_messages=True)),
+                         (2, 'Staff', discord.Permissions(manage_messages=True)),
+                         (3, 'Gaming Bots', discord.Permissions.none())])]
+        guild = discord.Guild(data=dict(id='1', name='Test', owner_id='6', roles=role_data), state=state)
+        for uid, bot, roles in [(9, True, []), (42, True, [3]), (43, True, [3]), (5, False, []), (7, False, [2])]:
+            member = discord.Member(data=dict(user=dict(id=str(uid), username='fixture', discriminator='0', avatar=None, bot=bot),
+                roles=list(map(str, roles)), flags=0), guild=guild, state=state)
+            guild._add_member(member)
+        with patch('config.INSTANT_GAMING_BOT_ID', 42):
+            rights = ig.overwrites(guild, 'ig-purchases')
+            data = [dict(id=str(target.id), type=1 if isinstance(target, discord.Member) else 0,
+                         allow=str(value.pair()[0].value), deny=str(value.pair()[1].value))
+                    for target, value in rights.items()]
+            for name in ('purchases', 'buyer-ranking'):
+                channel = discord.TextChannel(state=state, guild=guild,
+                    data=dict(id='20', name=name, type=0, position=0, permission_overwrites=data))
+                self.assertFalse(channel.permissions_for(guild.get_member(5)).view_channel)
+                self.assertFalse(channel.permissions_for(guild.get_member(43)).view_channel)
+                self.assertTrue(channel.permissions_for(guild.get_member(7)).view_channel)
+                actual = channel.permissions_for(guild.get_member(42))
+                self.assertTrue(all(getattr(actual, right) for right in ig.BOT_RIGHTS))
+                self.assertFalse(actual.administrator)
+                self.assertFalse(actual.manage_channels)
+
     async def test_health_explicit_success_rows_and_no_fetch(self):
         await groups.sync(self.guild)
         self.guild.fetch_member = AsyncMock()

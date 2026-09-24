@@ -127,3 +127,29 @@ This channel is visible to staff only.
 Die internen Schlüssel `ig-purchases` und `ig-buyer-ranking` bleiben unverändert; Repair verschiebt die vorhandenen IDs nach AFFILIATE STATS und benennt nur die Channels um. Kategorie und Channels erlauben ausdrücklich der konfigurierten Instant-Gaming-Identität Zugriff. Die Gaming-Bots-Gruppenrolle gewährt keinen pauschalen privaten Zugriff. Vorhandene Administratorrechte fremder Bots müssen ownerseitig geprüft werden.
 
 `🎁・free-games` liegt direkt unter Deals und gehört zu DealGecko. Keine News/Deals-Zusammenlegung, keine Affiliate-Formulierung im Free-Games-Standardpin. Details und Bot-Gruppierung: [Discord setup](DISCORD_SETUP.md).
+
+
+## Affiliate Stats access diagnostics
+
+Repair resolves the verified configured user ID, then `bot_member:<guild>:instant-gaming`,
+then the legacy `instant_gaming_bot:<guild>` mapping. It verifies an actual external
+bot member; direct Instant Gaming sync can fetch that exact member when uncached.
+A temporary cache miss no longer overwrites the legacy mapping with zero. No
+name-based identity or new role is created. Missing/unavailable identity is a warning.
+
+AFFILIATE STATS and both mapped children explicitly deny normal-member visibility,
+allow Staff reading and allow the Instant Gaming member View Channel, Send Messages,
+Read Message History, Embed Links and Attach Files. Gaming Bots is never the private
+access grant. Unrelated overwrite bits are retained; unsafe public visibility is
+closed by the existing private policy. An unknown permission-synced child prevents
+parent edits to avoid extending access to an unrelated private channel; managed
+children can still be repaired and Health reports remaining parent drift.
+
+Health reports category/purchases/buyer-ranking separately, including missing
+explicit/effective bot rights and Staff/privacy drift. It does not fetch members,
+change permissions or query the external `/config` UI. Actual external filtering
+is unverified: configured-ID/cache gaps are reproduced code defects, not proof
+of the live selector's cause. Administrator already bypasses Discord channel
+overwrites; if effective rights pass but the selector still omits channels, inspect
+the external bot configuration/support instead of broadening private permissions.
+Reopen Instant Gaming `/config` after owner Repair and select purchases/ranking.

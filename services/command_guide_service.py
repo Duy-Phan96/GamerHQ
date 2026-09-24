@@ -5,7 +5,7 @@ from database import db
 from services.server_service import ServerMessageError, upsert_fixed_message
 
 
-STAFF_COMMAND_ROOTS = ("server", "game-admin", "area")
+STAFF_COMMAND_ROOTS = ("server", "game-admin", "area", "deals")
 STAFF_GUIDE_CHANNEL_KEY = "server_staff_commands_channel_id"
 STAFF_GUIDE_MESSAGE_KEY = "server_staff_commands_message_id"
 
@@ -167,21 +167,40 @@ async def refresh_staff_command_guide(bot, guild: discord.Guild, channel: discor
         db.set_setting(STAFF_GUIDE_CHANNEL_KEY, channel.id)
 
     content = build_staff_command_guide(bot, guild)
-    if len(content) > 2000:
-        # Keep the first implementation deliberately safe. If the staff command
-        # surface eventually exceeds one Discord message, fail loudly instead of
-        # silently dropping documentation.
-        raise ServerMessageError(
-            f"Staff command guide is {len(content)} characters long; Discord allows 2000. "
-            "Split the guide into managed pages before adding more commands."
-        )
+    pages, chunk = [], ''
+    for line in content.splitlines(keepends=True):
+        if len(chunk) + len(line) > 1850:
+            pages.append(chunk.rstrip())
+            chunk = ''
+        chunk += line
+    if chunk:
+        pages.append(chunk.rstrip())
+    messages = []
+    for index, page in enumerate(pages, 1):
+        heading = '# 🛠️ GamerHQ Staff Commands' if index == 1 else f'# 🛠️ GamerHQ Staff Commands — Page {index}'
+        if index > 1:
+            page = heading + '\n\n' + page
+        key = STAFF_GUIDE_MESSAGE_KEY if index == 1 else f'{STAFF_GUIDE_MESSAGE_KEY}:page:{index}'
+        messages.append(await upsert_fixed_message(channel, setting_key=key, content=page, pin=True,
+            recover_match=lambda m, heading=heading: (m.content or '').split('\n', 1)[0] == heading))
+    # Only mapped, owned continuation pages may be retired if the guide shrinks.
+    previous = int(db.get_setting(STAFF_GUIDE_MESSAGE_KEY + ':pages') or '1')
+    for index in range(len(pages) + 1, min(previous, 50) + 1):
+        key = f'{STAFF_GUIDE_MESSAGE_KEY}:page:{index}'
+        raw = db.get_setting(key)
+        if raw and raw.isdigit():
+            try:
+                message = await channel.fetch_message(int(raw))
+                heading = f'# 🛠️ GamerHQ Staff Commands — Page {index}'
+                if message.author.id != guild.me.id or (message.content or '').split('\n', 1)[0] != heading:
+                    raise ServerMessageError('Staff guide continuation ownership changed; review manually.')
+                await message.delete()
+            except discord.NotFound:
+                pass
+            db.set_setting(key, '')
+    db.set_setting(STAFF_GUIDE_MESSAGE_KEY + ':pages', len(pages))
+    return messages[0]
 
-    return await upsert_fixed_message(
-        channel,
-        setting_key=STAFF_GUIDE_MESSAGE_KEY,
-        content=content,
-        pin=True,
-    )
 
 COMMUNITY_GUIDE_CHANNEL_KEY = "server_community_commands_channel_id"
 COMMUNITY_GUIDE_MESSAGE_KEYS = (

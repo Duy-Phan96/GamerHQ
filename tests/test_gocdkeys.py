@@ -19,7 +19,7 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         for target, value in [('database.db.DB_PATH', Path(directory.name)/'test.db'),
-                              ('config.GOCDKEYS_ENABLED', True), ('config.GOCDKEYS_REFERRAL_CODE', 'kas66b'),
+                              ('config.GOCDKEYS_ENABLED', True), ('config.GOCDKEYS_AUTOMATIC_SUPPORTED', True), ('config.GOCDKEYS_REFERRAL_CODE', 'kas66b'),
                               ('config.GUILD_ID', 1), ('config.INSTANT_GAMING_BOT_ID', 42)]:
             patcher = patch(target, value); patcher.start(); self.addCleanup(patcher.stop)
         db.init_db()
@@ -261,20 +261,24 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Referral: Configured', row[2])
         with db.connect() as conn: self.assertEqual(before,list(conn.iterdump()))
 
-    async def test_http_policy_blocks_redirects_errors_and_oversized_html(self):
-        for status, body, expected in [(200, PAGE.encode(), PAGE), (403, b'Forbidden', None),
-                                      (302, PAGE.encode(), None), (200, b'x'*2_000_001, None)]:
-            async def chunks(size):
-                yield body
-            response = SimpleNamespace(status=status, headers={'Content-Type':'text/html'},
-                                       content=SimpleNamespace(iter_chunked=chunks))
-            request = AsyncMock(); request.__aenter__.return_value=response
-            session = MagicMock(); session.get.return_value=request
-            context = AsyncMock(); context.__aenter__.return_value=session
-            with patch('services.gocdkeys_service.aiohttp.ClientSession', return_value=context):
-                result = await service.GoCdKeysService().fetch_page(URL)
-            self.assertEqual(result, expected)
-            session.get.assert_called_once_with(URL, allow_redirects=False)
+    async def test_provider_never_scrapes_even_with_legacy_opt_in(self):
+        with patch('services.gocdkeys_service.aiohttp.ClientSession') as http:
+            result = await service.GoCdKeysService().fetch_page(URL)
+        self.assertIsNone(result)
+        http.assert_not_called()
+
+    async def test_automatic_mode_is_unsupported_and_preserves_existing_posts(self):
+        with patch('config.GOCDKEYS_AUTOMATIC_SUPPORTED', False):
+            await self.service.handle(self.message)
+            await self.service.handle_delete(self.guild, 2, 100)
+            self.assertIsNone(await self.service.find_game_page('Elden Ring'))
+            with self.assertRaisesRegex(ValueError, 'unsupported'):
+                await self.service.preview_backfill(self.guild)
+            self.assertEqual(service.status(self.guild)[1], 'INFO')
+            self.assertIn('Unsupported', service.status(self.guild)[2])
+            self.service.fetch_page.assert_not_called()
+            self.message.reply.assert_not_called()
+            self.assertFalse(affiliate_deals.processed(100))
 
     def test_description_link_and_content_fallbacks(self):
         for embeds, content in [([discord.Embed(description='**Elden Ring**')], ''),
