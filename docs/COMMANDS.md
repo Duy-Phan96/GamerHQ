@@ -17,6 +17,8 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 
 ## Admin / Owner commands
 
+- `/deals import-gocdkeys` — Owner/admin: paste 1–10 partner links into the modal, review paginated results, optionally Edit Titles/notes, then Post New Deals or Cancel. URL duplicates and existing delivery claims are skipped. See [manual import](GOCDKEYS.md#manual-batch-import).
+
 - `/deals create` — Owner/admin: select Amazon, Instant Gaming, GoCDKeys or Other; enter prices and a verified product/affiliate URL; Preview → Post Deal / Edit / Cancel. Optional image URL; fixed gaming-deals target. See [curated deals](DEALS.md).
 
 - `/deals backfill` — Owner/admin: currently unavailable; automatic GoCDKeys access is unsupported (HTTP 403). No history processing or posts. Use verified manual links via `/deals create`.

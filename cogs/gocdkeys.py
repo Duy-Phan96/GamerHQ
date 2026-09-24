@@ -72,6 +72,18 @@ class GoCdKeysWatcher(commands.Cog):
     deals = app_commands.Group(name='deals', description='Gaming deal administration',
                                default_permissions=discord.Permissions(administrator=True))
 
+    @deals.command(name='import-gocdkeys', description='Owner/admin: paste and preview up to ten GoCDKeys partner links.')
+    @app_commands.guild_only()
+    async def import_gocdkeys(self, interaction: discord.Interaction):
+        from cogs.deal_import import ImportModal
+        from services.curated_deal_service import target
+        from services.server_service import ServerMessageError
+        try:
+            target(interaction.guild, interaction.user)
+        except ServerMessageError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.send_modal(ImportModal(interaction.guild.id, interaction.user.id))
+
     @deals.command(name='create', description='Owner/admin: preview and post a curated partner deal.')
     @app_commands.guild_only()
     @app_commands.choices(partner=[app_commands.Choice(name=label, value=value) for value, label in

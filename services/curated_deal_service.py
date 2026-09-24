@@ -13,7 +13,7 @@ from services.game_area_cleanup import authorized
 from services.instant_gaming_service import resolve
 from services.managed_message_service import validate_url
 from services.server_service import ServerMessageError
-from services.gocdkeys_service import build_affiliate_url, valid_page_url
+from services.gocdkeys_service import manual_partner_url
 
 PARTNERS = {
     'amazon': ('Amazon', '🛒', 'View on Amazon'),
@@ -39,15 +39,13 @@ def public_url(value):
 
 def partner_url(partner, value):
     value = public_url(value)
+    if partner == 'gocdkeys':
+        return manual_partner_url(value)
     host = urlsplit(value).hostname.lower()
     domains = {'amazon': AMAZON_HOSTS | {'amzn.to', 'amzn.eu'},
                'instant-gaming': {'instant-gaming.com'}, 'gocdkeys': {'gocdkeys.com'}}
     if partner in domains and not any(host == d or host.endswith('.' + d) for d in domains[partner]):
         raise ServerMessageError('The URL domain does not match the selected partner.')
-    # Reuse the established referral contract only for its supported product URLs.
-    # Other manually verified provider URLs remain exact, with no guessed paths.
-    if partner == 'gocdkeys' and valid_page_url(value):
-        value = build_affiliate_url(value)
     return value
 
 
@@ -119,7 +117,12 @@ async def publish(guild, actor, draft_id, expected_channel_id, deal):
         raise ServerMessageError('The managed target changed. Create a fresh preview.')
     deal = validate(deal)
     payload = render(deal)
-    if not affiliate_deals.claim_curated(draft_id, guild.id, channel.id, actor.id, asdict(deal)):
+    return await deliver(guild, actor, draft_id, channel, payload, asdict(deal))
+
+
+async def deliver(guild, actor, draft_id, channel, payload, data):
+    """Shared at-most-once delivery for curated cards and manual link imports."""
+    if not affiliate_deals.claim_curated(draft_id, guild.id, channel.id, actor.id, data):
         return 'retained'
     try:
         message = await channel.send(**payload)
