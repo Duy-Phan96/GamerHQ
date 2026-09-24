@@ -29,6 +29,9 @@ def preference_role(guild, kind, key):
     role = guild.get_role(int(row['role_id'])) if row else None
     if not assignable(role, guild):
         raise ValueError('This role is unavailable or unsafe. Please ask staff to run role setup.')
+    if kind == 'base' and (any(g.get('role_id') == role.id for g in db.get_all_games(active_only=False))
+                           or any(int(r['role_id']) == role.id for r in db.get_managed_roles('lfg'))):
+        raise ValueError('The profile mapping points to another managed role; staff must repair it.')
     if kind == 'lfg' and any(g.get('role_id') == role.id for g in db.get_all_games(active_only=False)):
         raise ValueError('The notification mapping points to a game-access role; staff must repair it.')
     return role
@@ -38,11 +41,21 @@ async def toggle_preference(member, kind, key, *, exclusive=None):
     async with _preference_locks.setdefault((member.guild.id, member.id), asyncio.Lock()):
         # Refresh memberships, so repeated clicks cannot race the gateway cache.
         member = await member.guild.fetch_member(member.id)
+        if kind == 'base' and key == 'gender-unspecified':
+            mapping = profile_roles(member.guild)
+            held = [r for k, r in mapping.items() if k.startswith('gender-') and r in member.roles]
+            if held:
+                await member.remove_roles(*held, reason='GamerHQ private gender preference')
+            return False
+        if kind == 'base':
+            exclusive = next((group for group in ('Gender', 'Age group')
+                              if any(o.key == key for o in ROLE_GROUPS[group])), exclusive)
         role = preference_role(member.guild, kind, key)
         enabled = role not in member.roles
         if enabled:
             if exclusive:
-                others = [preference_role(member.guild, 'base', o.key) for o in ROLE_GROUPS[exclusive] if o.key != key]
+                others = [r for k, r in profile_roles(member.guild).items()
+                          if k != key and (k.startswith('gender-') if exclusive == 'Gender' else k.startswith('age-'))]
                 held = [r for r in others if r in member.roles]
                 if held:
                     await member.remove_roles(*held, reason='GamerHQ optional profile choice')
@@ -109,7 +122,7 @@ ROLE_GROUPS: dict[str, tuple[RoleOption, ...]] = {
     "Gender": (
         RoleOption("gender-male", "Male", "♂️"),
         RoleOption("gender-female", "Female", "♀️"),
-        RoleOption("gender-unspecified", "Prefer not to say", "⚪"),
+        RoleOption("gender-diverse", "Non-binary / Diverse", "🏳️‍🌈"),
     ),
     "Age group": (
         RoleOption("age-under18", "Under 18", "🔞"),
@@ -127,6 +140,62 @@ ROLE_GROUPS: dict[str, tuple[RoleOption, ...]] = {
         RoleOption("giveaways", "Giveaways", "🎁", ("giveaway notifications",)),
     ),
 }
+
+
+# Playstyle roles are retired in this repository. Keep the step informative until
+# a supported role group is explicitly introduced; never revive deprecated roles.
+PROFILE_STEPS = (
+    ('Gender', ('Gender',)),
+    ('Age', ('Age group',)),
+    ('Language', ('🗣️ Language',)),
+    ('Platform', ('🖥️ Platform',)),
+    ('Playstyle', ()),
+    ('Interests & Notifications', ('🔔 Notifications', '📰 Gaming Content')),
+)
+
+
+def profile_roles(guild):
+    """Registry-only allowlist; reject unsafe, aliased or game-access mappings."""
+    result = {o.key: preference_role(guild, 'base', o.key)
+              for options in ROLE_GROUPS.values() for o in options}
+    legacy = db.get_managed_role_by_key('base', 'gender-unspecified')
+    if legacy:
+        role = guild.get_role(int(legacy['role_id']))
+        if role:
+            if not assignable(role, guild):
+                raise ValueError('Legacy gender mapping needs staff review.')
+            result['gender-unspecified'] = role
+    protected = {g['role_id'] for g in db.get_all_games(active_only=False) if g.get('role_id')}
+    protected.update(int(r['role_id']) for r in db.get_managed_roles('lfg'))
+    ids = [r.id for r in result.values()]
+    if len(set(ids)) != len(ids) or protected.intersection(ids):
+        raise ValueError('Profile role mappings overlap another managed role; staff review required.')
+    return result
+
+
+async def save_profile(member, mapping_ids, original_ids, selected_keys):
+    """Apply only reviewed profile differences; stale/replaced mappings fail closed."""
+    async with _preference_locks.setdefault((member.guild.id, member.id), asyncio.Lock()):
+        member = await member.guild.fetch_member(member.id)
+        mapping = profile_roles(member.guild)
+        if mapping_ids != {key: role.id for key, role in mapping.items()}:
+            raise ValueError('Profile mappings changed. Reopen Update Profile.')
+        if not selected_keys <= _expected_base_keys():
+            raise ValueError('Unsupported profile option.')
+        for group in ('Gender', 'Age group'):
+            if len(selected_keys & {o.key for o in ROLE_GROUPS[group]}) > 1:
+                raise ValueError('Choose at most one gender and age group.')
+        current = {r.id for r in member.roles} & set(mapping_ids.values())
+        if current != original_ids:
+            raise ValueError('Your profile changed during this session. Reopen Update Profile.')
+        desired = {mapping_ids[key] for key in selected_keys}
+        add = [r for r in mapping.values() if r.id in desired - current]
+        remove = [r for r in mapping.values() if r.id in current - desired]
+        if add:
+            await member.add_roles(*add, reason='GamerHQ reviewed profile save')
+        if remove:
+            await member.remove_roles(*remove, reason='GamerHQ reviewed profile save')
+        return len(add), len(remove)
 
 
 def normalize_role_name(value: str) -> str:

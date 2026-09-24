@@ -64,3 +64,13 @@ slash commands are needed. Both feature flags default false. Legacy `/streamer s
 inactive. Existing `/streamer area`, `/streamer channels` and `/streamer voice`
 remain staff-only legacy tools with server-side authorization, including when Twitch is disabled.
 Public profiles and choose-streamers are inactive. See [Streamer Hub](STREAMER_HUB.md).
+
+## Profile controls
+
+In choose-your-roles, **Update Profile** opens Gender → Age → Language → Platform →
+Playstyle → Interests & Notifications → Review → Save Profile. Only Save changes
+roles. Current values are preselected; Back/Cancel are safe. No active playstyle
+roles currently exist, so that step is informational. The grouped quick buttons
+change only one setting; **Suggest Role** is the last board. Games remain exclusively
+in choose-your-games. Persistent buttons survive restart; unfinished drafts do not.
+See [profile settings](ROLE_SETTINGS.md) for migration and role-safety details.

@@ -1,54 +1,78 @@
-# Onboarding and optional role settings
+# Profile Settings and game selection
 
-Welcome's persistent **Get Started** button opens an ephemeral flow:
-**Gender (optional) → Age group (optional) → the existing game selector → complete**.
-Skipping either profile question changes nothing and never gates server access.
-Gender uses Male, Female and Prefer not to say; age uses Under 18, 18–24, 25–34 and
-35+. No adult-only policy was found in repository rules, and this feature introduces
-no age restriction or verification. No free text or birthday is stored. The selected
-roles are visible on members' Discord profiles; the prompt explains this.
+Choose Your Games manages game membership (and the existing separate per-game LFG
+notification selector). Choose Your Roles is **Profile Settings**: personal profile,
+gaming setup, interests and notifications. Update Profile never opens a game selector.
+Welcome's Get Started button opens the same profile editor; games remain a separate step
+in choose-your-games.
 
-## Optional settings
+## Profile Settings
 
-`choose-your-roles` stays public/read-only and contains these separate pinned boards:
+The public/read-only choose-your-roles channel has five canonical pinned messages:
 
-1. Optional Settings intro, with Update Profile and Suggest Role.
-2. Notifications: Community Events, Stream Updates, Giveaways.
-3. Gaming Content: Gaming News, Gaming Deals.
-4. Language: English, German.
-5. Platform: PC, PlayStation, Xbox, Nintendo, Mobile.
+1. **Profile Settings** — Update Profile, with one concise explanation.
+2. **About You** — Gender, Age group, Language quick controls.
+3. **Gaming Setup** — Platform quick controls.
+4. **Interests & Notifications** — Community Events, Stream Updates, Giveaways,
+   Gaming News and Gaming Deals quick controls.
+5. **Missing something?** — Suggest Role, separate from Update Profile.
 
-Each button toggles only the clicking member's registered role and confirms privately.
-The handler rereads the member and mapping, rejects missing/privileged/unassignable
-roles, and serializes clicks per member. Gender/age choices are exclusive within each
-group; platforms and languages allow multiple choices. Notification roles are never
-automatically assigned. Stream Updates is retained for compatibility with the existing
-streamer area; automatic live promotion remains that integration's separate work.
+Gender supports Male, Female, Non-binary / Diverse and Prefer not to say. The last
+choice clears managed gender roles; it creates no visible role. Existing legacy
+Prefer not to say roles are left on the server and cleared from a member only on
+explicit profile save/clear. Gender and age are optional, with at most one each.
+Age groups remain Under 18, 18–24, 25–34 and 35+; no birthday is collected or stored.
+English/German and PC/PlayStation/Xbox/Nintendo/Mobile support multiple selections.
+Roles are visible on members' server profiles; age is not verified or an access gate.
 
-Persistent entry points are registered by `Roles.cog_load` and the existing Games cog.
-The personal onboarding/game selection sessions expire after five minutes; reopen the
-persistent entry button after expiry or a bot restart.
+There are **no active playstyle roles** in the current repository. Casual, Competitive
+and global LFG Pings stay retired. The Playstyle wizard step explains this and offers
+Next; it does not recreate these roles or remove legacy member assignments.
+
+## Update Profile
+
+**Gender → Age → Language → Platform → Playstyle → Interests & Notifications →
+Review → Save Profile**. The private session fetches the member's current roles and
+preselects mapped profile choices. Back preserves the draft; Cancel/timeout changes
+nothing. Empty optional fields are omitted from review. Save is unavailable until review.
+
+Only Save calculates and applies profile differences. The shared per-member preference
+lock serializes quick actions and saves. Member roles and mappings are rechecked; a
+changed profile/mapping rejects the stale draft and asks the user to reopen. Game, LFG,
+Staff/Admin, bot/integration and unrelated roles are preserved. Unsafe or overlapping
+mappings fail closed. Gender/age exclusivity is validated again server-side.
+Discord role additions/removals are separate requests: a save-time API error can leave
+some confirmed changes applied, and the response tells the member to reopen and inspect.
+No role changes occur while moving through the draft.
+
+Quick controls toggle only that setting immediately; gender/age replace only their
+exclusive group. They do not open the wizard. All controls authorize the clicking member;
+private wizard buttons also bind to the member and guild. Suggest Role uses the existing
+suggestion submission/review flow. Notifications are explicit opt-ins.
+
+Persistent main controls retain custom IDs and are registered by Roles.cog_load.
+Draft sessions expire after five minutes and do not survive restart; restart Update
+Profile from the persistent button. No separate profile database or personal data fields
+are introduced: managed_roles plus Discord membership remain authoritative.
 
 ## Persistence and migration
 
-Base roles reuse `managed_roles` with kind `base` and stable keys. Existing language
-and platform IDs are reused. Setup creates missing roles; unsafe/ambiguous matches
-require review instead of creating duplicates. Discord roles have no added privileges.
+Setup reuses existing role IDs and the same five message slots, updating defaults in
+place: intro → Profile Settings, notifications → About You, gaming_content → Gaming
+Setup, language → Interests & Notifications, platform → Missing something?. Those
+legacy key names remain internal stable identifiers. The new Diverse role is ensured
+through the existing base-role helper; Prefer not to say is no longer created.
 
-The intro reuses `server_pinned_message_<channel-id>` and replaces the old giant default
-message in place. Category keys are `role_message:<guild-id>:notifications`,
-`:gaming_content`, `:language`, and `:platform`. They use the existing fixed-message
-helper, content/editor registry, fingerprints, locks, persisted IDs and pin recovery.
-Each board can be edited independently through `/server pinned-messages`; customized
-content survives refresh. Missing boards are recovered without reposting healthy boards.
-Initial creation follows the listed order. Discord cannot move an existing message;
-recovery of a deleted middle board appends its replacement instead of deleting others.
+The fixed-message helper retains IDs, pins, fingerprints, locks, recovery and custom
+content. Repeated setup/repair does not duplicate roles/messages. Legacy customized
+controls remain valid and are retained; health flags their layout for review. Use
+/server pinned-messages → Reset to Default → Confirm Reset on each affected custom
+pin to adopt the new grouping. No customized message is silently overwritten.
 
-Competitive, Casual and global LFG Pings are removed from the active configuration/UI.
-Sync retires only those recorded base-role mappings. It does not delete their Discord
-roles or remove existing member roles. No repository LFG dependency on those roles was
-found. Unknown roles with similar names remain untouched; any later Discord deletion
-needs owner review of live permissions, integrations and membership.
+Initial creation and the standard existing slots follow the listed order. Discord
+cannot move a message; recovering a deleted middle slot appends its replacement
+rather than deleting/reposting healthy messages. Manually reordered/previously
+recreated slots need owner review. Unknown/user messages are never adopted or deleted.
 
 ## Per-game LFG opt-in
 
@@ -71,7 +95,8 @@ notification membership grants no game-area access.
 ## Health and owner acceptance
 
 `/server health` remains read-only and checks role mappings/safety, duplicates, game LFG
-references and role-message IDs. Message inspection checks ownership/pins and scans the
+references, profile/game channel separation and role-message IDs. It also checks persistent
+Update Profile/Suggest Role registration and age/gender mappings. Message inspection checks ownership/pins and scans the
 latest 100 messages for duplicate default category titles; customized titles outside
 that window cannot be exhaustively detected.
 
@@ -80,8 +105,9 @@ After deploying one bot instance:
 1. `/server setup` → Repair / Setup → Confirm Repair.
 2. `/server roles` → Sync Roles → Confirm Sync (also available after catalog changes).
 3. `/server health` and `/server pinned-messages` to inspect the five boards.
-4. Test Get Started, skipping both profile questions, ordinary game selection and separate
-   LFG opt-in. Verify a second role-button click removes its role.
+4. Test Update Profile, Back, Cancel, Review and Save. Verify no roles change before Save,
+   games are absent, Suggest Role is at the bottom, and quick controls remain immediate.
+5. Check game selection and separate LFG opt-in still work in choose-your-games.
 
 Customized Welcome content/buttons remain owner-controlled. If it predates onboarding,
 add the allowlisted Get Started action in the pinned-message editor.

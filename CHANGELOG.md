@@ -2,6 +2,8 @@
 
 ## [Unreleased] - 2026-09-23
 
+- Refine Profile Settings into grouped About You, Gaming Setup and Interests & Notifications; reuse existing message IDs, move Suggest Role to the last board, and add a preselected member-bound Gender → Age → Language → Platform → Playstyle → Interests → Review → Save flow. Preserve retired playstyles/game roles, support Diverse and no-visible-role gender privacy, and keep quick controls independent.
+
 - Add confirmed owner/admin GoCDKeys batch import: strict supplied partner URLs, conservative editable slug titles, paginated preview, paced individual posts and durable normalized-URL deduplication through existing curated delivery records. Preserve correct referrals and reject conflicts; automated lookup remains disabled.
 
 - Add confirmed owner/admin curated deals with strict manual links/prices and durable delivery claims. Disable unsupported automatic GoCDKeys scraping/backfill despite legacy opt-in; retain manual referral links.
