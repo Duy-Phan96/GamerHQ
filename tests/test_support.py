@@ -37,9 +37,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(overview.sends, 1)
         text = overview.messages[int(overview_id)].content
         self.assertIn('# 💙 Support GamerHQ', text)
-        self.assertIn('support us directly', text)
-        self.assertIn('partner and deal links', text)
-        self.assertIn('No extra purchase is required', text)
+        self.assertIn('useful deals, tools and services', text)
         self.assertFalse(manual.deleted)
         self.assertEqual(manual.edits, 0)
         self.assertEqual(ids, {name: support.resource(self.guild, name).id for name in support.PARTNER_CHANNELS})
@@ -91,7 +89,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'- {emoji} {mention} — {label}', lines)
             self.assertEqual(text.count(mention), 1)
         self.assertTrue(all(line.startswith('- ') for line in lines if '<#' in line))
-        self.assertIn('**🤝 PARTNERS & BENEFITS**', text)
+        self.assertIn('**🛒 MARKETPLACE**', text)
         self.assertTrue(text.endswith(support.DISCLOSURE))
         self.assertLess(len(text), 1000)
 
@@ -115,7 +113,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         text = channel.messages[mid].content
         self.assertNotIn(target.mention, text)
         self.assertNotIn('#amazon', text)
-        self.assertIn('More partner channels are being set up.', text)
+        self.assertNotIn('More partner channels are being set up.', text)
         findings = await scan(self.guild, messages=False)
         self.assertEqual(next(f.state for f in findings if f.name == 'amazon'), 'REPAIRABLE')
         await self.setup_board()
@@ -141,7 +139,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         from pathlib import Path
         text = (Path(__file__).resolve().parents[1] / 'README.md').read_text(encoding='utf-8-sig')
         structure_block = text.split('```text', 1)[1].split('```', 1)[0]
-        self.assertIn('PARTNERS & BENEFITS', structure_block)
+        self.assertIn('MARKETPLACE', structure_block)
         for name in support.PARTNER_CHANNELS:self.assertIn(name, structure_block)
 
     async def test_structure_repeated_setup_preserves_ids_and_read_only(self):
@@ -194,7 +192,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(m.deleted for m in old[1:]))
         self.assertFalse(user.deleted)
         self.assertEqual(len(channel.messages),2)
-        self.assertEqual(len(support.resource(self.guild,'haushaltscheck').messages),1)
+        self.assertEqual(len(support.resource(self.guild,'electricity').messages),1)
         await self.setup_board()
         self.assertEqual(len(channel.messages),2)
 
@@ -202,7 +200,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         channel=await self.setup_board()
         legacy=self.add_message(channel,'## 🇩🇪 For Germans\nLegacy',pinned=True)
         db.set_setting(support.legacy_message_key(self.guild,'energy'),legacy.id)
-        germany=support.resource(self.guild,'haushaltscheck')
+        germany=support.resource(self.guild,'electricity')
         finance=germany.messages[int(db.get_setting(support.message_key(self.guild,'household')))]
         finance.pinned=False
         error=discord.Forbidden(type('Response',(),{'status':403,'reason':'Forbidden'})(),'denied')
@@ -230,7 +228,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_household_message_recovers_once(self):
         await self.setup_board()
-        channel=support.resource(self.guild,'haushaltscheck')
+        channel=support.resource(self.guild,'electricity')
         await channel.messages[int(db.get_setting(support.message_key(self.guild,'household')))].delete()
         await asyncio.gather(*(support.sync_support_messages(self.guild) for _ in range(3)))
         self.assertEqual(len(channel.messages),1)
@@ -289,11 +287,11 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         for forbidden in ('Finanzcheck','PixVerse','Instant Gaming','PayPal'):
             self.assertNotIn(forbidden,intro)
         for _,text,_ in support.support_sections():self.assertLess(len(text),2000)
-        self.assertIn('Nur für Nutzer in Deutschland.',support.HOUSEHOLD_TEXT)
-        self.assertIn('mehrere passende Tarife',support.HOUSEHOLD_TEXT)
-        self.assertIn('als PDF zum Vergleichen',support.HOUSEHOLD_TEXT)
+        self.assertIn('Available for users in Germany.',support.ELECTRICITY_TEXT)
+        self.assertIn('several suitable options',support.ELECTRICITY_TEXT)
+        self.assertIn('decide for yourself',support.ELECTRICITY_TEXT)
         for phrase in ('Kurs', 'Finanzberatung', 'Investments', 'garantiert', 'besten Preis'):
-            self.assertNotIn(phrase, support.HOUSEHOLD_TEXT)
+            self.assertNotIn(phrase, support.ELECTRICITY_TEXT)
         guide=structure.guide_text(self.guild)
         self.assertLess(len(guide)+200,2000)
         for section,_,entry in support.support_sections():
@@ -318,8 +316,8 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         user=self.add_message(channel,'Manual history',author=20,pinned=True)
         unknown=self.add_message(channel,'# 🎓 Strom & Gas Vertrieb\nUnmapped manual bot pin',pinned=True)
         await self.setup_board()
-        self.assertIs(support.resource(self.guild,'haushaltscheck'),channel)
-        self.assertEqual(channel.name,'🇩🇪・haushaltscheck')
+        self.assertIs(support.resource(self.guild,'electricity'),channel)
+        self.assertEqual(channel.name,'🇩🇪・electricity')
         self.assertTrue(all(m.deleted for m in old.values()))
         self.assertFalse(user.deleted or unknown.deleted)
         self.assertEqual(user.edits + unknown.edits,0)
@@ -331,10 +329,10 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_existing_household_target_keeps_manual_legacy_history_for_review(self):
         channel,old=self.old_germany()
-        target=self.guild.add_channel('🇩🇪・haushaltscheck',channel.category)
+        target=self.guild.add_channel('🇩🇪・electricity',channel.category)
         user=self.add_message(channel,'Manual history',author=20)
         await self.setup_board()
-        self.assertIs(support.resource(self.guild,'haushaltscheck'),target)
+        self.assertIs(support.resource(self.guild,'electricity'),target)
         self.assertTrue(all(m.deleted for m in old.values()))
         self.assertFalse(user.deleted)
         self.assertIs(support.legacy_review_channel(self.guild),channel)
@@ -352,7 +350,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(old['finance'],'delete',AsyncMock(side_effect=error)):
             with self.assertRaises(discord.Forbidden):await support.repair_support(self.guild,[])
         self.assertTrue(db.get_setting(f'household_migration:{self.guild.id}'))
-        target=support.resource(self.guild,'haushaltscheck')
+        target=support.resource(self.guild,'electricity')
         self.assertEqual(target.sends,1)
         await support.repair_support(self.guild,[])
         self.assertTrue(old['finance'].deleted)
@@ -395,7 +393,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         msg=old['finance'];channel.messages.pop(msg.id);finance.messages[msg.id]=msg;msg.channel=finance
         manual=self.add_message(finance,'Keep me',author=20,pinned=True)
         await self.setup_board()
-        self.assertIs(support.resource(self.guild,'haushaltscheck'),channel)
+        self.assertIs(support.resource(self.guild,'electricity'),channel)
         self.assertTrue(msg.deleted)
         self.assertFalse(manual.deleted)
         self.assertIn(finance,support.legacy_review_channels(self.guild))
@@ -418,13 +416,13 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         for value in ('INSTANT_GAMING_BOT_ID','Marketing campaigns','Purchase notification','Buyer ranking','disabled'):
             self.assertIn(value,external)
 
-    async def test_english_defaults_disclosure_and_german_household(self):
+    async def test_english_defaults_disclosure_and_electricity(self):
         await self.setup_board()
         intro=support.resource(self.guild,'support-gamerhq')
         self.assertIs(intro.category,self.start)
         text=intro.messages[int(db.get_setting(support.message_key(self.guild)))].content
-        self.assertIn("Want to support GamerHQ?",text)
-        self.assertIn("partner and deal links",text)
+        self.assertIn("Find useful deals, tools and services",text)
+        self.assertIn("useful deals, tools and services",text)
         self.assertNotIn('finanzberatung',text)
         self.assertIn("Want to support GamerHQ directly?",support.DIRECT_TEXT)
         self.assertIn('`Ctrl + D`',support.AMAZON_TEXT)
@@ -440,11 +438,11 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             if section!='household':
                 for word in ('Wenn ', 'Hier findest', 'unterstützt', 'Tipp:', 'Du kannst'):
                     self.assertNotIn(word,content)
-        self.assertIn('Nur für Nutzer in Deutschland.',support.HOUSEHOLD_TEXT)
+        self.assertIn('Available for users in Germany.',support.ELECTRICITY_TEXT)
 
     async def test_completed_legacy_mappings_retire_without_losing_review_identity(self):
         channel,old=self.old_germany()
-        target=self.guild.add_channel('🇩🇪・haushaltscheck',channel.category)
+        target=self.guild.add_channel('🇩🇪・electricity',channel.category)
         manual=self.add_message(channel,'Manual history',author=20)
         await self.setup_board()
         self.assertFalse(db.get_setting(support.channel_key(self.guild,'germany-services')))
@@ -488,7 +486,7 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         channel,old=self.old_germany()
         original=support.pin_managed_message
         async def pin(message,**kwargs):
-            if message.content==support.HOUSEHOLD_TEXT:
+            if message.content==support.ELECTRICITY_TEXT:
                 raise discord.Forbidden(type('Response',(),{'status':403,'reason':'Forbidden'})(),'denied')
             await original(message,**kwargs)
         with patch.object(support,'pin_managed_message',side_effect=pin):

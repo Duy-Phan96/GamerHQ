@@ -14,7 +14,7 @@ from services.server_service import ServerMessageError
 class InstantGamingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         fixtures.OnboardingTests.setUp(self)
-        self.partners = self.guild.add_category('🤝 PARTNERS & BENEFITS')
+        self.partners = self.guild.add_category('🛒 MARKETPLACE')
     add_message = fixtures.OnboardingTests.add_message
 
     def member(self, mid=901, *, bot=True):
@@ -251,7 +251,7 @@ class InstantGamingTests(unittest.IsolatedAsyncioTestCase):
     async def test_migration_orders_managed_partners_with_feeds_first(self):
         from services import support_service as support
         existing = []
-        for name in ('amazon', 'ai-tools', 'haushaltscheck'):
+        for name in ('amazon', 'ai-tools', 'electricity'):
             channel = self.guild.add_channel(name, self.partners)
             db.set_setting(support.channel_key(self.guild, name), channel.id)
             existing.append(channel.id)

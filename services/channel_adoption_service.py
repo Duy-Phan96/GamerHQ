@@ -125,7 +125,7 @@ def validate(guild, name, current, snapshot, fields):
             allowed.add(partners.id)
         if (not category or category.id not in allowed
                 or category.overwrites_for(guild.default_role).view_channel is False):
-            raise ServerMessageError('Only existing public START HERE, COMMUNITY or PARTNERS & BENEFITS categories may be adopted.')
+            raise ServerMessageError('Only existing public START HERE, COMMUNITY or MARKETPLACE categories may be adopted.')
     if 'position' in fields and 'category' not in fields and current['category'] != desired(guild, name)['category']:
         raise ServerMessageError('Category differs from desired state. Adopt category first or select all.')
     if 'position' in fields:

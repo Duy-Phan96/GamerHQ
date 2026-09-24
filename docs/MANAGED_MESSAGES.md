@@ -10,7 +10,7 @@ The editor uses existing GamerHQ message/channel mappings, bot ownership and a s
 | --- | --- |
 | support-gamerhq | Benefits Overview |
 | amazon | Amazon |
-| haushaltscheck | Haushaltscheck |
+| electricity | Electricity |
 | gaming-deals | Gaming Deals |
 | gaming-news | Gaming News |
 | free-games | Free Games |
@@ -38,7 +38,7 @@ Action choices are limited to the board's existing registered handler:
 
 | Board | Action |
 | --- | --- |
-| Haushaltscheck | `HOUSEHOLD_CHECK_REQUEST` |
+| Electricity | `ELECTRICITY_REQUEST` |
 | Need Support | `CREATE_SUPPORT_TICKET` |
 | Suggestions | `SUBMIT_SUGGESTION` |
 
@@ -62,7 +62,7 @@ The private audit table records actor, channel, stable key, content/buttons chan
 
 Retired energy/course/finance boards are excluded from editing after migration. Historical custom content and audit records remain stored. Custom legacy messages are left untouched for MANUAL_REVIEW; their old ticket actions cannot create new requests. See [partner migration](PARTNERS.md).
 
-Current default partner copy is English except for Haushaltscheck. Repair refreshes generated defaults in place and preserves customized text/buttons. To adopt the English wording on a customized board, preview and confirm Reset to Default; the existing message ID stays unchanged.
+Current default partner copy is English, including Electricity. Repair refreshes generated defaults in place and preserves customized text/buttons. To adopt the English wording on a customized board, preview and confirm Reset to Default; the existing message ID stays unchanged.
 
 The support-gamerhq overview explains direct support and support through partner/deal links; the separate direct-support board is retired. Existing custom copy stays saved until an explicit Reset to Default. The old overview heading can be recovered in place if its registry is missing.
 

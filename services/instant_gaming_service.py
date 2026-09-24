@@ -64,7 +64,7 @@ def targets(guild):
     from services.support_service import resource
     public = resource(guild, 'partners-benefits', True)
     if not public:
-        raise ServerMessageError('An existing PARTNERS & BENEFITS category is required; no category was created.')
+        raise ServerMessageError('An existing MARKETPLACE category is required; no category was created.')
     return {name: public if name in PUBLIC else private for name in CHANNELS}
 
 

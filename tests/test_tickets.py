@@ -178,7 +178,7 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
     async def test_guide_health_and_worst_case_message_size(self):
         from services.health_service import scan
         text=structure.guide_text(self.guild)
-        self.assertIn('## 🆘 Need Support?',text);self.assertIn('## 🤝 Partners & Benefits',text)
+        self.assertIn('## 🆘 Need Support?',text);self.assertIn('## 🛒 Marketplace',text)
         self.assertLess(len(text)+200,2000)
         item=await self.create()
         item['subject']='@'*100;item['description']='*'*900

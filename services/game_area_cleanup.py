@@ -19,7 +19,7 @@ def inspect_area(guild, game, *, channels=None, manual=False):
     category = objects.get(game.get('category_id'))
     reasons = []
     from services.onboarding_service import alias
-    protected = category and alias(category.name) in {'start-here', 'community', 'events', 'voice-channels', 'streamers', 'gamerhq-streamers', 'partners-benefits'}
+    protected = category and alias(category.name) in {'start-here', 'community', 'events', 'voice-channels', 'streamers', 'gamerhq-streamers', 'partners-benefits', 'marketplace'}
     if not isinstance(category, discord.CategoryChannel) or blocked_name(category) or protected:
         reasons.append('Missing or protected category; cannot establish managed area')
     if not manual and (game.get('selectable') or game.get('active')):

@@ -27,7 +27,8 @@ def supported():
 
 
 def removed(guild, name):
-    return db.get_setting(f'managed_channel_removed:{guild.id}:{name}') == '1'
+    names = (name, 'haushaltscheck') if name == 'electricity' else (name,)
+    return any(db.get_setting(f'managed_channel_removed:{guild.id}:{key}') == '1' for key in names)
 
 
 def identify(guild, cid):

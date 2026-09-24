@@ -45,7 +45,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("💡・suggestions"),
         ),
     ),
-    CategorySpec("🤝 PARTNERS & BENEFITS", (ChannelSpec("📰・gaming-news"), ChannelSpec("🔥・gaming-deals"), ChannelSpec("🎁・free-games"), ChannelSpec("🛒・amazon"), ChannelSpec("🤖・ai-tools"), ChannelSpec("🇩🇪・haushaltscheck"))),
+    CategorySpec("🛒 MARKETPLACE", (ChannelSpec("📰・gaming-news"), ChannelSpec("🔥・gaming-deals"), ChannelSpec("🎁・free-games"), ChannelSpec("🛒・amazon"), ChannelSpec("🤖・ai-tools"), ChannelSpec("🇩🇪・electricity"))),
     CategorySpec("🔒 AFFILIATE STATS", (ChannelSpec("💸・purchases"), ChannelSpec("🏆・buyer-ranking")), private=True),
     CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
     CategorySpec("🏆 EVENTS", (ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
@@ -80,11 +80,11 @@ def normalize_name(name: str) -> str:
 
 def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.CategoryChannel | None:
     wanted = normalize_name(spec.name)
-    if wanted == 'partners-benefits':
+    if wanted == 'marketplace':
         from services.support_service import resource
         from services.server_service import ServerMessageError
         try:
-            return resource(guild, wanted, True)
+            return resource(guild, 'partners-benefits', True)
         except ServerMessageError:
             return None
     for category in guild.categories:
@@ -211,7 +211,7 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
         )
     lines.extend([
         "",
-        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and PARTNERS & BENEFITS, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID. Streamer repair hides managed legacy discovery channels; Twitch controls remain disabled unless STREAMER_HUB_ENABLED is explicitly enabled.",
+        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and MARKETPLACE, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID. Streamer repair hides managed legacy discovery channels; Twitch controls remain disabled unless STREAMER_HUB_ENABLED is explicitly enabled.",
     ])
     return "\n".join(lines)
 

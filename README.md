@@ -25,10 +25,10 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Submit suggestions through a public entry point for private Staff review.
 - Open private support tickets with a short form. Staff can take tickets and mark them waiting; the creator or Staff can confirm closure. Closed tickets retain readable history.
 - Use managed welcome, rules, guide and role-selection channels.
-- Use the Partners & Benefits overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
+- Use the Marketplace overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
 - Provide tournaments/giveaways channels as an events foundation; event functionality remains Coming Soon.
 
-Partner messages are English; Haushaltscheck remains German for its free, nonbinding Germany-focused household/contract requests. Gaming Deals highlights current deals, promotions and releases.
+Marketplace messages are English. Electricity is a Germany-only electricity tariff comparison/request service. Gaming Deals highlights current deals, promotions and releases.
 
 ### Administration
 
@@ -62,13 +62,13 @@ START HERE
 ├─ need-support
 └─ support-gamerhq
 
-🤝 PARTNERS & BENEFITS
+🛒 MARKETPLACE
 ├─ 📰・gaming-news
 ├─ 🔥・gaming-deals
 ├─ 🎁・free-games
 ├─ 🛒・amazon
 ├─ 🤖・ai-tools
-└─ 🇩🇪・haushaltscheck
+└─ 🇩🇪・electricity
 
 COMMUNITY
 ├─ newbies
@@ -109,7 +109,7 @@ STAFF (private)
 
 Optional Game Areas, streamer areas, LFG resources and temporary voice rooms extend this layout. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
 
-**Need Support** opens a help ticket visible to its creator and authorized Staff. **Partners & Benefits** in support-gamerhq links directly to the six channels in **PARTNERS & BENEFITS**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
+**Need Support** opens a help ticket visible to its creator and authorized Staff. **Marketplace** in support-gamerhq links directly to the six channels in **MARKETPLACE**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
 
 Gaming News covers news/releases; Gaming Deals covers discounts, promotions and Instant Gaming offers; Free Games covers free/free-to-keep offers from DealGecko. Free Games is not an affiliate promotion board.
 
@@ -229,7 +229,7 @@ Staff review suggestions and take/mark waiting/close tickets through private but
 1. Prepare the existing base layout described in [setup](docs/SETUP.md). START HERE and COMMUNITY must already exist. A private STAFF category is needed for Staff review/log placement; configure the existing game-selector channel as well.
 2. Start the bot and run `/server health` to inspect missing resources, mappings and permissions without repairing them.
 3. As server owner, open `/server setup`, review its check/repair preview and confirm the intended changes.
-4. Confirm that each Partners & Benefits list item opens its partner channel. Missing mappings are omitted from navigation and reported by health; owner setup repairs them.
+4. Confirm that each Marketplace list item opens its partner channel. Missing mappings are omitted from navigation and reported by health; owner setup repairs them.
 5. Run health again and perform the relevant [manual acceptance checks](RELEASE_CHECKLIST.md), including two-user ticket isolation and voice ownership.
 
 Setup is an incremental maintenance workflow, not a complete empty-server installer. It reuses managed channels/messages, updates guides and permissions, and leaves ambiguous resources for manual review. Destructive Game Area cleanup has its own selection and confirmation; it is not an automatic consequence of opening health/setup.
@@ -276,7 +276,7 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 LICENSE is not configured. The repository is public, but no software license has been selected; that remains an owner decision.
 
-support-gamerhq stays in START HERE and explains direct support and support through useful partner/deal links. PARTNERS & BENEFITS has this managed order: Gaming News, Gaming Deals, Amazon, AI Tools, Haushaltscheck. Owner Repair safely removes the recorded direct-support channel; unknown content or dependencies remain for review. Instant Gaming purchases and buyer ranking remain staff-only. Owner `/server setup` safely migrates recorded legacy partner boards to Haushaltscheck and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
+support-gamerhq stays in START HERE and links to useful Marketplace deals, tools and services. MARKETPLACE has this managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. Owner Repair safely removes the recorded direct-support channel; unknown content or dependencies remain for review. Instant Gaming purchases and buyer ranking remain staff-only. Owner `/server setup` safely migrates recorded legacy partner boards to Electricity and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
 
 Owner/admin `/deals import-gocdkeys` imports up to ten copied partner links through a private preview, editable titles and confirmed individual posts; repeated imports skip stored URLs. [Manual import workflow](docs/GOCDKEYS.md#manual-batch-import).
 

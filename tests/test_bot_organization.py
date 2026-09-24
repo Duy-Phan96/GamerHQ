@@ -48,7 +48,7 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
         _, failed = await repair_server(self.guild, self.bot)
         self.assertEqual(failed, [])
         partners = support.resource(self.guild, 'partners-benefits', True)
-        expected = ['gaming-news', 'gaming-deals', 'free-games', 'amazon', 'ai-tools', 'haushaltscheck']
+        expected = ['gaming-news', 'gaming-deals', 'free-games', 'amazon', 'ai-tools', 'electricity']
         self.assertEqual([c.name for c in children(self.guild.channels, partners.id)], [support.PARTNER_CHANNELS[n] for n in expected])
         identities = {n: support.resource(self.guild, n).id for n in expected}
         pins = {n: list(support.resource(self.guild, n).messages) for n in expected}
@@ -175,7 +175,7 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
     def test_readme_exact_partner_order_and_private_stats(self):
         from pathlib import Path
         text = (Path(__file__).resolve().parents[1] / 'README.md').read_text(encoding='utf-8')
-        self.assertIn('🤝 PARTNERS & BENEFITS\n├─ 📰・gaming-news\n├─ 🔥・gaming-deals\n├─ 🎁・free-games\n├─ 🛒・amazon\n├─ 🤖・ai-tools\n└─ 🇩🇪・haushaltscheck', text)
+        self.assertIn('🛒 MARKETPLACE\n├─ 📰・gaming-news\n├─ 🔥・gaming-deals\n├─ 🎁・free-games\n├─ 🛒・amazon\n├─ 🤖・ai-tools\n└─ 🇩🇪・electricity', text)
         self.assertIn('🔒 AFFILIATE STATS (private)\n├─ 💸・purchases\n└─ 🏆・buyer-ranking', text)
 
     async def test_known_ids_without_names_and_uncached_members(self):

@@ -1,30 +1,34 @@
-# Support and Partners & Benefits
+# Support and Marketplace
 
 ```text
 START HERE
 ├─ 🆘・need-support
 └─ 💜・support-gamerhq
-🤝 PARTNERS & BENEFITS
+🛒 MARKETPLACE
 ├─ 📰・gaming-news
 ├─ 🔥・gaming-deals
 ├─ 🎁・free-games
 ├─ 🛒・amazon
 ├─ 🤖・ai-tools
-└─ 🇩🇪・haushaltscheck
+└─ 🇩🇪・electricity
 ```
 
-Seven canonical messages across the overview and six partner channels. The overview, Gaming News, Amazon, Gaming Deals and AI Tools are English; only Haushaltscheck is German. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
+Seven canonical messages across the overview and six partner channels. The overview, Gaming News, Amazon, Gaming Deals and AI Tools are English; Electricity is also English and available to users in Germany. Members can view/read/use buttons but cannot post or create threads. Staff and GamerHQ retain their existing access. The optional configured external Instant Gaming bot can post in gaming-deals; see [external setup](INSTANT_GAMING.md).
 
 ## Owner rollout and migration
 
-The existing 🤝 PARTNERS & BENEFITS category keeps the managed order shown above:
-News, Deals, Free Games, Amazon, AI Tools, Haushaltscheck by default. Explicitly adopted layout overrides are respected; other children retain their relative order.
+Explicit owner Repair renames the existing PARTNERS & BENEFITS category to 🛒 MARKETPLACE and haushaltscheck to electricity, retaining their Discord IDs/history. The internal category key `partners-benefits` and canonical pin key `partner_message:<guild>:household` deliberately remain stable. Active channel/adoption mappings move from `haushaltscheck` to `electricity` before the rename for safe retries. An old adopted display name is discarded for this explicit rename; other adopted properties remain. Conflicting mapped/named destinations require manual review, never a merge or duplicate. Intentionally removed channels remain removed.
+
+Generated pin defaults update in place. Customized legacy pins remain preserved and health requests editor review or confirmed Reset to Default; the retired household action is disabled and unavailable for new editor actions. Old ticket records are never rewritten. Startup does not perform structural migration.
+
+The existing 🛒 MARKETPLACE category keeps the managed order shown above:
+News, Deals, Free Games, Amazon, AI Tools, Electricity by default. Explicitly adopted layout overrides are respected; other children retain their relative order.
 Its existing channel/message IDs, customization and affiliate button are retained.
 The overview still links it. Partner repair and Instant Gaming sync share the
 same defaults and message key; neither moves it back to START HERE.
 Purchases and Buyer Ranking are separate private AFFILIATE STATS feeds; see INSTANT_GAMING.md.
 
-Back up SQLite, restart reviewed code, inspect `/server health`, then owner `/server setup` → Repair. Repeat Repair and compare identities. Existing recorded strom-gas, germany-services or finanzberatung channels may be reused, in that preference order, if no Haushaltscheck exists. Reused channel IDs/history remain intact. Name-only legacy channels are retained for review rather than renamed automatically.
+Back up SQLite, restart reviewed code, inspect `/server health`, then owner `/server setup` → Repair. Repeat Repair and compare identities. Existing recorded strom-gas, germany-services or finanzberatung channels may be reused, in that preference order, if no Electricity exists. Reused channel IDs/history remain intact. Name-only legacy channels are retained for review rather than renamed automatically.
 
 A durable `household_migration:<guild>` journal captures recorded legacy message IDs and pending earlier reorder/split generations before renaming. Only after all replacement messages are pinned are recognized, bot-owned default energy/course/finance messages removed. Failures retain the journal for retry without duplicate replacement pins. Historical managed-content/audit records remain in SQLite, marked retired and excluded from the active editor. Completed migrations move old channel/message IDs from active settings to `retired_partner_channel` / `retired_partner_message` settings. This also cleans up mappings left by the previous release, while keeping renamed legacy channels discoverable for manual review. Ticket rows retain their original data and type.
 
@@ -32,7 +36,7 @@ Unknown/manual messages, customized legacy pins and uncertain fingerprints are p
 
 Existing custom overview/Gaming Deals copy remains customized. Repair updates defaults without overwriting it; use the editor's confirmed Reset to Default to adopt new navigation/copy. `/server sync-support` refreshes adopted boards and can resume a previously authorized migration, but never creates missing channels. Missing navigation mappings are omitted and flagged by health.
 
-Support GamerHQ explains both direct support and support through useful partner/deal links. Owner Repair retires the recorded direct-support channel after publishing the overview, clears its active channel/pin mappings and retires editor state. Unknown/custom content, threads, dependencies or API failures retain the channel for manual review. No replacement is created.
+Support GamerHQ provides member-benefit-first navigation and one short neutral disclosure. Owner Repair retires the recorded direct-support channel after publishing the overview, clears its active channel/pin mappings and retires editor state. Unknown/custom content, threads, dependencies or API failures retain the channel for manual review. No replacement is created.
 
 ## Final message texts
 
@@ -45,21 +49,16 @@ Mentions below are documentation placeholders. Runtime substitutes persisted Dis
 ```text
 # 💙 Support GamerHQ
 
-Want to support GamerHQ?
+Find useful deals, tools and services in **🛒 MARKETPLACE**.
 
-You can support us directly, or simply use one of our partner and deal links when you are planning to buy something anyway.
-
-Every bit of support helps us keep GamerHQ running and improve the community. 💙
-
-Check out our partner offers in **🤝 PARTNERS & BENEFITS**:
+Explore the offers below and choose what is useful to you.
 
 - 📰 <gaming-news channel mention> — Gaming News
 - 🔥 <gaming-deals channel mention> — Gaming Deals
+- 🎁 <free-games channel mention> — Free Games
 - 🛒 <amazon channel mention> — Amazon
 - 🤖 <ai-tools channel mention> — AI Tools
-- 🇩🇪 <haushaltscheck channel mention> — Haushaltscheck
-
-No extra purchase is required — just use the links whenever they are useful to you.
+- 🇩🇪 <electricity channel mention> — Electricity
 
 Some links may be affiliate or referral links.
 ```
@@ -80,31 +79,21 @@ Affiliate / referral link
 
 Button: [🛒 Open Amazon](https://amzn.to/4dnxPXh).
 
-### haushaltscheck
+### electricity
+
+Germany-only electricity tariff comparison/request service.
 
 ```text
-# 🇩🇪 Haushaltscheck
+# 🇩🇪 Electricity
 
-Nur für Nutzer in Deutschland.
+Available for users in Germany.
 
-Viele Themen rund um Verträge, Tarife und laufende Kosten werden einem im Alltag kaum erklärt – und in der Schule meistens auch nicht.
+Looking for a better electricity tariff?
 
-Wenn du möchtest, kannst du deinen Haushalt kostenlos und unverbindlich prüfen lassen.
-
-Dabei können zum Beispiel Bereiche wie:
-
-- 🚗 KFZ
-- ⚡ Strom & Gas
-- 📄 laufende Verträge & Tarife
-
-gecheckt werden.
-
-Du bekommst mehrere passende Tarife übersichtlich zusammengestellt und als PDF zum Vergleichen.
-
-So kannst du Preis und Leistung in Ruhe vergleichen und selbst entscheiden, ob und welches Angebot für dich sinnvoll ist.
+You can compare several suitable options through our partner and decide for yourself which one works best for you.
 ```
 
-Button: 🔍 Haushaltscheck anfragen → `HOUSEHOLD_CHECK_REQUEST`.
+Button: ⚡ Compare Electricity Tariffs → `ELECTRICITY_REQUEST`.
 
 ### gaming-deals
 
@@ -134,23 +123,23 @@ Button: [🤖 Open PixVerse](https://motivaiprivatelimited.sjv.io/c/7668488/3811
 
 ## Private requests
 
-`HOUSEHOLD_CHECK_REQUEST` uses existing private tickets, per-user/per-type limits, Staff take/wait/close controls, audit and restart recovery. The entry checks canonical message/channel identity before creation. The user describes the areas in the private conversation; no extra category form is needed.
+`ELECTRICITY_REQUEST` uses existing private tickets, per-user/per-type limits, Staff take/wait/close controls, audit and restart recovery. The entry checks canonical message/channel identity before creation. The user describes their electricity comparison request in the private conversation.
 
 ```text
-# 🇩🇪 Haushaltscheck
+# ⚡ Electricity Tariff Request
 
-Deine private Anfrage wurde erstellt.
+Your private request has been created.
 
-Beschreibe hier kurz, welche Verträge oder Bereiche du prüfen lassen möchtest.
+Tell us briefly what you'd like to compare, and you'll receive suitable tariff options to review.
 
 Status: OPEN
 ```
 
-The real opening also includes existing ticket number, creator, type and assignment metadata. Creator, authorized Staff and GamerHQ can access it; unrelated members cannot (Discord administrators retain their platform permissions). Closing retains readable history. `GENERAL_SUPPORT` remains unchanged. Historical `ENERGY_SUPPORT`, `ENERGY_COURSE_REQUEST` and `FINANCE_REQUEST` tickets retain their type and lifecycle, but new requests of those types are rejected.
+Creator, authorized Staff and GamerHQ can access it; unrelated members cannot (Discord administrators retain their platform permissions). Closing retains readable history. `GENERAL_SUPPORT` remains unchanged. Historical `HOUSEHOLD_CHECK_REQUEST`, `ENERGY_SUPPORT`, `ENERGY_COURSE_REQUEST` and `FINANCE_REQUEST` tickets retain their type and lifecycle; new requests of those types are rejected.
 
 ## Acceptance
 
-Run `python -m pytest`. Live checks: compare IDs across two repairs; inspect all seven pins and exact links; create a household ticket with user A and confirm user B cannot view it; take/wait/close/restart; confirm customized pins survive; inspect each MANUAL_REVIEW finding. Verify external posting permission and attribution separately. Offline tests do not imply live Discord verification.
+Run `python -m pytest`. Live checks: compare IDs across two repairs; inspect all seven pins and exact links; create a electricity ticket with user A and confirm user B cannot view it; take/wait/close/restart; confirm customized pins survive; inspect each MANUAL_REVIEW finding. Verify external posting permission and attribution separately. Offline tests do not imply live Discord verification.
 
 ## Free Games default (member benefit, not affiliate promotion)
 

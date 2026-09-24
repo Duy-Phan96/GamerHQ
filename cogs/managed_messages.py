@@ -275,13 +275,15 @@ class Actions(EditorView):
         super().__init__(session)
         self.draft = draft
         used = {b['target'] for b in draft['buttons'] if b['type'] == 'ACTION'}
-        choices = [key for key in service.specs(session.guild)[draft['key']][2] if key not in used]
+        choices = [key for key in service.specs(session.guild)[draft['key']][2] if key not in used and key != 'HOUSEHOLD_CHECK_REQUEST']
         if choices:
             self.select('Choose action', [discord.SelectOption(label=service.ACTIONS[key][0], value=key) for key in choices], self.choose)
         self.button('Back', self.back)
         self.button('Cancel', self.cancel)
 
     async def choose(self, interaction, action):
+        if action == 'HOUSEHOLD_CHECK_REQUEST':
+            raise service.ServerMessageError('This legacy action is retired. Choose Electricity instead.')
         button = dict(label=service.ACTIONS[action][0], emoji='', type='ACTION', target=action, enabled=True)
         buttons = self.draft['buttons'] + [button]
         service.validate(interaction.guild, self.draft['key'], self.draft['content'], buttons)

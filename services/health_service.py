@@ -54,7 +54,7 @@ async def scan(guild, bot=None, *, messages=True):
         add('Runtime / commands','WARN' if missing else 'PASS','Missing registrations: '+', '.join(sorted(missing)) if missing else f'{len(inventory)} supported commands registered.')
         views = list(getattr(bot,'persistent_views',[]))
         ids = {getattr(child,'custom_id',None) for view in views for child in view.children}
-        required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:household-check'}
+        required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:electricity'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],
@@ -132,7 +132,7 @@ async def scan(guild, bot=None, *, messages=True):
         correct = all([c.id for c in current] == [c.id for c in ordered] for current, ordered in plans)
         add('Partner channel order', 'PASS' if correct else 'REPAIRABLE',
             'Compared to default/adopted order; explicit sync restores desired state.')
-        add('PARTNERS & BENEFITS', 'PASS' if partners else 'REPAIRABLE', 'Owner setup creates/reuses the mapped partner category.')
+        add('MARKETPLACE', 'PASS' if partners and partners.name == '🛒 MARKETPLACE' else 'REPAIRABLE', 'Owner setup creates/reuses the mapped partner category.')
         for name, display in PARTNER_CHANNELS.items():
             if removed(guild, name):
                 continue
@@ -145,11 +145,11 @@ async def scan(guild, bot=None, *, messages=True):
             valid = valid and rights.view_channel is True and rights.read_message_history is True and rights.send_messages is adoption_stored(guild, name).get('send_messages', False)
             add(name, 'PASS' if valid else 'REPAIRABLE', 'Managed channel ID, partner placement and read-only permissions checked; owner setup repairs missing mappings.')
     except ServerMessageError:
-        add('PARTNERS & BENEFITS', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
+        add('MARKETPLACE', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
     if bot is not None:
         registered = {item.custom_id for view in getattr(bot, 'persistent_views', []) for item in view.children if getattr(item, 'custom_id', None)}
-        expected = {'gamerhq:offers:household-check'}
-        add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent HOUSEHOLD_CHECK_REQUEST handler checked; restart after updating if missing.')
+        expected = {'gamerhq:offers:electricity'}
+        add('Partner ticket handlers', 'PASS' if expected <= registered else 'WARN', 'Persistent ELECTRICITY_REQUEST handler checked; restart after updating if missing.')
     add('Instant Gaming integration', 'INFO', 'Optional external configuration; see docs/INSTANT_GAMING.md. No external bot is required for GamerHQ health.')
     from services.gocdkeys_service import status as comparison_status
     try:
@@ -236,6 +236,8 @@ async def scan(guild, bot=None, *, messages=True):
                 except (ValueError, TypeError):
                     add(f'{name} pin', 'MANUAL_REVIEW', 'Malformed managed configuration; manual review required.')
                     continue
+                if name == 'electricity' and state and (any(b.get('target') == 'HOUSEHOLD_CHECK_REQUEST' for b in state['buttons']) or 'haushaltscheck' in (message.content or '').lower()):
+                    add('Electricity legacy customization', 'MANUAL_REVIEW', 'Preserved custom pin needs owner editor review or Reset to Default; legacy action is disabled.')
                 valid=guild.me and message.author.id==guild.me.id and (managed.owns(state, channel, message) if state else (message.content or '').startswith(prefix))
                 add(f'{name} pin','PASS' if valid and message.pinned else 'REPAIRABLE' if valid else 'MANUAL_REVIEW','Canonical author/content/pin checked.')
             except discord.NotFound: add(f'{name} pin','REPAIRABLE','Managed message deleted; setup can recreate it.')
@@ -273,7 +275,7 @@ async def scan(guild, bot=None, *, messages=True):
                 if game.get(field) and (not ch or ch.category_id!=cid): add('Game Area mapping','MANUAL_REVIEW',f'Game {game["id"]}: {field} missing/moved.')
         elif game.get('area_enabled'): add('Game Area','MANUAL_REVIEW',f'Game {game["id"]}: enabled area lacks category ID.')
     if not any(f.name.startswith('Game') and f.state!='PASS' for f in findings): add('Game Areas','PASS',f'{len(mapped)} area mappings checked.')
-    known_categories={'start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits'}
+    known_categories={'start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits','marketplace'}
     unknown=[c for c in guild.categories if c.id not in mapped and alias(c.name) not in known_categories]
     if unknown: add('Unknown categories','MANUAL_REVIEW',f'{len(unknown)} unmapped categories retained; may include legitimate custom/Streamer areas.')
     for row in temps:

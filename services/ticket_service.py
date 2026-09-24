@@ -21,14 +21,17 @@ ENTRY_TEXT = ('# 🆘 Need Support?\n\nNeed help with GamerHQ?\n\n'
     'Please do not include passwords, payment details or other sensitive information.')
 TICKET_TYPES = {
     'GENERAL_SUPPORT': 'General Support',
+    'ELECTRICITY_REQUEST': 'Electricity Tariff Request',
     'HOUSEHOLD_CHECK_REQUEST': 'Haushaltscheck',
     'ENERGY_SUPPORT': 'Energy Support',
     'ENERGY_COURSE_REQUEST': 'Energy Course Request',
     'FINANCE_REQUEST': 'Finance Request',
 }
-ACTIVE_TICKET_TYPES = {'GENERAL_SUPPORT', 'HOUSEHOLD_CHECK_REQUEST'}
+ACTIVE_TICKET_TYPES = {'GENERAL_SUPPORT', 'ELECTRICITY_REQUEST'}
 # Legacy types remain readable/closable, but cannot open new requests.
 REQUEST_COPY = {
+    'ELECTRICITY_REQUEST': ('⚡ Electricity Tariff Request',
+        "Your private request has been created.\n\nTell us briefly what you'd like to compare, and you'll receive suitable tariff options to review."),
     'HOUSEHOLD_CHECK_REQUEST': ('🇩🇪 Haushaltscheck',
         'Deine private Anfrage wurde erstellt.\n\nBeschreibe hier kurz, welche Verträge oder Bereiche du prüfen lassen möchtest.'),
     'ENERGY_SUPPORT': ('⚡ Strom & Gas Support',
@@ -112,6 +115,9 @@ def opening_text(item):
     assigned = f'<@{item["assigned_staff_id"]}>' if item['assigned_staff_id'] else 'Not assigned'
     unavailable = ' (left/unavailable)' if item['creator_left'] else ''
     kind = item.get('ticket_type', 'GENERAL_SUPPORT')
+    if kind == 'ELECTRICITY_REQUEST':
+        intro = REQUEST_COPY[kind][1] if item['status'] != 'CLOSED' else 'This request is closed. Its history remains available to you and the GamerHQ team.'
+        return f'{ticket_title(item)}\n\n{intro}\n\nStatus: {item["status"]}'
     if kind in REQUEST_COPY:
         intro = REQUEST_COPY[kind][1] if item['status'] != 'CLOSED' else 'Diese Anfrage ist geschlossen. Der Verlauf bleibt für dich und das GamerHQ-Team lesbar.'
         return (f'{ticket_title(item)}\n\n{intro}\n\nTicket: #{item["id"]:04d}\n'

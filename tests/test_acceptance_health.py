@@ -41,7 +41,7 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         fake=SimpleNamespace(persistent_views=[SupportOffers()],tree=SimpleNamespace(get_commands=lambda **kw:[]))
         result=await health.scan(self.guild,fake)
         self.assertEqual(next(f.state for f in result if f.name=='Instant Gaming integration'),'INFO')
-        for name in ('PARTNERS & BENEFITS','Partner channel order','gaming-news','amazon','haushaltscheck','gaming-deals','ai-tools','Partner ticket handlers'):
+        for name in ('MARKETPLACE','Partner channel order','gaming-news','amazon','electricity','gaming-deals','ai-tools','Partner ticket handlers'):
             self.assertEqual(next(f.state for f in result if f.name==name),'PASS')
         fake.persistent_views=[]
         result=await health.scan(self.guild,fake)

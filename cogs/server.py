@@ -432,7 +432,7 @@ class ServerSetupView(SafeView):
             content=(
                 "# 🔧 Repair GamerHQ Server\n\n"
                 "Apply the focused onboarding update?\n\n"
-                "Migrate old welcome to COMMUNITY/newbies; create the clean START HERE/welcome; move LFG to START HERE, tournaments/giveaways to EVENTS; add guide, private staff suggestions and the read-only Support / PARTNERS & BENEFITS channels.\n"
+                "Migrate old welcome to COMMUNITY/newbies; create the clean START HERE/welcome; move LFG to START HERE, tournaments/giveaways to EVENTS; add guide, private staff suggestions and the read-only Support / MARKETPLACE channels.\n"
                 "Custom areas and game categories are left untouched.\n\n"
                 "Confirm to continue."
             ),

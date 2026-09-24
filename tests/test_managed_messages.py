@@ -78,7 +78,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         await view.choose(interaction, str(self.draft()['channel_id']))
         menu = interaction.response.edit_message.call_args.kwargs['view']
         self.assertIsInstance(menu, ui.Messages)
-        self.assertEqual({o.label for o in menu.children[0].options}, {'Haushaltscheck', 'Amazon'})
+        self.assertEqual({o.label for o in menu.children[0].options}, {'Electricity', 'Amazon'})
 
     async def test_unknown_manual_pins_and_wrong_author_excluded(self):
         state = self.draft()
@@ -171,7 +171,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await managed.health(self.guild), [])
         from services.health_service import scan
         findings = await scan(self.guild)
-        self.assertTrue(all(f.state == 'PASS' for f in findings if f.name in {'haushaltscheck pin', 'Managed message registry'}))
+        self.assertTrue(all(f.state == 'PASS' for f in findings if f.name in {'electricity pin', 'Managed message registry'}))
 
     async def test_reset_confirmation_restores_latest_defaults(self):
         draft = self.draft()
@@ -265,7 +265,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         view = managed.render([action])
         with patch.object(SupportOffers, 'request', AsyncMock()) as request:
             await view.children[0].callback(self.interaction())
-            self.assertEqual(request.call_args.args[1], 'HOUSEHOLD_CHECK_REQUEST')
+            self.assertEqual(request.call_args.args[1], 'ELECTRICITY_REQUEST')
 
     async def test_http_failure_durable_pending_then_repair(self):
         draft = self.draft()
@@ -333,9 +333,9 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         draft = self.draft()
         draft['buttons'] = []
         view = ui.Actions(ui.Session(self.guild, self.admin.id), draft)
-        self.assertEqual([o.value for o in view.children[0].options], ['HOUSEHOLD_CHECK_REQUEST'])
-        await view.choose(self.interaction(), 'HOUSEHOLD_CHECK_REQUEST')
-        self.assertEqual(draft['buttons'][0]['target'], 'HOUSEHOLD_CHECK_REQUEST')
+        self.assertEqual([o.value for o in view.children[0].options], ['ELECTRICITY_REQUEST'])
+        await view.choose(self.interaction(), 'ELECTRICITY_REQUEST')
+        self.assertEqual(draft['buttons'][0]['target'], 'ELECTRICITY_REQUEST')
 
     async def test_support_disclosure_exact(self):
         self.assertEqual(support.DISCLOSURE, 'Some links may be affiliate or referral links.')

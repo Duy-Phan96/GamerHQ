@@ -122,28 +122,28 @@ class SupportOffers(SafeView):
         await interaction.response.defer(ephemeral=True)
         try:
             guild = interaction.guild
-            section = {'HOUSEHOLD_CHECK_REQUEST': 'household'}.get(kind)
+            section = {'ELECTRICITY_REQUEST': 'household'}.get(kind)
             if section is None:
-                raise ValueError('Unbekannte Support-Anfrage.')
+                raise ValueError('Please use the current Electricity request button.')
             if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild, support.section_channel(section)))
                     or str(interaction.message.id)!=db.get_setting(support.message_key(guild, section))):
-                raise ValueError('Bitte nutze die aktuelle Nachricht im passenden Partner-Kanal.')
+                raise ValueError('Please use the current message in the Electricity channel.')
             title,description=tickets.REQUEST_COPY[kind]
             item,created=await tickets.open_ticket(guild,interaction.user,title,description,ticket_type=kind)
             channel=guild.get_channel(item['channel_id']) if item['channel_id'] else None
             view=discord.ui.View()
             if channel:
-                view.add_item(discord.ui.Button(label='Anfrage öffnen',url=f'https://discord.com/channels/{guild.id}/{channel.id}'))
-            text='✅ Deine private Anfrage wurde erstellt.' if created else 'ℹ️ Du hast bereits eine offene Anfrage dieser Art.'
-            if not channel:text+=' Die Erstellung muss vom GamerHQ-Team geprüft werden. Es wurde keine doppelte Anfrage erstellt.'
+                view.add_item(discord.ui.Button(label='Open Request',url=f'https://discord.com/channels/{guild.id}/{channel.id}'))
+            text='✅ Your private request has been created.' if created else 'ℹ️ You already have an open request of this type.'
+            if not channel:text+=' Please ask the GamerHQ team to check your existing request.'
             await interaction.followup.send(text,view=view,ephemeral=True)
         except Exception as error:
             await reply_error(interaction,error)
 
-    @discord.ui.button(label='🔍 Haushaltscheck anfragen', style=discord.ButtonStyle.primary,
-                       custom_id='gamerhq:offers:household-check')
-    async def household_check(self, interaction, button):
-        await self.request(interaction, 'HOUSEHOLD_CHECK_REQUEST')
+    @discord.ui.button(label='⚡ Compare Electricity Tariffs', style=discord.ButtonStyle.primary,
+                       custom_id='gamerhq:offers:electricity')
+    async def electricity(self, interaction, button):
+        await self.request(interaction, 'ELECTRICITY_REQUEST')
 
 
 class Tickets(commands.Cog):

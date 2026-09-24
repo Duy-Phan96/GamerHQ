@@ -52,7 +52,7 @@ asyncio locks are process-local; they are not a distributed coordination system.
 | Games/areas | game_service, area_management_service, game_area_safety/cleanup; cogs/games.py and area.py | [Games](GAME_SYSTEM.md); test_voice_area, test_music_cleanup |
 | LFG | lobby_service, lobby_dashboard, lfg_service; cogs/lfg.py and lobby_management.py | [LFG](LFG_EVENTS.md); test_lobby_management, test_stability |
 | Temporary voice | temp_voice_service; cogs/voice.py and voice_controls.py | [Permissions](PERMISSIONS.md); test_voice_area |
-| Tickets/household requests | ticket_service; cogs/tickets.py | test_tickets, test_energy_offers; private creator/Staff access and retained closed history |
+| Tickets/electricity requests | ticket_service; cogs/tickets.py | test_tickets, test_energy_offers; private creator/Staff access and retained closed history |
 | Suggestions | cogs/suggestions.py + community_structure_service | test_community_structure; private Staff delivery/review state |
 | Partner boards/migration | support_service and legacy_finance_service | [Partners](PARTNERS.md); test_support |
 | Instant Gaming | instant_gaming_service + existing partner deals pin | [IG](INSTANT_GAMING.md); test_instant_gaming |
@@ -87,7 +87,7 @@ adoption explicit. High-risk private/bot permission drift invokes the existing s
 permission helpers immediately. See [scope, actions and recovery](SERVER_STRUCTURE.md#detected-changes-and-approval).
 
 Partner overview mentions come from persisted channel mappings; missing
-destinations are omitted and reported. Gaming News and Gaming Deals lead PARTNERS & BENEFITS, followed by Amazon, AI Tools and Haushaltscheck,
+destinations are omitted and reported. Gaming News and Gaming Deals lead MARKETPLACE, followed by Free Games, Amazon, AI Tools and Electricity,
 while retaining the partner message key/affiliate button. Instant Gaming also
 owns News and private Purchases/Buyer Ranking; missing external bot config must
 not prevent channel preparation.
@@ -98,7 +98,7 @@ ownership/fingerprint checks and confirmed reset are detailed once in
 [Managed messages](MANAGED_MESSAGES.md). Selectors/LFG cards retain their own
 specialized renderers; do not force them into the public pin editor.
 
-Legacy Haushaltscheck migration journals IDs and retires known defaults while
+Legacy energy/household migration journals IDs and retires known defaults while
 preserving custom/uncertain content and old tickets. legacy_finance_service can
 delete a recorded, dependency-free, fully inspected legacy finanzberatung only
 during explicit owner repair. Health shares inspection, not deletion. See
@@ -146,3 +146,5 @@ Member-facing copy should be natural, friendly and concise. GamerHQ is English.
 Hide empty/inactive sections completely; never publish configuration, provider or
 mapping status as member-facing placeholders. Technical diagnosis belongs in staff
 health/setup reports and logs. Member errors should offer a useful retry/help action.
+
+Marketplace reuses the `partners-benefits` category key and the `household` canonical message key for identity continuity. Explicit Repair migrates old channel/adoption mappings to `electricity` before renaming; historical ticket types remain readable. New private requests use `ELECTRICITY_REQUEST`. See [migration details](PARTNERS.md).
