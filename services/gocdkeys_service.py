@@ -7,7 +7,7 @@ import re
 import time
 import unicodedata
 from weakref import WeakValueDictionary
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import aiohttp
 import discord
@@ -86,6 +86,63 @@ def build_affiliate_url(url):
     if not valid_page_url(url) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', config.GOCDKEYS_REFERRAL_CODE):
         raise ValueError('Invalid comparison URL/referral configuration')
     return urlunsplit(urlsplit(url)._replace(fragment='ref=' + config.GOCDKEYS_REFERRAL_CODE))
+
+
+def manual_partner_url(url, *, require_referral=False):
+    """Validate supplied links only; preserve correct tracking, reject conflicts."""
+    from services.managed_message_service import validate_url
+    from services.server_service import ServerMessageError
+    url = url.strip()
+    validate_url(url)
+    parts = urlsplit(url)
+    if parts.hostname.lower() not in {'gocdkeys.com', 'www.gocdkeys.com', 'gocdkeys.de', 'www.gocdkeys.de'} or parts.port not in (None, 443):
+        raise ServerMessageError('Use an HTTPS link on gocdkeys.com or gocdkeys.de.')
+    code = config.GOCDKEYS_REFERRAL_CODE
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', code):
+        raise ServerMessageError('The configured GoCDKeys referral code needs owner review.')
+    refs = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) +
+            parse_qsl(parts.fragment, keep_blank_values=True) if key.lower() == 'ref']
+    if refs:
+        if len(refs) != 1 or refs[0] != ('ref', code):
+            raise ServerMessageError('Conflicting or ambiguous referral; review the original partner link.')
+        return url
+    if valid_page_url(url) and not parts.fragment:
+        return build_affiliate_url(url)
+    if require_referral:
+        raise ServerMessageError('Missing supported referral; copy the complete partner-dashboard link.')
+    return url
+
+
+def import_link(url):
+    """Return supplied partner URL, conservative identity and optional slug title."""
+    from services.server_service import ServerMessageError
+    validated = manual_partner_url(url, require_referral=True)
+    parts = urlsplit(validated)
+    match = re.fullmatch(r'/(?:buy|kaufen)-([a-z0-9]+(?:-[a-z0-9]+)*)/?', parts.path)
+    if not match:
+        raise ServerMessageError('Unknown product URL structure; manual review required.')
+    normalized = import_identity(validated)
+    slug = match[1]
+    cleaned, suffix_count = re.subn(r'-(?:pc-cd-key|pc-steam-key|steam-key|cd-key|ps5|ps4|xbox-one|xbox-series-x-s|xbox|pc)$', '', slug)
+    words = cleaned.split('-')
+    title = None
+    if suffix_count and any(len(word) > 1 and word.isalpha() for word in words) and cleaned not in {'game', 'product', 'offer', 'unknown'}:
+        roman = {'ii', 'iii', 'iv', 'vi', 'vii', 'viii', 'ix', 'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi'}
+        title = ' '.join("Marvel's" if word == 'marvels' else word.upper() if word in roman else word.capitalize() for word in words)
+        if len(title) > 200:
+            title = None
+    return validated, normalized, title
+
+
+def import_identity(url):
+    """Tracking-independent identity; validation belongs to the caller."""
+    parts = urlsplit(url)
+    # Identity ignores only known tracking, not edition/platform/other query data.
+    query = sorted((k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                   if k != 'ref' and not k.lower().startswith('utm_') and k.lower() not in {'gclid', 'fbclid'})
+    fragment = [(k, v) for k, v in parse_qsl(parts.fragment, keep_blank_values=True) if k != 'ref']
+    return urlunsplit(('https', parts.hostname.lower().removeprefix('www.'), parts.path.rstrip('/'),
+                            urlencode(query), urlencode(sorted(fragment))))
 
 
 class ProductPage(HTMLParser):
@@ -348,7 +405,7 @@ def create_comparison_message(url):
 
 def status(guild, bot=None):
     if not config.GOCDKEYS_AUTOMATIC_SUPPORTED:
-        return ('GoCDKeys', 'INFO', 'Automatic lookup/backfill: Unsupported (HTTP 403). Manual verified links: /deals create. Existing comparisons retained.')
+        return ('GoCDKeys', 'INFO', 'Automatic lookup/backfill: Unsupported (HTTP 403). Manual links: /deals create or /deals import-gocdkeys. Existing comparisons retained.')
     from services.bot_group_service import member_id
     channel = resolve(guild, 'gaming-deals', mapped_only=True)
     configured = bool(channel and any(member_id(guild, source) for source in config.SUPPORTED_DEAL_SOURCES) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', config.GOCDKEYS_REFERRAL_CODE))

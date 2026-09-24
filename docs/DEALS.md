@@ -55,3 +55,18 @@ conversions are not tracked. Runtime deal data stays private in the normal DB ba
 The Staff Command Guide includes `/deals` and uses managed pages under Discord's
 2000-character limit. The original first-page mapping is retained. Repeated refresh
 reuses page IDs; only confidently owned, mapped surplus pages can be retired.
+
+
+## GoCDKeys link batches
+
+For partner-dashboard links without manually entered prices, use
+`/deals import-gocdkeys`. It shares authorization, managed target, URL validation,
+SQLite table and at-most-once send helper with this editor. Its deterministic URL
+claim additionally prevents duplicate imports across sessions/restarts. Import
+metadata identifies `workflow=import-gocdkeys`; Amazon/Instant Gaming curated
+cards and official bot posts are unaffected. Prior GoCDKeys curated records are
+also checked before importing. `/deals create` remains an intentional per-draft
+posting flow: it does not become a global URL deduplicator, so simultaneously
+creating a separate curated draft for the same product is outside import dedupe.
+See [manual import](GOCDKEYS.md#manual-batch-import) for exact URL/referral rules,
+preview/title editing and Codex-assisted paste preparation.

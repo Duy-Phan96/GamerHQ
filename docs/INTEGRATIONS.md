@@ -16,4 +16,4 @@ Do not introduce scraping, third-party credentials, webhook servers or backgroun
 
 Bot grouping uses verified optional user IDs: Instant Gaming/DealGecko → Gaming Bots, Jockie/Pancake → Music Bots. Free Games belongs to DealGecko; IG private destinations retain keys but move to AFFILIATE STATS. See [current Discord setup](DISCORD_SETUP.md).
 
-GoCDKeys currently supports verified manually supplied links through `/deals create`. Automated lookup/backfill is unsupported following HTTP 403 and performs no requests even when the legacy flag is enabled. Existing comparison mappings/messages remain intact. See [provider state](GOCDKEYS.md) and [curated deals](DEALS.md).
+GoCDKeys supports verified manually supplied links through `/deals create` and the bounded `/deals import-gocdkeys` preview/confirm workflow. Imports post individual comparison links without price claims and deduplicate stored URLs. Automated lookup/backfill is unsupported following HTTP 403 and performs no requests even when the legacy flag is enabled. Existing comparison mappings/messages remain intact. See [provider state](GOCDKEYS.md) and [curated deals](DEALS.md).

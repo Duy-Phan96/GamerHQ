@@ -46,3 +46,11 @@ def finish_curated(draft_id, status, message_id=None):
     with db.connect() as conn:
         conn.execute('UPDATE curated_deals SET status=?, discord_message_id=? WHERE id=?',
                      (status, message_id, draft_id))
+
+
+def curated_links(guild_id):
+    """Existing metadata, including unresolved claims; previews never mutate it."""
+    with db.connect() as conn:
+        return [dict(row) for row in conn.execute(
+            "SELECT id, status, data_json FROM curated_deals WHERE guild_id=? AND json_extract(data_json, '$.partner')='gocdkeys'",
+            (guild_id,))]

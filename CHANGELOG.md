@@ -2,6 +2,8 @@
 
 ## [Unreleased] - 2026-09-23
 
+- Add confirmed owner/admin GoCDKeys batch import: strict supplied partner URLs, conservative editable slug titles, paginated preview, paced individual posts and durable normalized-URL deduplication through existing curated delivery records. Preserve correct referrals and reject conflicts; automated lookup remains disabled.
+
 - Add confirmed owner/admin curated deals with strict manual links/prices and durable delivery claims. Disable unsupported automatic GoCDKeys scraping/backfill despite legacy opt-in; retain manual referral links.
 - Repair legacy Instant Gaming identity resolution and uncached direct sync; diagnose effective Affiliate Stats parent/child access without granting private access to Gaming Bots. Preserve unknown synced children for manual review.
 - Paginate the managed Staff Command Guide, retaining the original page ID and adding `/deals` without exceeding Discord message limits.
