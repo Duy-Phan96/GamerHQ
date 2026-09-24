@@ -18,13 +18,13 @@ async def tracked_edit(channel, **kwargs):
 
 CHANNEL_NAME = '💜・support-gamerhq'
 TITLE = '# 💙 Support GamerHQ'
-INTRO_TEXT = TITLE + "\n\nWant to support GamerHQ?\n\nYou can support us directly, or simply use one of our partner and deal links when you are planning to buy something anyway.\n\nEvery bit of support helps us keep GamerHQ running and improve the community. 💙\n\nCheck out our partner offers in **🤝 PARTNERS & BENEFITS**:"
+INTRO_TEXT = TITLE + "\n\nFind useful deals, tools and services in **🛒 MARKETPLACE**.\n\nExplore the offers below and choose what is useful to you."
 DISCLOSURE = 'Some links may be affiliate or referral links.'
 FREE_GAMES_TEXT = '# 🎁 Free Games\n\nFree games and limited-time free-to-keep offers will be posted here automatically.\n\nKeep an eye on the channel so you don\'t miss them. 🎮'
 PARTNER_NAVIGATION = (
     ('gaming-news', '📰', 'Gaming News'), ('gaming-deals', '🔥', 'Gaming Deals'), ('free-games', '🎁', 'Free Games'),
     ('amazon', '🛒', 'Amazon'), ('ai-tools', '🤖', 'AI Tools'),
-    ('haushaltscheck', '🇩🇪', 'Haushaltscheck'),
+    ('electricity', '🇩🇪', 'Electricity'),
 )
 DIRECT_TEXT = "# 💜 Direct Support\n\nWant to support GamerHQ directly?\n\nA direct support option will be available here soon.\n\n**Coming Soon**"  # Retirement fingerprint only.
 AMAZON_TEXT = """# 🛒 Amazon
@@ -34,29 +34,17 @@ Use the link below when shopping on Amazon.
 Tip: Save it as a browser bookmark with `Ctrl + D` so it's easy to find later.
 
 Affiliate / referral link"""
-HOUSEHOLD_TEXT = """# 🇩🇪 Haushaltscheck
+ELECTRICITY_TEXT = """# 🇩🇪 Electricity
 
-Nur für Nutzer in Deutschland.
+Available for users in Germany.
 
-Viele Themen rund um Verträge, Tarife und laufende Kosten werden einem im Alltag kaum erklärt – und in der Schule meistens auch nicht.
+Looking for a better electricity tariff?
 
-Wenn du möchtest, kannst du deinen Haushalt kostenlos und unverbindlich prüfen lassen.
-
-Dabei können zum Beispiel Bereiche wie:
-
-- 🚗 KFZ
-- ⚡ Strom & Gas
-- 📄 laufende Verträge & Tarife
-
-gecheckt werden.
-
-Du bekommst mehrere passende Tarife übersichtlich zusammengestellt und als PDF zum Vergleichen.
-
-So kannst du Preis und Leistung in Ruhe vergleichen und selbst entscheiden, ob und welches Angebot für dich sinnvoll ist."""
+You can compare several suitable options through our partner and decide for yourself which one works best for you."""
 from services.instant_gaming_service import CHANNELS as INSTANT_GAMING_CHANNELS
 GAMING_TEXT = INSTANT_GAMING_CHANNELS['gaming-deals'][1]
-PARTNER_CATEGORY = '🤝 PARTNERS & BENEFITS'
-PARTNER_CHANNELS = {'gaming-news':'📰・gaming-news', 'gaming-deals':'🔥・gaming-deals', 'free-games':'🎁・free-games', 'amazon':'🛒・amazon', 'ai-tools':'🤖・ai-tools', 'haushaltscheck':'🇩🇪・haushaltscheck'}
+PARTNER_CATEGORY = '🛒 MARKETPLACE'
+PARTNER_CHANNELS = {'gaming-news':'📰・gaming-news', 'gaming-deals':'🔥・gaming-deals', 'free-games':'🎁・free-games', 'amazon':'🛒・amazon', 'ai-tools':'🤖・ai-tools', 'electricity':'🇩🇪・electricity'}
 LEGACY_SECTIONS = ('intro','transparency','instant_gaming','pixverse','amazon','energy','energy_sales')
 LEGACY_HEADINGS = {TITLE, '# 🤝 Partners & Benefits', '# 💜 Support GamerHQ', '## ℹ️ Transparency', '## 🎮 Instant Gaming', '## 🤖 PixVerse', '## 🛒 Amazon', '## 🇩🇪 For Germany', '## 🇩🇪 For Germans', '## 🎓 Strom & Gas Vertrieb'}
 _locks = {}
@@ -99,12 +87,12 @@ def legacy_message_key(guild, section='intro'):
 
 
 def section_channel(section):
-    return {'intro':'support-gamerhq', 'free_games':'free-games', 'amazon':'amazon', 'household':'haushaltscheck', 'instant_gaming':'gaming-deals', 'pixverse':'ai-tools'}[section]
+    return {'intro':'support-gamerhq', 'free_games':'free-games', 'amazon':'amazon', 'household':'electricity', 'instant_gaming':'gaming-deals', 'pixverse':'ai-tools'}[section]
 
 
 def support_sections(channel_name=None):
     sections = [('intro', INTRO_TEXT, None), ('free_games', FREE_GAMES_TEXT, None), ('amazon', AMAZON_TEXT, AFFILIATES[2]),
-                ('household', HOUSEHOLD_TEXT, None),
+                ('household', ELECTRICITY_TEXT, None),
                 ('instant_gaming', GAMING_TEXT, AFFILIATES[0]),
                 ('pixverse', '# 🤖 AI & Creator Tools\n\n## PixVerse\n\n' + AFFILIATES[1].copy + '\n\nAffiliate / referral link', AFFILIATES[1])]
     return [row for row in sections if channel_name is None or section_channel(row[0]) == channel_name]
@@ -118,12 +106,6 @@ def support_text(channels=None):
     parts = [INTRO_TEXT]
     if bullets:
         parts.append('\n'.join(bullets))
-    from services.channel_change_service import removed
-    guild = next(iter(channels.values())).guild if channels else None
-    expected = sum(not guild or not removed(guild, name) for name, _, _ in PARTNER_NAVIGATION)
-    if len(bullets) != expected:
-        parts.append('More partner channels are being set up.')
-    parts.append('No extra purchase is required — just use the links whenever they are useful to you.')
     parts.append(DISCLOSURE)
     return '\n\n'.join(parts)
 
@@ -147,15 +129,27 @@ def resource(guild, name, category=False):
     raw = db.get_setting(key)
     stored = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if category and name == 'partners-benefits':
+        matches = [c for c in collection if alias(c.name) in {'partners-benefits', 'partner-benefits', 'marketplace'}]
         if stored in collection:
+            if any(c.id != stored.id for c in matches):
+                raise ServerMessageError('Conflicting Marketplace category IDs; owner review required.')
             if blocked_name(stored):
                 raise ServerMessageError('Mapped partner category is protected/private; review manually.')
             return stored
-        matches = [c for c in collection if alias(c.name) in {'partners-benefits', 'partner-benefits'}]
         if len(matches) > 1:
             raise ServerMessageError('Multiple partner categories found; review manually. No category created.')
         return matches[0] if matches else None
     named = unique(collection, name)
+    if not category and name == 'electricity':
+        old = db.get_setting(channel_key(guild, 'haushaltscheck'))
+        legacy = guild.get_channel(int(old)) if old and old.isdigit() else None
+        if legacy in collection:
+            if (stored in collection and stored.id != legacy.id) or (named and named.id != legacy.id):
+                raise ServerMessageError('Conflicting electricity/legacy channel IDs; owner review required.')
+            return legacy
+        if stored not in collection and named is None:
+            named = unique(collection, 'haushaltscheck')
+
     if stored in collection:
         if named and named.id != stored.id:
             raise ServerMessageError('Conflicting partner/support IDs and names; review before repair.')
@@ -170,13 +164,13 @@ def resolve(guild, kind):
 def guide_reference(guild):
     channel = resolve(guild, 'channel')
     link = channel.mention if channel else '#support-gamerhq'
-    return f'## 🤝 Partners & Benefits\nFind useful deals, tools and services in **{link}**.'
+    return f'## 🛒 Marketplace\nFind useful deals, tools and services in **{link}**.'
 
 
 def matches_section(message, content):
     heading = (message.content or '').split('\n', 1)[0]
     expected = content.split('\n', 1)[0]
-    return heading == expected or (expected == TITLE and heading in {'# 💜 Support GamerHQ', '# 🤝 Partners & Benefits'}) or (expected == '# 🔥 Gaming Deals' and heading == '# 🎮 Gaming Deals')
+    return heading == expected or (expected == TITLE and heading in {'# 💜 Support GamerHQ', '# 🤝 Partners & Benefits'}) or (expected == '# 🇩🇪 Electricity' and heading == '# 🇩🇪 Haushaltscheck') or (expected == '# 🔥 Gaming Deals' and heading == '# 🎮 Gaming Deals')
 
 
 async def remove_empty_legacy_category(guild):
@@ -242,7 +236,7 @@ RETIRED_HEADINGS = {'# ⚡ Strom & Gas', '# 🎓 Strom & Gas Vertrieb',
 
 
 def legacy_review_channels(guild):
-    active = db.get_setting(channel_key(guild, 'haushaltscheck'))
+    active = db.get_setting(channel_key(guild, 'electricity'))
     ids = set(json.loads(db.get_setting(f'household_review:{guild.id}') or '[]'))
     previous_review = db.get_setting(f'partner_manual_review:{guild.id}')
     if previous_review and previous_review.isdigit():
@@ -553,6 +547,29 @@ async def repair_partner_permissions(guild, category, *, feed_ids=()):
             await set_read_only(channel)
 
 
+def migrate_electricity_mapping(guild, channel):
+    """Explicit repair, persisted before rename so retries reuse the same resource."""
+    with db.connect() as conn:
+        for prefix in ('managed_channel', 'managed_channel_state', 'managed_channel_removed'):
+            old_key, new_key = f'{prefix}:{guild.id}:haushaltscheck', f'{prefix}:{guild.id}:electricity'
+            old = conn.execute('SELECT value FROM settings WHERE key=?', (old_key,)).fetchone()
+            current = conn.execute('SELECT value FROM settings WHERE key=?', (new_key,)).fetchone()
+            if old and current and old['value'] != current['value']:
+                raise ServerMessageError('Conflicting electricity migration state; owner review required.')
+            if old:
+                value = old['value']
+                if prefix == 'managed_channel_state':
+                    adopted = json.loads(value)
+                    if channel and str(adopted['channel_id']) != str(channel.id):
+                        raise ServerMessageError('Legacy adopted state has a different channel ID.')
+                    adopted.pop('name', None)  # Explicit product rename supersedes the old label.
+                    value = json.dumps(adopted)
+                conn.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (new_key, value))
+                conn.execute('DELETE FROM settings WHERE key=?', (old_key,))
+        if channel:
+            conn.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (channel_key(guild, 'electricity'), str(channel.id)))
+
+
 async def repair_support(guild, changed):
     # Resolve every collision/private target before creating or moving resources.
     start = unique(guild.categories, 'start-here')
@@ -562,8 +579,8 @@ async def repair_support(guild, changed):
     from services.channel_change_service import removed
     channels = {name:resource(guild,name) for name in ['support-gamerhq', *PARTNER_CHANNELS] if not removed(guild, name)}
     legacy = [resource(guild, name) for name in LEGACY_CHANNELS]
-    if 'haushaltscheck' in channels and channels['haushaltscheck'] is None:
-        channels['haushaltscheck'] = next((c for name, c in zip(LEGACY_CHANNELS, legacy)
+    if 'electricity' in channels and channels['electricity'] is None:
+        channels['electricity'] = next((c for name, c in zip(LEGACY_CHANNELS, legacy)
             if c and db.get_setting(channel_key(guild, name)) == str(c.id)), None)
     if partners and blocked_name(partners):
         raise ServerMessageError('Mapped partner category is protected/private; review manually.')
@@ -575,12 +592,16 @@ async def repair_support(guild, changed):
     for channel in inspect_channels:
         if channel and channel.category and blocked_name(channel.category) and alias(channel.category.name) != 'support-gamerhq':
             raise ServerMessageError('A partner/support channel is in a protected/private area; review before making it public.')
+    migrate_electricity_mapping(guild, channels.get('electricity'))
     await prepare_household_migration(guild, legacy)
     empty = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda target:discord.PermissionOverwrite())
     overwrites = guide_overwrites(empty)
     if partners is None:
         partners = await guild.create_category(PARTNER_CATEGORY, overwrites=overwrites, reason='GamerHQ partner information')
-        changed.append('Created PARTNERS & BENEFITS')
+        changed.append('Created MARKETPLACE')
+    elif partners.name != PARTNER_CATEGORY:
+        await tracked_edit(partners, name=PARTNER_CATEGORY, reason='GamerHQ Marketplace rename; preserve category ID')
+        changed.append('Renamed existing category to MARKETPLACE')
     await repair_partner_permissions(guild, partners, feed_ids=[c.id for c in channels.values() if c])
     db.set_setting(f'managed_category:{guild.id}:partners-benefits', partners.id)
     for name, channel in channels.items():
@@ -603,7 +624,7 @@ async def repair_support(guild, changed):
         else:
             await set_read_only(channel)
     result = await sync_support_messages(guild, order=True)
-    changed.append('Updated Partners & Benefits messages and navigation')
+    changed.append('Updated Marketplace messages and navigation')
     if result and result['pin_failures']:
         raise ServerMessageError('Partner messages saved, but pinning failed: ' + ', '.join(result['pin_failures']) + '. Restore permissions and retry.')
     retirement = await retire_direct_support(guild)

@@ -1,5 +1,12 @@
 # GamerHQ Changelog
 
+## Marketplace Electricity service
+
+- Reuse the existing partner category and household-check channel as 🛒 MARKETPLACE and 🇩🇪・electricity; preserve IDs, history, custom pins and unrelated integrations.
+- Provide English electricity-only copy and private `ELECTRICITY_REQUEST` tickets; retain historical ticket types and disable old entry actions.
+- Update navigation, editor, setup/repair and read-only health. Explicit Repair migrates persisted channel/adoption mappings with conflict checks and retry safety; custom legacy pins require owner review.
+
+
 ## [Unreleased] - 2026-09-23
 
 - Polish Profile Settings: personal onboarding/correction is Gender → Age → Review → Save only; keep platform/interests quick toggles, hide inactive playstyles, remove language selection for the English-language server, and explicitly retire the owned About You pin/legacy language mappings during Repair without removing existing roles or memberships.

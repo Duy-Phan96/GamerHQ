@@ -35,7 +35,7 @@ managed bits remain authoritative. Private IG exposure or loss of required bot a
 auto-repaired and privately logged, never offered as an unsafe adoption. Log delivery
 requires an existing private bot-log and fails closed if normal members could read it.
 
-PARTNERS & BENEFITS uses the existing public read-only guide policy. Known information boards
+MARKETPLACE uses the existing public read-only guide policy. Known information boards
 retain category inheritance when their overwrites match; Instant Gaming feeds also need the
 configured external bot's explicit posting grants. Unknown channels with independent
 interactive overrides are untouched. If an unknown child is still permission-synced with a

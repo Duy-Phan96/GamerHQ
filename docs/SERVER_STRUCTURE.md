@@ -8,7 +8,7 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 
 - START HERE: public onboarding, selectors and LFG/guide/support entries.
 - COMMUNITY: general conversation, newbies, introductions, suggestions and bot commands.
-- PARTNERS & BENEFITS: public read-only boards in managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Haushaltscheck. Direct support is explained in support-gamerhq; its former separate channel is retired by owner Repair.
+- MARKETPLACE: public read-only boards in managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. The support-gamerhq overview links to useful Marketplace offers; the former direct-support channel is retired by owner Repair.
 - STAFF: private staff conversation, suggestion inbox, ticket/bot/mod logs and commands.
 - AFFILIATE STATS: private purchases/buyer-ranking using existing IG channel IDs and explicit Instant Gaming access.
 - SUPPORT TICKETS: private ticket channels created on demand.
@@ -49,9 +49,9 @@ at confirmation; only the preview author may confirm. A changed Discord snapshot
 mapping or saved override invalidates the preview.
 
 Initial eligibility is deliberately limited to recorded IDs for `support-gamerhq`,
-`gaming-news`, `gaming-deals`, `amazon`, `ai-tools` and `haushaltscheck`. Names include
+`gaming-news`, `gaming-deals`, `free-games`, `amazon`, `ai-tools` and `electricity`. Names include
 emoji/prefixes. Category adoption accepts existing public START HERE, COMMUNITY or
-PARTNERS & BENEFITS only. Position means zero-based order among text channels in the
+MARKETPLACE only. Position means zero-based order among text channels in the
 category, not Discord's raw position number. To adopt both a moved parent and position,
 use `all` or adopt the category first. Name-only adoption leaves other desired fields
 unchanged. Unknown channels, private feeds, roles and arbitrary overwrites are not

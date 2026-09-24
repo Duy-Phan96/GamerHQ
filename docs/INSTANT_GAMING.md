@@ -5,7 +5,7 @@ GamerHQ verwaltet diese Channels über gespeicherte IDs, Setup/Repair und
 
 | Channel | Position | Mitglieder | Staff |
 | --- | --- | --- | --- |
-| 📰・gaming-news | an erster Stelle der vorhandenen 🤝 PARTNERS & BENEFITS-Kategorie | lesen, nicht schreiben | schreiben |
+| 📰・gaming-news | an erster Stelle der vorhandenen 🛒 MARKETPLACE-Kategorie | lesen, nicht schreiben | schreiben |
 | 🔥・gaming-deals | direkt nach gaming-news | lesen, nicht schreiben | schreiben |
 | 💸・purchases | 🔒 AFFILIATE STATS | unsichtbar | lesen; Schreiben wie Kategorie |
 | 🏆・buyer-ranking | 🔒 AFFILIATE STATS | unsichtbar | lesen; Schreiben wie Kategorie |
@@ -56,7 +56,7 @@ sonst ein Ersatz erzeugt und gespeichert. Mehrdeutige Kandidaten führen zu
 Manual Review; es werden keine Duplikate erstellt oder Channels zusammengelegt.
 
 Gaming News und Gaming Deals werden mit ihren bestehenden IDs und ihrem Verlauf
-in die vorhandene 🤝 PARTNERS & BENEFITS-Kategorie verschoben. Die verwaltete Reihenfolge ist News, Deals, Free Games, Amazon, AI Tools, Haushaltscheck.
+in die vorhandene 🛒 MARKETPLACE-Kategorie verschoben. Die verwaltete Reihenfolge ist News, Deals, Free Games, Amazon, AI Tools, Electricity.
 Andere Channels behalten ihre relative Reihenfolge.
 Die Kategorie-ID wird ebenfalls wiederverwendet; es entsteht keine neue Kategorie. Der Deals-Pin bleibt
 unter `partner_message:<guild-id>:instant_gaming`; der

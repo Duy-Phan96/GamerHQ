@@ -11,7 +11,7 @@ from services.music_bot_service import blocked_name
 def candidates(guild):
     ids = {int(raw) for key in ('managed_channel', 'retired_partner_channel')
            if (raw := db.get_setting(f'{key}:{guild.id}:finanzberatung')) and raw.isdigit()}
-    household = db.get_setting(f'managed_channel:{guild.id}:haushaltscheck')
+    household = db.get_setting(f'managed_channel:{guild.id}:electricity')
     return [c for c in guild.text_channels
             if (c.id in ids or alias(c.name) == 'finanzberatung') and str(c.id) != household]
 

@@ -7,7 +7,7 @@
 5. Set `DISCORD_TOKEN`, positive `GUILD_ID`, `CHOOSE_GAMES_CHANNEL_ID` and a separate `GAMERHQ_DB_PATH`. IDs are configuration, not example content; no live IDs are included in these docs.
 6. Follow [local setup](SETUP.md). Starting `bot.py` is a real connection and command/resource reconciliation, not a dry run. Never run two copies against the same guild/database.
 7. Run `/server health` and inspect missing resources. Owner `/server setup` is an incremental preview/confirmed repair workflow, requiring pre-existing START HERE and COMMUNITY; prepare the base channels and private STAFF category described in SETUP.md.
-8. Verify that each support-gamerhq bullet opens its PARTNERS & BENEFITS channel. If a destination is missing, inspect health and run owner setup repair; do not manually paste raw IDs.
+8. Verify that each support-gamerhq bullet opens its MARKETPLACE channel. If a destination is missing, inspect health and run owner setup repair; do not manually paste raw IDs.
 9. Verify role assignment, public/private LFG, voice ownership, suggestions and two-user ticket isolation using the [release checklist](../RELEASE_CHECKLIST.md). Check that ordinary users cannot see other tickets or Staff logs.
 
 Slash-command permissions restrict who can operate maintenance commands; they are separate from the bot's own Discord permissions. Missing hierarchy/permissions should be corrected explicitly instead of granting everyone broad access.
@@ -16,7 +16,7 @@ For `/server pinned-messages`, verify an owner/admin can select and preview a ma
 
 ## Partner feeds and bot groups
 
-Owner Repair preserves News, Deals, Amazon, AI Tools and the German Haushaltscheck, inserting **🎁・free-games** directly below Deals. Each public feed is read-only for normal members. Free Games is for free/free-to-keep offers (DealGecko); Gaming Deals is for discounted/commercial offers (Instant Gaming); Gaming News remains separate. Existing channel history, IDs, pins, buttons and customized content are preserved.
+Owner Repair preserves News, Deals, Amazon, AI Tools and Germany-only Electricity, inserting **🎁・free-games** directly below Deals. Each public feed is read-only for normal members. Free Games is for free/free-to-keep offers (DealGecko); Gaming Deals is for discounted/commercial offers (Instant Gaming); Gaming News remains separate. Existing channel history, IDs, pins, buttons and customized content are preserved.
 
 The Free Games adjacency rule takes precedence over older adopted absolute positions. If health reports an adopted-position conflict after repair, review the resulting order and adopt the intended positions again; unrelated channels retain their relative order.
 
@@ -48,3 +48,7 @@ See [partner migration](PARTNERS.md), [Instant Gaming](INSTANT_GAMING.md) and [m
 ## Streamer Hub beta
 
 Keep both streamer flags false initially. Owner repair preserves existing channels/data and hides managed legacy choose-streamers. In an enabled Dev guild, manually assign the safe 🎥 Streamer role; stream-updates is the fixed read-only public target, while guide/commands are restricted to approved Streamers/staff. Public profiles, follower roles and custom notices are inactive. See [beta guide](STREAMER_HUB.md).
+
+## Marketplace upgrade
+
+Restart reviewed code, run `/server health`, then `/server setup` → Repair. Existing category/channel IDs are reused for 🛒 MARKETPLACE and 🇩🇪・electricity. Verify the English Electricity pin and private ⚡ Compare Electricity Tariffs action; repeat Repair to confirm stable IDs. Customized legacy pins require owner editor review or Reset to Default. See [Marketplace migration](PARTNERS.md).

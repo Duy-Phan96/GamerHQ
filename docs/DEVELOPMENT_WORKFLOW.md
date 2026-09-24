@@ -27,7 +27,7 @@ python -m pip install -r requirements.lock -r requirements-dev.txt
 | Pins / partners / IG | tests/test_managed_messages.py, test_support.py, test_instant_gaming.py |
 | Games / voice / music | tests/test_voice_area.py, test_music_cleanup.py |
 | LFG / concurrency | tests/test_lobby_management.py, test_stability.py |
-| Tickets / household requests | tests/test_tickets.py, test_energy_offers.py |
+| Tickets / electricity requests | tests/test_tickets.py, test_energy_offers.py |
 | Production / repository safety | tests/test_production.py, test_repository_safety.py |
 
 All filenames in the table are under tests/. Examples:

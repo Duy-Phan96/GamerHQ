@@ -19,7 +19,8 @@ _locks = {}
 ACTIONS = {
     'STREAMER_ROLE': ('Streamer', 'gamerhq:roles:streamer'),
     'START_ONBOARDING': ('Get Started', 'gamerhq:onboarding:start'),
-    'HOUSEHOLD_CHECK_REQUEST': ('🔍 Haushaltscheck anfragen', 'gamerhq:offers:household-check'),
+    'ELECTRICITY_REQUEST': ('⚡ Compare Electricity Tariffs', 'gamerhq:offers:electricity'),
+    'HOUSEHOLD_CHECK_REQUEST': ('Legacy household request', 'gamerhq:offers:household-check'),
     'CREATE_SUPPORT_TICKET': ('Create Support Ticket', 'gamerhq:tickets:create'),
     'SUBMIT_SUGGESTION': ('Submit Suggestion', 'gamerhq:suggestions:submit'),
 }
@@ -47,10 +48,10 @@ def specs(guild):
     result = {}
     result[f'instant_gaming_message:{guild.id}:gaming-news'] = ('Gaming News', f'managed_channel:{guild.id}:gaming-news', [])
     for section, label in [('intro', 'Support GamerHQ'), ('free_games', 'Free Games'),
-                           ('amazon', 'Amazon'), ('household', 'Haushaltscheck'),
+                           ('amazon', 'Amazon'), ('household', 'Electricity'),
                            ('instant_gaming', 'Gaming Deals'), ('pixverse', 'AI Tools')]:
-        action = 'HOUSEHOLD_CHECK_REQUEST' if section == 'household' else None
-        result[message_key(guild, section)] = (label, f'managed_channel:{guild.id}:{section_channel(section)}', [action] if action else [])
+        action = 'ELECTRICITY_REQUEST' if section == 'household' else None
+        result[message_key(guild, section)] = (label, f'managed_channel:{guild.id}:{section_channel(section)}', ([action, 'HOUSEHOLD_CHECK_REQUEST'] if section == 'household' else [action]) if action else [])
     for key, name, label, action in [('central_guide', 'guide', 'Guide', None),
                                     ('suggestions_entry', 'suggestions', 'Suggestions', 'SUBMIT_SUGGESTION'),
                                     ('ticket_entry', 'need-support', 'Need Support', 'CREATE_SUPPORT_TICKET')]:
@@ -181,6 +182,10 @@ def render(buttons, *, preview=False):
             from cogs.tickets import SupportOffers, TicketEntry
             from cogs.suggestions import SuggestionEntryView
             action = config['target']
+            if action == 'HOUSEHOLD_CHECK_REQUEST':
+                item = discord.ui.Button(label=config['label'], emoji=config['emoji'] or None, disabled=True, custom_id=ACTIONS[action][1])
+                view.add_item(item)
+                continue
             if action in {'ROLE_english', 'ROLE_german'}:
                 continue  # Legacy controls are inert; explicit Repair removes their stored configuration.
             from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView, RoleSuggestionView
