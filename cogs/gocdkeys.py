@@ -32,6 +32,16 @@ class GoCdKeysWatcher(commands.Cog):
         except Exception as exc:
             logging.getLogger(__name__).debug('[gocdkeys] skipped: edit lookup (%s)', type(exc).__name__)
 
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload):
+        await self.service.handle_delete(self.bot.get_guild(payload.guild_id), payload.channel_id, payload.message_id)
+
+    @commands.Cog.listener()
+    async def on_raw_bulk_message_delete(self, payload):
+        guild = self.bot.get_guild(payload.guild_id)
+        for message_id in payload.message_ids:
+            await self.service.handle_delete(guild, payload.channel_id, message_id)
+
 
 async def setup(bot):
     await bot.add_cog(GoCdKeysWatcher(bot))

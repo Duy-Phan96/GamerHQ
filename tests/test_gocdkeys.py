@@ -24,7 +24,8 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
             patcher = patch(target, value); patcher.start(); self.addCleanup(patcher.stop)
         db.init_db()
         self.channel = SimpleNamespace(id=2, mention='<#2>')
-        self.guild = SimpleNamespace(id=1, get_channel=lambda cid: self.channel if cid == 2 else None,
+        self.channel.permissions_for = lambda member: discord.Permissions.all()
+        self.guild = SimpleNamespace(id=1, me=SimpleNamespace(id=9), get_channel=lambda cid: self.channel if cid == 2 else None,
                                      text_channels=[self.channel])
         db.set_setting('managed_channel:1:gaming-deals', '2')
         self.message = SimpleNamespace(id=100, guild=self.guild, channel=self.channel,
@@ -104,7 +105,7 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
         self.service.fetch_page.assert_not_called()
 
     def test_normalization_extraction_order_and_edition_identity(self):
-        self.assertEqual(service.normalize_game_name('ELDEN RING - Steam'), 'Elden Ring')
+        self.assertEqual(service.normalize_game_name('ELDEN RING - Steam'), 'ELDEN RING')
         self.assertEqual(service.normalize_game_name('Cyberpunk 2077 Ultimate Edition PC'), 'Cyberpunk 2077 Ultimate Edition')
         embed = discord.Embed(title='DEAL', description='Wrong Game')
         embed.add_field(name='Price', value='€10.00')
@@ -161,65 +162,133 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(self.service.handle(self.message), other.handle(self.message))
         self.message.reply.assert_awaited_once()
 
-    async def test_paid_sources_and_free_states(self):
-        import config
-        for author in (42, config.DEALGECKO_BOT_ID):
-            self.message.author.id = author
-            for price in ('€0', '€0.00', 'Price = 0', '**FREE**', 'Gratis', '100% OFF', '~~€19.99~~ €0'):
-                self.message.content = price
-                self.assertEqual(service.price_state(self.message), 'free')
-                await self.service.handle(self.message)
+    async def test_embed_only_without_price_is_enriched(self):
+        self.message.content = ''
+        self.message.embeds = [discord.Embed(title='Silent Hill: Townfall')]
+        self.service.fetch_page.return_value = '<title>Buy Silent Hill: Townfall Steam Key at best prices | Gocdkeys</title>'
+        await self.service.handle(self.message)
+        self.message.reply.assert_awaited_once()
+        self.assertEqual(affiliate_deals.record(100)['normalized_game'], 'Silent Hill: Townfall')
+        self.assertEqual(self.message.reply.call_args.kwargs['view'].children[0].url,
+                         'https://gocdkeys.com/buy-silent-hill-townfall-pc-cd-key#ref=kas66b')
+
+    async def test_structured_field_and_trusted_application(self):
+        self.message.content = ''
+        self.message.embeds = [discord.Embed(title='DEAL')]
+        self.message.embeds[0].add_field(name='Game', value='Elden Ring')
+        self.message.webhook_id = 123
+        self.message.author.id = 123
+        self.message.application_id = 42
+        await self.service.handle(self.message)
+        self.message.reply.assert_awaited_once()
+
+    async def test_untrusted_application_and_self_are_ignored(self):
+        self.message.webhook_id = 123
+        self.message.application_id = 999
+        await self.service.handle(self.message)
+        self.message.webhook_id = None
+        self.message.author.id = 9
+        with patch('config.INSTANT_GAMING_BOT_ID', 9):
+            await self.service.handle(self.message)
         self.message.reply.assert_not_called()
-        self.service.fetch_page.assert_not_called()
+
+    async def test_dealgecko_uses_same_pipeline(self):
+        import config
         self.message.author.id = config.DEALGECKO_BOT_ID
-        self.message.content = 'Steam\n€4.99'
+        self.message.content = ''
         await self.service.handle(self.message)
         self.message.reply.assert_awaited_once()
         self.assertEqual(affiliate_deals.record(100)['source_key'], 'dealgecko')
 
-    def test_positive_currencies_and_title_formats(self):
-        for price in ('€4.99', '€19.99', '$9.99', '£12.50', '24,99 EUR'):
-            self.message.content = price
-            self.assertEqual(service.price_state(self.message), 'paid')
-        self.message.content = 'Price unknown'
-        self.assertEqual(service.price_state(self.message), 'unknown')
-        self.message.content = 'Save €19.99'
-        self.assertEqual(service.price_state(self.message), 'unknown')
-        for raw, expected in [('Cyberpunk 2077 - Steam Key', 'Cyberpunk 2077'), ('ELDEN RING | 40% OFF','Elden Ring'), ('Hogwarts Legacy (PC)', 'Hogwarts Legacy')]:
+    def test_title_formats_preserve_identity(self):
+        for raw, expected in [('ELDEN RING - Steam Key', 'ELDEN RING'),
+                              ('Cyberpunk 2077 (PC)', 'Cyberpunk 2077'),
+                              ('Silent Hill: Townfall', 'Silent Hill: Townfall'),
+                              ('EA SPORTS FC™ 27 Ultimate Edition', 'EA SPORTS FC 27 Ultimate Edition'),
+                              ('Deal or No Deal', 'Deal or No Deal')]:
             self.assertEqual(service.normalize_game_name(raw), expected)
+        self.message.embeds = [discord.Embed(title='Offer')]
+        self.message.embeds[0].add_field(name='Unknown', value='Uncertain promotion')
+        self.message.content = ''
+        self.assertIsNone(service.extract_game_name(self.message))
 
-    async def test_paid_free_paid_edits_reuse_owned_companion(self):
-        self.guild.me = SimpleNamespace(id=9)
+    def companion(self):
         companion = SimpleNamespace(id=200, author=self.guild.me, reference=SimpleNamespace(message_id=100), content=service.COPY)
         async def edit(**kwargs):
-            companion.content=kwargs['content']
+            companion.content = kwargs['content']
         companion.edit = AsyncMock(side_effect=edit)
-        self.channel.fetch_message=AsyncMock(return_value=companion)
+        companion.delete = AsyncMock()
+        self.channel.fetch_message = AsyncMock(return_value=companion)
+        return companion
+
+    async def test_changed_title_updates_same_companion_and_mapping(self):
+        companion = self.companion()
         await self.service.handle(self.message)
-        self.message.content='FREE'
-        await self.service.handle(self.message)
-        self.assertEqual(affiliate_deals.record(100)['status'], 'disabled')
-        self.assertIsNone(companion.edit.call_args.kwargs['view'])
-        self.message.content='€4.99'
+        self.message.embeds = [discord.Embed(title='Silent Hill: Townfall')]
         restarted = service.GoCdKeysService()
-        restarted.fetch_page = AsyncMock(return_value=PAGE)
+        restarted.fetch_page = AsyncMock(return_value='<title>Buy Silent Hill: Townfall Steam Key at best prices | Gocdkeys</title>')
         await restarted.handle(self.message)
-        self.assertEqual(affiliate_deals.record(100)['status'], 'posted')
-        self.assertEqual(companion.edit.call_args.kwargs['view'].children[0].url, URL+'#ref=kas66b')
+        await restarted.handle(self.message)
+        companion.edit.assert_awaited_once()
+        row = affiliate_deals.record(100)
+        self.assertEqual(row['normalized_game'], 'Silent Hill: Townfall')
+        self.assertEqual(row['response_message_id'], 200)
+        self.assertIn('silent-hill-townfall', row['gocdkeys_url'])
         self.message.reply.assert_awaited_once()
 
-    async def test_free_to_paid_and_unknown_companion_preserved(self):
-        self.message.content='Gratis'
+    async def test_uncertain_edit_disables_and_valid_edit_restores(self):
+        companion = self.companion()
         await self.service.handle(self.message)
-        self.assertIsNone(affiliate_deals.record(100))
-        self.message.content='$9.99'
+        self.message.embeds = []
+        self.message.content = ''
         await self.service.handle(self.message)
-        self.guild.me=SimpleNamespace(id=9)
-        other=SimpleNamespace(author=SimpleNamespace(id=777), edit=AsyncMock())
-        self.channel.fetch_message=AsyncMock(return_value=other)
-        self.message.content='€0'
+        self.assertEqual(affiliate_deals.record(100)['status'], 'disabled')
+        self.message.embeds = [discord.Embed(title='ELDEN RING - Steam')]
         await self.service.handle(self.message)
-        other.edit.assert_not_called()
+        self.assertEqual(affiliate_deals.record(100)['status'], 'posted')
+        self.assertEqual(companion.edit.await_count, 2)
+        self.message.reply.assert_awaited_once()
+
+    async def test_delete_is_scoped_owned_and_durable(self):
+        companion = self.companion()
+        await self.service.handle(self.message)
+        await self.service.handle_delete(self.guild, 3, 100)
+        companion.delete.assert_not_called()
+        await self.service.handle_delete(self.guild, 2, 100)
+        await self.service.handle_delete(self.guild, 2, 100)
+        await service.GoCdKeysService().handle(self.message)
+        companion.delete.assert_awaited_once()
+        self.assertEqual(affiliate_deals.record(100)['status'], 'deleted')
+        self.message.reply.assert_awaited_once()
+
+    async def test_manual_or_unrelated_companions_are_never_edited_or_deleted(self):
+        companion = self.companion()
+        await self.service.handle(self.message)
+        for field, wrong in [('author', SimpleNamespace(id=777)),
+                             ('reference', SimpleNamespace(message_id=999)), ('content', 'Manual message')]:
+            old = getattr(companion, field)
+            setattr(companion, field, wrong)
+            self.message.embeds = []
+            self.message.content = ''
+            await self.service.handle(self.message)
+            await self.service.handle_delete(self.guild, 2, 100)
+            setattr(companion, field, old)
+        companion.edit.assert_not_called()
+        companion.delete.assert_not_called()
+
+    async def test_delete_permission_failure_retains_mapping(self):
+        companion = self.companion()
+        await self.service.handle(self.message)
+        companion.delete.side_effect = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), 'Denied')
+        await self.service.handle_delete(self.guild, 2, 100)
+        self.assertEqual(affiliate_deals.record(100)['status'], 'posted')
+
+    def test_health_reports_missing_posting_permissions_and_intent(self):
+        self.channel.permissions_for = lambda member: discord.Permissions.none()
+        row = service.status(self.guild, SimpleNamespace(intents=SimpleNamespace(message_content=False)))
+        self.assertEqual(row[1], 'WARN')
+        self.assertIn('send_messages', row[2])
+        self.assertIn('Message Content intent: Disabled', row[2])
 
     async def test_free_games_scope_even_when_paid(self):
         self.channel.name='free-games'
@@ -241,6 +310,23 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
         payload.data={'pinned':True}
         await watcher.on_raw_message_edit(payload)
         self.channel.fetch_message.assert_awaited_once_with(100)
+
+    async def test_raw_delete_and_bulk_delete_use_existing_mapping(self):
+        from cogs.gocdkeys import GoCdKeysWatcher
+        watcher = GoCdKeysWatcher(SimpleNamespace(get_guild=lambda gid: self.guild if gid == 1 else None))
+        watcher.service.handle_delete = AsyncMock()
+        await watcher.on_raw_message_delete(SimpleNamespace(guild_id=1, channel_id=2, message_id=100))
+        watcher.service.handle_delete.assert_awaited_once_with(self.guild, 2, 100)
+        await watcher.on_raw_bulk_message_delete(SimpleNamespace(guild_id=1, channel_id=2, message_ids={101, 102}))
+        self.assertEqual(watcher.service.handle_delete.await_count, 3)
+
+    async def test_already_missing_companion_retains_deleted_claim(self):
+        self.companion()
+        await self.service.handle(self.message)
+        self.channel.fetch_message.side_effect = discord.NotFound(SimpleNamespace(status=404, reason='Not Found'), 'Missing')
+        await self.service.handle_delete(self.guild, 2, 100)
+        self.assertEqual(affiliate_deals.record(100)['status'], 'deleted')
+        self.assertEqual(affiliate_deals.record(100)['response_message_id'], 200)
 
     def test_additive_migration_preserves_legacy_delivery_claim(self):
         with db.connect() as conn:

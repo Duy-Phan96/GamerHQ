@@ -6,7 +6,6 @@ import logging
 import re
 import time
 import unicodedata
-from decimal import Decimal, InvalidOperation
 from weakref import WeakValueDictionary
 from urllib.parse import urlsplit, urlunsplit
 
@@ -24,52 +23,22 @@ _message_locks = WeakValueDictionary()
 
 def deal_source(message):
     from services.bot_group_service import member_id
-    if not message.author.bot or message.webhook_id:
+    if not message.author.bot:
         return None
+    if message.author.id == getattr(getattr(message.guild, 'me', None), 'id', None):
+        return None
+    # Discord-supplied application IDs authenticate application/webhook posts;
+    # an arbitrary webhook name or author ID is never sufficient.
+    source_id = getattr(message, 'application_id', None) if message.webhook_id else message.author.id
     return next((name for name in config.SUPPORTED_DEAL_SOURCES
-                 if member_id(message.guild, name) == message.author.id), None)
-
-
-def price_state(message):
-    """Only confidently priced offers qualify. Free signals always win over old prices."""
-    fields = [f for e in message.embeds for f in e.fields]
-    price_fields = [f.value for f in fields if f.name.casefold().strip() in
-                    {'price', 'sale price', 'current price', 'preis', 'offer price', 'deal price'}]
-    discounts = [f.value + ' off' for f in fields if f.name.casefold().strip() in {'discount', 'rabatt'}]
-    texts = [message.content or '', *[e.description or '' for e in message.embeds],
-             *[e.title or '' for e in message.embeds], *price_fields, *discounts]
-    positive = False
-    for text in texts:
-        discount_only = text in discounts
-        text = re.sub(r'~~.*?~~', '', text, flags=re.S)
-        text = text.replace('**', '').replace('__', '')
-        # Remove URLs; prices/discounts in referral paths are not offer prices.
-        text = re.sub(r'https?://\S+', '', text)
-        if re.search(r'(?im)(?:^|[:\n])\s*(?:FREE|Gratis|Kostenlos)(?:\s*[!.*]|\s*$)|\b(?:now free|free to keep|100\s*%\s*(?:off|discount|rabatt))\b', text):
-            return 'free'
-        if discount_only:
-            continue
-        text = re.sub(r'(?im)^\s*(?:save|saving|savings|original price|old price|rrp|msrp)\b[^\n]*', '', text)
-        values = re.findall(r'(?:[€$£]\s*(\d+(?:[.,]\d{1,2})?)|(?<![\w.])(\d+(?:[.,]\d{1,2})?)\s*(?:[€$£]|EUR\b|USD\b|GBP\b))', text, re.I)
-        numbers = [a or b for a, b in values]
-        numbers += re.findall(r'(?i)\b(?:price|preis)\s*[:=]\s*(\d+(?:[.,]\d{1,2})?)\b', text)
-        if text in price_fields and re.fullmatch(r'\s*\d+(?:[.,]\d{1,2})?\s*', text):
-            numbers.append(text.strip())
-        for number in numbers:
-            try:
-                amount = Decimal(number.replace(',', '.'))
-            except InvalidOperation:
-                continue
-            if amount == 0: return 'free'
-            positive = positive or amount > 0
-    return 'paid' if positive else 'unknown'
+                 if source_id and member_id(message.guild, name) == source_id), None)
 
 
 def normalize_game_name(value):
     value = html.unescape(str(value or ''))
     value = re.sub(r'\[([^\]]+)\]\(https?://[^)]+\)', r'\1', value)
     value = re.sub(r'https?://\S+|<[^>]+>', '', value)
-    value = re.sub(r'(?i)\b(?:sale|deal|buy now)\b\s*[:!–-]?', '', value)
+    value = re.sub(r'(?i)^(?:sale|deal|buy now)\s*[:!–-]\s*', '', value)
     value = re.sub(r'(?:[$€£]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*[$€£]|-?\d+\s*%)', '', value)
     value = re.sub(r'(?i)\s*[-–|]?\s*\d+\s*%\s*OFF\s*$', '', value)
     value = re.sub(r'(?i)(?:\s*[-–|()]?\s*\b(?:steam(?: key)?|pc)\b\s*\)?)+$', '', value)
@@ -78,18 +47,18 @@ def normalize_game_name(value):
     value = ' '.join(value.split()).strip(' -:.')
     if not 2 <= len(value) <= 160 or not any(c.isalpha() for c in value):
         return None
-    if value.casefold() in {'price', 'discount', 'platform', 'instant gaming', 'dealgecko', 'game', 'product', 'offer', 'offers', 'free', 'gratis', 'eur', 'usd'}:
+    if value.casefold() in {'sale', 'deal', 'buy now', 'price', 'discount', 'platform', 'instant gaming', 'dealgecko', 'game', 'product', 'offer', 'offers', 'free', 'gratis', 'eur', 'usd'}:
         return None
-    return value.title() if value.isupper() else value
+    return value
 
 
 def extract_game_name(message):
     embeds = message.embeds
     sources = [e.title for e in embeds]
     sources += [f.value for e in embeds for f in e.fields if f.name.casefold().strip() in {'game', 'title', 'product', 'game name'}]
-    sources += [f.value for e in embeds for f in e.fields if f.name.casefold().strip() not in {'price', 'discount', 'platform', 'store', 'region', 'edition'}]
-    sources += [e.description for e in embeds]
     sources += re.findall(r'\[([^\]]+)\]\(https?://[^)]+\)', message.content or '')
+    sources += re.findall(r'(?im)^(?:game|title|product)\s*:\s*(.+)$', message.content or '')
+    sources += [e.description for e in embeds]
     sources += [message.content]
     for source in sources:
         for line in (source or '').splitlines():
@@ -168,7 +137,7 @@ class GoCdKeysService:
                                          headers={'User-Agent': 'GamerHQ-PriceComparison/1.0'}) as session:
             async with session.get(url, allow_redirects=False) as response:
                 if response.status != 200 or 'text/html' not in response.headers.get('Content-Type', ''):
-                    log.debug('[gocdkeys] skipped: product HTTP status %s', response.status)
+                    log.info('[gocdkeys] skipped: product HTTP status %s', response.status)
                     return None
                 raw = bytearray()
                 async for chunk in response.content.iter_chunked(65536):
@@ -202,29 +171,61 @@ class GoCdKeysService:
             self._cache[title] = (now + (3600 if result else 300), result)
             return result
 
-    async def update_companion(self, message, row, *, enable=False):
-        if not row['response_message_id'] or row['guild_id'] != message.guild.id or row['channel_id'] != message.channel.id:
-            return
-        companion = await message.channel.fetch_message(row['response_message_id'])
-        if (companion.author.id != message.guild.me.id
-                or getattr(companion.reference, 'message_id', None) != message.id
+    async def owned_companion(self, channel, guild, source_id, row):
+        if not row['response_message_id'] or row['guild_id'] != guild.id or row['channel_id'] != channel.id:
+            return None
+        companion = await channel.fetch_message(row['response_message_id'])
+        if (companion.author.id != guild.me.id
+                or getattr(companion.reference, 'message_id', None) != source_id
                 or companion.content not in {COPY, DISABLED_COPY}):
-            log.warning('[gocdkeys] skipped: companion ownership/content mismatch')
+            log.warning('[gocdkeys] skipped reason=companion_ownership_mismatch message_id=%s', source_id)
+            return None
+        return companion
+
+    async def update_companion(self, message, row, *, url=None, title=None):
+        companion = await self.owned_companion(message.channel, message.guild, message.id, row)
+        if not companion:
             return
-        if enable:
-            kwargs = create_comparison_message(row['gocdkeys_url'])
+        if url:
+            kwargs = create_comparison_message(url)
             kwargs['suppress'] = kwargs.pop('suppress_embeds')
             await companion.edit(**kwargs)
+            affiliate_deals.update_target(message.id, url, title)
         else:
             await companion.edit(content=DISABLED_COPY, view=None, allowed_mentions=discord.AllowedMentions.none(), suppress=True)
-        affiliate_deals.finish(message.id, 'posted' if enable else 'disabled')
+            affiliate_deals.finish(message.id, 'disabled')
+
+    async def handle_delete(self, guild, channel_id, source_id):
+        try:
+            if not config.GOCDKEYS_ENABLED or not guild or guild.id != config.GUILD_ID:
+                return
+            channel = resolve(guild, 'gaming-deals', mapped_only=True)
+            if not channel or channel.id != channel_id:
+                return
+            lock = _message_locks.setdefault(source_id, asyncio.Lock())
+            async with lock:
+                row = affiliate_deals.record(source_id)
+                if not row or row['status'] not in {'posted', 'disabled'}:
+                    return
+                try:
+                    companion = await self.owned_companion(channel, guild, source_id, row)
+                    if not companion:
+                        return
+                    await companion.delete()
+                except discord.NotFound:
+                    pass
+                affiliate_deals.finish(source_id, 'deleted')
+        except Exception as exc:
+            log.warning('[gocdkeys] cleanup skipped message_id=%s reason=%s', source_id, type(exc).__name__)
 
     async def handle(self, message):
         try:
             if not config.GOCDKEYS_ENABLED or not message.guild or message.guild.id != config.GUILD_ID:
+                log.debug('[gocdkeys] skipped reason=disabled_or_wrong_guild message_id=%s', message.id)
                 return
             source = deal_source(message)
             if not source:
+                log.debug('[gocdkeys] skipped reason=untrusted_source message_id=%s', message.id)
                 return
             channel = resolve(message.guild, 'gaming-deals', mapped_only=True)
             if not channel or message.channel.id != channel.id:
@@ -237,28 +238,25 @@ class GoCdKeysService:
 
     async def process_deal(self, message, source):
         row = affiliate_deals.record(message.id)
-        state = price_state(message)
         title = extract_game_name(message)
+        log.info('[gocdkeys] deal detected source=%s message_id=%s title_found=%s', source, message.id, bool(title))
         if row:
-            if row['status'] == 'posted' and (state != 'paid' or not title or title != row['normalized_game']):
+            if row['status'] not in {'posted', 'disabled'}:
+                return
+            if row['status'] == 'posted' and title and identity(title) == identity(row['normalized_game'] or ''):
+                return
+            page = await self.find_game_page(title) if title else None
+            if page:
+                await self.update_companion(message, row, url=build_affiliate_url(page), title=title)
+            elif row['status'] == 'posted':
                 await self.update_companion(message, row)
-            elif row['status'] == 'disabled' and state == 'paid' and title == row['normalized_game']:
-                # Revalidate before re-enabling the SAME companion, never post another.
-                page = await self.find_game_page(title)
-                if page and build_affiliate_url(page) == row['gocdkeys_url']:
-                    await self.update_companion(message, row, enable=True)
-            else:
-                log.debug('[gocdkeys] skipped: already processed')
-            return
-        if state != 'paid':
-            log.debug('[gocdkeys] skipped: free or unknown price')
             return
         if not title:
-            log.debug('[gocdkeys] skipped: no game title found')
+            log.info('[gocdkeys] skipped reason=unresolved_title message_id=%s', message.id)
             return
         page = await self.find_game_page(title)
         if not page:
-            log.debug('[gocdkeys] skipped: game not resolved')
+            log.info('[gocdkeys] skipped reason=unresolved_game message_id=%s', message.id)
             return
         url = build_affiliate_url(page)
         if not affiliate_deals.claim(message, url, title, source): return
@@ -269,7 +267,7 @@ class GoCdKeysService:
             log.warning('[gocdkeys] skipped: delivery failed; claim retained for manual review')
             return
         affiliate_deals.finish(message.id, 'posted', result.id)
-        log.info('[gocdkeys] posted source message %s', message.id)
+        log.info('[gocdkeys] comparison created provider=GoCDKeys source=%s message_id=%s', source, message.id)
 
 
 def create_comparison_message(url):
@@ -283,10 +281,15 @@ def status(guild, bot=None):
     channel = resolve(guild, 'gaming-deals', mapped_only=True)
     configured = bool(channel and any(member_id(guild, source) for source in config.SUPPORTED_DEAL_SOURCES) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', config.GOCDKEYS_REFERRAL_CODE))
     intent = bool(getattr(getattr(bot, 'intents', None), 'message_content', False))
-    enabled = config.GOCDKEYS_ENABLED and configured and intent
+    permissions = channel.permissions_for(guild.me) if channel and getattr(guild, 'me', None) else None
+    missing = [right for right in ('view_channel', 'send_messages', 'read_message_history', 'embed_links')
+               if not permissions or not getattr(permissions, right, False)]
+    enabled = config.GOCDKEYS_ENABLED and configured and intent and not missing
     detail = (f'Paid-deal watcher: {"Enabled" if enabled else "Disabled"}; '
               f'Gaming Deals: {channel.mention if channel else "Missing"}; '
               f'GoCDKeys: {"Configured" if configured else "Missing"}; '
               f'Referral: {"Configured" if config.GOCDKEYS_REFERRAL_CODE else "Missing"}. '
+              f'GamerHQ posting: {"Ready" if not missing else "Missing " + ", ".join(missing)}; '
+              f'Message Content intent: {"Enabled" if intent else "Disabled"}. '
               'Optional product-page validation; no live lookup in health.')
     return ('GoCDKeys', 'PASS' if enabled else 'WARN' if config.GOCDKEYS_ENABLED else 'INFO', detail)

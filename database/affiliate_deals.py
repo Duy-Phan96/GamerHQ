@@ -26,3 +26,9 @@ def finish(source_id, status, response_id=None):
     with db.connect() as conn:
         conn.execute('UPDATE processed_affiliate_deals SET status=?, response_message_id=COALESCE(?,response_message_id) WHERE source_message_id=?',
                      (status, response_id, source_id))
+
+
+def update_target(source_id, url, title):
+    with db.connect() as conn:
+        conn.execute("UPDATE processed_affiliate_deals SET status='posted', gocdkeys_url=?, normalized_game=? WHERE source_message_id=?",
+                     (url, title, source_id))
