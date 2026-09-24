@@ -248,21 +248,26 @@ class BotOrganizationTests(unittest.IsolatedAsyncioTestCase):
         await repair_server(self.guild, self.bot)
         deals = ig.resolve(self.guild, 'gaming-deals')
         gecko = self.members['dealgecko']
+        instant = self.members['instant-gaming']
         role = groups.resolve(self.guild, 'gaming')
         custom = self.guild.role(987)
         custom.name = 'Custom interaction'
         original = discord.PermissionOverwrite(view_channel=False, send_messages=True, attach_files=False)
         deals.overwrites[custom] = original
         deals.category.overwrites[custom] = original
-        for target in (role, gecko):
+        for target in (role, gecko, instant):
             deals.overwrites[target] = discord.PermissionOverwrite(view_channel=False, send_messages=False)
             deals.category.overwrites[target] = discord.PermissionOverwrite(view_channel=False)
+        findings = await scan(self.guild, self.bot, messages=False)
+        self.assertTrue(any(f.name == 'Instant Gaming gaming-deals access' and f.state == 'WARN' for f in findings))
         await repair_server(self.guild, self.bot)
-        for target in (role, gecko):
+        for target in (role, gecko, instant):
             self.assertTrue(all(getattr(deals.overwrites_for(target), bit) is True for bit in ig.BOT_RIGHTS))
             self.assertTrue(deals.category.overwrites_for(target).view_channel)
             self.assertFalse(deals.overwrites_for(target).administrator)
-            self.assertIsNot(ig.affiliate_category(self.guild).overwrites_for(target).view_channel, True)
+            if target != instant:
+                self.assertIsNot(ig.affiliate_category(self.guild).overwrites_for(target).view_channel, True)
+            self.assertIsNot(self.staff.overwrites_for(target).view_channel, True)
         self.assertEqual(deals.overwrites_for(custom), original)
         self.assertEqual(deals.category.overwrites_for(custom), original)
         before = dict(deals.overwrites)

@@ -517,7 +517,8 @@ def partner_overwrites(category):
         if target != category.guild.default_role and target != category.guild.me and not (target in category.guild.roles and is_staff(target)):
             rights[target] = discord.PermissionOverwrite.from_pair(*value.pair())
     role = resolve(category.guild, 'gaming')
-    for target in (role if role and safe(role) and role.permissions.value == 0 else None, member(category.guild, 'dealgecko')):
+    for target in (role if role and safe(role) and role.permissions.value == 0 else None, member(category.guild, 'dealgecko'),
+                   member(category.guild, 'instant-gaming')):
         if target:
             value = rights.setdefault(target, discord.PermissionOverwrite())
             value.view_channel = value.read_message_history = True

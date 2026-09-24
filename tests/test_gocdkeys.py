@@ -25,7 +25,7 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
         db.init_db()
         self.channel = SimpleNamespace(id=2, mention='<#2>')
         self.channel.permissions_for = lambda member: discord.Permissions.all()
-        self.guild = SimpleNamespace(id=1, me=SimpleNamespace(id=9), get_channel=lambda cid: self.channel if cid == 2 else None,
+        self.guild = SimpleNamespace(id=1, me=SimpleNamespace(id=9, bot=True), get_channel=lambda cid: self.channel if cid == 2 else None,
                                      text_channels=[self.channel])
         db.set_setting('managed_channel:1:gaming-deals', '2')
         self.message = SimpleNamespace(id=100, guild=self.guild, channel=self.channel,
@@ -33,6 +33,133 @@ class ComparisonTests(unittest.IsolatedAsyncioTestCase):
             embeds=[discord.Embed(title='ELDEN RING - Steam')], reply=AsyncMock(return_value=SimpleNamespace(id=200)))
         self.service = service.GoCdKeysService()
         self.service.fetch_page = AsyncMock(return_value=PAGE)
+
+    def backfill_history(self, messages):
+        self.history_limits = []
+        async def history(*, limit):
+            self.history_limits.append(limit)
+            for message in messages:
+                yield message  # Service also enforces the bound.
+        self.channel.history = history
+        self.channel.fetch_message = AsyncMock(side_effect=lambda mid: next(m for m in messages if m.id == mid))
+
+    async def test_backfill_preview_read_only_then_confirm_and_restart(self):
+        self.backfill_history([self.message])
+        plan = await self.service.preview_backfill(self.guild)
+        self.assertEqual((plan['scanned'], plan['supported'], plan['candidates']), (1, 1, [100]))
+        self.assertFalse(affiliate_deals.processed(100))
+        self.service.fetch_page.assert_not_called()
+        self.message.reply.assert_not_called()
+        result = await self.service.run_backfill(self.guild, plan)
+        self.assertEqual(result['created'], 1)
+        restarted = service.GoCdKeysService()
+        result = await restarted.run_backfill(self.guild, plan)
+        self.assertEqual(result['created'], 0)
+        await restarted.handle(self.message)
+        self.message.reply.assert_awaited_once()
+        self.assertEqual((await restarted.preview_backfill(self.guild))['enriched'], 1)
+
+    async def test_backfill_and_live_share_concurrent_claim(self):
+        self.backfill_history([self.message])
+        plan = await self.service.preview_backfill(self.guild)
+        await asyncio.gather(self.service.run_backfill(self.guild, plan), self.service.handle(self.message))
+        self.message.reply.assert_awaited_once()
+
+    async def test_backfill_silent_hill_embed_and_referral(self):
+        self.message.content = ''
+        self.message.embeds = [discord.Embed(title='Silent Hill: Townfall', description='34.19 €')]
+        self.service.fetch_page.return_value = PAGE.replace('Elden Ring', 'Silent Hill: Townfall')
+        self.backfill_history([self.message])
+        plan = await self.service.preview_backfill(self.guild)
+        self.assertEqual(plan['candidates'], [100])
+        await self.service.run_backfill(self.guild, plan)
+        self.assertEqual(self.message.reply.call_args.kwargs['view'].children[0].url,
+                         'https://gocdkeys.com/buy-silent-hill-townfall-pc-cd-key#ref=kas66b')
+
+    async def test_backfill_scan_limits_and_untrusted_messages(self):
+        from copy import copy
+        messages = []
+        for index in range(105):
+            message = copy(self.message)
+            message.id = 100 + index
+            message.author = SimpleNamespace(id=777, bot=True)
+            messages.append(message)
+        self.backfill_history(messages)
+        for limit in (25, 50, 100):
+            plan = await self.service.preview_backfill(self.guild, limit)
+            self.assertEqual((plan['scanned'], plan['skipped']), (limit, limit))
+            self.assertEqual(plan['candidates'], [])
+        self.assertEqual(self.history_limits, [25, 50, 100])
+        with self.assertRaises(ValueError):
+            await self.service.preview_backfill(self.guild, 101)
+
+    async def test_backfill_retains_unmapped_companions_and_uncertain_claims(self):
+        companion = SimpleNamespace(id=200, author=self.guild.me, content=service.COPY,
+                                    reference=SimpleNamespace(message_id=100), channel=self.channel, guild=self.guild)
+        self.backfill_history([companion, self.message])
+        plan = await self.service.preview_backfill(self.guild)
+        self.assertEqual((plan['enriched'], plan['candidates']), (1, []))
+        self.assertFalse(affiliate_deals.processed(100))
+        self.backfill_history([self.message])
+        plan = await self.service.preview_backfill(self.guild)
+        affiliate_deals.claim(self.message, URL, 'Elden Ring', 'instant-gaming')
+        affiliate_deals.finish(100, 'uncertain')
+        result = await self.service.run_backfill(self.guild, plan)
+        self.assertEqual(result['retained'], 1)
+        self.assertEqual((await self.service.preview_backfill(self.guild))['retained'], 1)
+        self.message.reply.assert_not_called()
+
+    async def test_backfill_rechecks_mapping_permissions_source_and_companions(self):
+        self.backfill_history([self.message])
+        plan = await self.service.preview_backfill(self.guild)
+        db.set_setting('managed_channel:1:gaming-deals', '')
+        with self.assertRaises(ValueError):
+            await self.service.run_backfill(self.guild, plan)
+        db.set_setting('managed_channel:1:gaming-deals', '2')
+        self.channel.permissions_for = lambda member: discord.Permissions.none()
+        with self.assertRaises(ValueError):
+            await self.service.run_backfill(self.guild, plan)
+        self.channel.permissions_for = lambda member: discord.Permissions.all()
+        self.message.author = SimpleNamespace(id=777, bot=True)
+        self.assertEqual((await self.service.run_backfill(self.guild, plan))['skipped'], 1)
+        self.message.author = SimpleNamespace(id=42, bot=True)
+        companion = SimpleNamespace(id=200, author=self.guild.me, content=service.COPY,
+                                    reference=SimpleNamespace(message_id=100), channel=self.channel, guild=self.guild)
+        self.backfill_history([companion, self.message])
+        self.assertEqual((await self.service.run_backfill(self.guild, plan))['retained'], 1)
+        self.message.reply.assert_not_called()
+
+    async def test_backfill_provider_waits_instead_of_skipping_busy_batch(self):
+        import time
+        self.service._next_request = time.monotonic() + 0.01
+        with patch('services.gocdkeys_service.asyncio.sleep', new_callable=AsyncMock) as sleep:
+            self.assertEqual(await self.service.find_game_page('Elden Ring', wait=True), URL)
+            sleep.assert_awaited_once()
+
+    async def test_backfill_session_authorization_and_double_click(self):
+        from cogs.gocdkeys import BackfillView, GoCdKeysWatcher
+        self.guild.owner_id = 1
+        actor = SimpleNamespace(id=1, guild_permissions=discord.Permissions.none())
+        interaction = SimpleNamespace(guild=self.guild, user=actor, response=AsyncMock(),
+                                      edit_original_response=AsyncMock())
+        view = BackfillView(self.service, self.guild, actor.id, 50)
+        self.assertTrue(await view.interaction_check(interaction))
+        self.backfill_history([self.message])
+        await view.proceed.callback(interaction)
+        await view.proceed.callback(interaction)
+        self.assertEqual(len(self.history_limits), 1)
+        confirm = interaction.edit_original_response.call_args.kwargs['view']
+        actor.id = 2
+        self.assertFalse(await confirm.interaction_check(interaction))
+        await confirm.proceed.callback(interaction)
+        self.message.reply.assert_not_called()
+        cog = GoCdKeysWatcher(None)
+        await cog.backfill.callback(cog, interaction)
+        self.assertNotIn('view', interaction.response.send_message.call_args.kwargs)
+        actor.id = 1
+        await confirm.cancel.callback(interaction)
+        self.assertTrue(confirm.used)
+        self.assertFalse(affiliate_deals.processed(100))
 
     async def test_matching_deal_reply_is_compact_and_attributed(self):
         await self.service.handle(self.message)
