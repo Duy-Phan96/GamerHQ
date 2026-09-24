@@ -2,6 +2,8 @@
 
 ## [Unreleased] - 2026-09-23
 
+- Polish Profile Settings: personal onboarding/correction is Gender → Age → Review → Save only; keep platform/interests quick toggles, hide inactive playstyles, remove language selection for the English-language server, and explicitly retire the owned About You pin/legacy language mappings during Repair without removing existing roles or memberships.
+
 - Refine Profile Settings into grouped About You, Gaming Setup and Interests & Notifications; reuse existing message IDs, move Suggest Role to the last board, and add a preselected member-bound Gender → Age → Language → Platform → Playstyle → Interests → Review → Save flow. Preserve retired playstyles/game roles, support Diverse and no-visible-role gender privacy, and keep quick controls independent.
 
 - Add confirmed owner/admin GoCDKeys batch import: strict supplied partner URLs, conservative editable slug titles, paginated preview, paced individual posts and durable normalized-URL deduplication through existing curated delivery records. Preserve correct referrals and reject conflicts; automated lookup remains disabled.

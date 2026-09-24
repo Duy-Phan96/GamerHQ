@@ -131,14 +131,18 @@ Streamer Hub: the existing streamer cog registers `cogs/twitch_hub.py` buttons a
 
 ## Profile settings
 
-`cogs/roles.py` owns the existing member-bound RoleSelectionSession, now a sequential
-profile draft with review/save, and persistent entry/quick/suggestion controls.
-`role_service.py` owns profile step metadata, registry-only role safety and a shared
-per-member lock for final save/quick changes. It rechecks mappings/current membership,
-rejects stale drafts and preserves non-profile roles. No game selector is invoked.
-`role_panel_service.py` reuses five persisted message slots for Profile Settings,
-About You, Gaming Setup, Interests & Notifications and Suggest Role, through the
-existing managed-message editor. Customized pins remain owner-controlled. Health
-checks mappings, panels, persistent entry controls and channel separation read-only.
-See [profile contracts and migration](ROLE_SETTINGS.md); tests cover role settings,
-profile wizard, onboarding and managed messages.
+`cogs/roles.py` reuses RoleSelectionSession for initial personal onboarding and later
+corrections: Gender → Age → Review → Save. `role_service.py` limits the save allowlist
+to Gender/Age, rechecks mappings/member state and uses the same per-member lock as
+quick toggles. Game/platform/notification and unrelated roles remain independent.
+`role_panel_service.py` manages four existing slots: Profile Settings, Gaming Setup,
+Interests & Notifications and Suggest Role. Explicit setup Repair retires the proven
+old About You pin and marks legacy language mappings inactive without deleting Discord
+roles/memberships. Health remains read-only. No automatic join questionnaire or
+parallel profile subsystem is introduced; Welcome's Get Started is the existing entry.
+See [profile contracts and migration](ROLE_SETTINGS.md).
+
+Member-facing copy should be natural, friendly and concise. GamerHQ is English.
+Hide empty/inactive sections completely; never publish configuration, provider or
+mapping status as member-facing placeholders. Technical diagnosis belongs in staff
+health/setup reports and logs. Member errors should offer a useful retry/help action.

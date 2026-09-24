@@ -85,14 +85,16 @@ STREAMER_HUB_ENABLED=false and STREAMER_ROLE_SELECTION_ENABLED=false keep produc
 
 ## Profile Settings acceptance
 
-After restarting the single local bot, run `/server health`, then `/server setup` →
-Repair → Confirm Repair. Inspect choose-your-roles: Profile Settings / Update Profile,
-About You, Gaming Setup, Interests & Notifications, then Missing something? / Suggest
-Role. Existing five message IDs are reused. Customized pins are preserved; reset only
-those pins through `/server pinned-messages` if health flags their legacy layout.
+Restart the single local bot, run `/server health`, then `/server setup` → Repair →
+Confirm Repair. Verify Profile Settings / Update Profile, Gaming Setup / Choose your
+platforms, Interests & Notifications, and Missing something? / Suggest Role last.
+About You, language controls and inactive playstyle copy must be absent. Repair retires
+only the proven managed About You message and legacy language selections; it preserves
+surviving message IDs and existing language-role memberships. Custom text remains
+owner-controlled; use `/server pinned-messages` for any retained obsolete descriptions.
 
-As a normal member, test preselection, Gender → Age → Language → Platform → Playstyle
-(informational: no active roles) → Interests → Review → Save. Cancel must leave roles
-untouched; quick controls must not open the wizard. Prefer not to say clears visible
-gender roles. Game selection stays in choose-your-games and game/Staff/unrelated roles
-must remain unchanged. See [profile settings](ROLE_SETTINGS.md) for recovery caveats.
+As a member, verify both Get Started and Update Profile show Gender → Age → Review →
+Save only. Check preselection, Back, Cancel and Save; only personal roles may change.
+Platform/notification buttons must toggle independently without opening the editor.
+Games remain in choose-your-games. GamerHQ is English; no language question is asked.
+See [profile settings](ROLE_SETTINGS.md) for migration and recovery details.

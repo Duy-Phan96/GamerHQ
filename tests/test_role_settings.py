@@ -40,10 +40,10 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
             response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock()),
             followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
 
-    async def test_five_independent_pinned_panels_and_no_legacy_roles(self):
+    async def test_four_independent_pinned_panels_and_no_legacy_roles(self):
         keys = panels.message_keys(self.guild, self.board)
-        self.assertEqual(len(keys), 5)
-        self.assertEqual(len(self.board.messages), 5)
+        self.assertEqual(len(keys), 4)
+        self.assertEqual(len(self.board.messages), 4)
         for section, key in keys.items():
             msg = await self.board.fetch_message(int(db.get_setting(key)))
             self.assertTrue(msg.pinned)
@@ -55,14 +55,14 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.board.overwrites_for(self.guild.default_role).view_channel)
         self.assertFalse(self.board.overwrites_for(self.guild.default_role).send_messages)
 
-    async def test_sync_reuses_roles_messages_and_language_id(self):
+    async def test_sync_reuses_roles_messages_and_platform_id(self):
         ids = [r.id for r in self.guild.roles]
         mids = list(self.board.messages)
-        language = db.get_managed_role_by_key('base', 'english')['role_id']
+        language = db.get_managed_role_by_key('base', 'pc')['role_id']
         await panels.sync(self.guild); await panels.sync(self.guild)
         self.assertEqual(ids, [r.id for r in self.guild.roles])
         self.assertEqual(mids, list(self.board.messages))
-        self.assertEqual(language, db.get_managed_role_by_key('base', 'english')['role_id'])
+        self.assertEqual(language, db.get_managed_role_by_key('base', 'pc')['role_id'])
 
     async def test_each_content_button_adds_then_removes_only_its_role(self):
         for button in RoleToggleView('📰 Gaming Content').children:
@@ -96,7 +96,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         await panels.refresh(self.guild, section='gaming_content')
         self.assertNotEqual(str(msg.id), db.get_setting(key))
         self.assertEqual(edits, {mid: self.board.messages[mid].edits for mid in edits})
-        self.assertEqual(len(self.board.messages), 5)
+        self.assertEqual(len(self.board.messages), 4)
 
     async def test_owner_repair_restores_missing_role_panel(self):
         key = panels.message_keys(self.guild, self.board)['language']
@@ -142,7 +142,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_profile_order_has_no_game_selection(self):
         session = RoleSelectionSession(self.member)
-        for expected in ('Gender', 'Age', 'Language', 'Platform', 'Playstyle', 'Interests & Notifications'):
+        for expected in ('Gender', 'Age'):
             self.assertIn(expected, session.status_text())
             await session.next_step(self.interaction())
         self.assertIn('Profile Review', session.status_text())
@@ -164,7 +164,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_detects_missing_duplicate_mappings_without_writes(self):
         self.assertEqual(await panels.diagnostics(self.guild, messages=True), [])
         keys = panels.message_keys(self.guild, self.board)
-        db.set_setting(keys['language'], db.get_setting(keys['notifications']))
+        db.set_setting(keys['language'], db.get_setting(keys['gaming_content']))
         role = roles.preference_role(self.guild, 'base', 'gaming-news')
         self.guild.roles.remove(role)
         with db.connect() as conn: before = list(conn.iterdump())
@@ -218,7 +218,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages, list(self.board.messages))
         bot = SimpleNamespace(add_view=MagicMock())
         await Roles(bot).cog_load()
-        self.assertEqual(bot.add_view.call_count, 6)
+        self.assertEqual(bot.add_view.call_count, 5)
         self.assertTrue(all(call.args[0].is_persistent() for call in bot.add_view.call_args_list))
 
     async def test_game_rename_reuses_notification_role_and_other_game_is_independent(self):

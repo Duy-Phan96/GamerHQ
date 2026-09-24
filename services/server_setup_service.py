@@ -251,7 +251,7 @@ async def repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list
         failed.append(str(exc))
     from services.role_panel_service import sync as sync_roles
     try:
-        await sync_roles(guild)
+        await sync_roles(guild, repair=True)
         changed.append('Updated optional profile/notification roles and separate managed settings panels.')
     except (discord.HTTPException, ServerMessageError, ValueError) as exc:
         failed.append(str(exc))

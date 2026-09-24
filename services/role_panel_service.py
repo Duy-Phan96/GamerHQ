@@ -5,21 +5,35 @@ from database import db
 from services.server_service import upsert_fixed_message, ServerMessageError
 from services.onboarding_service import unique, set_read_only
 
-INTRO = ('# 👤 Profile Settings\n\nSet up or update your GamerHQ profile.\n\n'
-         'Use **Update Profile** to review everything step by step, or use the sections below for quick changes. '
-         'All choices are optional. Games belong in #choose-your-games.')
-# Reuse the five existing message slots/IDs in their established order.
+INTRO = ('# 👤 Profile Settings\n\nNeed to update something about your profile?\n\n'
+         'Use **Update Profile** to change the personal details you selected when joining GamerHQ.')
+# Retain the surviving slots/IDs. Explicit Repair retires the former About You slot.
 SECTIONS = (
-    ('notifications', '👤 About You', 'Gender, age group and languages. Prefer not to say clears visible gender roles.'),
-    ('gaming_content', '🎮 Gaming Setup', 'Choose your platforms. No active playstyle roles are currently configured.'),
+    ('gaming_content', '🎮 Gaming Setup', '## Choose your platforms\n\nSelect the platforms you usually play on.'),
     ('language', '🔔 Interests & Notifications', 'Choose the events, streams and gaming content you want to hear about.'),
-    ('platform', '💡 Missing something?', "Can't find the role or option you need?"),
+    ('platform', '💡 Missing something?', "Can't find the role or option you're looking for?"),
 )
 PANEL_GROUPS = {
-    '👤 About You': ('Gender', 'Age group', '🗣️ Language'),
     '🎮 Gaming Setup': ('🖥️ Platform',),
     '🔔 Interests & Notifications': ('🔔 Notifications', '📰 Gaming Content'),
 }
+
+
+def panel_groups(group):
+    from services.role_service import ROLE_GROUPS, PLAYSTYLE_GROUP
+    groups = PANEL_GROUPS.get(group, (group,))
+    if group == '🎮 Gaming Setup' and ROLE_GROUPS.get(PLAYSTYLE_GROUP):
+        groups += (PLAYSTYLE_GROUP,)
+    return groups
+
+
+def panel_text(group, text):
+    from services.role_service import ROLE_GROUPS, PLAYSTYLE_GROUP
+    if group == '🎮 Gaming Setup' and ROLE_GROUPS.get(PLAYSTYLE_GROUP):
+        text += '\n\n## Choose your playstyle\n\nChoose how you usually like to play.'
+    return f'# {group}\n\n{text}'
+
+
 LEGACY_TITLES = {'intro': '# 👤 Optional Settings', 'notifications': '# 🔔 Notifications',
                  'gaming_content': '# 📰 Gaming Content', 'language': '# 🗣️ Language', 'platform': '# 🖥️ Platform'}
 _locks = {}
@@ -51,7 +65,7 @@ async def refresh(guild, *, section=None):
         await set_read_only(board)
         keys = message_keys(guild, board)
         panels = [('intro', INTRO, ChooseRolesHubView())] + [
-            (key, f'# {group}\n\n{text}', RoleToggleView(group))
+            (key, panel_text(group, text), RoleToggleView(group))
             for key, group, text in SECTIONS]
         for key, content, view in panels:
             if section is not None and key != section:
@@ -64,11 +78,61 @@ async def refresh(guild, *, section=None):
                 or (key == 'intro' and (m.content or '').startswith('# 👤 Choose Your Roles')))
 
 
-async def sync(guild):
+async def sync(guild, *, repair=False):
     from services.role_service import ensure_base_roles, ensure_lfg_roles
     await ensure_base_roles(guild)
     await ensure_lfg_roles(guild)
+    if repair:
+        await retire_obsolete(guild)
     await refresh(guild)
+
+
+async def retire_obsolete(guild):
+    """Explicit Repair: retire only proven managed About You and language controls."""
+    from services import managed_message_service as managed
+    from services.role_service import retire_language_mappings
+    board = channel(guild)
+    if not board:
+        raise ServerMessageError('Profile channel unavailable; legacy cleanup needs review.')
+    old_key = f'role_message:{guild.id}:notifications'
+    async with managed.lock(old_key):
+        raw, state = db.get_setting(old_key), managed.load(old_key)
+        if raw:
+            if not raw.isdigit() or raw in {db.get_setting(k) for k in message_keys(guild, board).values()}:
+                raise ServerMessageError('Ambiguous legacy profile message mapping; nothing deleted.')
+            try:
+                message = await board.fetch_message(int(raw))
+            except discord.NotFound:
+                message = None
+            if message:
+                proven = managed.owns(state, board, message) if state else (
+                    guild.me and message.author.id == guild.me.id and
+                    (message.content or '').startswith(('# 👤 About You', '# 🔔 Notifications')))
+                if not proven:
+                    raise ServerMessageError('Legacy profile message ownership/content changed; manual review required.')
+                try:
+                    await message.delete()
+                except discord.NotFound:
+                    pass
+            if state:
+                state['retired'] = True
+                managed.store(state)
+            db.set_setting(old_key, '')
+    # Preserve custom text and all unrelated buttons; remove only obsolete actions.
+    for key in message_keys(guild, board).values():
+        async with managed.lock(key):
+            state = managed.load(key)
+            if not state or not state.get('customized'):
+                continue
+            filtered = [b for b in state['buttons'] if b.get('target') not in {'ROLE_english', 'ROLE_german'}]
+            if filtered == state['buttons']:
+                continue
+            message = await board.fetch_message(state['message_id'])
+            if str(message.id) != db.get_setting(key) or not managed.owns(state, board, message):
+                raise ServerMessageError('Legacy language controls need manual ownership review.')
+            state.update(buttons=filtered, pending=True, version=state['version'] + 1)
+            managed.store(state)
+    retire_language_mappings()
 
 
 async def diagnostics(guild, *, messages=False):
@@ -79,6 +143,12 @@ async def diagnostics(guild, *, messages=False):
         profile_roles(guild)
     except ValueError as exc:
         issues.append(str(exc))
+    old_key = f'role_message:{guild.id}:notifications'
+    if db.get_setting(old_key):
+        issues.append('Legacy About You panel awaits explicit Repair.')
+    from services.role_service import LEGACY_LANGUAGES
+    if any(db.get_managed_role_by_key('base', key) for key in LEGACY_LANGUAGES):
+        issues.append('Legacy language role mappings await explicit Repair.')
     seen = set()
     for options in ROLE_GROUPS.values():
         for option in options:

@@ -16,7 +16,7 @@ The editor uses existing GamerHQ message/channel mappings, bot ownership and a s
 | free-games | Free Games |
 | ai-tools | AI Tools |
 | welcome | Welcome |
-| choose-your-roles | Profile Settings, About You, Gaming Setup, Interests & Notifications, Missing something? |
+| choose-your-roles | Profile Settings, Gaming Setup, Interests & Notifications, Missing something? |
 | guide | Guide |
 | suggestions | Suggestions |
 | need-support | Need Support |
