@@ -70,6 +70,8 @@ class GamerHQBot(commands.Bot):
             self.health_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.health_task
+        if getattr(self, 'twitch_hub', None):
+            await self.twitch_hub.close()
         await super().close()
 
 bot = GamerHQBot()

@@ -27,7 +27,7 @@ Text channels commonly use emoji + ・ + kebab-case; category labels commonly us
 | Game roles and optional areas | games columns; [Game system](GAME_SYSTEM.md) |
 | Temporary game/common voice | temp_voice_channels; cogs/voice.py and temp_voice_service.py |
 | LFG private text/voice/cards | lfg_events and related tables; [LFG](LFG_EVENTS.md) |
-| Streamer profiles/areas/rooms | streamer_profiles/streamer_channels; cogs/streamer.py |
+| Streamer Hub (hidden beta), retained legacy areas | managed channel/role settings; twitch_connections/twitch_live_deliveries; legacy streamer_profiles/streamer_channels retained. [Beta policy](STREAMER_HUB.md). |
 | Tickets and suggestions | support_tickets/ticket_audit and suggestions; feature services |
 | Fixed messages | existing feature setting keys; [Managed messages](MANAGED_MESSAGES.md) |
 

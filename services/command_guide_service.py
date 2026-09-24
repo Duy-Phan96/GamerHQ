@@ -340,20 +340,8 @@ async def refresh_community_command_guide(bot, guild: discord.Guild, channel: di
 
 def build_streamer_command_guide(bot, guild: discord.Guild) -> str:
     """Dedicated member-facing /streamer reference for the Streamers category."""
-    text = _build_member_group_page(
-        bot,
-        guild,
-        "streamer",
-        "🎥 STREAMER COMMANDS",
-        "Commands for your GamerHQ Streamer profile, followers and optional Streamer area.",
-    )
-    if text:
-        return text
-    return (
-        "# 🎥 STREAMER COMMANDS\n\n"
-        "No `/streamer` commands were found in the current command tree. "
-        "Restart the bot after command sync to refresh this guide."
-    )
+    import config
+    return '# 🎥 Streamer Hub — Beta\n\n' + ('Use Connect Twitch in streamer-guide. Legacy area/channel tools remain staff-only.' if config.STREAMER_HUB_ENABLED else 'Currently disabled. Legacy streamer profiles and following are inactive.')
 
 
 async def ensure_streamer_guide_channel(guild: discord.Guild) -> discord.TextChannel:

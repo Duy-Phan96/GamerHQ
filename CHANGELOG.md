@@ -2,6 +2,7 @@
 
 ## [Unreleased] - 2026-09-23
 
+- Prepare hidden Twitch Streamer Hub beta: approved-role Device OAuth, outbound EventSub, durable session deduplication, confirmed disconnect, private setup/health and default-off role selection; retain inactive legacy profile data.
 - Fix embed-only gaming-deals comparisons blocked by price detection; trust configured application identities, update/delete only mapped GamerHQ companions, and report posting permission/intent readiness.
 - Reuse GoCDKeys for trusted paid Instant Gaming/DealGecko posts; skip free/unknown offers, update owned companions on price edits, and repair scoped Gaming Bots/DealGecko paid-channel access.
 

@@ -41,7 +41,6 @@ async def scan(guild, bot=None, *, messages=True):
             events = [dict(r) for r in conn.execute('SELECT * FROM lfg_events WHERE guild_id=?',(guild.id,))]
             temps = [dict(r) for r in conn.execute('SELECT * FROM temp_voice_channels')]
             suggestions = [dict(r) for r in conn.execute('SELECT * FROM suggestions WHERE guild_id=?',(guild.id,))]
-            streamers = [dict(r) for r in conn.execute('SELECT * FROM streamer_profiles WHERE guild_id=?',(guild.id,))]
         games = db.get_all_games()
         add('Database','PASS','Required tables readable.')
     except sqlite3.Error:
@@ -206,18 +205,10 @@ async def scan(guild, bot=None, *, messages=True):
         if len(category.text_channels)>=45: add('Ticket capacity','WARN','Ticket category nearly full; review retained history before manual archival. No automatic deletion.')
     except ServerMessageError as exc:
         add('Ticket System','MANUAL_REVIEW',str(exc))
-    for group in ('streamers','voice-channels'):
-        present=[c for c in guild.categories if alias(c.name) in {group,'gamerhq-streamers' if group=='streamers' else group}]
-        add(group.upper(),'PASS' if len(present)==1 else 'MANUAL_REVIEW',f'{len(present)} category matches.')
-    for name in ('streamer-guide','streamer-commands','stream-updates','choose-streamers'):
-        found=[c for c in guild.text_channels if alias(c.name)==name]
-        add(name,'PASS' if len(found)==1 else 'MANUAL_REVIEW',f'{len(found)} channels found; Streamer structure is not rebuilt by health.')
-    for profile in streamers:
-        if profile.get('follower_role_id') and not guild.get_role(profile['follower_role_id']):
-            add('Streamer role','MANUAL_REVIEW',f'Profile {profile["user_id"]}: follower role mapping missing.')
-        for field in ('category_id','create_voice_channel_id'):
-            if profile.get(field) and not guild.get_channel(profile[field]):
-                add('Streamer resource','MANUAL_REVIEW',f'Profile {profile["user_id"]}: {field} missing; review Streamer tools.')
+    from services.streamer_hub_service import health as streamer_health
+    add(*streamer_health(guild, bot))
+    present = [c for c in guild.categories if alias(c.name) == 'voice-channels']
+    add('VOICE-CHANNELS', 'PASS' if len(present) == 1 else 'MANUAL_REVIEW', f'{len(present)} category matches.')
     try:
         from cogs.suggestions import inbox
         inbox(guild)

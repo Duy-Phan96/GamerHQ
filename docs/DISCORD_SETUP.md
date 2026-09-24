@@ -44,3 +44,7 @@ Check `/server health`, repeat Repair to verify idempotency, then inspect using 
 Repository audit found no runtime/config dependency on Carl-bot. It is not in the intended bot stack. A cached name match produces only a health warning; no code kicks any bot. After checking any live manual automations not represented in this repository, remove it manually: **right-click Carl-bot → Kick Carl-bot → Confirm**.
 
 See [partner migration](PARTNERS.md), [Instant Gaming](INSTANT_GAMING.md) and [managed pin editing](MANAGED_MESSAGES.md).
+
+## Streamer Hub beta
+
+Keep both streamer flags false initially. Owner repair preserves existing channels/data and hides managed legacy choose-streamers. In an enabled Dev guild, manually assign the safe 🎥 Streamer role; stream-updates is the fixed read-only public target, while guide/commands are restricted to approved Streamers/staff. Public profiles, follower roles and custom notices are inactive. See [beta guide](STREAMER_HUB.md).

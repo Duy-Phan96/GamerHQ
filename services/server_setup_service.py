@@ -211,7 +211,7 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
         )
     lines.extend([
         "",
-        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and PARTNERS & BENEFITS, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID.",
+        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and PARTNERS & BENEFITS, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID. Streamer repair hides managed legacy discovery channels; Twitch controls remain disabled unless STREAMER_HUB_ENABLED is explicitly enabled.",
     ])
     return "\n".join(lines)
 
@@ -254,6 +254,12 @@ async def repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list
         await sync_roles(guild)
         changed.append('Updated optional profile/notification roles and separate managed settings panels.')
     except (discord.HTTPException, ServerMessageError, ValueError) as exc:
+        failed.append(str(exc))
+    from services.streamer_hub_service import sync as sync_streamer
+    try:
+        await sync_streamer(guild)
+        changed.append('Applied hidden Streamer Hub beta policy; preserved legacy data.')
+    except (discord.HTTPException, ServerMessageError) as exc:
         failed.append(str(exc))
     return changed, failed
 

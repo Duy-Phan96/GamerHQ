@@ -9,12 +9,6 @@ Generated from current discord.py command group objects, without bot login or co
 - `/lfg create` — Create a GamerHQ Looking for Group event.
 - `/lfg join-code` — Join a private GamerHQ event using its invite code.
 - `/lfg manage` — Manage or cancel LFG events you created.
-- `/streamer area` — Create or open your optional GamerHQ Streamer area.
-- `/streamer audience` — See who follows your GamerHQ Streamer profile.
-- `/streamer channels` — Manage your 3 permanent Streamer community channels.
-- `/streamer profile` — View your GamerHQ Streamer profile.
-- `/streamer setup` — Create or update your GamerHQ Streamer profile.
-- `/streamer voice` — Create a temporary Voice room in your Streamer area.
 - `/voice manage` — Manage your own Create Voice room; staff may select a room.
 
 ## Moderator / Staff actions
@@ -56,3 +50,11 @@ Haushaltscheck uses the persistent `HOUSEHOLD_CHECK_REQUEST` button and existing
 Owner `/server setup` Repair also ensures Free Games immediately below Gaming Deals, a private AFFILIATE STATS category, and hoisted Music Bots/Gaming Bots roles for explicitly configured bot user IDs. `/server health` reports missing optional bot identities and unsafe hierarchy/access without changing state.
 
 `/server health` checks DealGecko/Gaming Bots paid-channel access and comparison configuration. `/server setup` Repair restores scoped feed permissions; it does not configure the external DealGecko dashboard.
+
+## Streamer Hub (hidden beta)
+
+Connect/disconnect Twitch through the private buttons in streamer-guide; no new
+slash commands are needed. Both feature flags default false. Legacy `/streamer setup` and `/streamer profile` open the enabled beta; `/streamer audience` is
+inactive. Existing `/streamer area`, `/streamer channels` and `/streamer voice`
+remain staff-only legacy tools with server-side authorization, including when Twitch is disabled.
+Public profiles and choose-streamers are inactive. See [Streamer Hub](STREAMER_HUB.md).
