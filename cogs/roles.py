@@ -212,6 +212,21 @@ class SuggestRoleModal(discord.ui.Modal, title="💡 Suggest a Role"):
 class ChooseRolesHubView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+        import config
+        if config.STREAMER_ROLE_SELECTION_ENABLED:
+            button = discord.ui.Button(label='Streamer', emoji='🎥', custom_id='gamerhq:roles:streamer')
+            button.callback = self.toggle_streamer
+            self.add_item(button)
+
+    async def toggle_streamer(self, interaction):
+        from services.streamer_hub_service import toggle_role
+        await interaction.response.defer(ephemeral=True)
+        try:
+            enabled = await toggle_role(interaction.guild, interaction.user.id)
+            await interaction.followup.send(f'Streamer role {"enabled" if enabled else "disabled"}.', ephemeral=True)
+        except (ValueError, discord.HTTPException):
+            await interaction.followup.send('Streamer role selection is unavailable.', ephemeral=True)
+
 
     @discord.ui.button(
         label="Update Profile",

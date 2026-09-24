@@ -10,7 +10,7 @@ from unittest.mock import patch
 @contextmanager
 def offline_environment():
     with tempfile.TemporaryDirectory(prefix='gamerhq-tests-') as directory:
-        clean={'GOCDKEYS_ENABLED':'false','GOCDKEYS_REFERRAL_CODE':'kas66b','GAMERHQ_DB_PATH':str(Path(directory)/'test.db'),'GUILD_ID':'0',
+        clean={'STREAMER_HUB_ENABLED':'false','STREAMER_ROLE_SELECTION_ENABLED':'false','TWITCH_CLIENT_ID':'','GOCDKEYS_ENABLED':'false','GOCDKEYS_REFERRAL_CODE':'kas66b','GAMERHQ_DB_PATH':str(Path(directory)/'test.db'),'GUILD_ID':'0',
                'DEALGECKO_BOT_ID':'0','JOCKIE_MUSIC_BOT_ID':'0','PANCAKE_BOT_ID':'0','INSTANT_GAMING_BOT_ID':'0','CHOOSE_GAMES_CHANNEL_ID':'0','GAME_SUGGESTIONS_CHANNEL_ID':'0','INTRODUCTIONS_CHANNEL_ID':'0'}
         # dotenv is disabled before importing application modules. Discord requests
         # fail immediately if an accidental integration call escapes a test mock.

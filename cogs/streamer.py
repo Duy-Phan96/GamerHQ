@@ -180,6 +180,7 @@ class StreamerFollowSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction):
+        return await interaction.response.send_message('Streamer following is inactive in this beta.', ephemeral=True)
         if self.values[0] == 'none':
             return await interaction.response.send_message('No Streamers are available yet.', ephemeral=True)
         streamer_id = int(self.values[0])
@@ -462,7 +463,7 @@ class StreamerChannelManagerView(discord.ui.View):
         await self.cog.show_manage_selector(interaction)
 
 class Streamer(commands.Cog):
-    streamer = app_commands.Group(name='streamer', description='GamerHQ streamer tools')
+    streamer = app_commands.Group(name='streamer', description='Legacy staff streamer tools', default_permissions=discord.Permissions(manage_guild=True))
 
     def __init__(self, bot):
         self.bot = bot
@@ -699,43 +700,34 @@ class Streamer(commands.Cog):
         return role
 
     async def cog_load(self):
-        self.bot.add_view(SetupButtonView(self))
+        from cogs.twitch_hub import HubView
+        from services.twitch_service import TwitchHub
+        self.bot.twitch_hub = TwitchHub(self.bot)
+        self.bot.add_view(HubView())
+
+    async def cog_unload(self):
+        await self.bot.twitch_hub.close()
+
+    async def interaction_check(self, interaction):
+        from services.streamer_hub_service import authorize, DENIED
+        from services.onboarding_service import is_staff
+        import config
+        allowed = False
+        if interaction.guild and interaction.guild.id == config.GUILD_ID and interaction.command.name in {'area', 'channels', 'voice'}:
+            member = await interaction.guild.fetch_member(interaction.user.id)
+            allowed = member.id == interaction.guild.owner_id or any(is_staff(r) for r in member.roles)
+        else:
+            allowed = await authorize(interaction.guild, interaction.user.id)
+        if not allowed:
+            await interaction.response.send_message(DENIED, ephemeral=True)
+        return allowed
 
     async def ensure_infra(self, guild):
-        cat = discord.utils.get(guild.categories, name=CATEGORY)
-        if not cat:
-            cat = await guild.create_category(CATEGORY, reason='GamerHQ streamer system')
-
-        channels = {}
-        for name in (GUIDE, CHOOSE, UPDATES):
-            ch = find_channel(guild, name)
-            if not ch:
-                ch = await guild.create_text_channel(name, category=cat, reason='GamerHQ streamer system')
-            elif ch.category_id != cat.id:
-                await ch.edit(category=cat, reason='GamerHQ streamer system')
-            channels[name] = ch
-
-        key = 'streamer_guide_message_id'
-        mid = db.get_setting(key)
-        msg = None
-        if mid:
-            try:
-                msg = await channels[GUIDE].fetch_message(int(mid))
-            except (discord.NotFound, discord.HTTPException, ValueError):
-                pass
-        if msg:
-            await msg.edit(content=GUIDE_TEXT, view=SetupButtonView(self))
-        else:
-            msg = await channels[GUIDE].send(GUIDE_TEXT, view=SetupButtonView(self))
-            db.set_setting(key, str(msg.id))
-            try:
-                await pin_managed_message(msg, reason='GamerHQ streamer guide')
-            except discord.HTTPException:
-                pass
-
-        await self.refresh_choose(guild)
+        from services.streamer_hub_service import sync
+        await sync(guild)
 
     async def refresh_choose(self, guild):
+        return  # Legacy directory/follower roles are outside the hidden beta.
         ch = find_channel(guild, CHOOSE)
         if not ch:
             return
@@ -801,30 +793,11 @@ class Streamer(commands.Cog):
                 pass
 
     async def start_setup(self, interaction):
-        games = db.get_selectable_games()
-        if not games:
-            return await interaction.response.send_message(
-                'No active GamerHQ games are available yet.', ephemeral=True
-            )
-
-        # Discord supports 25 select options. Prioritize games the member has
-        # selected, then fill the remaining slots alphabetically.
-        role_ids = {r.id for r in interaction.user.roles}
-        games = sorted(
-            games,
-            key=lambda g: (0 if g.get('role_id') in role_ids else 1, g['name'].lower()),
-        )[:25]
-        existing = db.get_streamer_profile(interaction.guild.id, interaction.user.id)
-        action = 'Update' if existing else 'Set Up'
-        await interaction.response.send_message(
-            f'**🎥 {action} Streamer Profile**\n'
-            'Platform: **Twitch**\n'
-            'Choose your **Main Game** first. You will enter your Twitch channel and required description next.',
-            view=GameView(self, interaction.user.id, games),
-            ephemeral=True,
-        )
+        from cogs.twitch_hub import open_hub
+        await open_hub(interaction)
 
     async def save_profile(self, interaction, game_id, channel_value, description_value):
+        return await interaction.response.send_message('Legacy profiles are inactive.', ephemeral=True)
         game = db.get_game_by_id(game_id)
         if not game:
             return await interaction.response.send_message(
@@ -878,26 +851,12 @@ class Streamer(commands.Cog):
 
     @streamer.command(name='profile', description='View your GamerHQ Streamer profile.')
     async def profile(self, interaction):
-        p = db.get_streamer_profile(interaction.guild.id, interaction.user.id)
-        if not p:
-            return await interaction.response.send_message(
-                'You do not have a GamerHQ Streamer profile yet. Use `/streamer setup`.',
-                ephemeral=True,
-            )
-        game = db.get_game_by_id(p['main_game_id'])
-        verified = '✅ Connected' if p.get('twitch_connected') else '⚪ Verification pending'
-        await interaction.response.send_message(
-            '# 🎥 Your Streamer Profile\n'
-            f'**Platform:** {p["platform"]}\n'
-            f'**Twitch:** https://twitch.tv/{p["channel"]}\n'
-            f'**Twitch status:** {verified}\n'
-            f'**Main Game:** {game["name"] if game else "Unknown"}\n'
-            f'**Description:** {p.get("description") or "—"}',
-            ephemeral=True,
-        )
+        from cogs.twitch_hub import open_hub
+        await open_hub(interaction)
 
     @streamer.command(name='audience', description='See who follows your GamerHQ Streamer profile.')
     async def audience(self, interaction):
+        return await interaction.response.send_message('Streamer following is not active in this beta.', ephemeral=True)
         p = db.get_streamer_profile(interaction.guild.id, interaction.user.id)
         if not p:
             return await interaction.response.send_message(
@@ -961,11 +920,7 @@ class Streamer(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        for guild in self.bot.guilds:
-            try:
-                await self.ensure_infra(guild)
-            except Exception as e:
-                print(f'Streamer infrastructure refresh skipped: {e}')
+        await self.bot.twitch_hub.start()
 
 
 async def setup(bot):

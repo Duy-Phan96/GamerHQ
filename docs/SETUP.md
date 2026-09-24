@@ -78,3 +78,7 @@ Bot grouping and private Affiliate Stats setup use verified `INSTANT_GAMING_BOT_
 Known bot grouping requires no manual ID setup for DealGecko, Jockie Music or Pancake: public IDs are centralized in `config.py`; unset/zero optional overrides use those defaults. Preserve the existing Instant Gaming ID. Run `/server setup` → Repair / Setup → Confirm Repair, then `/server health`. The output lists all four exact-ID assignments; absent bots are warnings. See [bot grouping](DISCORD_SETUP.md).
 
 Paid deals in gaming-deals can receive optional GoCDKeys comparisons from Instant Gaming or DealGecko; free-games is always excluded. The managed gaming-deals channel defines the paid/reduced scope; a recognized positive price is not required. Health checks GamerHQ posting permissions and the local intent. Enable the existing GOCDKEYS_ENABLED setting and Message Content Intent after reviewing [paid-deal setup](GOCDKEYS.md). Route free and paid posts separately in DealGecko.
+
+## Hidden Twitch beta
+
+STREAMER_HUB_ENABLED=false and STREAMER_ROLE_SELECTION_ENABLED=false keep production inactive. Future Dev-only OAuth needs TWITCH_CLIENT_ID from a Public Twitch application; no callback/client secret is used. Explicit setup repairs managed streamer access and pins; health reports disabled as informational. See [configuration and Dev acceptance](STREAMER_HUB.md).

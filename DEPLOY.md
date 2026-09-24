@@ -96,3 +96,7 @@ bash scripts/update.sh
 The script requires the expected deployment path/origin, clean main and mode-600 `.env`. It locks maintenance, saves the prior image/commit, backs up SQLite, fast-forwards main, builds, preflights and waits for health. Errors stop execution. Inspect and roll back a failed update before retrying, so the saved previous image is not replaced by a failed candidate.
 
 Bot logs rotate at three 10 MB files. No PostgreSQL or exposed service ports are needed. Image building, SELinux mounts, timer operation, restore rehearsal and live Discord acceptance remain owner-run host gates; Windows offline tests do not verify those gates.
+
+## Hidden Twitch beta (future Dev testing)
+
+Keep STREAMER_HUB_ENABLED=false and STREAMER_ROLE_SELECTION_ENABLED=false in production. No new port, proxy or Compose service is required: Device OAuth and EventSub use outbound HTTPS/WSS on 443. Future Dev testing requires a Public Twitch application and private TWITCH_CLIENT_ID. Runtime SQLite/backups then contain OAuth tokens: preserve private directory permissions and never publish them. Run one bot instance per DB; rotated refresh tokens are single-use. See [beta configuration, recovery and acceptance](docs/STREAMER_HUB.md). Do not enable production as part of routine deployment.

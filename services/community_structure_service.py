@@ -40,7 +40,7 @@ def guide_text(guild):
         f'## 💡 Suggestions\nOpen **{mention(guild, "suggestions")}** → **Submit Suggestion**. Ideas go privately to the team for review.\n\n'
         '## 🏆 Events\n**Coming Soon** — tournaments, giveaways and upcoming community events in **EVENTS**.\n\n'
         '## 🔊 Voice\nJoin **➕ Create Voice** for your own temporary room. Use `/voice manage` to rename it, set a user limit, lock/unlock, allow or remove players, and close it. Music Bots work there too. Empty rooms are automatically removed.\n\n'
-        f'## 🎥 Streamers\nSee stream updates and selection in **STREAMERS**: **{streamer_link}**.\n\n'
+        '## 🎥 Streamer Hub\nBeta — currently hidden.\n\n'
         + ticket_reference(guild) + '\n\n' + guide_reference(guild)
     )
 

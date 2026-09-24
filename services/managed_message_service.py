@@ -17,6 +17,7 @@ from services.server_service import ServerMessageError
 
 _locks = {}
 ACTIONS = {
+    'STREAMER_ROLE': ('Streamer', 'gamerhq:roles:streamer'),
     'START_ONBOARDING': ('Get Started', 'gamerhq:onboarding:start'),
     'HOUSEHOLD_CHECK_REQUEST': ('🔍 Haushaltscheck anfragen', 'gamerhq:offers:household-check'),
     'CREATE_SUPPORT_TICKET': ('Create Support Ticket', 'gamerhq:tickets:create'),
@@ -56,7 +57,7 @@ def specs(guild):
     if board:
         keys = message_keys(guild, board)
         mapping = f'managed_channel:{guild.id}:choose-your-roles'
-        result[keys['intro']] = ('Optional Settings', mapping, ['ROLE_PROFILE', 'ROLE_SUGGEST'])
+        result[keys['intro']] = ('Optional Settings', mapping, ['ROLE_PROFILE', 'ROLE_SUGGEST', 'STREAMER_ROLE'])
         for section, group, _ in SECTIONS:
             result[keys[section]] = (group, mapping, [f'ROLE_{o.key}' for o in ROLE_GROUPS[group]])
     welcome = db.get_setting(f'onboarding:{guild.id}:welcome')
@@ -171,7 +172,11 @@ def render(buttons, *, preview=False):
             action = config['target']
             from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView
             source = OnboardingEntry() if action == 'START_ONBOARDING' else TicketEntry() if action == 'CREATE_SUPPORT_TICKET' else SuggestionEntryView() if action == 'SUBMIT_SUGGESTION' else SupportOffers()
-            if action in {'ROLE_PROFILE', 'ROLE_SUGGEST'}:
+            if action == 'STREAMER_ROLE':
+                import config as runtime_config
+                if not runtime_config.STREAMER_ROLE_SELECTION_ENABLED:
+                    continue
+            if action in {'ROLE_PROFILE', 'ROLE_SUGGEST', 'STREAMER_ROLE'}:
                 source = ChooseRolesHubView()
             elif action.startswith('ROLE_'):
                 group = next(g for g, options in ROLE_GROUPS.items() if any('ROLE_' + o.key == action for o in options))

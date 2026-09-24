@@ -6,6 +6,34 @@ from config import DB_PATH, SEED_PATH
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS twitch_connections (
+    guild_id INTEGER NOT NULL,
+    discord_user_id INTEGER NOT NULL,
+    twitch_user_id TEXT NOT NULL UNIQUE,
+    twitch_login TEXT NOT NULL,
+    twitch_display_name TEXT NOT NULL,
+    connected_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    notifications_enabled INTEGER NOT NULL DEFAULT 1,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    is_live INTEGER NOT NULL DEFAULT 0,
+    last_live_started_at TEXT,
+    subscription_ids TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (guild_id, discord_user_id)
+);
+CREATE TABLE IF NOT EXISTS twitch_live_deliveries (
+    twitch_user_id TEXT NOT NULL,
+    stream_session_id TEXT NOT NULL,
+    guild_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    discord_notification_message_id INTEGER,
+    PRIMARY KEY (twitch_user_id, stream_session_id)
+);
+
 CREATE TABLE IF NOT EXISTS processed_affiliate_deals (
     source_message_id INTEGER PRIMARY KEY,
     guild_id INTEGER NOT NULL,

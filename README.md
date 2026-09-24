@@ -40,11 +40,11 @@ Partner messages are English; Haushaltscheck remains German for its free, nonbin
 - Manage game-library entries, managed roles, information messages and Music Bots role configuration.
 - Edit GamerHQ-managed pinned messages with `/server pinned-messages` (owner/admin): Markdown, configurable link/action buttons, Preview → Save, and independent selection of multiple messages in a channel. Customizations survive restart and repair; confirmed Reset to Default restores generated content. See the [editor guide](docs/MANAGED_MESSAGES.md).
 
-### Streamers
+### Streamer Hub — hidden beta
 
-- Create streamer profiles and let members follow/unfollow them.
-- View a profile's audience and create an optional dedicated streamer area.
-- Manage up to three permanent community channels in that area and create temporary streamer voice rooms.
+- Approved streamers can connect Twitch; EventSub posts title/category and a Watch on Twitch button in stream-updates when enabled.
+- Both beta and role self-selection default to **false**. choose-streamers, public profiles, following and custom live messages are inactive.
+- See [Twitch beta setup and limitations](docs/STREAMER_HUB.md).
 
 ## Discord server structure
 
@@ -81,11 +81,10 @@ EVENTS
 ├─ tournaments
 └─ giveaways
 
-STREAMERS
+STREAMERS (hidden beta)
+├─ stream-updates
 ├─ streamer-guide
-├─ streamer-commands
-├─ choose-streamers
-└─ stream-updates
+└─ streamer-commands
 
 VOICE CHANNELS
 ├─ Chill Lounge
@@ -171,7 +170,7 @@ Edit your private `.env` before starting the bot. Existing process environment v
 
 Relative database paths resolve from the repository directory. Omitting `GAMERHQ_DB_PATH` preserves the legacy `gamerhq.db` default. The schema and public game catalog are initialized from source on bot startup; no production database download is needed.
 
-The actual configuration template is [.env.example](.env.example). GamerHQ does not currently require an OAuth client secret, Twitch credential or PostgreSQL connection string.
+The actual configuration template is [.env.example](.env.example). The disabled Twitch beta needs no credentials; future Dev testing uses TWITCH_CLIENT_ID for Public-client Device OAuth. No client secret, callback listener or PostgreSQL connection is used.
 
 ## Running the bot
 
@@ -202,8 +201,8 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | `/game select`, `/game suggest` | Choose game roles or suggest a game |
 | `/lfg create`, `/lfg manage`, `/lfg join-code` | Create/manage sessions and join private sessions |
 | `/voice manage` | Manage your own temporary room; Staff may select a managed room |
-| `/streamer setup`, `/streamer profile`, `/streamer audience` | Configure/view a profile and its followers |
-| `/streamer area`, `/streamer channels`, `/streamer voice` | Manage a streamer area and its channels/voice rooms |
+| `/streamer setup`, `/streamer profile` | Legacy staff entry points to the enabled Twitch beta; profiles/following are inactive |
+| `/streamer area`, `/streamer channels`, `/streamer voice` | Retained legacy staff-only area tools |
 
 ### Administration commands
 
@@ -252,7 +251,7 @@ The GitHub Actions workflow runs offline tests on Python 3.12/3.14, repository a
 ## Planned work and current limits
 
 - **Events:** tournaments/giveaways have channels and Coming Soon guidance; a full event platform is not implemented.
-- **Streamer live updates:** automatic Twitch-based promotion is announced in the streamer guide but is not active yet.
+- **Streamer Hub:** hidden beta implemented but disabled by default; live Twitch acceptance must be performed separately on a Dev server.
 - **Potential experiments:** participant availability feedback, post-session feedback and simpler game-role selection remain ideas under evaluation, not shipped features or delivery commitments.
 - **Tickets:** closed history stays in private Discord channels. Automatic transcript export, retention/deletion, reopening, Staff Notes and Add User are not implemented.
 - **XP, levels and achievements:** not implemented; no reward system is promised.
