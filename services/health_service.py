@@ -171,7 +171,12 @@ async def scan(guild, bot=None, *, messages=True):
         from services.bot_group_service import resolve as group_role
         deals = resource(guild, 'gaming-deals')
         gaming_role = group_role(guild, 'gaming')
-        for label, target in [('DealGecko', dealgecko), ('Gaming Bots', gaming_role)]:
+        hq_access = deals and guild.me and all(getattr(deals.permissions_for(guild.me), bit)
+            for bit in ('view_channel', 'read_message_history', 'send_messages', 'embed_links'))
+        add('GamerHQ gaming-deals access', 'PASS' if hq_access else 'WARN',
+            'Effective read/reply/link permissions checked; owner Repair can restore access.')
+        for label, target in [('DealGecko', dealgecko), ('Gaming Bots', gaming_role),
+                              ('Instant Gaming', bot_member(guild, 'instant-gaming'))]:
             access = deals and target and all(getattr(deals.overwrites_for(target), bit) is True and getattr(deals.permissions_for(target), bit) for bit in BOT_RIGHTS)
             parent_ok = deals and target and deals.category and deals.category.overwrites_for(target).view_channel is not False
             add(label + ' gaming-deals access', 'PASS' if access and parent_ok else 'WARN',

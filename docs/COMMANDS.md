@@ -17,6 +17,8 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 
 ## Admin / Owner commands
 
+- `/deals backfill` — Owner/admin: preview missing comparisons on recent gaming deals. Choose 25/50/100 messages (default 50), then Preview → Run Backfill or Cancel. Read-only preview; unresolved products and existing delivery claims are skipped. See [GoCDKeys](GOCDKEYS.md).
+
 - `/area manage` — Add or safely remove multiple Game Areas.
 - `/game-admin add-area` — Admin: create or restore a dedicated Discord area for a library game.
 - `/game-admin create` — Admin: create a new Game Library entry and its game role.

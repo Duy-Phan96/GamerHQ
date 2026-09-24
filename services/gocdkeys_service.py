@@ -131,6 +131,74 @@ class GoCdKeysService:
         self._gate = asyncio.Lock()
         self._next_request = 0.0
 
+    def backfill_channel(self, guild):
+        if not config.GOCDKEYS_ENABLED or not guild or guild.id != config.GUILD_ID:
+            raise ValueError('GoCDKeys must be enabled in the configured server.')
+        channel = resolve(guild, 'gaming-deals', mapped_only=True)
+        if not channel or not guild.me or not all(getattr(channel.permissions_for(guild.me), bit)
+                for bit in ('view_channel', 'read_message_history', 'send_messages', 'embed_links')):
+            raise ValueError('Managed gaming-deals or GamerHQ read/reply permissions missing. Run /server health.')
+        return channel
+
+    async def recent_messages(self, channel, limit):
+        messages = []
+        async for message in channel.history(limit=limit):
+            messages.append(message)
+            if len(messages) >= limit:
+                break
+        return messages
+
+    def companion_sources(self, guild, messages):
+        # Existing canonical replies without a DB row are also retained. Never
+        # adopt, edit or delete these messages from a read-only preview.
+        return {getattr(getattr(m, 'reference', None), 'message_id', None) for m in messages
+                if m.author.id == guild.me.id and m.content in {COPY, DISABLED_COPY}}
+
+    async def preview_backfill(self, guild, limit=50):
+        if limit not in (25, 50, 100):
+            raise ValueError('Choose 25, 50 or 100 messages.')
+        channel = self.backfill_channel(guild)
+        messages = await self.recent_messages(channel, limit)
+        companions = self.companion_sources(guild, messages)
+        plan = dict(channel_id=channel.id, scanned=len(messages), supported=0,
+                    enriched=0, retained=0, skipped=0, candidates=[])
+        for message in messages:
+            if (message.channel.id != channel.id or not deal_source(message)
+                    or not extract_game_name(message)):
+                plan['skipped'] += 1
+                continue
+            plan['supported'] += 1
+            row = affiliate_deals.record(message.id)
+            if message.id in companions or (row and row['status'] == 'posted'):
+                plan['enriched'] += 1
+            elif row:
+                plan['retained'] += 1  # Includes uncertain/reserved/deleted claims.
+            else:
+                plan['candidates'].append(message.id)
+        return plan
+
+    async def run_backfill(self, guild, plan):
+        channel = self.backfill_channel(guild)
+        if channel.id != plan['channel_id'] or len(plan['candidates']) > 100:
+            raise ValueError('Managed channel changed; create a new preview.')
+        companions = self.companion_sources(guild, await self.recent_messages(channel, 100))
+        result = dict(created=0, retained=0, skipped=0, uncertain=0)
+        for source_id in plan['candidates']:
+            # Re-read both Discord and SQLite at confirmation, including live
+            # arrivals since preview. handle() shares the live source lock/claim.
+            if source_id in companions or affiliate_deals.processed(source_id):
+                result['retained'] += 1
+                continue
+            try:
+                message = await channel.fetch_message(source_id)
+                outcome = await self.handle(message, backfill=True)
+                result[outcome if outcome in result else 'skipped'] += 1
+            except discord.HTTPException:
+                result['skipped'] += 1
+        log.info('[gocdkeys] backfill processed created=%s retained=%s skipped=%s uncertain=%s',
+                 result['created'], result['retained'], result['skipped'], result['uncertain'])
+        return result
+
     async def fetch_page(self, url):
         # No redirects or arbitrary product-provided hosts (SSRF/affiliate safety).
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
@@ -145,7 +213,7 @@ class GoCdKeysService:
                     if len(raw) > 2_000_000: return None
                 return raw.decode('utf-8', errors='replace')
 
-    async def find_game_page(self, title):
+    async def find_game_page(self, title, *, wait=False):
         # Conservative resolver. Edition/DLC words remain part of the identity.
         # A candidate slug is NEVER considered a result until the page is verified.
         target = product_target(title)
@@ -159,7 +227,10 @@ class GoCdKeysService:
             cached = self._cache.get(title)
             if cached and cached[0] > now: return cached[1]
             # Bounded load; busy bursts can be skipped rather than queued unboundedly.
-            if now < self._next_request: return None
+            if now < self._next_request:
+                if not wait: return None
+                await asyncio.sleep(self._next_request - now)
+                now = time.monotonic()
             self._next_request = now + 2
             try:
                 document = await self.fetch_page(url)
@@ -218,7 +289,7 @@ class GoCdKeysService:
         except Exception as exc:
             log.warning('[gocdkeys] cleanup skipped message_id=%s reason=%s', source_id, type(exc).__name__)
 
-    async def handle(self, message):
+    async def handle(self, message, *, backfill=False):
         try:
             if not config.GOCDKEYS_ENABLED or not message.guild or message.guild.id != config.GUILD_ID:
                 log.debug('[gocdkeys] skipped reason=disabled_or_wrong_guild message_id=%s', message.id)
@@ -232,11 +303,14 @@ class GoCdKeysService:
                 return
             lock = _message_locks.setdefault(message.id, asyncio.Lock())
             async with lock:
-                await self.process_deal(message, source)
+                if backfill and affiliate_deals.processed(message.id):
+                    log.info('[gocdkeys] duplicate skipped message_id=%s', message.id)
+                    return 'retained'
+                return await self.process_deal(message, source, backfill=backfill)
         except Exception as exc:
             log.warning('[gocdkeys] skipped: handler error (%s)', type(exc).__name__)
 
-    async def process_deal(self, message, source):
+    async def process_deal(self, message, source, *, backfill=False):
         row = affiliate_deals.record(message.id)
         title = extract_game_name(message)
         log.info('[gocdkeys] deal detected source=%s message_id=%s title_found=%s', source, message.id, bool(title))
@@ -254,7 +328,7 @@ class GoCdKeysService:
         if not title:
             log.info('[gocdkeys] skipped reason=unresolved_title message_id=%s', message.id)
             return
-        page = await self.find_game_page(title)
+        page = await self.find_game_page(title, wait=True) if backfill else await self.find_game_page(title)
         if not page:
             log.info('[gocdkeys] skipped reason=unresolved_game message_id=%s', message.id)
             return
@@ -265,9 +339,10 @@ class GoCdKeysService:
         except Exception:
             affiliate_deals.finish(message.id, 'uncertain')
             log.warning('[gocdkeys] skipped: delivery failed; claim retained for manual review')
-            return
+            return 'uncertain'
         affiliate_deals.finish(message.id, 'posted', result.id)
         log.info('[gocdkeys] comparison created provider=GoCDKeys source=%s message_id=%s', source, message.id)
+        return 'created'
 
 
 def create_comparison_message(url):
