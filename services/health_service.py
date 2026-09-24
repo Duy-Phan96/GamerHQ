@@ -54,7 +54,7 @@ async def scan(guild, bot=None, *, messages=True):
         add('Runtime / commands','WARN' if missing else 'PASS','Missing registrations: '+', '.join(sorted(missing)) if missing else f'{len(inventory)} supported commands registered.')
         views = list(getattr(bot,'persistent_views',[]))
         ids = {getattr(child,'custom_id',None) for view in views for child in view.children}
-        required = {'gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:household-check'}
+        required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:household-check'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],

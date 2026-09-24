@@ -8,7 +8,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 
 ### Gaming & LFG
 
-- Start with optional gender/age groups, select games, and manage separate notification/profile preferences. See [role settings](docs/ROLE_SETTINGS.md).
+- **Choose Your Games** manages games. **Profile Settings / Choose Your Roles** groups About You, Gaming Setup and Interests & Notifications. Update Profile guides a private edit through Review → Save; quick controls change one setting. See [profile settings](docs/ROLE_SETTINGS.md).
 - Create public or private Looking for Group sessions, invite players and join private sessions with access codes.
 - Manage active lobbies: hosts can edit details, manage participants, review proposed times and close or cancel sessions.
 - Maintain a game library with optional dedicated Game Areas. Game selection and a game's Discord area are separate: removing an area can preserve the game and its role.

@@ -9,7 +9,7 @@ from services import role_service as roles, role_panel_service as panels
 from services import managed_message_service as managed
 from services.server_setup_service import repair_server
 from services.health_service import scan
-from cogs.roles import RoleToggleView, ProfileStep, OnboardingEntry
+from cogs.roles import RoleToggleView, RoleSelectionSession, OnboardingEntry
 from cogs.games import GameSelectionSession, ChooseGamesButtons
 
 
@@ -140,16 +140,13 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(roles.lfg_notification(self.guild, self.game['id'], already_posted=True)[0], '')
         self.assertTrue(ChooseGamesButtons().is_persistent())
 
-    async def test_onboarding_skip_order_gender_age_existing_games(self):
-        step = ProfileStep(self.member.id)
-        self.assertIn('Gender', step.text())
-        interaction = self.interaction()
-        await step.advance(interaction)
-        age = interaction.edit_original_response.call_args.kwargs['view']
-        self.assertIn('Age group', age.text())
-        await age.advance(interaction)
-        games = interaction.edit_original_response.call_args.kwargs['view']
-        self.assertIsInstance(games, GameSelectionSession)
+    async def test_profile_order_has_no_game_selection(self):
+        session = RoleSelectionSession(self.member)
+        for expected in ('Gender', 'Age', 'Language', 'Platform', 'Playstyle', 'Interests & Notifications'):
+            self.assertIn(expected, session.status_text())
+            await session.next_step(self.interaction())
+        self.assertIn('Profile Review', session.status_text())
+        self.assertFalse(any(isinstance(c, GameSelectionSession) for c in session.children))
         self.assertEqual(self.member.roles, [])
         self.assertTrue(OnboardingEntry().is_persistent())
 
@@ -159,7 +156,9 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.member.roles), 1)
         self.assertEqual(self.member.roles[0], roles.preference_role(self.guild, 'base', 'gender-female'))
         interaction = self.interaction()
-        await ProfileStep(999).advance(interaction, 'age-35plus')
+        session = RoleSelectionSession(self.member)
+        session.member_id = 999
+        await session.next_step(interaction)
         interaction.response.send_message.assert_awaited_once()
 
     async def test_health_detects_missing_duplicate_mappings_without_writes(self):

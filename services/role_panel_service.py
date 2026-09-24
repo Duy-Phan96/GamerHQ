@@ -5,13 +5,23 @@ from database import db
 from services.server_service import upsert_fixed_message, ServerMessageError
 from services.onboarding_service import unique, set_read_only
 
-INTRO = '# 👤 Optional Settings\n\nCustomize your GamerHQ experience.\n\nUse the sections below to choose notifications and optional profile settings. You can change these anytime.'
+INTRO = ('# 👤 Profile Settings\n\nSet up or update your GamerHQ profile.\n\n'
+         'Use **Update Profile** to review everything step by step, or use the sections below for quick changes. '
+         'All choices are optional. Games belong in #choose-your-games.')
+# Reuse the five existing message slots/IDs in their established order.
 SECTIONS = (
-    ('notifications', '🔔 Notifications', 'Choose which GamerHQ notifications you want to receive.'),
-    ('gaming_content', '📰 Gaming Content', 'Choose which gaming updates you want to receive.'),
-    ('language', '🗣️ Language', 'Choose the languages relevant to you.'),
-    ('platform', '🖥️ Platform', 'Optional profile settings: choose the platforms you play on.'),
+    ('notifications', '👤 About You', 'Gender, age group and languages. Prefer not to say clears visible gender roles.'),
+    ('gaming_content', '🎮 Gaming Setup', 'Choose your platforms. No active playstyle roles are currently configured.'),
+    ('language', '🔔 Interests & Notifications', 'Choose the events, streams and gaming content you want to hear about.'),
+    ('platform', '💡 Missing something?', "Can't find the role or option you need?"),
 )
+PANEL_GROUPS = {
+    '👤 About You': ('Gender', 'Age group', '🗣️ Language'),
+    '🎮 Gaming Setup': ('🖥️ Platform',),
+    '🔔 Interests & Notifications': ('🔔 Notifications', '📰 Gaming Content'),
+}
+LEGACY_TITLES = {'intro': '# 👤 Optional Settings', 'notifications': '# 🔔 Notifications',
+                 'gaming_content': '# 📰 Gaming Content', 'language': '# 🗣️ Language', 'platform': '# 🖥️ Platform'}
 _locks = {}
 
 
@@ -41,7 +51,7 @@ async def refresh(guild, *, section=None):
         await set_read_only(board)
         keys = message_keys(guild, board)
         panels = [('intro', INTRO, ChooseRolesHubView())] + [
-            (key, f'# {group}\n\n{text}\n\nClick to enable or disable. Your choices are optional.', RoleToggleView(group))
+            (key, f'# {group}\n\n{text}', RoleToggleView(group))
             for key, group, text in SECTIONS]
         for key, content, view in panels:
             if section is not None and key != section:
@@ -50,6 +60,7 @@ async def refresh(guild, *, section=None):
             await upsert_fixed_message(board, setting_key=keys[key], content=content, pin=True, view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
                 recover_match=lambda m, title=title, key=key: (m.content or '').startswith(title)
+                or (m.content or '').startswith(LEGACY_TITLES[key])
                 or (key == 'intro' and (m.content or '').startswith('# 👤 Choose Your Roles')))
 
 
@@ -63,6 +74,11 @@ async def sync(guild):
 async def diagnostics(guild, *, messages=False):
     from services.role_service import ROLE_GROUPS, preference_role, normalize_role_name
     issues = []
+    from services.role_service import profile_roles
+    try:
+        profile_roles(guild)
+    except ValueError as exc:
+        issues.append(str(exc))
     seen = set()
     for options in ROLE_GROUPS.values():
         for option in options:
@@ -88,9 +104,19 @@ async def diagnostics(guild, *, messages=False):
             issues.append(f'Orphan LFG role mapping: {row["role_key"]}; owner review required.')
     board = channel(guild)
     if not board:
-        return issues + ['Optional settings channel missing or ambiguous.']
+        return issues + ['Profile settings channel missing or ambiguous.']
+    games_id = db.get_setting(f'managed_channel:{guild.id}:choose-your-games')
+    if str(board.id) == str(games_id):
+        issues.append('Profile and game selector share a channel mapping; owner review required.')
     ids = set()
     for key, value in message_keys(guild, board).items():
+        from services.managed_message_service import load
+        state = load(value)
+        expected_title = INTRO.split('\n')[0] if key == 'intro' else '# ' + next(group for name, group, _ in SECTIONS if name == key)
+        if state and not state.get('customized') and not state['content'].startswith(expected_title):
+            issues.append(f'Profile section needs refresh: {key}')
+        if state and state.get('customized') and state.get('buttons') != state.get('default_buttons'):
+            issues.append(f'Customized profile controls: {key}; review/reset this pin for the grouped layout.')
         raw = db.get_setting(value)
         if not raw or not raw.isdigit():
             issues.append(f'Missing role message mapping: {key}')

@@ -128,3 +128,17 @@ Bot identity defaults live only in `config.THIRD_PARTY_BOTS`. `bot_group_service
 The existing GoCdKeysService is the shared paid-deal pipeline for trusted bot identities: price classification precedes validated lookup; scoped raw edits update the owned persisted companion. No second provider or channel registry is introduced.
 
 Streamer Hub: the existing streamer cog registers `cogs/twitch_hub.py` buttons and starts/stops `services/twitch_service.py`. `services/streamer_hub_service.py` owns authorization, managed resources and read-only health; `database/twitch.py` uses additive SQLite connection/session tables. OAuth Device flow and EventSub are outbound-only; default flags are false. Legacy profile records remain untouched. See [beta contract](STREAMER_HUB.md).
+
+## Profile settings
+
+`cogs/roles.py` owns the existing member-bound RoleSelectionSession, now a sequential
+profile draft with review/save, and persistent entry/quick/suggestion controls.
+`role_service.py` owns profile step metadata, registry-only role safety and a shared
+per-member lock for final save/quick changes. It rechecks mappings/current membership,
+rejects stale drafts and preserves non-profile roles. No game selector is invoked.
+`role_panel_service.py` reuses five persisted message slots for Profile Settings,
+About You, Gaming Setup, Interests & Notifications and Suggest Role, through the
+existing managed-message editor. Customized pins remain owner-controlled. Health
+checks mappings, panels, persistent entry controls and channel separation read-only.
+See [profile contracts and migration](ROLE_SETTINGS.md); tests cover role settings,
+profile wizard, onboarding and managed messages.

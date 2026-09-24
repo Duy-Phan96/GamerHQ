@@ -12,171 +12,147 @@ def _channel_alias(name: str) -> str:
 
 
 class RoleCategorySelect(discord.ui.Select):
-    def __init__(self, session, group: str):
+    def __init__(self, session):
+        from services.role_service import PROFILE_STEPS
         self.session = session
-        self.group = group
-        configured, missing = configured_group(session.guild, group)
-        self.configured = configured
-        self.missing = missing
+        label, groups = PROFILE_STEPS[session.step]
+        self.keys = {o.key for group in groups for o in ROLE_GROUPS[group]}
+        options = [discord.SelectOption(label=o.label, value=o.key, emoji=o.emoji,
+                   default=o.key in session.selected_keys)
+                   for group in groups for o in ROLE_GROUPS[group]]
+        if label == 'Gender':
+            options.append(discord.SelectOption(label='Prefer not to say', value='__private__',
+                           emoji='⚪', default=not (self.keys & session.selected_keys)))
+        super().__init__(placeholder=label, min_values=0,
+                         max_values=1 if label in ('Gender', 'Age') else len(options), options=options)
 
-        options = [
-            discord.SelectOption(
-                label=option.label[:100],
-                value=str(role.id),
-                emoji=option.emoji,
-                default=role.id in session.pending_role_ids,
-            )
-            for option, role in configured
-        ]
-
-        # Discord selects require at least one option. A disabled informational
-        # option keeps the session usable while making missing setup visible.
-        if not options:
-            options = [discord.SelectOption(label="No configured roles yet", value="__none__", emoji="⚠️")]
-
-        super().__init__(
-            placeholder=f"Choose roles from {group}",
-            min_values=0,
-            max_values=max(1, len(options)),
-            options=options,
-            row=2,
-            disabled=not configured,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.session.member_id:
-            await interaction.response.send_message("This role selector belongs to another user.", ephemeral=True)
+    async def callback(self, interaction):
+        if not await self.session.interaction_check(interaction):
             return
-
-        configured_ids = {role.id for _, role in self.configured}
-        selected_ids = {int(value) for value in self.values if value != "__none__"}
-        self.session.pending_role_ids.difference_update(configured_ids)
-        self.session.pending_role_ids.update(selected_ids)
-        self.session.rebuild()
-        await interaction.response.edit_message(content=self.session.status_text(), view=self.session)
-
-
-class RoleCategoryButton(discord.ui.Button):
-    def __init__(self, session, group: str, row: int):
-        self.session = session
-        self.group = group
-        super().__init__(
-            label=group.split(" ", 1)[1] if " " in group else group,
-            emoji=group.split(" ", 1)[0] if " " in group else None,
-            style=discord.ButtonStyle.primary if group == session.current_group else discord.ButtonStyle.secondary,
-            row=row,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.session.member_id:
-            await interaction.response.send_message("This role selector belongs to another user.", ephemeral=True)
-            return
-        self.session.current_group = self.group
+        selected = set(self.values)
+        if not selected <= self.keys | {'__private__'} or ('__private__' in selected and len(selected) > 1):
+            return await interaction.response.send_message('Invalid profile choice.', ephemeral=True)
+        if self.session.step in (0, 1) and len(selected) > 1:
+            return await interaction.response.send_message('Choose at most one option.', ephemeral=True)
+        self.session.selected_keys.difference_update(self.keys)
+        self.session.selected_keys.update(selected - {'__private__'})
         self.session.rebuild()
         await interaction.response.edit_message(content=self.session.status_text(), view=self.session)
 
 
 class RoleSelectionSession(discord.ui.View):
-    def __init__(self, member: discord.Member):
+    """Member-bound, temporary profile draft. Only reviewed Save changes roles."""
+    def __init__(self, member):
+        from services.role_service import profile_roles
         super().__init__(timeout=300)
-        self.member_id = member.id
-        self.guild = member.guild
-        self.original_role_ids = {role.id for role in member.roles}
-        self.pending_role_ids = set(self.original_role_ids)
-        self.current_group = next(iter(ROLE_GROUPS))
+        self.guild, self.member_id = member.guild, member.id
+        mapping = profile_roles(self.guild)
+        self.mapping_ids = {key: role.id for key, role in mapping.items()}
+        self.original_role_ids = {r.id for r in member.roles} & set(self.mapping_ids.values())
+        self.selected_keys = {key for key, role in mapping.items()
+                              if role.id in self.original_role_ids and key != 'gender-unspecified'}
+        self.step, self.used = 0, False
         self.rebuild()
 
+    async def interaction_check(self, interaction):
+        if (self.used or not interaction.guild or interaction.guild.id != self.guild.id
+                or interaction.user.id != self.member_id):
+            await interaction.response.send_message('This profile session is closed or belongs to another member.', ephemeral=True)
+            return False
+        return True
+
     def rebuild(self):
+        from services.role_service import PROFILE_STEPS
         self.clear_items()
-        for index, group in enumerate(ROLE_GROUPS):
-            self.add_item(RoleCategoryButton(self, group, row=index // 4))
-        self.add_item(RoleCategorySelect(self, self.current_group))
-
-        confirm = discord.ui.Button(label="Confirm Selection", emoji="✅", style=discord.ButtonStyle.success, row=4)
-        confirm.callback = self.confirm_selection
-        self.add_item(confirm)
-        cancel = discord.ui.Button(label="Cancel", emoji="✖️", style=discord.ButtonStyle.secondary, row=4)
-        cancel.callback = self.cancel_selection
-        self.add_item(cancel)
-
-    def managed_ids(self):
-        ids = set()
-        for group in ROLE_GROUPS:
-            configured, _ = configured_group(self.guild, group)
-            ids.update(role.id for _, role in configured)
-        return ids
+        if self.step < len(PROFILE_STEPS) and PROFILE_STEPS[self.step][1]:
+            self.add_item(RoleCategorySelect(self))
+        for label, callback, disabled in [
+            ('Save Profile' if self.step == 6 else 'Review' if self.step == 5 else 'Next',
+             self.confirm_selection if self.step == 6 else self.next_step, False),
+            ('Back', self.back, self.step == 0), ('Cancel', self.cancel_selection, False)]:
+            button = discord.ui.Button(label=label, row=1, disabled=disabled,
+                        style=discord.ButtonStyle.success if label == 'Save Profile' else discord.ButtonStyle.secondary)
+            button.callback = callback
+            self.add_item(button)
 
     def status_text(self):
-        configured, missing = configured_group(self.guild, self.current_group)
-        managed = self.managed_ids()
-        original = self.original_role_ids & managed
-        pending = self.pending_role_ids & managed
-        added = len(pending - original)
-        removed = len(original - pending)
+        from services.role_service import PROFILE_STEPS
+        if self.step < 6:
+            name, groups = PROFILE_STEPS[self.step]
+            selected = [o.label for group in groups for o in ROLE_GROUPS[group] if o.key in self.selected_keys]
+            detail = 'No active playstyle options are configured. Continue to interests.' if not groups else (
+                'Current selection: ' + (', '.join(selected) or 'Not specified'))
+            return (f'# 👤 Update Profile · {self.step + 1}/6 — {name}\n\n{detail}\n\n'
+                    'Choices are optional and visible as server roles. Clear the selection to remove a choice. '
+                    'Nothing changes until Review → Save Profile. Games belong in #choose-your-games.')
+        lines = ['# 👤 Profile Review']
+        for heading, indexes in [('👤 About You', (0, 1, 2)), ('🎮 Gaming Setup', (3, 4)),
+                                 ('🔔 Interests & Notifications', (5,))]:
+            rows = []
+            for index in indexes:
+                label, groups = PROFILE_STEPS[index]
+                values = [o.label for group in groups for o in ROLE_GROUPS[group] if o.key in self.selected_keys]
+                if values:
+                    rows.append(f'{label}: ' + ', '.join(values))
+            if rows:
+                lines.extend(['', '**' + heading + '**', *rows])
+        if len(lines) == 1:
+            lines.extend(['', 'No optional profile roles selected.'])
+        lines.extend(['', 'Save Profile applies only these profile settings. Your game and unrelated roles stay unchanged.'])
+        return '\n'.join(lines)
 
-        text = (
-            "👤 **Choose Your Roles**\n"
-            "Choose a category, then select the roles that fit you.\n"
-            "You can switch categories freely — your choices stay saved until you confirm.\n\n"
-            f"**Current category:** {self.current_group}\n"
-            f"**Selected overall:** {len(pending)}\n"
-            f"**Pending changes:** +{added} / -{removed}\n\n"
-            "Nothing changes until you press **Confirm Selection**."
-        )
-        if missing:
-            text += "\n\n⚠️ **Not configured yet:** " + ", ".join(option.label for option in missing)
-        return text
+    async def next_step(self, interaction):
+        if await self.interaction_check(interaction):
+            self.step = min(6, self.step + 1)
+            self.rebuild()
+            await interaction.response.edit_message(content=self.status_text(), view=self)
 
-    async def confirm_selection(self, interaction: discord.Interaction):
-        if interaction.user.id != self.member_id:
-            await interaction.response.send_message("This role selector belongs to another user.", ephemeral=True)
+    async def back(self, interaction):
+        if await self.interaction_check(interaction):
+            self.step = max(0, self.step - 1)
+            self.rebuild()
+            await interaction.response.edit_message(content=self.status_text(), view=self)
+
+    async def confirm_selection(self, interaction):
+        if not await self.interaction_check(interaction):
             return
-
-        await interaction.response.edit_message(content="⏳ **Saving your role selection…**", view=None)
-        managed = self.managed_ids()
-        original = self.original_role_ids & managed
-        pending = self.pending_role_ids & managed
-        add_ids = pending - original
-        remove_ids = original - pending
-
-        add_roles = [self.guild.get_role(role_id) for role_id in add_ids]
-        remove_roles = [self.guild.get_role(role_id) for role_id in remove_ids]
-        add_roles = [role for role in add_roles if role]
-        remove_roles = [role for role in remove_roles if role]
-
+        if self.step != 6:
+            return await interaction.response.send_message('Review your profile before saving.', ephemeral=True)
+        self.used = True
+        self.stop()
+        await interaction.response.defer()
+        from services.role_service import save_profile
         try:
-            if add_roles:
-                await interaction.user.add_roles(*add_roles, reason="GamerHQ confirmed general role selection")
-            if remove_roles:
-                await interaction.user.remove_roles(*remove_roles, reason="GamerHQ confirmed general role selection")
-        except discord.Forbidden:
-            await interaction.edit_original_response(
-                content="❌ I could not update your roles. Please ask staff to check the GamerHQ Bot role position/permissions.",
-                view=None,
-            )
-            self.stop()
-            return
-        except discord.HTTPException as exc:
-            await interaction.edit_original_response(content=f"❌ Discord could not save the selection: `{exc}`", view=None)
-            self.stop()
-            return
+            added, removed = await save_profile(interaction.user, self.mapping_ids,
+                                               self.original_role_ids, self.selected_keys)
+            text = f'✅ Profile saved. Added: {added}; removed: {removed}.'
+        except ValueError as exc:
+            text = str(exc)
+        except discord.HTTPException:
+            text = ('Discord could not confirm the complete save. Some confirmed changes may already be applied. '
+                    'Reopen Update Profile to review your current roles; ask staff to check bot permissions if needed.')
+        await interaction.edit_original_response(content=text, view=None)
 
-        lines = ["✅ **Your roles have been updated.**"]
-        if add_roles:
-            lines.append("\n**Added:** " + ", ".join(sorted(role.name for role in add_roles)))
-        if remove_roles:
-            lines.append("\n**Removed:** " + ", ".join(sorted(role.name for role in remove_roles)))
-        if not add_roles and not remove_roles:
-            lines.append("\nNo roles needed to be changed.")
-        await interaction.edit_original_response(content="".join(lines), view=None)
-        self.stop()
+    async def cancel_selection(self, interaction):
+        if await self.interaction_check(interaction):
+            self.used = True
+            self.stop()
+            await interaction.response.edit_message(content='Profile cancelled. Nothing changed.', view=None)
 
-    async def cancel_selection(self, interaction: discord.Interaction):
-        if interaction.user.id != self.member_id:
-            await interaction.response.send_message("This role selector belongs to another user.", ephemeral=True)
-            return
-        await interaction.response.edit_message(content="✖️ Role selection cancelled. Nothing was changed.", view=None)
-        self.stop()
+    async def on_timeout(self):
+        self.used = True
+
+
+async def open_profile(interaction):
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        return await interaction.response.send_message('Use this inside GamerHQ.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    try:
+        member = await interaction.guild.fetch_member(interaction.user.id)
+        session = RoleSelectionSession(member)
+        await interaction.followup.send(session.status_text(), view=session, ephemeral=True)
+    except (ValueError, discord.HTTPException):
+        await interaction.followup.send('Profile settings are unavailable. Ask staff to run /server health.', ephemeral=True)
 
 
 class SuggestRoleModal(discord.ui.Modal, title="💡 Suggest a Role"):
@@ -235,11 +211,12 @@ class ChooseRolesHubView(discord.ui.View):
         custom_id="gamerhq:roles:select",
     )
     async def select_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
-            return
-        session = ProfileStep(interaction.user.id)
-        await interaction.response.send_message(session.text(), view=session, ephemeral=True)
+        await open_profile(interaction)
+
+
+class RoleSuggestionView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Suggest Role",
@@ -258,7 +235,17 @@ def build_choose_roles_view() -> discord.ui.View:
 class RoleToggleView(discord.ui.View):
     def __init__(self, group):
         super().__init__(timeout=None)
-        for option in ROLE_GROUPS[group]:
+        from services.role_panel_service import PANEL_GROUPS
+        if group == '💡 Missing something?':
+            button = RoleSuggestionView().children[0]
+            self.add_item(button)
+            return
+        groups = PANEL_GROUPS.get(group, (group,))
+        options = [o for name in groups for o in ROLE_GROUPS[name]]
+        if 'Gender' in groups:
+            from services.role_service import RoleOption
+            options.insert(3, RoleOption('gender-unspecified', 'Prefer not to say', '⚪'))
+        for option in options:
             button = discord.ui.Button(label=option.label, emoji=option.emoji,
                 custom_id=f'gamerhq:preference:base:{option.key}')
             async def callback(interaction, key=option.key, label=option.label):
@@ -268,54 +255,12 @@ class RoleToggleView(discord.ui.View):
                     if not interaction.guild or not isinstance(interaction.user, discord.Member):
                         raise ValueError('Use these settings inside GamerHQ.')
                     enabled = await toggle_preference(interaction.user, 'base', key)
-                    await interaction.followup.send(f'{"✅" if enabled else "❌"} {label} {"enabled" if enabled else "disabled"}.', ephemeral=True)
+                    text = 'Gender hidden. No visible gender role is selected.' if key == 'gender-unspecified' else f'{"✅" if enabled else "❌"} {label} {"enabled" if enabled else "disabled"}.'
+                    await interaction.followup.send(text, ephemeral=True)
                 except (ValueError, discord.HTTPException) as exc:
                     await interaction.followup.send(f'Could not update your preference: {exc}', ephemeral=True)
             button.callback = callback
             self.add_item(button)
-
-
-class ProfileStep(discord.ui.View):
-    """Optional profile steps; games are delegated to the existing selector."""
-    def __init__(self, member_id, step=0):
-        super().__init__(timeout=300)
-        self.member_id, self.step = member_id, step
-        group = ('Gender', 'Age group')[step]
-        for option in ROLE_GROUPS[group]:
-            button = discord.ui.Button(label=option.label, emoji=option.emoji)
-            async def callback(interaction, key=option.key):
-                await self.advance(interaction, key)
-            button.callback = callback
-            self.add_item(button)
-        skip = discord.ui.Button(label='Skip', style=discord.ButtonStyle.secondary)
-        skip.callback = self.advance
-        self.add_item(skip)
-
-    def text(self):
-        return f'**{("Gender", "Age group")[self.step]} (optional)**\nChoose a broad profile role or skip. Roles are visible on your server profile. No free-text data or birth date is collected.'
-
-    async def advance(self, interaction, key=None):
-        from services.role_service import toggle_preference
-        if not interaction.guild or interaction.user.id != self.member_id:
-            await interaction.response.send_message('This onboarding belongs to another member.', ephemeral=True)
-            return
-        await interaction.response.defer()
-        try:
-            if key:
-                await toggle_preference(interaction.user, 'base', key, exclusive=('Gender', 'Age group')[self.step])
-        except (ValueError, discord.HTTPException) as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
-            return
-        if self.step == 0:
-            view = ProfileStep(self.member_id, 1)
-            await interaction.edit_original_response(content=view.text(), view=view)
-        else:
-            from cogs.games import GameSelectionSession
-            from database import db
-            games = [g for g in db.get_selectable_games() if g.get('role_id')]
-            view = GameSelectionSession(interaction.user, games)
-            await interaction.edit_original_response(content=view.status_text(), view=view)
-        self.stop()
 
 
 class OnboardingEntry(discord.ui.View):
@@ -324,11 +269,7 @@ class OnboardingEntry(discord.ui.View):
 
     @discord.ui.button(label='Get Started', emoji='👋', custom_id='gamerhq:onboarding:start')
     async def start(self, interaction, button):
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message('Use this inside GamerHQ.', ephemeral=True)
-            return
-        view = ProfileStep(interaction.user.id)
-        await interaction.response.send_message(view.text(), view=view, ephemeral=True)
+        await open_profile(interaction)
 
 
 class Roles(commands.Cog):

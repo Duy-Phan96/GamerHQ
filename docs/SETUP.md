@@ -82,3 +82,17 @@ Run `/server health` and owner `/server setup` → Repair to verify private AFFI
 ## Hidden Twitch beta
 
 STREAMER_HUB_ENABLED=false and STREAMER_ROLE_SELECTION_ENABLED=false keep production inactive. Future Dev-only OAuth needs TWITCH_CLIENT_ID from a Public Twitch application; no callback/client secret is used. Explicit setup repairs managed streamer access and pins; health reports disabled as informational. See [configuration and Dev acceptance](STREAMER_HUB.md).
+
+## Profile Settings acceptance
+
+After restarting the single local bot, run `/server health`, then `/server setup` →
+Repair → Confirm Repair. Inspect choose-your-roles: Profile Settings / Update Profile,
+About You, Gaming Setup, Interests & Notifications, then Missing something? / Suggest
+Role. Existing five message IDs are reused. Customized pins are preserved; reset only
+those pins through `/server pinned-messages` if health flags their legacy layout.
+
+As a normal member, test preselection, Gender → Age → Language → Platform → Playstyle
+(informational: no active roles) → Interests → Review → Save. Cancel must leave roles
+untouched; quick controls must not open the wizard. Prefer not to say clears visible
+gender roles. Game selection stays in choose-your-games and game/Staff/unrelated roles
+must remain unchanged. See [profile settings](ROLE_SETTINGS.md) for recovery caveats.

@@ -9,7 +9,7 @@ from services.server_service import ServerMessageError, upsert_fixed_message
 
 WELCOME_COPY = (
     "# 👋 Welcome to GamerHQ!\n\n"
-    "Start below: Gender (optional) → Age group (optional) → Choose Games.\n"
+    "Start below to update your optional profile. Select games separately in Choose Your Games.\n"
     "🎮 Choose the games you play in {choose-your-games} anytime.\n"
     "👤 Optional notifications, languages and profile settings: {choose-your-roles}\n"
     "📅 Find or create gaming sessions in {looking-for-group}\n"
