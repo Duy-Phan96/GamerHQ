@@ -20,8 +20,8 @@ class GamerHQBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
-        from config import GOCDKEYS_ENABLED
-        intents.message_content = GOCDKEYS_ENABLED
+        from config import GOCDKEYS_ENABLED, GOCDKEYS_AUTOMATIC_SUPPORTED
+        intents.message_content = GOCDKEYS_ENABLED and GOCDKEYS_AUTOMATIC_SUPPORTED
         intents.voice_states = True
         super().__init__(command_prefix="!", intents=intents)
         self.health_task = None

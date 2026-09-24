@@ -24,7 +24,8 @@ def key(guild, group):
 def member_id(guild, name):
     import config
     configured = getattr(config, CONFIG[name])
-    raw = str(configured or db.get_setting(f'bot_member:{guild.id}:{name}') or '')
+    legacy = db.get_setting(f'instant_gaming_bot:{guild.id}') if name == 'instant-gaming' else None
+    raw = str(configured or db.get_setting(f'bot_member:{guild.id}:{name}') or legacy or '')
     return int(raw) if raw.isdigit() and int(raw) else None
 
 

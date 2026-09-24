@@ -72,6 +72,24 @@ class GoCdKeysWatcher(commands.Cog):
     deals = app_commands.Group(name='deals', description='Gaming deal administration',
                                default_permissions=discord.Permissions(administrator=True))
 
+    @deals.command(name='create', description='Owner/admin: preview and post a curated partner deal.')
+    @app_commands.guild_only()
+    @app_commands.choices(partner=[app_commands.Choice(name=label, value=value) for value, label in
+        [('amazon', 'Amazon'), ('instant-gaming', 'Instant Gaming'), ('gocdkeys', 'GoCDKeys'), ('other', 'Other')]])
+    async def create(self, interaction: discord.Interaction, partner: str, image_url: str = ''):
+        from cogs.deal_editor import DealModal
+        from services import curated_deal_service as curated
+        from services.server_service import ServerMessageError
+        try:
+            curated.target(interaction.guild, interaction.user)
+            if partner not in curated.PARTNERS:
+                raise ServerMessageError('Choose a supported partner.')
+            if image_url:
+                image_url = curated.public_url(image_url)
+        except ServerMessageError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.send_modal(DealModal(interaction.guild.id, interaction.user.id, partner, image_url))
+
     @deals.command(name='backfill', description='Owner/admin: preview missing comparisons on recent gaming deals.')
     @app_commands.guild_only()
     @app_commands.choices(count=[app_commands.Choice(name=str(n), value=n) for n in (25, 50, 100)])
@@ -94,7 +112,7 @@ class GoCdKeysWatcher(commands.Cog):
     async def on_raw_message_edit(self, payload):
         import config
         from services.instant_gaming_service import resolve
-        if not config.GOCDKEYS_ENABLED or payload.guild_id != config.GUILD_ID:
+        if not config.GOCDKEYS_AUTOMATIC_SUPPORTED or not config.GOCDKEYS_ENABLED or payload.guild_id != config.GUILD_ID:
             return
         # Ignore pin-only updates. Partial content updates require a fresh source.
         if not {'content', 'embeds'} & payload.data.keys():

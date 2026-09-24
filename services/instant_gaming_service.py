@@ -90,7 +90,13 @@ async def ensure_affiliate_category(guild):
         category = await guild.create_category('🔒 AFFILIATE STATS', overwrites=rights,
                                                reason='GamerHQ private affiliate statistics')
     elif category.overwrites != rights:
-        await tracked_edit(category, overwrites=rights, reason='GamerHQ private Affiliate Stats access')
+        known_ids = {c.id for name in ('ig-purchases', 'ig-buyer-ranking')
+                     if (c := resolve(guild, name, mapped_only=True))}
+        children = [c for c in await guild.fetch_channels() if getattr(c, 'category_id', None) == category.id]
+        if any(c.id not in known_ids and c.overwrites == category.overwrites for c in children):
+            log.warning('Affiliate Stats has unknown permission-synced children; parent retained for owner review. Managed feeds can still be repaired.')
+        else:
+            await tracked_edit(category, overwrites=rights, reason='GamerHQ private Affiliate Stats access')
     db.set_setting(f'managed_category:{guild.id}:affiliate-stats', category.id)
     return category
 
@@ -186,6 +192,8 @@ async def _refresh(guild, channels=None):
 
 async def sync(guild):
     async with _locks.setdefault(guild.id, asyncio.Lock()):
+        from services.bot_group_service import fetch_member
+        await fetch_member(guild, 'instant-gaming')
         if not configured_bot(guild):
             log.warning('[InstantGaming] Instant Gaming bot ID missing or bot unavailable; channels will be prepared without bot-specific grants')
         channels = {name: resolve(guild, name) for name in CHANNELS}
@@ -227,7 +235,8 @@ async def sync(guild):
         # edit() returns a new object before the gateway updates the guild cache.
         await refresh(guild, channels=channels)
         bot = configured_bot(guild)
-        db.set_setting(f'instant_gaming_bot:{guild.id}', bot.id if bot else 0)
+        if bot:
+            db.set_setting(f'instant_gaming_bot:{guild.id}', bot.id)
         rows = await diagnostics(guild, channels=channels)
         lines = ['# Instant Gaming Setup']
         for name in CHANNELS:
@@ -248,6 +257,7 @@ async def diagnostics(guild, *, messages=True, channels=None):
     if not configured_bot(guild):
         rows.append(('Instant Gaming bot', 'WARN', 'INSTANT_GAMING_BOT_ID is not configured or does not identify an available external bot.'))
     try:
+        rows.extend(affiliate_access_diagnostics(guild, channels=channels))
         categories = targets(guild)
         from services.support_service import partner_overwrites
         public = categories['gaming-news']
@@ -295,4 +305,34 @@ async def diagnostics(guild, *, messages=True, channels=None):
                     rows.append((name + ' pins', 'WARN', 'Could not inspect pinned messages.'))
     except ServerMessageError as exc:
         rows.append(('Instant Gaming channels', 'MANUAL_REVIEW', str(exc)))
+    return rows
+
+
+def affiliate_access_diagnostics(guild, *, channels=None):
+    """Read-only per-resource evidence; never promise external /config behavior."""
+    bot = configured_bot(guild)
+    category = affiliate_category(guild)
+    resources = [('category', category)] + [(name.removeprefix('ig-'),
+        channels.get(name) if channels is not None else resolve(guild, name, mapped_only=True))
+        for name in ('ig-purchases', 'ig-buyer-ranking')]
+    rows = []
+    staff = [r for r in guild.roles if is_staff(r)]
+    for label, channel in resources:
+        if not channel:
+            rows.append(('Affiliate Stats ' + label, 'REPAIRABLE', 'Managed resource missing; run owner Repair.'))
+            continue
+        expected = overwrites(guild, 'ig-purchases', channel.overwrites, category)
+        private = channel.overwrites_for(guild.default_role).view_channel is False
+        private = private and all(value.view_channel is not True or expected[target].view_channel is True
+                                  for target, value in channel.overwrites.items())
+        staff_ok = all(channel.overwrites_for(role).view_channel is True and
+                       (not hasattr(channel, 'permissions_for') or channel.permissions_for(role).view_channel)
+                       for role in staff)
+        missing = [bit for bit in BOT_RIGHTS if not bot or getattr(channel.overwrites_for(bot), bit) is not True
+                   or (hasattr(channel, 'permissions_for') and not getattr(channel.permissions_for(bot), bit))]
+        detail = f'Member privacy: {"OK" if private else "DRIFT"}; Staff: {"OK" if staff_ok else "DRIFT"}; '
+        detail += ('Instant Gaming unresolved; check verified ID/membership and run owner Repair.' if not bot else
+                   'Instant Gaming missing: ' + ', '.join(missing) + '; owner Repair available.' if missing else
+                   'Instant Gaming effective view/send/history/embed/attachment access OK. External /config remains owner-verified.')
+        rows.append(('Affiliate Stats ' + label, 'PASS' if private and staff_ok and not missing else 'WARN', detail))
     return rows

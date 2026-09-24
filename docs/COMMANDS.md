@@ -17,7 +17,9 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 
 ## Admin / Owner commands
 
-- `/deals backfill` — Owner/admin: preview missing comparisons on recent gaming deals. Choose 25/50/100 messages (default 50), then Preview → Run Backfill or Cancel. Read-only preview; unresolved products and existing delivery claims are skipped. See [GoCDKeys](GOCDKEYS.md).
+- `/deals create` — Owner/admin: select Amazon, Instant Gaming, GoCDKeys or Other; enter prices and a verified product/affiliate URL; Preview → Post Deal / Edit / Cancel. Optional image URL; fixed gaming-deals target. See [curated deals](DEALS.md).
+
+- `/deals backfill` — Owner/admin: currently unavailable; automatic GoCDKeys access is unsupported (HTTP 403). No history processing or posts. Use verified manual links via `/deals create`.
 
 - `/area manage` — Add or safely remove multiple Game Areas.
 - `/game-admin add-area` — Admin: create or restore a dedicated Discord area for a library game.

@@ -132,6 +132,8 @@ class GoCdKeysService:
         self._next_request = 0.0
 
     def backfill_channel(self, guild):
+        if not config.GOCDKEYS_AUTOMATIC_SUPPORTED:
+            raise ValueError('Automatic GoCDKeys lookup is unsupported (HTTP 403). Use /deals create with a verified link.')
         if not config.GOCDKEYS_ENABLED or not guild or guild.id != config.GUILD_ID:
             raise ValueError('GoCDKeys must be enabled in the configured server.')
         channel = resolve(guild, 'gaming-deals', mapped_only=True)
@@ -200,20 +202,13 @@ class GoCdKeysService:
         return result
 
     async def fetch_page(self, url):
-        # No redirects or arbitrary product-provided hosts (SSRF/affiliate safety).
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
-                                         headers={'User-Agent': 'GamerHQ-PriceComparison/1.0'}) as session:
-            async with session.get(url, allow_redirects=False) as response:
-                if response.status != 200 or 'text/html' not in response.headers.get('Content-Type', ''):
-                    log.info('[gocdkeys] skipped: product HTTP status %s', response.status)
-                    return None
-                raw = bytearray()
-                async for chunk in response.content.iter_chunked(65536):
-                    raw.extend(chunk)
-                    if len(raw) > 2_000_000: return None
-                return raw.decode('utf-8', errors='replace')
+        # Retain the provider seam, but never scrape without approved access.
+        log.info('[gocdkeys] automatic lookup unsupported; use verified manual links')
+        return None
 
     async def find_game_page(self, title, *, wait=False):
+        if not config.GOCDKEYS_AUTOMATIC_SUPPORTED:
+            return None
         # Conservative resolver. Edition/DLC words remain part of the identity.
         # A candidate slug is NEVER considered a result until the page is verified.
         target = product_target(title)
@@ -268,7 +263,7 @@ class GoCdKeysService:
 
     async def handle_delete(self, guild, channel_id, source_id):
         try:
-            if not config.GOCDKEYS_ENABLED or not guild or guild.id != config.GUILD_ID:
+            if not config.GOCDKEYS_AUTOMATIC_SUPPORTED or not config.GOCDKEYS_ENABLED or not guild or guild.id != config.GUILD_ID:
                 return
             channel = resolve(guild, 'gaming-deals', mapped_only=True)
             if not channel or channel.id != channel_id:
@@ -291,7 +286,7 @@ class GoCdKeysService:
 
     async def handle(self, message, *, backfill=False):
         try:
-            if not config.GOCDKEYS_ENABLED or not message.guild or message.guild.id != config.GUILD_ID:
+            if not config.GOCDKEYS_AUTOMATIC_SUPPORTED or not config.GOCDKEYS_ENABLED or not message.guild or message.guild.id != config.GUILD_ID:
                 log.debug('[gocdkeys] skipped reason=disabled_or_wrong_guild message_id=%s', message.id)
                 return
             source = deal_source(message)
@@ -352,6 +347,8 @@ def create_comparison_message(url):
 
 
 def status(guild, bot=None):
+    if not config.GOCDKEYS_AUTOMATIC_SUPPORTED:
+        return ('GoCDKeys', 'INFO', 'Automatic lookup/backfill: Unsupported (HTTP 403). Manual verified links: /deals create. Existing comparisons retained.')
     from services.bot_group_service import member_id
     channel = resolve(guild, 'gaming-deals', mapped_only=True)
     configured = bool(channel and any(member_id(guild, source) for source in config.SUPPORTED_DEAL_SOURCES) and re.fullmatch(r'[A-Za-z0-9_-]{1,64}', config.GOCDKEYS_REFERRAL_CODE))

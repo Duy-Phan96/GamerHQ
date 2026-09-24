@@ -6,6 +6,16 @@ from config import DB_PATH, SEED_PATH
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS curated_deals (
+    id TEXT PRIMARY KEY,
+    guild_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    created_by INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    data_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    discord_message_id INTEGER
+);
 CREATE TABLE IF NOT EXISTS twitch_connections (
     guild_id INTEGER NOT NULL,
     discord_user_id INTEGER NOT NULL,

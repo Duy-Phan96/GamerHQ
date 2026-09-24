@@ -2,6 +2,10 @@
 
 ## [Unreleased] - 2026-09-23
 
+- Add confirmed owner/admin curated deals with strict manual links/prices and durable delivery claims. Disable unsupported automatic GoCDKeys scraping/backfill despite legacy opt-in; retain manual referral links.
+- Repair legacy Instant Gaming identity resolution and uncached direct sync; diagnose effective Affiliate Stats parent/child access without granting private access to Gaming Bots. Preserve unknown synced children for manual review.
+- Paginate the managed Staff Command Guide, retaining the original page ID and adding `/deals` without exceeding Discord message limits.
+
 - Add owner/admin `/deals backfill` with bounded read-only preview, confirmed shared-provider processing and durable live/backfill duplicate prevention. Repair explicit Instant Gaming partner-category discovery denies and report its/GamerHQ gaming-deals access without widening private access.
 
 - Prepare hidden Twitch Streamer Hub beta: approved-role Device OAuth, outbound EventSub, durable session deduplication, confirmed disconnect, private setup/health and default-off role selection; retain inactive legacy profile data.
