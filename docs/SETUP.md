@@ -98,3 +98,7 @@ Save only. Check preselection, Back, Cancel and Save; only personal roles may ch
 Platform/notification buttons must toggle independently without opening the editor.
 Games remain in choose-your-games. GamerHQ is English; no language question is asked.
 See [profile settings](ROLE_SETTINGS.md) for migration and recovery details.
+
+## Interactive boards and Community Events
+
+After restarting the updated bot, run `/server health`, then owner `/server setup` → Repair. Repair creates/reuses `🎉・community-events` above tournaments and giveaways in EVENTS and maintains one canonical intro pin. It also repairs the selectors’ reaction/application-command permissions without allowing normal chat or threads. Check buttons/select menus and reactions using an ordinary member account. Existing event posts, IDs and private channels remain intact. See [permission modes](PERMISSIONS.md#read-only-modes).

@@ -12,7 +12,7 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 - STAFF: private staff conversation, suggestion inbox, ticket/bot/mod logs and commands.
 - AFFILIATE STATS: private purchases/buyer-ranking using existing IG channel IDs and explicit Instant Gaming access.
 - SUPPORT TICKETS: private ticket channels created on demand.
-- EVENTS: tournaments/giveaways information boards; full tournament/giveaway engines are not implemented.
+- EVENTS: 🎉・community-events → 🏆・tournaments → 🎁・giveaways. Owner Repair creates/reuses Community Events by stored ID, maintains its canonical pin and orders these managed slots without replacing channels/history or changing unrelated child order. Full tournament/giveaway engines are not implemented.
 - VOICE CHANNELS: common voice rooms and a generator. STREAMERS and game areas have separate feature lifecycles.
 
 Text channels commonly use emoji + ・ + kebab-case; category labels commonly use emoji + uppercase words. Voice names vary by feature. Reuse each service's normalizer/aliases instead of imposing a new global naming rule. Existing STAFF aliases are in cogs/suggestions.py.

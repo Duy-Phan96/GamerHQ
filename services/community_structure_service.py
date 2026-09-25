@@ -3,6 +3,23 @@ from database import db
 from services.onboarding_service import alias, unique, set_read_only, set_writable
 from services.server_service import ServerMessageError, upsert_fixed_message
 
+EVENT_BOARDS = ('community-events', 'tournaments', 'giveaways')
+EVENTS_INTRO = ('# 🎉 Community Events\n\n'
+                'Join upcoming GamerHQ community events, game nights and special sessions here.')
+
+
+def event_order(guild, snapshot):
+    """Replace only managed event slots; unrelated children's relative order stays intact."""
+    events = unique(guild.categories, 'events')
+    current = sorted((c for c in snapshot if getattr(c, 'category_id', None) == getattr(events, 'id', None)
+                      and c in guild.text_channels), key=lambda c: (c.position, c.id)) if events else []
+    by_id = {c.id: c for c in current}
+    # edit() returns a new object before the gateway necessarily updates the cache.
+    # Resolve identity from mappings, but placement from the fresh REST snapshot.
+    ids = [c.id for name in EVENT_BOARDS if (c := core_channel(guild, name)) and c.id in by_id] if events else []
+    managed = iter(by_id[cid] for cid in ids if cid in by_id)
+    return current, [next(managed) if c.id in ids else c for c in current]
+
 
 def resource_key(guild, name):
     return f'managed_channel:{guild.id}:{name}'
@@ -38,7 +55,7 @@ def guide_text(guild):
         '`m!play <Apple Music song or playlist link>`\n`p!play <Spotify song or playlist link>`\n'
         'Disconnect: `m!leave` / `p!stop`. More: `m!help`, `p!help` or official bot documentation.\n\n'
         f'## 💡 Suggestions\nOpen **{mention(guild, "suggestions")}** → **Submit Suggestion**. Ideas go privately to the team for review.\n\n'
-        '## 🏆 Events\n**Coming Soon** — tournaments, giveaways and upcoming community events in **EVENTS**.\n\n'
+        f'## 🏆 Events\nGame nights: **{mention(guild, "community-events")}**. Tournaments & giveaways: **Coming Soon**.\n\n'
         '## 🔊 Voice\nJoin **➕ Create Voice** for your own temporary room. Use `/voice manage` to rename it, set a user limit, lock/unlock, allow or remove players, and close it. Music Bots work there too. Empty rooms are automatically removed.\n\n'
         '## 🎥 Streamer Hub\nBeta — currently hidden.\n\n'
         + ticket_reference(guild) + '\n\n' + guide_reference(guild)
@@ -54,16 +71,31 @@ async def refresh_boards(guild):
     suggestions = core_channel(guild, 'suggestions')
     if suggestions:
         await refresh_entry(suggestions)
+    events = core_channel(guild, 'community-events') if db.get_setting(resource_key(guild, 'community-events')) else None
+    if events:
+        await upsert_fixed_message(events, setting_key=f'community_events:{guild.id}', content=EVENTS_INTRO, pin=True,
+            recover_match=lambda m: (m.content or '').startswith('# 🎉 Community Events'))
 
 
 async def migrate_boards(guild, changed, failed):
     from cogs.suggestions import STAFF_ALIASES, private_overwrites
     start, community = unique(guild.categories, 'start-here'), unique(guild.categories, 'community')
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
-    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', 'tournaments', 'giveaways', 'introductions')}
-    for name in ('guide', 'suggestions'):
+    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
+    for name in ('guide', 'suggestions', 'community-events'):
         if not channels[name] and unique(guild.text_channels, name):
             raise ServerMessageError(f'#{name} exists outside the core categories; review its location before setup. No duplicate was created.')
+    event = channels['community-events']
+    matches = [c for c in guild.text_channels if alias(c.name) == 'community-events']
+    if event and any(c.id != event.id for c in matches):
+        raise ServerMessageError('Conflicting community-events IDs/names; review manually. No duplicate was created.')
+    if event and (not event.category or alias(event.category.name) not in {'events', 'start-here', 'community'}):
+        raise ServerMessageError('community-events is outside public core categories; review before making it public.')
+    if event and not db.get_setting(resource_key(guild, 'community-events')) and (
+        event.overwrites_for(guild.default_role).view_channel is False
+        or event.category.overwrites_for(guild.default_role).view_channel is False
+    ):
+        raise ServerMessageError('Unmapped community-events is private; review before adopting it as a public board.')
     events = unique(guild.categories, 'events')
     staff_categories = [c for c in guild.categories if alias(c.name) in STAFF_ALIASES]
     if len(staff_categories) > 1:
@@ -80,24 +112,29 @@ async def migrate_boards(guild, changed, failed):
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
-    for name, target in [('guide', start), ('suggestions', community)]:
+    for name, target in [('guide', start), ('suggestions', community), ('community-events', events)]:
         channel = channels[name]
         if not channel:
             # Visible but read-only from creation, including bot access.
             import discord
-            overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=False, send_messages_in_threads=False, create_public_threads=False, create_private_threads=False)}
-            if guild.me:
-                overwrites[guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, manage_messages=True)
-            channel = await target.create_text_channel('📘・guide' if name == 'guide' else name, overwrites=overwrites, reason='GamerHQ managed board')
+            from types import SimpleNamespace
+            from services.onboarding_service import guide_overwrites
+            empty = SimpleNamespace(guild=guild, name=name, overwrites={}, overwrites_for=lambda target: discord.PermissionOverwrite())
+            overwrites = guide_overwrites(empty)
+            display = {'guide': '📘・guide', 'community-events': '🎉・community-events'}.get(name, name)
+            channel = await target.create_text_channel(display, overwrites=overwrites, reason='GamerHQ managed board')
             channels[name] = channel
+            db.set_setting(resource_key(guild, name), channel.id)
             changed.append(f'Created {name}')
         elif channel.category_id != target.id:
             channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ managed board location')
     if channels['guide'].name != '📘・guide':
         channels['guide'] = await channels['guide'].edit(name='📘・guide', reason='GamerHQ guide naming')
+    if channels['community-events'].name != '🎉・community-events':
+        channels['community-events'] = await channels['community-events'].edit(name='🎉・community-events', reason='GamerHQ community events naming')
     if channels['looking-for-group']:
         await channels['looking-for-group'].edit(name='🎯・looking-for-group', reason='GamerHQ LFG naming')
-    for name in ('looking-for-group', 'guide', 'suggestions'):
+    for name in ('looking-for-group', 'guide', 'suggestions', 'community-events'):
         if channels[name]:
             await set_read_only(channels[name])
     if channels['introductions']:
@@ -112,10 +149,15 @@ async def migrate_boards(guild, changed, failed):
             # Privacy and move in the same API operation, never temporarily public.
             await staff_inbox.edit(category=staff, sync_permissions=False, overwrites=private_overwrites(guild, staff_inbox), reason='GamerHQ private suggestion inbox')
         db.set_setting(f'staff_suggestions_channel:{guild.id}', staff_inbox.id)
-    for name in ('guide', 'suggestions', 'looking-for-group', 'tournaments', 'giveaways', 'bot-commands', 'choose-your-games', 'choose-your-roles'):
+    for name in ('guide', 'suggestions', 'looking-for-group', *EVENT_BOARDS, 'bot-commands', 'choose-your-games', 'choose-your-roles'):
         channel = channels.get(name) or core_channel(guild, name)
         if channel:
             db.set_setting(resource_key(guild, name), channel.id)
+    current, ordered = event_order(guild, await guild.fetch_channels())
+    if [c.id for c in current] != [c.id for c in ordered]:
+        from services.channel_change_service import bulk_positions
+        await bulk_positions(guild, [{'id': c.id, 'position': i} for i, c in enumerate(ordered)],
+                             reason='GamerHQ community events before tournaments and giveaways')
     from services.support_service import repair_support
     await repair_support(guild, changed)
     from services.ticket_service import repair

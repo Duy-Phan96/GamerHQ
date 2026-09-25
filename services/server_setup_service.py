@@ -48,7 +48,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
     CategorySpec("🛒 MARKETPLACE", (ChannelSpec("📰・gaming-news"), ChannelSpec("🔥・gaming-deals"), ChannelSpec("🎁・free-games"), ChannelSpec("🛒・amazon"), ChannelSpec("🤖・ai-tools"), ChannelSpec("🇩🇪・electricity"))),
     CategorySpec("🔒 AFFILIATE STATS", (ChannelSpec("💸・purchases"), ChannelSpec("🏆・buyer-ranking")), private=True),
     CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
-    CategorySpec("🏆 EVENTS", (ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
+    CategorySpec("🏆 EVENTS", (ChannelSpec("🎉・community-events"), ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
     CategorySpec(
         "🔊 VOICE CHANNELS",
         (
@@ -231,7 +231,7 @@ def render_details(report: dict) -> str:
                 icon = "🔊" if channel_spec.kind == "voice" else "#️⃣"
                 lines.append(f"⚠️ {icon} {channel_spec.name} — missing")
         lines.append("")
-    lines.append("**Update preserves welcome/newbies history; moves LFG to START HERE and tournaments/giveaways to EVENTS; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
+    lines.append("**Update preserves welcome/newbies history; moves LFG to START HERE, adds/reuses community-events above tournaments/giveaways in EVENTS, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
     return "\n".join(lines)
 
 

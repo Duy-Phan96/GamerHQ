@@ -192,3 +192,5 @@ transactions, cancellation or UI representation could change. Historical ticket
 readers, migration journals and disabled-provider compatibility code remain live
 compatibility dependencies, not dead code. Existing locks assume one bot process.
 No dependency upgrade, new feature, Discord migration or deployment was introduced.
+
+Read-only board modes remain in `onboarding_service`; feature helpers retain their own bot/private-access rules. `community_structure_service` owns Community Events identity, canonical pin and EVENTS ordering, with inventory in `server_setup_service` and read-only diagnostics in `health_service`. See [permission modes](PERMISSIONS.md#read-only-modes).

@@ -47,3 +47,18 @@ Test ordinary member, Staff, owner/admin, configured bot and an unrelated explic
 
 
 AFFILIATE STATS denies normal-member visibility and grants only Staff, GamerHQ management and the verified Instant Gaming identity access. Gaming Bots is a cosmetic group, never a private-access role. DealGecko has explicit Free Games posting rights only. Existing bot Administrator permissions cannot be neutralized by channel denies; health requests manual reduction.
+
+## Read-only modes
+
+The existing `onboarding_service.guide_overwrites` selects its mode by persisted managed ID first, then the channel alias. Both modes allow everyone to view/read history and deny normal messages, thread messages and public/private thread creation. Staff and GamerHQ retain publishing rights. Feature helpers retain integration-specific grants and adopted posting policy.
+
+| Mode | Boards | Member interaction |
+| --- | --- | --- |
+| READ_ONLY_STATIC | rules, announcements, guide, gaming-news, free-games; Marketplace category default | Add Reactions denied; existing application-command and external-emoji policy retained |
+| READ_ONLY_INTERACTIVE | welcome (Get Started), choose-your-games, choose-your-roles, suggestions, looking-for-group, support-gamerhq, need-support, gaming-deals, amazon, ai-tools, electricity, community-events | Add Reactions and Use Application Commands explicitly allowed; existing buttons/selects retained |
+
+Tournaments and Giveaways retain their existing permissions/content. Pure automatic news/free-game feeds do not need new reactions; deal/offer boards have link buttons or request actions. Unknown boards are not newly enrolled in repair. Custom visibility and unrelated overwrite bits remain untouched; only contract bits are repaired. Explicit child overrides override a restrictive parent on interactive boards; category changes retain the existing guard for unknown permission-synced children.
+
+Discord has no separate channel permission for buttons/select menus. Allowing application commands does not bypass command-specific authorization. Standard Unicode/server emojis need no additional external-emoji grant here. `USE_EXTERNAL_EMOJIS` is the permission for other servers’ custom emojis and is left unchanged. `ADD_REACTIONS` denial prevents adding a new reaction, not joining an existing one. See the [official Discord permission reference](https://docs.discord.com/developers/topics/permissions).
+
+Health compares these managed permission bits without writing, reports Repair availability, and checks Community Events placement/order. Owner `/server setup` → Repair applies changes; offline checks do not replace live ordinary-member acceptance.

@@ -91,8 +91,43 @@ def is_staff(role):
     return not role.is_default() and not role.managed and any((role.permissions.administrator, role.permissions.manage_guild, role.permissions.manage_messages, role.permissions.moderate_members))
 
 
-def guide_overwrites(channel):
-    """Change posting bits only, retaining custom visibility and interactive features."""
+READ_ONLY_STATIC = 'static'
+READ_ONLY_INTERACTIVE = 'interactive'
+INTERACTIVE_BOARDS = frozenset({
+    'welcome', 'choose-your-games', 'choose-your-roles', 'suggestions',
+    'looking-for-group', 'support-gamerhq', 'need-support', 'gaming-deals',
+    'amazon', 'ai-tools', 'electricity', 'community-events',
+})
+STATIC_BOARDS = frozenset({'rules', 'announcements', 'guide', 'gaming-news', 'free-games'})
+
+
+def read_only_mode(channel):
+    # Persisted identity wins over adopted display names.
+    names = INTERACTIVE_BOARDS | STATIC_BOARDS
+    keys = {f'managed_channel:{channel.guild.id}:{name}': name for name in names}
+    mapped = db.get_settings(keys)
+    name = next((keys[k] for k, value in mapped.items() if value == str(getattr(channel, 'id', None))),
+                alias(getattr(channel, 'name', '')))
+    return READ_ONLY_INTERACTIVE if name in INTERACTIVE_BOARDS else READ_ONLY_STATIC
+
+
+def interaction_overwrites(guild, overwrites, mode):
+    """Only interaction bits; feature-specific posting/bot policy stays with its owner."""
+    result = {target: discord.PermissionOverwrite.from_pair(*value.pair()) for target, value in overwrites.items()}
+    for target, value in result.items():
+        if target == guild.me or (target in guild.roles and is_staff(target)) or (
+            isinstance(target, discord.Member) and (target.bot or any(is_staff(r) for r in target.roles))
+        ):
+            continue
+        if target == guild.default_role or value.add_reactions is not None:
+            value.add_reactions = mode == READ_ONLY_INTERACTIVE
+        if mode == READ_ONLY_INTERACTIVE and (target == guild.default_role or value.use_application_commands is False):
+            value.use_application_commands = True
+    return result
+
+
+def guide_overwrites(channel, *, mode=None):
+    """Apply a board's posting/interaction contract, retaining unrelated custom bits."""
     guild = channel.guild
     result = dict(channel.overwrites)
     for target in set(result) | {guild.default_role} | {r for r in guild.roles if is_staff(r)}:
@@ -113,7 +148,7 @@ def guide_overwrites(channel):
         overwrite = channel.overwrites_for(guild.me)
         overwrite.view_channel = overwrite.read_message_history = overwrite.send_messages = overwrite.manage_messages = True
         result[guild.me] = overwrite
-    return result
+    return interaction_overwrites(guild, result, mode or read_only_mode(channel))
 
 
 async def set_read_only(channel):
@@ -222,8 +257,10 @@ async def migrate_onboarding(guild, bot=None):
                 commands = await commands.edit(topic=COMMAND_TOPIC, reason='GamerHQ bot command guidance')
             await set_writable(commands)
             db.set_setting('server_community_commands_channel_id', commands.id)
+            from services.community_structure_service import core_channel
+            selectors = {c.id for name in ('choose-your-games', 'choose-your-roles') if (c := core_channel(guild, name))}
             for channel in start.text_channels:
-                if alias(channel.name) in {'welcome', 'rules', 'announcements', 'choose-your-games', 'choose-your-roles'}:
+                if channel.id in selectors or alias(channel.name) in {'welcome', 'rules', 'announcements', 'choose-your-games', 'choose-your-roles'}:
                     await set_read_only(channel)
             for channel in (newbies, unique(community.text_channels, 'introductions')):
                 if channel:

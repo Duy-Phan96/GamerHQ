@@ -61,7 +61,8 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_channel_single_autoselect_and_multiple_selection(self):
         states = await managed.available(self.guild)
-        self.assertEqual(len(states), 15)
+        self.assertEqual(len(states), 16)
+        self.assertIn(f'community_events:{self.guild.id}', {state['key'] for state in states})
         view = ui.Channels(ui.Session(self.guild, self.admin.id), states)
         interaction = self.interaction()
         amazon = self.draft(support.message_key(self.guild, 'amazon'))
@@ -295,7 +296,7 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.content, 'Changed outside editor')
 
     async def test_core_boards_customization_and_suggestion_handler(self):
-        keys = [key for key, spec in managed.specs(self.guild).items() if spec[0] in {'Welcome', 'Guide', 'Suggestions', 'Need Support'}]
+        keys = [key for key, spec in managed.specs(self.guild).items() if spec[0] in {'Welcome', 'Guide', 'Suggestions', 'Need Support', 'Community Events'}]
         for key in keys:
             state = self.draft(key)
             state['content'] = '# Custom ' + state['label']

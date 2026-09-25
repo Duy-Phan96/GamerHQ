@@ -160,6 +160,9 @@ def overwrites(guild, name, existing=None, category=None):
                 setattr(value, bit, False)
         result[target] = value
     from services.channel_change_service import public_policy
+    if name in PUBLIC:
+        from services.onboarding_service import interaction_overwrites, READ_ONLY_INTERACTIVE, READ_ONLY_STATIC
+        result = interaction_overwrites(guild, result, READ_ONLY_INTERACTIVE if name == 'gaming-deals' else READ_ONLY_STATIC)
     return public_policy(guild, name, result) if name in PUBLIC else result
 
 

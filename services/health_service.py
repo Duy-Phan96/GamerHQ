@@ -59,7 +59,7 @@ async def scan(guild, bot=None, *, messages=True):
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],
         'community': ['newbies','general','introductions','suggestions','bot-commands'],
-        'events': ['tournaments','giveaways'],
+        'events': ['community-events','tournaments','giveaways'],
     }
     channels = {}
     for group,names in groups.items():
@@ -73,14 +73,23 @@ async def scan(guild, bot=None, *, messages=True):
                 add(name,'MANUAL_REVIEW','Multiple name matches; no automatic merge.'); continue
             channels[name]=channel
             if not channel:
-                add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
+                add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
             issue = channel.category is None or alias(channel.category.name)!=group or (name=='guide' and channel.name!='📘・guide')
+            if name == 'community-events':
+                issue = issue or channel.name != '🎉・community-events' or db.get_setting(f'managed_channel:{guild.id}:{name}') != str(channel.id)
             add(name,'REPAIRABLE' if issue else 'PASS','Managed name/location needs setup repair.' if issue else f'Channel {channel.id}.')
             if group=='start-here' or name=='suggestions':
                 everyone=channel.overwrites_for(guild.default_role)
                 posting = everyone.send_messages is not False or any(o.send_messages is True and t!=guild.me and not (t in guild.roles and (t.permissions.administrator or t.permissions.manage_messages or t.permissions.manage_guild or t.permissions.moderate_members)) for t,o in channel.overwrites.items())
                 if posting: add(f'{name} permissions','REPAIRABLE','Normal posting is not fully disabled.')
-                if everyone.use_application_commands is False: add(f'{name} interactions','MANUAL_REVIEW','Application commands explicitly denied; review custom policy.')
+    from services.community_structure_service import event_order
+    try:
+        current, ordered = event_order(guild, await guild.fetch_channels())
+        correct = [c.id for c in current] == [c.id for c in ordered]
+        add('EVENTS order', 'PASS' if correct else 'REPAIRABLE',
+            'Community Events, Tournaments, Giveaways order OK.' if correct else 'Owner Repair restores managed event order.')
+    except ServerMessageError:
+        add('EVENTS order', 'MANUAL_REVIEW', 'Ambiguous event channels; no automatic merge.')
     from services.support_service import resolve as support_resource, CHANNEL_NAME
     try:
         category = next((c for c in guild.categories if alias(c.name)=='start-here'),None)
@@ -146,6 +155,35 @@ async def scan(guild, bot=None, *, messages=True):
             add(name, 'PASS' if valid else 'REPAIRABLE', 'Managed channel ID, partner placement and read-only permissions checked; owner setup repairs missing mappings.')
     except ServerMessageError:
         add('MARKETPLACE', 'MANUAL_REVIEW', 'Conflicting partner mappings; no automatic merge.')
+    from services.onboarding_service import read_only_mode, READ_ONLY_INTERACTIVE, guide_overwrites, is_staff, INTERACTIVE_BOARDS, STATIC_BOARDS
+    from services.channel_change_service import public_policy
+    for name, channel in channels.items():
+        if not channel or name not in INTERACTIVE_BOARDS | STATIC_BOARDS:
+            continue
+        try:
+            mode = read_only_mode(channel)
+            expected = public_policy(guild, name, guide_overwrites(channel, mode=mode))
+        except ServerMessageError:
+            add(f'{name} read-only', 'MANUAL_REVIEW', 'Conflicting desired state; review before permission repair.')
+            continue
+        fields = ('send_messages', 'send_messages_in_threads', 'create_public_threads', 'create_private_threads', 'add_reactions')
+        if mode == READ_ONLY_INTERACTIVE:
+            fields += ('use_application_commands',)
+        missing = set()
+        for target, rights in expected.items():
+            if target == guild.me or (target in guild.roles and is_staff(target)) or (
+                isinstance(target, discord.Member) and (target.bot or any(is_staff(r) for r in target.roles))
+            ):
+                continue
+            # Integration roles are governed by their owning feed helper.
+            if name in {'gaming-news', 'gaming-deals', 'free-games'} and target != guild.default_role:
+                continue
+            actual = channel.overwrites_for(target)
+            checks = fields + (('view_channel', 'read_message_history') if target == guild.default_role else ())
+            missing.update(bit for bit in checks if getattr(actual, bit) != getattr(rights, bit))
+        mode = 'Interactive' if mode == READ_ONLY_INTERACTIVE else 'Static'
+        add(f'{name} read-only', 'REPAIRABLE' if missing else 'PASS',
+            'Repair available: ' + ', '.join(sorted(missing)) if missing else f'{mode} read-only permissions OK.')
     if bot is not None:
         registered = {item.custom_id for view in getattr(bot, 'persistent_views', []) for item in view.children if getattr(item, 'custom_id', None)}
         expected = {'gamerhq:offers:electricity'}
