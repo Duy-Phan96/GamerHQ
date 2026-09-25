@@ -3,6 +3,7 @@ from discord import app_commands
 
 from database import db
 from services.server_service import ServerMessageError, upsert_fixed_message
+from services.onboarding_service import alias as _alias
 
 
 STAFF_COMMAND_ROOTS = ("server", "game-admin", "area", "deals")
@@ -96,29 +97,6 @@ def build_staff_command_guide(bot, guild: discord.Guild) -> str:
     return "\n".join(lines).strip()
 
 
-def _alias(name: str) -> str:
-    import re
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
-def _staff_role_overwrites(guild: discord.Guild) -> dict:
-    """Private by default; expose to roles that already carry staff permissions."""
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-    }
-    for role in guild.roles:
-        if role.is_default() or role.managed:
-            continue
-        perms = role.permissions
-        if perms.administrator or perms.manage_guild or perms.manage_messages or perms.moderate_members:
-            overwrites[role] = discord.PermissionOverwrite(
-                view_channel=True,
-                read_message_history=True,
-                send_messages=True,
-            )
-    return overwrites
-
-
 async def ensure_staff_guide_channel(guild: discord.Guild) -> discord.TextChannel:
     """Resolve the managed mod-command channel, or create it safely in the staff area."""
     # Only reuse a stored channel when it is actually the dedicated command guide.
@@ -150,7 +128,6 @@ async def ensure_staff_guide_channel(guild: discord.Guild) -> discord.TextChanne
         raise ServerMessageError('No suitable STAFF category exists; staff guide creation skipped. Review STAFF manually.')
 
     # A channel inside an existing private staff category inherits its permissions.
-    # For a category created above, the private staff overwrites are already present.
     channel = await guild.create_text_channel(
         "🛠️・mod-commands",
         category=staff_category,

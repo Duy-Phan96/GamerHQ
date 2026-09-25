@@ -1,3 +1,4 @@
+from services.response_service import check_admin
 import asyncio
 import json
 import sqlite3
@@ -90,8 +91,12 @@ class ConfirmGameAddView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        if not await check_admin(interaction):
+            return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await check_admin(interaction):
+            return
 
         # Re-scan immediately before execution so stale previews cannot create surprises.
         fresh_plan = inspect_game_structure(interaction.guild, self.game)
@@ -191,6 +196,8 @@ class DeleteGameConfirmView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        if not await check_admin(interaction):
+            return
 
         current = db.get_game_by_id(self.game["id"])
         if current is None:
@@ -217,6 +224,8 @@ class DeleteGameConfirmView(discord.ui.View):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await check_admin(interaction):
+            return
 
         if current.get('area_enabled') or current.get('category_id'):
             await interaction.edit_original_response(content='Remove the area first through `/area manage` and its safety preview, then review permanent game deletion again.', embed=None, view=None)
@@ -339,6 +348,8 @@ class ConfirmInitialSetupView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        if not await check_admin(interaction):
+            return
 
         if self.running:
             await interaction.response.send_message(
@@ -405,6 +416,8 @@ class ConfirmInitialSetupView(discord.ui.View):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await check_admin(interaction):
+            return
 
         completed = []
 
@@ -498,8 +511,12 @@ class ConfirmOverviewView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        if not await check_admin(interaction):
+            return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await check_admin(interaction):
+            return
 
         try:
             result = await rebuild_choose_games_message(
@@ -1053,12 +1070,16 @@ class ConfirmRenameView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        if not await check_admin(interaction):
+            return
 
         await interaction.response.edit_message(
             content="⏳ **Renaming game safely…**",
             embed=None,
             view=None,
         )
+        if not await check_admin(interaction):
+            return
 
         # Fresh database conflict check.
         existing = db.get_game_by_name(self.new_name)

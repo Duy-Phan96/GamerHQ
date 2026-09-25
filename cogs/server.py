@@ -1,4 +1,4 @@
-from services.response_service import SafeView, command_error
+from services.response_service import SafeView, command_error, check_admin
 import re
 
 import discord
@@ -154,7 +154,24 @@ class RoleCleanupSelect(discord.ui.Select):
         )
 
 
-class RoleCleanupSelectView(discord.ui.View):
+class RoleAdminSession(SafeView):
+    """Actor-bound role controls recheck current membership and admin rights."""
+    session_name = 'menu'
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.admin_id:
+            text = f"❌ This {self.session_name} belongs to another admin session."
+        else:
+            return await check_admin(interaction, self.guild)
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
+        return False
+
+
+class RoleCleanupSelectView(RoleAdminSession):
+    session_name = 'cleanup'
     def __init__(self, *, guild: discord.Guild, admin_id: int, candidates, selected_ids: set[int] | None = None):
         super().__init__(timeout=180)
         self.guild = guild
@@ -163,11 +180,6 @@ class RoleCleanupSelectView(discord.ui.View):
         self.selected_ids = set(selected_ids or set())
         self.add_item(RoleCleanupSelect(candidates=self.candidates, selected_ids=self.selected_ids))
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message("❌ This cleanup belongs to another admin session.", ephemeral=True)
-            return False
-        return True
 
     def render_content(self) -> str:
         selected = [role for role, _ in self.candidates if role.id in self.selected_ids]
@@ -231,7 +243,8 @@ def render_cleanup_preview(selected) -> str:
     return "\n".join(lines)
 
 
-class ConfirmRoleCleanupView(discord.ui.View):
+class ConfirmRoleCleanupView(RoleAdminSession):
+    session_name = 'cleanup'
     def __init__(self, *, guild: discord.Guild, admin_id: int, candidates, selected_ids: set[int]):
         super().__init__(timeout=180)
         self.guild = guild
@@ -239,16 +252,15 @@ class ConfirmRoleCleanupView(discord.ui.View):
         self.candidates = candidates
         self.selected_ids = set(selected_ids)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message("❌ This cleanup belongs to another admin session.", ephemeral=True)
-            return False
-        return True
 
     @discord.ui.button(label="Delete Selected Roles", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.interaction_check(interaction):
+            return
         from services.role_service import delete_cleanup_candidates
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await self.interaction_check(interaction):
+            return
         deleted, failed = await delete_cleanup_candidates(self.guild, self.selected_ids)
         parts = []
         if deleted:
@@ -283,22 +295,22 @@ class ConfirmRoleCleanupView(discord.ui.View):
         self.stop()
 
 
-class ConfirmRoleSyncView(discord.ui.View):
+class ConfirmRoleSyncView(RoleAdminSession):
+    session_name = 'sync'
     def __init__(self, *, guild: discord.Guild, admin_id: int):
         super().__init__(timeout=180)
         self.guild = guild
         self.admin_id = admin_id
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message("❌ This sync belongs to another admin session.", ephemeral=True)
-            return False
-        return True
 
     @discord.ui.button(label="Confirm Sync", emoji="✅", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.interaction_check(interaction):
+            return
         from services.role_service import ensure_base_roles
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not await self.interaction_check(interaction):
+            return
         try:
             resolved, created = await ensure_base_roles(self.guild)
             from services.role_service import ensure_lfg_roles
@@ -325,17 +337,13 @@ class ConfirmRoleSyncView(discord.ui.View):
         self.stop()
 
 
-class RoleAdminView(discord.ui.View):
+class RoleAdminView(RoleAdminSession):
+    session_name = 'menu'
     def __init__(self, *, guild: discord.Guild, admin_id: int):
         super().__init__(timeout=180)
         self.guild = guild
         self.admin_id = admin_id
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message("❌ This menu belongs to another admin session.", ephemeral=True)
-            return False
-        return True
 
     @discord.ui.button(label="Sync Roles", emoji="🔄", style=discord.ButtonStyle.primary)
     async def sync_roles(self, interaction: discord.Interaction, button: discord.ui.Button):

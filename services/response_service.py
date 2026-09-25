@@ -21,3 +21,17 @@ class SafeView(discord.ui.View):
 
 async def command_error(self, interaction, error):
     await report_error(interaction,error,type(self).__name__)
+
+
+async def check_admin(interaction, guild=None):
+    """Recheck current membership before an actor-bound admin mutation."""
+    from services.authorization_service import authorized
+    guild = guild if guild is not None else interaction.guild
+    if interaction.guild and guild and interaction.guild.id == guild.id and authorized(guild, interaction.user):
+        return True
+    text = '❌ Administrator access is required. Reopen this panel after your permissions are restored.'
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True)
+    else:
+        await interaction.response.send_message(text, ephemeral=True)
+    return False
