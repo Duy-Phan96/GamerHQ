@@ -1,5 +1,13 @@
 # GamerHQ Changelog
 
+## Internal maintenance and reliability
+
+- Batch managed channel order settings without changing adopted layout, resource IDs or permissions; reuse the shared HTTPS link policy and channel alias normalization.
+- Recheck current administrator membership for role sessions and Game Library confirmations, including after their initial Discord acknowledgement; preserve authorized flows and existing controls.
+- Close remaining bot resources even when earlier shutdown cleanup fails. Declare the existing locked aiohttp version directly; retain deployment, feature flags and public behavior.
+- Add offline regression coverage for order planning, settings batches, revoked sessions, public URLs and shutdown failures.
+
+
 ## Marketplace Electricity service
 
 - Reuse the existing partner category and household-check channel as 🛒 MARKETPLACE and 🇩🇪・electricity; preserve IDs, history, custom pins and unrelated integrations.

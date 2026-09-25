@@ -19,12 +19,17 @@ def key(guild, name):
     return f'managed_channel_state:{guild.id}:{name}'
 
 
-def stored(guild, name):
-    raw = db.get_setting(key(guild, name))
+def _decode_stored(raw, channel_id):
     state = json.loads(raw) if raw else {}
-    if state and str(state['channel_id']) != db.get_setting(f'managed_channel:{guild.id}:{name}'):
+    if state and str(state['channel_id']) != channel_id:
         raise ServerMessageError('Adopted state has a different channel ID; manual review required.')
     return state
+
+
+def stored(guild, name):
+    raw = db.get_setting(key(guild, name))
+    channel_id = db.get_setting(f'managed_channel:{guild.id}:{name}') if raw else None
+    return _decode_stored(raw, channel_id)
 
 
 def defaults(guild, name):
@@ -34,13 +39,15 @@ def defaults(guild, name):
             'position': None if name == 'support-gamerhq' else list(supported())[1:].index(name)}
 
 
-def desired(guild, name):
-    result = defaults(guild, name)
-    state = stored(guild, name)
+def _desired_state(result, state):
     if 'category' in state and state['category'] != result['category'] and 'position' not in state:
         result['position'] = None  # No default ordering contract outside the default category.
     result.update({k: v for k, v in state.items() if k in PROPERTIES})
     return result
+
+
+def desired(guild, name):
+    return _desired_state(defaults(guild, name), stored(guild, name))
 
 
 def placement(guild, name, display, category):
@@ -194,10 +201,15 @@ def order_plans(guild, snapshot):
     """Read-only order calculation shared by sync and health."""
     from services.support_service import resource, PARTNER_CHANNELS
     partners = resource(guild, 'partners-benefits', True)
-    mapped = {name: db.get_setting(f'managed_channel:{guild.id}:{name}') for name in supported()}
-    states = {name: stored(guild, name) for name in supported()}
+    names = supported()
+    keys = [item for name in names for item in (f'managed_channel:{guild.id}:{name}', key(guild, name))]
+    settings = db.get_settings(keys)
+    mapped = {name: settings.get(f'managed_channel:{guild.id}:{name}') for name in names}
+    states = {name: _decode_stored(settings.get(key(guild, name)), mapped[name]) for name in names}
+    targets = {name: _desired_state(defaults(guild, name), state)['category']
+               for name, state in states.items() if 'position' in state}
     categories = {partners.id} if partners else set()
-    categories.update(desired(guild, name)['category'] for name, state in states.items() if 'position' in state)
+    categories.update(targets.values())
     plans = []
     for cid in categories:
         current = children(snapshot, cid)
@@ -207,7 +219,7 @@ def order_plans(guild, snapshot):
             raise ServerMessageError('Conflicting partner channel mappings; manual review required.')
         ordered = managed + [c for c in current if c not in managed] if partners and cid == partners.id else list(current)
         anchors = [(state['position'], mapped[name]) for name, state in states.items()
-                   if 'position' in state and desired(guild, name)['category'] == cid and mapped[name] in by_id]
+                   if 'position' in state and targets[name] == cid and mapped[name] in by_id]
         anchor_ids = {channel_id for _, channel_id in anchors}
         ordered = [c for c in ordered if str(c.id) not in anchor_ids]
         for pos, channel_id in sorted(anchors):

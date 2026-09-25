@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from contextlib import contextmanager
+from collections.abc import Iterable
 
 from config import DB_PATH, SEED_PATH
 
@@ -532,6 +533,25 @@ def get_setting(key):
     with connect() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+
+def get_settings(keys: Iterable[str]) -> dict[str, str]:
+    """Read a bounded set of settings together; missing keys are omitted.
+
+    This is a call-local snapshot, never a cache. Chunk parameters for SQLite
+    builds with the historical 999-variable limit.
+    """
+    keys = tuple(dict.fromkeys(keys))
+    if not keys:
+        return {}
+    values = {}
+    with connect() as conn:
+        for offset in range(0, len(keys), 500):
+            chunk = keys[offset:offset + 500]
+            placeholders = ','.join('?' for _ in chunk)
+            rows = conn.execute(f'SELECT key,value FROM settings WHERE key IN ({placeholders})', chunk)
+            values.update((row['key'], row['value']) for row in rows)
+    return values
 
 
 def add_temp_voice(channel_id, host_id, game_id):

@@ -148,3 +148,47 @@ mapping status as member-facing placeholders. Technical diagnosis belongs in sta
 health/setup reports and logs. Member errors should offer a useful retry/help action.
 
 Marketplace reuses the `partners-benefits` category key and the `household` canonical message key for identity continuity. Explicit Repair migrates old channel/adoption mappings to `electricity` before renaming; historical ticket types remain readable. New private requests use `ELECTRICITY_REQUEST`. See [migration details](PARTNERS.md).
+
+
+## Internal maintenance audit (2026-09)
+
+The repository-wide static review covered tracked Python modules, configuration,
+CI/deployment scripts, dependencies and the documented feature boundaries. There
+are no separate repositories/, models/ or views/ packages to reconcile: domain
+persistence stays in database/, and Discord components stay in cogs/.
+
+Focused changes preserve commands, component labels, copy, mappings, limits,
+feature flags and provider links:
+
+- `database.db.get_settings` batches parameterized reads. Channel order planning
+  uses a fresh call-local snapshot, validates adopted IDs and reuses the existing
+  desired-state rules. It introduces no process cache or schema migration; code
+  performing async mutations continues to recheck live authorization/state.
+- Role-admin views and legacy Game Library confirmations reuse the current-member
+  owner/admin policy in `authorization_service` and the private response helper.
+  Rights are checked at confirmation and after its initial Discord acknowledgement.
+  Removed/revoked administrators cannot reuse an old panel. Managed-message
+  authorization retains its existing import-compatible entry point.
+- `services.url_service.validate_url` owns the existing public HTTPS policy;
+  managed_message_service retains its import-compatible entry point. Validation
+  never fetches or rewrites URLs. Provider-specific path/host rules remain separate.
+- Bot shutdown attempts heartbeat, Twitch and Discord cleanup even if an earlier
+  cleanup raises. Errors remain observable. Startup ordering is unchanged.
+- Command guides reuse the existing channel alias function; unused private-role
+  overwrite construction was removed. Staff guide pagination already exists and
+  is retained. aiohttp is explicitly declared at the already locked version.
+
+The synthetic default seven-board order-plan regression measures **2 SQLite
+connections instead of 15**. This is a request-count improvement, not a claim
+about live latency. The tests cover adopted positions/categories, Free Games
+adjacency, ID conflicts, unrelated children, repeated reads, transaction rollback,
+URL policy, admin revocation and shutdown failures.
+
+Deferred deliberately: decomposing the large health scan/game cog, consolidating
+feature-specific resolvers with different ownership rules, converting synchronous
+SQLite access to async, enabling WAL, pooling Twitch HTTP sessions, and replacing
+legacy modal components. These need their own characterization because identity,
+transactions, cancellation or UI representation could change. Historical ticket
+readers, migration journals and disabled-provider compatibility code remain live
+compatibility dependencies, not dead code. Existing locks assume one bot process.
+No dependency upgrade, new feature, Discord migration or deployment was introduced.

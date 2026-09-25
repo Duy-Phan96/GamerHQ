@@ -66,13 +66,19 @@ class GamerHQBot(commands.Bot):
         logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Use /server health for acceptance diagnostics; owner /server setup for repairs.", len(self.extensions), len(self.persistent_views))
 
     async def close(self):
-        if self.health_task:
-            self.health_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.health_task
-        if getattr(self, 'twitch_hub', None):
-            await self.twitch_hub.close()
-        await super().close()
+        # Each owned resource must close even if an earlier cleanup fails.
+        try:
+            try:
+                if self.health_task:
+                    self.health_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self.health_task
+            finally:
+                if getattr(self, 'twitch_hub', None):
+                    await self.twitch_hub.close()
+        finally:
+            await super().close()
+
 
 bot = GamerHQBot()
 
