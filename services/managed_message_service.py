@@ -55,7 +55,8 @@ def specs(guild):
         result[message_key(guild, section)] = (label, f'managed_channel:{guild.id}:{section_channel(section)}', ([action, 'HOUSEHOLD_CHECK_REQUEST'] if section == 'household' else [action]) if action else [])
     for key, name, label, action in [('central_guide', 'guide', 'Guide', None),
                                     ('suggestions_entry', 'suggestions', 'Suggestions', 'SUBMIT_SUGGESTION'),
-                                    ('ticket_entry', 'need-support', 'Need Support', 'CREATE_SUPPORT_TICKET')]:
+                                    ('ticket_entry', 'need-support', 'Need Support', 'CREATE_SUPPORT_TICKET'),
+                                    ('community_events', 'community-events', 'Community Events', None)]:
         result[f'{key}:{guild.id}'] = (label, f'managed_channel:{guild.id}:{name}', [action] if action else [])
     from services.role_panel_service import channel as role_channel, message_keys, SECTIONS, panel_groups
     board = role_channel(guild)

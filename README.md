@@ -26,7 +26,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - Open private support tickets with a short form. Staff can take tickets and mark them waiting; the creator or Staff can confirm closure. Closed tickets retain readable history.
 - Use managed welcome, rules, guide and role-selection channels.
 - Use the Marketplace overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
-- Provide tournaments/giveaways channels as an events foundation; event functionality remains Coming Soon.
+- Provide community-events, tournaments and giveaways boards; community activities have their own space.
 
 Marketplace messages are English. Electricity is a Germany-only electricity tariff comparison/request service. Gaming Deals highlights current deals, promotions and releases.
 
@@ -78,6 +78,7 @@ COMMUNITY
 └─ bot-commands
 
 EVENTS
+├─ community-events
 ├─ tournaments
 └─ giveaways
 
@@ -250,7 +251,7 @@ The GitHub Actions workflow runs offline tests on Python 3.12/3.14, repository a
 
 ## Planned work and current limits
 
-- **Events:** tournaments/giveaways have channels and Coming Soon guidance; a full event platform is not implemented.
+- **Events:** community-events hosts game nights and community activities, alongside separate tournaments/giveaways boards; a full event platform is not implemented.
 - **Streamer Hub:** hidden beta implemented but disabled by default; live Twitch acceptance must be performed separately on a Dev server.
 - **Potential experiments:** participant availability feedback, post-session feedback and simpler game-role selection remain ideas under evaluation, not shipped features or delivery commitments.
 - **Tickets:** closed history stays in private Discord channels. Automatic transcript export, retention/deletion, reopening, Staff Notes and Add User are not implemented.

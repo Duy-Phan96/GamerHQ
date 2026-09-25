@@ -1,5 +1,11 @@
 # GamerHQ Changelog
 
+## Interactive read-only boards and community events
+
+- Distinguish static information feeds from interactive read-only boards in the existing permission helpers. Repair selectors, onboarding, suggestions, LFG and support/offer interactions without enabling member chat or threads.
+- Add managed Community Events above Tournaments and Giveaways, retaining IDs, history and canonical pins across repairs. Existing tournament/giveaway behavior stays unchanged.
+- Extend read-only Health diagnostics and offline regression coverage for permissions, ordering, privacy, reuse and repeated Repair.
+
 ## Internal maintenance and reliability
 
 - Batch managed channel order settings without changing adopted layout, resource IDs or permissions; reuse the shared HTTPS link policy and channel alias normalization.
