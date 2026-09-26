@@ -127,12 +127,12 @@ There is no Node/web component. Offline tests need no Discord credentials or liv
 
 ## Local installation
 
-Clone the repository, then run these commands from its root. Replace the repository URL placeholder with your own URL.
+Clone the GamerHQ repository, then run the remaining commands from the project root.
 
 ### Windows PowerShell
 
 ```powershell
-git clone "<YOUR_REPOSITORY_URL>" gamerhq
+git clone "https://github.com/Duy-Phan96/GamerHQ.git" gamerhq
 cd gamerhq
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -143,7 +143,7 @@ Copy-Item .env.example .env
 ### Linux / macOS
 
 ```bash
-git clone "<YOUR_REPOSITORY_URL>" gamerhq
+git clone "https://github.com/Duy-Phan96/GamerHQ.git" gamerhq
 cd gamerhq
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
