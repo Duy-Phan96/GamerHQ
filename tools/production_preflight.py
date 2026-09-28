@@ -6,11 +6,13 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from unittest.mock import patch
-from dotenv import dotenv_values
 
 
 def configuration(env_file=None, environ=None):
-    values = dict(dotenv_values(env_file)) if env_file and env_file.is_file() else {}
+    from tools.production_doctor import environment_file
+    values, issues = environment_file(env_file) if env_file and env_file.is_file() else ({}, [])
+    if issues:
+        raise ValueError('; '.join(issues))
     values.update(os.environ if environ is None else environ)
     return values
 
@@ -92,7 +94,12 @@ def main():
     try:
         errors, notices = check(configuration(args.env_file), allow_new=args.allow_new, db_path=args.db_path, backup_dir=args.backup_dir)
     except (OSError, ValueError):
-        errors, notices = ['Configuration could not be read; no values are printed'], []
+        from tools.production_doctor import environment_file
+        try:
+            _, issues = environment_file(args.env_file)
+        except OSError:
+            issues = []
+        errors, notices = issues or ['Configuration could not be read; no values are printed'], []
     for notice in notices:
         print(notice)
     for error in errors:

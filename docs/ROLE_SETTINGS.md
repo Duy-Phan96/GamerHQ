@@ -47,23 +47,9 @@ reopen Update Profile. No parallel profile database or personal fields are intro
 
 ## Explicit Repair and retained IDs
 
-The four surviving message slots retain their IDs: intro, gaming_content (Gaming Setup),
-language (Interests & Notifications; an internal legacy key), platform (Suggest Role).
-Normal refresh updates generated defaults and preserves customized content. Explicit
-`/server setup` → Repair removes the old mapped notifications/About You message only
-when bot ownership and the stored fingerprint match. Ambiguous mappings, changed
-content and failed deletion retain the record for owner review. Successful deletion
-retires its managed content record and clears the active message reference; repeat
-Repair does not recreate it. Unrelated/user messages are preserved.
+Surviving profile slots retain their IDs and custom content. Generic `/server repair` updates known default boards and pins, but does not delete the former About You message or migrate obsolete controls. Retained legacy content needs separate owner review; do not assume a restart performs retirement.
 
-Repository audit found English/German roles used only by the old profile feature.
-They stop being offered/created immediately; explicit Repair changes their registry
-kind from `base` to `legacy-profile`. Their Discord IDs, permissions and memberships
-are retained, protecting unknown live uses. No broad role deletion or membership
-migration runs. Legacy language callbacks do not grant roles; Repair strips their
-stored buttons from customized surviving pins while preserving other content/buttons.
-Custom text that describes obsolete options remains owner-controlled: use the existing
-pinned-message editor to update it or confirm Reset to Default.
+Legacy English/German roles are no longer offered. Existing memberships stay intact. The separate role-management workflow retains its ownership checks. Generic setup, repair and reconciliation do not retire legacy profile messages or strip customized controls; use the pinned-message editor after review.
 
 Initial creation follows the four-part order. Discord cannot move a message; recovery
 of a deleted middle pin appends its replacement instead of reposting healthy messages.
@@ -99,7 +85,7 @@ that window cannot be exhaustively detected.
 
 After deploying one bot instance:
 
-1. `/server setup` → Repair / Setup → Confirm Repair.
+1. `/server reconcile`, then `/server repair` (preview and confirm).
 2. `/server roles` → Sync Roles → Confirm Sync (also available after catalog changes).
 3. `/server health` and `/server pinned-messages` to inspect the four boards.
 4. Test Update Profile, Back, Cancel, Review and Save. Verify only Gender/Age appear and no roles change before Save.

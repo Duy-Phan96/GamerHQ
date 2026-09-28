@@ -36,13 +36,9 @@ private ticket content, sessions, OAuth credentials or delivery claims.
 
 ## Safe reconciliation
 
-Owner `/server setup` first previews read-only health. Confirmed Repair validates
-storage, prefers existing IDs and uses the owning resolver's exact name/type,
-category and privacy checks for missing IDs. Multiple candidates or unexpected
-private placement require `MANUAL_REVIEW`; no replacement is created. Existing
-public core/Marketplace channels and categories are reused, and safe zero-permission
-profile/LFG roles are registered. Custom game areas and arbitrary unknown resources
-still require explicit review or migration of their original mappings.
+Run `/server health`, then `/server reconcile`. Existing mappings are preferred; a single confident candidate can be linked on confirmation, while multiple candidates open an owner/admin choice. No Discord resource is edited or deleted by reconciliation. Rescan after linking channels, then review `/server message-duplicates` and `/server repair`. Use owner `/server setup` only for genuinely missing resources. See the [canonical operations guide](PRODUCTION_OPERATIONS.md).
+
+Optional game areas and their roles retain the existing `/game-admin recover-existing` workflow; arbitrary resources cannot be inferred from names alone.
 
 The shared fixed-message helper checks the expected channel's pins and up to 1000
 history messages. Only this GamerHQ bot's messages with exact canonical content or
@@ -113,7 +109,7 @@ fresh review, never automatic retry.
 Health reports the number of duplicate groups and the global command without
 mutating messages. Setup Repair adopts a single valid candidate, reports multiple
 candidates for review and never posts a third. LFG Repair uses this same helper.
-After review run `/server health`, then `/server setup` → **Repair**, and repeat the
+After review run `/server health`, then `/server reconcile`, then `/server repair` (preview and confirm), and repeat the
 global audit to verify that the repaired mapping remains stable.
 
 ## Transfer and validate (owner operations only)

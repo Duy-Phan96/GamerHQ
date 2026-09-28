@@ -19,7 +19,8 @@ services enforce access. Server ownership includes Administrator permissions;
 | ADMIN | `/game-admin database`, `recover-existing`, `status`, `set-visible`, `create`, `add-area`, `remove-area`, `delete`, `rename`, `setup`, `overview` | Administrator command checks; destructive previews retain current authorization and dependency checks. |
 | ADMIN | `/server health`, `adopt`, `instant-gaming`, `music-bots-role`, `cleanup-game-areas`, `roles`, `sync-support`, `pinned-messages`; `/area manage` | Owner/Administrator according to existing policy. Health is read-only and ephemeral. Normal Moderator permissions do not qualify. |
 | ADMIN | `/deals create`, `/deals import-gocdkeys`, `/deals backfill` | Current owner/admin checked in command, preview and publishing services; automatic backfill/provider lookup is disabled. |
-| SERVER_OWNER | `/server setup` | Owner-bound confirmation and guild check; serialized full repair. Unknown/manual resources retain review/deletion safeguards. |
+| SERVER_OWNER | `/server setup` | Owner-bound confirmation; create only genuinely missing resources. |
+| Owner/Admin | `/server reconcile`, `/server repair` | Actor/guild-bound expiring confirmation, fresh resource checks and serialization; link existing IDs or edit known resources, never delete. |
 | MODERATOR | `/streamer area`, `/streamer channels`, `/streamer voice` | Legacy Staff-only tools, additionally scoped to the caller's stored profile/resources. Old channel modals recheck current Staff access. |
 | MEMBER, conditional beta | `/streamer setup`, `/streamer profile`, `/streamer audience` | Enabled beta and approved Streamer/Staff membership; audience remains inactive. Both feature flags default false. |
 | MEMBER / RESOURCE OWNER | Ticket entry, own ticket close, profile/game selectors, LFG join/leave and proposals | Stored guild/resource identity, explicit member choices and current state. No arbitrary role IDs or general channel-management grants. |

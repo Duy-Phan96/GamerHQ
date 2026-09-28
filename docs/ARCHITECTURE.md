@@ -74,8 +74,7 @@ IDs; closure keeps Discord history and locks posting, with no implemented
 automatic transcript export. Suggestions and streamer resources have their own
 tables/lifecycles. Never add live content as source fixtures.
 
-Owner /server setup inspects then confirms focused repair. /server health is
-read-only. Targeted sync commands have narrower contracts: sync-support refreshes
+`services/server_operations.py` orchestrates the existing blueprint, policies and message registry: owner setup creates missing resources, owner/admin reconcile links existing IDs, and repair edits known resources. Each uses a fresh preview and explicit confirmation. Health uses read-only SQLite connections. See [production operations](PRODUCTION_OPERATIONS.md). Targeted sync commands have narrower contracts: sync-support refreshes
 adopted boards, while instant-gaming can create/recover its four channels. Do not
 assume all commands named sync have identical side effects.
 
@@ -136,9 +135,7 @@ corrections: Gender → Age → Review → Save. `role_service.py` limits the sa
 to Gender/Age, rechecks mappings/member state and uses the same per-member lock as
 quick toggles. Game/platform/notification and unrelated roles remain independent.
 `role_panel_service.py` manages four existing slots: Profile Settings, Gaming Setup,
-Interests & Notifications and Suggest Role. Explicit setup Repair retires the proven
-old About You pin and marks legacy language mappings inactive without deleting Discord
-roles/memberships. Health remains read-only. No automatic join questionnaire or
+Interests & Notifications and Suggest Role. Generic repair preserves retired About You pins and legacy language memberships for separate owner review; specialized migration helpers keep their original safety checks. Health remains read-only. No automatic join questionnaire or
 parallel profile subsystem is introduced; Welcome's Get Started is the existing entry.
 See [profile contracts and migration](ROLE_SETTINGS.md).
 

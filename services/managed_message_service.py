@@ -215,9 +215,9 @@ def mapped(guild, state):
 
 async def inspect(guild, state):
     if state['key'].startswith('partner_message:') and any(db.get_setting(f'{name}:{guild.id}') for name in ('partner_reorder', 'partner_split', 'household_migration')):
-        raise ServerMessageError('Partner migration is pending. Complete owner setup Repair before editing.')
+        raise ServerMessageError('Partner migration is pending. Review its owning migration before editing; generic repair preserves it.')
     if not mapped(guild, state):
-        raise ServerMessageError('Managed mapping changed or is missing. Run health and owner setup Repair.')
+        raise ServerMessageError('Managed mapping changed or is missing. Run /server health and /server reconcile.')
     if any(other['key'] != state['key'] and (other['channel_id'], other['message_id']) == (state['channel_id'], state['message_id'])
            for other in records(guild)):
         raise ServerMessageError('Multiple managed keys refer to this message. Manual review required.')
@@ -252,7 +252,7 @@ async def health(guild, *, messages=True):
         registered = {state['key'] for state in states}
         for key in specs(guild):
             if db.get_setting(key) and key not in registered:
-                issues.append('A mapped board is not registered yet; refresh its defaults through owner setup Repair.')
+                issues.append('A mapped board is not registered yet; register it through confirmed /server repair.')
         for state in states:
             try:
                 validate(guild, state['key'], state['content'], state['buttons'])
@@ -305,18 +305,30 @@ async def save(guild, user, draft, *, reset=False, confirmed=False):
                              audit[7], audit[6], 'delivery-rejected', int(time.time()))
                 store(state, rejection)
                 raise ServerMessageError('Discord rejected the content or components. Previous content was restored; reopen the editor and correct the draft.') from None
-            raise ServerMessageError('Changes are stored, but Discord delivery is unconfirmed. Run setup Repair; do not repeat this save.') from None
+            raise ServerMessageError('Changes are stored, but Discord delivery is unconfirmed. Inspect pending delivery with /server health; do not repeat this save.') from None
         updated.update(pending=False, content_hash=digest(updated['content']))
         store(updated)
         return updated
 
 
-def canonical_boards(guild, bot=None):
+def canonical_boards(guild, bot=None, *, warnings=None, defaults=False):
     """Existing owning renderers supply defaults; no second copy of canonical text."""
     from services.community_structure_service import core_channel, guide_text, EVENTS_INTRO
     from services.support_service import support_sections, section_channel, resource, message_key, support_text, PARTNER_CHANNELS
     from services.instant_gaming_service import CHANNELS, resolve, message_key as ig_key
     from cogs.server import future_community_copies
+    def guarded(function):
+        def read(*args, **kwargs):
+            try:
+                return function(*args, **kwargs)
+            except (ServerMessageError, ValueError, KeyError, TypeError):
+                if warnings is not None:
+                    label = args[1] if len(args) > 1 and isinstance(args[1], str) else function.__name__.replace('_', ' ').title()
+                    warnings.append(f'{label}: existing resource needs review in /server reconcile.')
+                return None
+        return read
+    core_channel, guide_text = guarded(core_channel), guarded(guide_text)
+    resource, support_text, resolve = guarded(resource), guarded(support_text), guarded(resolve)
     result = {}
     for name, content in future_community_copies().items():
         result[f'server_future_{name}_message_id'] = (core_channel(guild, name), content)
@@ -332,32 +344,33 @@ def canonical_boards(guild, bot=None):
         if name != 'gaming-deals':
             result[ig_key(guild, name)] = (resolve(guild, name), content)
     from services import role_panel_service as panels
-    board = panels.channel(guild)
+    board = guarded(panels.channel)(guild)
     if board:
         keys = panels.message_keys(guild, board)
         result[keys['intro']] = (board, panels.INTRO)
         for section, group, text in panels.SECTIONS:
-            result[keys[section]] = (board, panels.panel_text(group, text))
+            result[keys[section]] = (board, guarded(panels.panel_text)(group, text))
     from services.onboarding_service import unique, welcome_text
     raw = db.get_setting(f'onboarding:{guild.id}:welcome')
-    welcome = guild.get_channel(int(raw)) if raw and raw.isdigit() else unique(guild.text_channels, 'welcome')
+    welcome = guild.get_channel(int(raw)) if raw and raw.isdigit() else guarded(unique)(guild.text_channels, 'welcome')
     if welcome and welcome.category and welcome.category.name:
-        result[f'server_pinned_message_{welcome.id}'] = (welcome, welcome_text(guild))
+        result[f'server_pinned_message_{welcome.id}'] = (welcome, guarded(welcome_text)(guild))
     from cogs.suggestions import ENTRY_TEXT
     result[f'suggestions_entry:{guild.id}'] = (core_channel(guild, 'suggestions'), ENTRY_TEXT)
     from services.ticket_service import ENTRY_TEXT as ticket_text
     result[f'ticket_entry:{guild.id}'] = (core_channel(guild, 'need-support'), ticket_text)
-    editor_specs = specs(guild)
+    editor_specs = guarded(specs)(guild) or {}
     for state in records(guild):
         if state['key'] in editor_specs:
             raw = db.get_setting(editor_specs[state['key']][1])
             target = guild.get_channel(int(raw)) if raw and raw.isdigit() else result.get(state['key'], (None,))[0]
-            result[state['key']] = (target, state['content'])
+            content = result.get(state['key'], (None, state['content']))[1] if defaults and not state.get('customized') else state['content']
+            result[state['key']] = (target, content)
     # These are audit definitions, not additions to the editor action allowlist.
     from cogs.server import setting_key_for, default_copy_for, resolve_channel_placeholders
     lfg = core_channel(guild, 'looking-for-group')
     if lfg:
-        result[setting_key_for(lfg)] = (lfg, resolve_channel_placeholders(guild, default_copy_for(lfg)))
+        result[setting_key_for(lfg)] = (lfg, guarded(resolve_channel_placeholders)(guild, default_copy_for(lfg)))
     from services import game_service as games
     board = guild.get_channel(games.CHOOSE_GAMES_CHANNEL_ID)
     if board in guild.text_channels:
@@ -370,12 +383,12 @@ def canonical_boards(guild, bot=None):
         return guild.get_channel(int(raw)) if raw and raw.isdigit() else None
     result[guides.COMMUNITY_GUIDE_MESSAGE_KEYS[0]] = (
         mapped_channel(guides.COMMUNITY_GUIDE_CHANNEL_KEY) or core_channel(guild, 'bot-commands'),
-        guides.build_community_command_guide_pages(bot, guild)[0])
+        (guarded(guides.build_community_command_guide_pages)(bot, guild) or [None])[0])
     if bot is not None:
-        for key, page in guides.staff_command_pages(bot, guild):
+        for key, page in guarded(guides.staff_command_pages)(bot, guild) or []:
             result[key] = (mapped_channel(guides.STAFF_GUIDE_CHANNEL_KEY), page)
         result[guides.STREAMER_GUIDE_MESSAGE_KEY] = (
-            mapped_channel(guides.STREAMER_GUIDE_CHANNEL_KEY), guides.build_streamer_command_guide(bot, guild))
+            mapped_channel(guides.STREAMER_GUIDE_CHANNEL_KEY), guarded(guides.build_streamer_command_guide)(bot, guild))
     from services import streamer_hub_service as hub
-    result['streamer_guide_message_id'] = (hub.channel(guild, 'streamer-guide'), hub.guide_text(guild))
+    result['streamer_guide_message_id'] = (hub.channel(guild, 'streamer-guide'), guarded(hub.guide_text)(guild))
     return result

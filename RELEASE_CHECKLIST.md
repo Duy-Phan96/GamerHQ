@@ -79,7 +79,7 @@ Run this after every release candidate before declaring it stable.
 ## Voice and Area controls
 
 - [ ] Use [command reference](docs/COMMANDS.md); verify area and voice command registration.
-- [ ] Run owner setup twice; confirm guide name/ID/pin preservation.
+- [ ] Run confirmed reconciliation/repair twice; confirm guide name/ID/pin preservation.
 - [ ] Test owner/staff Voice permissions, lock/music, restart ownership and empty cleanup.
 - [ ] Test multi-page Area creation and confirmed removal; confirm active-resource blocks and game/role preservation.
 
@@ -87,7 +87,7 @@ Run this after every release candidate before declaring it stable.
 ## Owner acceptance preparation
 
 - [ ] Review this checklist and [command reference](docs/COMMANDS.md).
-- [ ] Deploy/sync; run owner/admin health, inspect private Details, then owner-confirmed setup repair.
+- [ ] Deploy/sync; run owner/admin health, inspect private Details, then confirmed reconciliation/repair.
 - [ ] Repeat health/setup; verify stable IDs/pins and manual-review protection.
 - [ ] Execute this checklist with two member accounts and a Staff account, including revoked permissions.
 - [ ] Record unresolved manual findings; do not run unknown-resource deletion as a repair shortcut.

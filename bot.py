@@ -9,11 +9,6 @@ try:
 except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from None
 from database import db
-from services.command_guide_service import (
-    refresh_staff_command_guide,
-    refresh_community_command_guide,
-    refresh_streamer_command_guide,
-)
 
 
 class GamerHQBot(commands.Bot):
@@ -65,7 +60,7 @@ class GamerHQBot(commands.Bot):
 
         print(f"Synced {len(guild_synced)} command group(s) to GamerHQ.")
         print(f"Cleared global commands: {len(global_synced)} remaining.")
-        logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Use /server health for acceptance diagnostics; owner /server setup for repairs.", len(self.extensions), len(self.persistent_views))
+        logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Use /server health, /server reconcile and /server repair for explicit maintenance.", len(self.extensions), len(self.persistent_views))
 
     async def close(self):
         # Each owned resource must close even if an earlier cleanup fails.
@@ -102,62 +97,9 @@ async def on_ready():
         if voice_cog:
             await voice_cog.cleanup_empty_temp_channels(guild)
 
-        # Keep the private staff command reference synchronized with the
-        # currently registered /server and /game-admin commands.
-        try:
-            from services.onboarding_service import alias, unique
-            existing = unique([c for c in guild.text_channels if alias(c.name) in {'mod-commands','staff-commands','moderator-commands','mods-commands'}], 'mod-commands')
-            if existing:
-                await refresh_staff_command_guide(bot, guild, channel=existing)
-            else:
-                print('Staff guide not found; review /server health. No structure created.')
-        except Exception as exc:
-            # Documentation refresh must never prevent the bot from coming online.
-            print(f"Staff command guide refresh skipped: {exc}")
-
-        try:
-            await refresh_community_command_guide(bot, guild)
-        except Exception as exc:
-            print(f"Community command guide refresh skipped: {exc}")
-
-        try:
-            from services.onboarding_service import unique
-            existing = unique(guild.text_channels, 'streamer-commands')
-            if existing:
-                await refresh_streamer_command_guide(bot, guild, channel=existing)
-            else:
-                print('Streamer commands missing; review /server health. No structure created.')
-        except Exception as exc:
-            print(f"Streamer command guide refresh skipped: {exc}")
-
-        # Refresh GamerHQ-owned fixed server copy. This also migrates the old
-        # onboarding pins without recreating guides in introductions/newbies.
-        server_cog = bot.get_cog("ServerAdmin")
-        if server_cog:
-            try:
-                await server_cog.refresh_default_managed_messages(guild)
-            except Exception as exc:
-                print(f"Managed server message refresh skipped: {exc}")
-
-        try:
-            from cogs.server import refresh_lfg_guide_message, refresh_future_community_messages
-            await refresh_lfg_guide_message(guild)
-            await refresh_future_community_messages(guild)
-        except Exception as exc:
-            print(f"Community guide refresh skipped: {exc}")
-
-        # Repair/update the public selector with its required persistent views.
-        try:
-            from cogs.games import GameCategoryView, ChooseGamesButtons
-            from services.game_service import refresh_choose_games_message
-            games_cog = bot.get_cog("Games")
-            await refresh_choose_games_message(
-                bot,
-                view=GameCategoryView,
-                intro_view=lambda: ChooseGamesButtons(games_cog),
-            )
-        except Exception as exc:
-            print(f"Choose Your Games refresh skipped: {exc}")
+        # Managed structure/message maintenance is now an explicit admin operation.
+        # Persistent handlers are registered by cogs; ordinary member/event lifecycles continue.
+        print('[GamerHQ] Managed resources unchanged at startup. Use /server health, /server reconcile, /server repair or /server setup as appropriate.')
 
 
 if __name__ == "__main__":
@@ -166,4 +108,10 @@ if __name__ == "__main__":
         validate_startup()
     except ConfigurationError as error:
         raise SystemExit(f"Configuration error: {error}") from None
-    bot.run(TOKEN)
+    from tools.instance_lock import instance_lock
+    from config import DB_PATH
+    try:
+        with instance_lock(DB_PATH):
+            bot.run(TOKEN)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from None

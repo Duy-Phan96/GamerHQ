@@ -4,7 +4,7 @@
 
 ## Supported boards
 
-The editor uses existing GamerHQ message/channel mappings, bot ownership and a stored content fingerprint. It never lists arbitrary user/admin pins or private ticket messages. Owner setup Repair registers supported boards through the existing fixed-message helper.
+The editor uses existing GamerHQ message/channel mappings, bot ownership and a stored content fingerprint. It never lists arbitrary user/admin pins or private ticket messages. Confirmed setup/repair registers supported canonical boards using existing managed-message keys; reconciliation links existing IDs.
 
 | Channel | Managed messages |
 | --- | --- |
@@ -46,17 +46,17 @@ Each action can occur once on its board. Other boards support Link buttons. Exis
 
 ## Defaults, repair and recovery
 
-Saving marks the complete body/button configuration customized in private SQLite. Startup, sync-support and normal owner setup Repair preserve it. Default boards continue to receive generated changes. Customized navigation links must be reviewed after channels change; automatic refresh intentionally preserves the saved body.
+Saving marks the complete body/button configuration customized in private SQLite. Startup, sync-support and confirmed `/server repair` preserve it. Default boards continue to receive generated changes. Customized navigation links must be reviewed after channels change; automatic refresh intentionally preserves the saved body.
 
 **Reset to Default** shows generated defaults and asks for **Confirm Reset**. Only confirmation replaces the customized body/buttons with the latest defaults and returns the board to normal generated updates. Cancel does not reset anything.
 
 Concurrent edits use versions: when another admin or a default refresh changes the record, saving an older draft is rejected. Reopen the editor and apply the intended changes to the latest version. Earlier menus/previews in the same session stop accepting actions when you move to a newer screen.
 
-If Discord delivery fails after confirmation, canonical changes and metadata audit are already saved; the error explicitly reports unconfirmed delivery. Check permissions, run `/server health`, then owner `/server setup` → Repair to deliver the saved configuration. Do not repeatedly confirm an old draft. Pending/invalid/unpinned boards are excluded from editing. Unknown fingerprints or conflicting mappings require manual review and are not overwritten by the editor. A pending partner migration must be completed before editing partner boards.
+If Discord delivery fails after confirmation, canonical changes and metadata audit are already saved; the error explicitly reports unconfirmed delivery. Check permissions, run `/server health`, then inspect pending delivery before using the existing editor/recovery path. Generic repair preserves pending or uncertain messages for manual review. Do not repeatedly confirm an old draft. Pending/invalid/unpinned boards are excluded from editing. Unknown fingerprints or conflicting mappings require manual review and are not overwritten by the editor. A pending partner migration must be completed before editing partner boards.
 
 If Discord definitively rejects the payload as invalid (HTTP 400), the previous canonical configuration is restored and a rejection audit entry is recorded. Reopen the editor to correct the draft; the rejected version cannot be saved again from the old confirmation.
 
-Health reads registry state without changing it. It checks missing channels/messages, duplicate mappings, ownership, fingerprints, button configuration/action IDs and pending delivery. Customized headings are healthy. Repair may recreate a genuinely deleted pin, but editor saves and resets never recreate messages.
+Health reads registry state without changing it. It checks missing channels/messages, duplicate mappings, ownership, fingerprints, button configuration/action IDs and pending delivery. Customized headings are healthy. Only confirmed setup may create a genuinely missing message after candidate inspection; repair, editor saves and resets never recreate messages.
 
 The private audit table records actor, channel, stable key, content/buttons changed flags, time and before/after hashes. It does not store full edited content or URLs in audit entries. Keep the runtime database and backups out of Git; run only one bot instance against a guild/database.
 

@@ -23,7 +23,7 @@ main() {
     [[ -f ../.env && ! -L ../.env && "$(stat -c %a ../.env)" == 600 ]] || { echo 'Private ../.env must be a regular file with mode 600.' >&2; return 1; }
     [[ -d ../data && -d ../backups ]] || { echo 'Create private persistent directories first.' >&2; return 1; }
     docker compose version
-    docker compose config --quiet
+    docker compose config --quiet 2>/dev/null || { echo 'Compose configuration invalid; inspect privately with production_doctor.' >&2; return 1; }
     if (( ! first )); then
         docker image tag gamerhq-bot:local gamerhq-bot:previous
         git rev-parse HEAD > /opt/gamerhq/previous-commit
@@ -32,12 +32,13 @@ main() {
     fi
     git fetch origin main --tags
     git merge-base --is-ancestor HEAD origin/main || { echo 'Local main is ahead or diverged; review manually.' >&2; return 1; }
-    git merge --ff-only origin/main
-    docker compose config --quiet
+    git pull --ff-only origin main
+    docker compose config --quiet 2>/dev/null || { echo 'Compose configuration invalid; inspect privately with production_doctor.' >&2; return 1; }
     docker compose build
     if (( first )) && [[ -f ../data/gamerhq.db ]]; then
         docker compose run --rm --no-deps gamerhq python -m tools.backup_database
     fi
+    docker run --rm -i --network none --entrypoint python gamerhq-bot:local -m tools.production_doctor --env-stdin-only < ../.env
     local -a preflight=(python -m tools.production_preflight --backup-dir /app/backups)
     if (( fresh )); then preflight+=(--allow-new); fi
     docker compose run --rm --no-deps gamerhq "${preflight[@]}"

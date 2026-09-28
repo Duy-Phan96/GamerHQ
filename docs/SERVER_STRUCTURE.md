@@ -4,15 +4,15 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 
 ## Permanent conventions
 
-[server_setup_service.py](../services/server_setup_service.py) defines SERVER_BLUEPRINT and inventory rendering. It is a desired inventory, not a generic installer that creates every missing item. repair_server delegates focused onboarding/community/partner/ticket repairs and Instant Gaming sync; unrelated missing resources may require manual review.
+[server_setup_service.py](../services/server_setup_service.py) defines SERVER_BLUEPRINT. [server_operations.py](../services/server_operations.py) separates confirmed creation, ID reconciliation and known-resource repair using existing policies and mapping keys. The older combined repair helper remains internal compatibility code; slash commands use the [production operations workflow](PRODUCTION_OPERATIONS.md).
 
 - START HERE: public onboarding, selectors and LFG/guide/support entries.
 - COMMUNITY: general conversation, newbies, introductions, suggestions and bot commands.
-- MARKETPLACE: public read-only boards in managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. The support-gamerhq overview links to useful Marketplace offers; the former direct-support channel is retired by owner Repair.
+- MARKETPLACE: public read-only boards in managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. The support-gamerhq overview links to useful Marketplace offers; the former direct-support channel is retained for separate owner review.
 - STAFF: private staff conversation, suggestion inbox, ticket/bot/mod logs and commands.
 - AFFILIATE STATS: private purchases/buyer-ranking using existing IG channel IDs and explicit Instant Gaming access.
 - SUPPORT TICKETS: private ticket channels created on demand.
-- EVENTS: 🎉・community-events → 🏆・tournaments → 🎁・giveaways. Owner Repair creates/reuses Community Events by stored ID, maintains its canonical pin and orders these managed slots without replacing channels/history or changing unrelated child order. Full tournament/giveaway engines are not implemented.
+- EVENTS: 🎉・community-events → 🏆・tournaments → 🎁・giveaways. Reconciliation links existing Community Events; setup creates it only if genuinely missing; repair fixes known permissions/pins. Existing specialized layout sync retains its ordering policy. Full tournament/giveaway engines are not implemented.
 - VOICE CHANNELS: common voice rooms and a generator. STREAMERS and game areas have separate feature lifecycles.
 
 Text channels commonly use emoji + ・ + kebab-case; category labels commonly use emoji + uppercase words. Voice names vary by feature. Reuse each service's normalizer/aliases instead of imposing a new global naming rule. Existing STAFF aliases are in cogs/suggestions.py.
@@ -37,9 +37,7 @@ Text channels commonly use emoji + ・ + kebab-case; category labels commonly us
 
 Desired state is GamerHQ's configured defaults plus persisted overrides; actual state is
 Discord. `/server health` compares only. Explicit `/server sync-support`,
-`/server instant-gaming` and `/server setup` → Repair apply desired state to Discord
-within their existing scopes. There are no standalone `/server sync` or `/server repair`
-commands in this version.
+`/server instant-gaming` apply desired state within their existing scopes. `/server repair` fixes linked resources; `/server reconcile` only links IDs. There is no standalone `/server sync` command.
 
 `/server adopt channel:<channel> aspect:<name|category|position|all>` runs in the opposite
 direction: Discord → GamerHQ, after preview and **Confirm Adoption**. `all` is the

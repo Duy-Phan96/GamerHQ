@@ -57,7 +57,7 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         before = len(self.guild.position_updates)
         result = await health.scan(self.guild, messages=False)
         self.assertEqual(next(f.state for f in result if f.name == 'Partner channel order'), 'REPAIRABLE')
-        self.assertEqual(next(f.state for f in result if f.name == 'Retired direct-support'), 'REPAIRABLE')
+        self.assertEqual(next(f.state for f in result if f.name == 'Retired direct-support'), 'MANUAL_REVIEW')
         self.assertIn(direct, self.guild.text_channels)
         self.assertEqual(len(self.guild.position_updates), before)
         await support.sync_support_messages(self.guild, order=True)

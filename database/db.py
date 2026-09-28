@@ -1,12 +1,23 @@
 import json
 import sqlite3
 import time
+from contextvars import ContextVar
 from contextlib import contextmanager
 from collections.abc import Iterable
 
 from config import DB_PATH, SEED_PATH
 
 SCHEMA_VERSION = 1  # 0 is the historical additive-migration schema.
+_read_only = ContextVar('database_read_only', default=False)
+
+
+@contextmanager
+def read_only():
+    token = _read_only.set(True)
+    try:
+        yield
+    finally:
+        _read_only.reset(token)
 
 
 SCHEMA = """
@@ -250,8 +261,12 @@ CREATE TABLE IF NOT EXISTS streamer_channels (
 
 @contextmanager
 def connect():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    if _read_only.get():
+        conn = sqlite3.connect(DB_PATH.resolve().as_uri() + '?mode=ro', uri=True)
+        conn.execute('PRAGMA query_only=ON')
+    else:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

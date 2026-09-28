@@ -1,5 +1,7 @@
 # Deploy GamerHQ on AlmaLinux
 
+For day-to-day updates, safe diagnostics and Discord recovery, use the canonical [production operations guide](docs/PRODUCTION_OPERATIONS.md).
+
 Deploy accepted GitHub `main` only, using Docker Compose. Development remains on `develop`; promotion is a separate owner review. The original baseline main lacks these deployment files. CI tests/builds but never deploys. The public repository can be cloned over HTTPS without a deploy key.
 
 ## Host preparation

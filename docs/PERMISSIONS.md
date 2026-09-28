@@ -61,4 +61,4 @@ Tournaments and Giveaways retain their existing permissions/content. Pure automa
 
 Discord has no separate channel permission for buttons/select menus. Allowing application commands does not bypass command-specific authorization. Standard Unicode/server emojis need no additional external-emoji grant here. `USE_EXTERNAL_EMOJIS` is the permission for other servers’ custom emojis and is left unchanged. `ADD_REACTIONS` denial prevents adding a new reaction, not joining an existing one. See the [official Discord permission reference](https://docs.discord.com/developers/topics/permissions).
 
-Health compares these managed permission bits without writing, reports Repair availability, and checks Community Events placement/order. Owner `/server setup` → Repair applies changes; offline checks do not replace live ordinary-member acceptance.
+Health compares these managed permission bits without writing, reports Repair availability, and checks Community Events placement/order. Owner `/server reconcile`, then `/server repair` (preview and confirm) applies changes; offline checks do not replace live ordinary-member acceptance.

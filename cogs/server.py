@@ -678,26 +678,17 @@ class ServerAdmin(commands.Cog):
         await interaction.edit_original_response(content=view.content(), view=view)
 
 
-    @server.command(name="setup", description="Owner only: inspect and repair core channels, guides and private suggestions.")
+    @server.command(name="setup", description="Owner: preview creation of genuinely missing managed resources.")
     async def server_setup(self, interaction: discord.Interaction):
-        if not interaction.guild:
-            await interaction.response.send_message("❌ This command can only be used inside a Discord server.", ephemeral=True)
-            return
-        if interaction.user.id != interaction.guild.owner_id:
-            await interaction.response.send_message(
-                "❌ **Owner only.** `/server setup` can only be used by the Discord server owner.",
-                ephemeral=True,
-            )
-            return
+        await open_operation(interaction, 'setup')
 
-        from services.health_service import scan, summary
-        await interaction.response.defer(ephemeral=True)
-        findings = await scan(interaction.guild, interaction.client)
-        await interaction.followup.send(
-            summary(findings).replace('# GamerHQ Health', '# SERVER CHECK'),
-            view=ServerSetupView(guild=interaction.guild, owner_id=interaction.user.id),
-            ephemeral=True,
-        )
+    @server.command(name="repair", description="Owner/admin: preview fixes to already linked managed resources.")
+    async def server_repair(self, interaction: discord.Interaction):
+        await open_operation(interaction, 'repair')
+
+    @server.command(name="reconcile", description="Owner/admin: link existing Discord resources without creating or deleting them.")
+    async def server_reconcile(self, interaction: discord.Interaction):
+        await open_operation(interaction, 'reconcile')
 
     @server.command(name="roles", description="Admin: sync, review and safely clean up GamerHQ-managed roles.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -754,6 +745,158 @@ class ServerAdmin(commands.Cog):
             await interaction.followup.send(str(exc), ephemeral=True)
 
 
+async def open_operation(interaction, mode, *, replace=False):
+    from services.server_operations import preview
+    if not await check_admin(interaction, interaction.guild): return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        draft = await preview(interaction.guild, interaction.user, mode, interaction.client)
+        view = OperationsView(interaction.guild, draft, interaction.client)
+        if replace:
+            await interaction.edit_original_response(content=view.text(), view=view, allowed_mentions=discord.AllowedMentions.none())
+        else:
+            await interaction.followup.send(view.text(), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+    except (ServerMessageError, discord.HTTPException) as exc:
+        await interaction.followup.send(str(exc), ephemeral=True)
+
+
+class ResourceChoice(discord.ui.Select):
+    def __init__(self, rows):
+        self.rows = rows
+        super().__init__(placeholder='Review an existing resource', options=[discord.SelectOption(
+            label=row['label'][:100], value=str(i), description=row['status']) for i, row in enumerate(rows)])
+
+    async def callback(self, interaction):
+        row = self.rows[int(self.values[0])]
+        parent = self.view
+        view = MappingChoiceView(parent, row)
+        lines = [f"# Review {discord.utils.escape_markdown(row['label'])}",
+                 'Choose which existing resource GamerHQ should manage. Selection only links its ID; nothing is moved or deleted.']
+        for resource in row['candidates'][:20]:
+            category = getattr(resource, 'category', None)
+            lines.append(f"ID {resource.id} · {getattr(category, 'name', 'No category')} · Created {discord.utils.snowflake_time(resource.id).date()} · {'eligible' if resource.id in row['safe'] else 'protected; cannot link'}")
+        await interaction.response.edit_message(content='\n'.join(lines)[:1900], view=view, allowed_mentions=discord.AllowedMentions.none())
+
+
+class CandidateChoice(discord.ui.Select):
+    def __init__(self, row):
+        super().__init__(placeholder='Choose the intended existing resource', options=[discord.SelectOption(
+            label=str(resource.id), description=getattr(getattr(resource, 'category', None), 'name', 'Existing managed message or role')[:100],
+            value=str(resource.id)) for resource in row['candidates'] if resource.id in row['safe']][:25])
+
+    async def callback(self, interaction):
+        self.view.parent.choices[self.view.row['key']] = int(self.values[0])
+        await interaction.response.edit_message(content=self.view.parent.text(), view=self.view.parent)
+        self.view.stop()
+
+
+class MappingChoiceView(RoleAdminSession):
+    def __init__(self, parent, row):
+        super().__init__(timeout=180)
+        self.parent, self.row = parent, row
+        self.guild, self.admin_id = parent.guild, parent.admin_id
+        if row['safe']: self.add_item(CandidateChoice(row))
+
+    async def interaction_check(self, interaction):
+        return await self.parent.interaction_check(interaction)
+
+    @discord.ui.button(label='Ignore for now')
+    async def ignore(self, interaction, button):
+        self.parent.choices[self.row['key']] = 0
+        await interaction.response.edit_message(content=self.parent.text(), view=self.parent)
+        self.stop()
+
+    @discord.ui.button(label='Cancel')
+    async def cancel(self, interaction, button):
+        self.parent.finished = True
+        await interaction.response.edit_message(content='Cancelled. No changes applied.', view=None)
+        self.stop()
+
+
+class OperationsView(RoleAdminSession):
+    def __init__(self, guild, draft, bot):
+        super().__init__(timeout=240)
+        self.guild, self.admin_id, self.draft, self.bot = guild, draft['actor_id'], draft, bot
+        self.page, self.choices, self.finished = 0, {}, False
+        self.refresh_choices()
+
+    async def interaction_check(self, interaction):
+        if self.finished:
+            await interaction.response.send_message('This preview is closed. Open a fresh command.', ephemeral=True)
+            return False
+        return await super().interaction_check(interaction)
+
+    def refresh_choices(self):
+        for child in list(self.children):
+            if isinstance(child, ResourceChoice): self.remove_item(child)
+        rows = [r for r in self.draft['rows'][self.page*8:(self.page+1)*8] if r['candidates'] and r['status'] != 'EXACT_MATCH']
+        if self.draft['mode'] == 'reconcile' and rows: self.add_item(ResourceChoice(rows))
+
+    def text(self):
+        mode = self.draft['mode']
+        explanations = {'setup': 'Create only missing resources. Existing or uncertain matches must be linked with /server reconcile first.',
+                        'repair': 'Fix placement, permissions and pins only for linked resources. Nothing will be created or deleted.',
+                        'reconcile': 'Link existing categories, channels, roles and messages. Nothing in Discord will be created, edited or deleted.'}
+        from services.server_operations import needs_repair
+        lines = [f'# GamerHQ {mode.title()} Preview', explanations[mode]]
+        labels = {'EXACT_MATCH': 'Already linked', 'SAFE_ADOPTION': 'Existing match ready to link',
+                  'AMBIGUOUS': 'Needs your review', 'MISSING': 'Not found', 'STALE': 'Stored resource no longer found'}
+        counts = {status: sum(r['status'] == status for r in self.draft['rows']) for status in ('EXACT_MATCH', 'SAFE_ADOPTION', 'AMBIGUOUS', 'MISSING', 'STALE')}
+        lines.append(' · '.join(f'{labels[k]}: {v}' for k, v in counts.items()))
+        for row in self.draft['rows'][self.page*8:(self.page+1)*8]:
+            state = labels[row['status']]
+            if mode == 'repair' and needs_repair(self.guild, row): state = 'Repair name/placement/order/permissions/pin/content'
+            selected = f" → {self.choices[row['key']] or 'ignored'}" if row['key'] in self.choices else ''
+            lines.append(f"• {discord.utils.escape_markdown(row['label'])[:75]}: {state}{selected}")
+        lines.append(f"Page {self.page+1}/{max(1,(len(self.draft['rows'])+7)//8)}. Review pages/matches, then Preview Changes. Safe single matches are linked only on confirmation.")
+        return '\n'.join(lines)[:1950]
+
+    @discord.ui.button(label='Next Page')
+    async def next_page(self, interaction, button):
+        self.page = (self.page + 1) % max(1, (len(self.draft['rows'])+7)//8)
+        self.refresh_choices()
+        await interaction.response.edit_message(content=self.text(), view=self)
+
+    @discord.ui.button(label='Preview Changes', style=discord.ButtonStyle.primary)
+    async def confirm_preview(self, interaction, button):
+        view = ConfirmOperationsView(self)
+        await interaction.response.edit_message(content=self.text()[:1800] + '\n**Confirm to apply this reviewed plan. Changed resources will be skipped.**', view=view)
+
+    @discord.ui.button(label='Cancel')
+    async def cancel(self, interaction, button):
+        self.finished = True
+        await interaction.response.edit_message(content='Cancelled. Nothing changed.', view=None)
+        self.stop()
+
+
+class ConfirmOperationsView(RoleAdminSession):
+    def __init__(self, parent):
+        super().__init__(timeout=180)
+        self.parent, self.guild, self.admin_id = parent, parent.guild, parent.admin_id
+        self.choices = dict(parent.choices)
+
+    @discord.ui.button(label='Confirm Changes', style=discord.ButtonStyle.success)
+    async def confirm(self, interaction, button):
+        from services.server_operations import apply
+        if self.parent.finished or not await self.interaction_check(interaction): return
+        self.parent.finished = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            done, skipped = await apply(self.guild, interaction.user, self.parent.draft, self.parent.bot,
+                                        confirmed=True, choices=self.choices)
+            text = f'Applied {len(done)} changes; {len(skipped)} need another review.\n' + '\n'.join(skipped[:8])
+            text += '\nRun /server health. After linking channels, rescan reconciliation for their messages. Use /server setup only for missing resources.'
+        except (ServerMessageError, discord.HTTPException, ValueError) as exc:
+            text = 'Stopped safely. Some confirmed changes may already be applied. Run health and open a fresh preview.\n' + str(exc)
+        await interaction.edit_original_response(content=text[:1900], view=None)
+        self.stop()
+
+    @discord.ui.button(label='Back')
+    async def back(self, interaction, button):
+        await interaction.response.edit_message(content=self.parent.text(), view=self.parent)
+        self.stop()
+
+
 class DuplicateAuditView(RoleAdminSession):
     def __init__(self, guild, actor_id, rows, bot):
         super().__init__(timeout=180)
@@ -772,12 +915,12 @@ class DuplicateAuditView(RoleAdminSession):
         count = sum(row['status'] == 'DUPLICATE' for row in self.rows)
         incomplete = sum(row['status'] == 'MANUAL_REVIEW' for row in self.rows)
         lines = ['# Managed Message Duplicate Scan',
-                 f'{count} duplicate groups require review. {incomplete} boards could not be fully inspected.']
+                 f'{count} duplicate groups require review. Other reconciliation issues: {incomplete}.']
         for row in self.rows[self.page * 8:(self.page + 1) * 8]:
             icon = '✅' if row['status'] == 'UNIQUE' else '⚠️'
             label = discord.utils.escape_markdown(row['label'])[:90]
             candidates = '?' if row['status'] == 'MANUAL_REVIEW' else len(row['matches'])
-            lines.append(f"{icon} **{label}** — <#{row['channel_id']}> — Candidates: {candidates} ({row['status']})")
+            lines.append(f"{icon} **{label}** — {str(row['channel_id'] or 'structure')} — Candidates: {candidates} ({row['status']})")
         lines.append(f'Page {self.page + 1}/{max(1, (len(self.rows) + 7) // 8)}. Nothing has been changed.')
         return '\n'.join(lines)
 
@@ -789,6 +932,13 @@ class DuplicateAuditView(RoleAdminSession):
         await interaction.response.defer(ephemeral=True)
         keys = [r['key'] for r in self.rows if r['status'] == 'DUPLICATE']
         await show_duplicate_review(interaction, self.guild, keys, self.bot)
+        self.stop()
+
+    @discord.ui.button(label='Open Reconciliation', style=discord.ButtonStyle.secondary)
+    async def reconcile(self, interaction, button):
+        if not await self.interaction_check(interaction): return
+        self.finished = True
+        await open_operation(interaction, 'reconcile', replace=True)
         self.stop()
 
     @discord.ui.button(label='Next Page', style=discord.ButtonStyle.secondary)

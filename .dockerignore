@@ -18,6 +18,7 @@
 !data/
 !data/games_seed.json
 **/.env*
+!.env.example
 **/*.db*
 **/*.sqlite*
 **/*.log*

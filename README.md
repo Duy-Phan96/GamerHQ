@@ -114,7 +114,7 @@ Optional Game Areas, streamer areas, LFG resources and temporary voice rooms ext
 
 Gaming News covers news/releases; Gaming Deals covers discounts, promotions and Instant Gaming offers; Free Games covers free/free-to-keep offers from DealGecko. Free Games is not an affiliate promotion board.
 
-The intended bot stack is GamerHQ, **🤖 Gaming Bots** (Instant Gaming, DealGecko), and **🎵 Music Bots** (Jockie Music, Pancake). Group roles are hoisted below Staff and grant no blanket private access. Known DealGecko/Jockie/Pancake IDs are built in; the existing Instant Gaming identity remains configurable. Owner Repair handles grouping and scoped permissions. See [Discord setup](docs/DISCORD_SETUP.md).
+The intended bot stack is GamerHQ, **🤖 Gaming Bots** (Instant Gaming, DealGecko), and **🎵 Music Bots** (Jockie Music, Pancake). Group roles are hoisted below Staff and grant no blanket private access. Known DealGecko/Jockie/Pancake IDs are built in; the existing Instant Gaming identity remains configurable. `/server repair` handles linked bot grouping and scoped permissions. See [Discord setup](docs/DISCORD_SETUP.md).
 
 ## Requirements
 
@@ -210,7 +210,10 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | Commands | Purpose |
 | --- | --- |
 | `/server health` | Owner/admin read-only diagnostics |
-| `/server setup` | Owner-only inspection, preview and confirmed repairs |
+| `/server setup` | Owner-only creation of genuinely missing resources after preview/confirmation |
+| `/server repair` | Owner/admin confirmed fixes to linked resources only |
+| `/server reconcile` | Owner/admin confirmed linking of existing Discord IDs |
+| `/server message-duplicates` | Review duplicates separately from structure warnings; confirm keep/remove |
 | `/server sync-support` | Reconcile existing support/partner layout and pins without creating missing channels |
 | `/server adopt` | Owner/admin preview and confirmation: persist selected current public board layout as desired state |
 | `/server cleanup-game-areas` | Preview unused managed areas before confirmed cleanup |
@@ -225,15 +228,11 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 
 Staff review suggestions and take/mark waiting/close tickets through private buttons. Ticket creation and role-selection hubs also use components; they are not additional slash commands. Lobby controls remain subject to host/member authorization.
 
-## Server setup and repair
+## Server operations
 
-1. Prepare the existing base layout described in [setup](docs/SETUP.md). START HERE and COMMUNITY must already exist. A private STAFF category is needed for Staff review/log placement; configure the existing game-selector channel as well.
-2. Start the bot and run `/server health` to inspect missing resources, mappings and permissions without repairing them.
-3. As server owner, open `/server setup`, review its check/repair preview and confirm the intended changes.
-4. Confirm that each Marketplace list item opens its partner channel. Missing mappings are omitted from navigation and reported by health; owner setup repairs them.
-5. Run health again and perform the relevant [manual acceptance checks](RELEASE_CHECKLIST.md), including two-user ticket isolation and voice ownership.
+Use `/server health` for read-only diagnosis, `/server reconcile` to link existing Discord IDs, `/server repair` for confirmed fixes to linked resources, and owner `/server setup` only for genuinely missing resources. `/server message-duplicates` reviews duplicate messages independently of unrelated structure warnings. All mutation flows require explicit confirmation; unknown/private resources and custom content stay protected.
 
-Setup is an incremental maintenance workflow, not a complete empty-server installer. It reuses managed channels/messages, updates guides and permissions, and leaves ambiguous resources for manual review. Destructive Game Area cleanup has its own selection and confirmation; it is not an automatic consequence of opening health/setup.
+See the canonical [production operations guide](docs/PRODUCTION_OPERATIONS.md) for VPS updates, backups, safe diagnostics and fresh-DB recovery. Local installation remains in [setup](docs/SETUP.md). Validate ordinary-member/private access using the [release checklist](RELEASE_CHECKLIST.md).
 
 ## Testing
 
@@ -277,7 +276,7 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 LICENSE is not configured. The repository is public, but no software license has been selected; that remains an owner decision.
 
-support-gamerhq stays in START HERE and links to useful Marketplace deals, tools and services. MARKETPLACE has this managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. Owner Repair safely removes the recorded direct-support channel; unknown content or dependencies remain for review. Instant Gaming purchases and buyer ranking remain staff-only. Owner `/server setup` safely migrates recorded legacy partner boards to Electricity and deletes confidently managed, dependency-free finanzberatung only after full content/thread checks; uncertain cases report an exact MANUAL_REVIEW reason; `/server sync-support` refreshes adopted boards. See [final message texts, migration and tests](docs/PARTNERS.md).
+support-gamerhq stays in START HERE and links to MARKETPLACE: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. Purchases and buyer ranking stay private. Existing mappings and customized messages are preserved; legacy channel retirement requires separate owner review. See [partner details](docs/PARTNERS.md) and [production operations](docs/PRODUCTION_OPERATIONS.md).
 
 Owner/admin `/deals import-gocdkeys` imports up to ten copied deal/giveaway partner links through a private preview, editable titles and confirmed individual posts; repeated imports skip stored URLs. [Manual import workflow](docs/GOCDKEYS.md#manual-batch-import).
 
