@@ -9,12 +9,13 @@ from services.server_service import ServerMessageError
 def preview_embed(plan, page):
     entries = plan.entries
     counts = {state: sum(e.state == state for e in entries) for state in ('new', 'posted', 'retained', 'duplicate', 'invalid')}
+    targets = ', '.join(f'{label}: <#{cid}>' for label, cid in [('DEAL', plan.channel_id), ('GIVEAWAY', plan.giveaway_channel_id)] if cid) or 'No new links'
     embed = discord.Embed(title='🎮 GoCDKeys Import Preview', description=(
-        f'New deals: {counts["new"]}\nAlready posted: {counts["posted"]}\n'
+        f'New promotions: {counts["new"]}\nAlready posted: {counts["posted"]}\n'
         f'Retained delivery claims: {counts["retained"]}\nDuplicates in batch: {counts["duplicate"]}\nInvalid/manual review: {counts["invalid"]}\n'
-        f'Target: <#{plan.channel_id}>\nNothing posted. Review titles and links; missing titles must be edited.'), color=0x5865F2)
+        f'Targets: {targets}\nNothing posted. Review titles and links; missing titles must be edited.'), color=0x5865F2)
     for entry in entries[page * 3:page * 3 + 3]:
-        text = entry.reason if entry.state == 'invalid' else f'{entry.state}\n[Preview URL](<{entry.url}>)'
+        text = entry.reason if entry.state == 'invalid' else f'{entry.promotion_type} · {entry.state}\n[Preview URL](<{entry.url}>)'
         if entry.note:
             text += '\n' + discord.utils.escape_markdown(entry.note)
         embed.add_field(name=f'{entry.line}. {entry.title or "Title required"}'[:240], value=text, inline=False)
@@ -31,21 +32,22 @@ async def send_preview(interaction, plan, warning=None):
 class ImportModal(discord.ui.Modal, title='Import GoCDKeys partner links'):
     links = discord.ui.TextInput(label='1–10 partner links, one per line', style=discord.TextStyle.paragraph, max_length=4000)
 
-    def __init__(self, guild_id, actor_id):
+    def __init__(self, guild_id, actor_id, selected_type="AUTO"):
         super().__init__(timeout=300)
         self.guild_id, self.actor_id = guild_id, actor_id
+        self.selected_type = selected_type
 
     async def on_submit(self, interaction):
         if not await check_actor(interaction, self.guild_id, self.actor_id):
             return
         try:
-            plan = imports.preview(interaction.guild, interaction.user, str(self.links))
+            plan = imports.preview(interaction.guild, interaction.user, str(self.links), self.selected_type)
         except ServerMessageError as exc:
             return await interaction.response.send_message(str(exc), ephemeral=True)
         await send_preview(interaction, plan)
 
 
-class TitlesModal(discord.ui.Modal, title='Edit imported deal titles'):
+class TitlesModal(discord.ui.Modal, title='Edit imported promotion titles'):
     titles = discord.ui.TextInput(label='Line number | title (each new link)', style=discord.TextStyle.paragraph, max_length=2200)
     notes = discord.ui.TextInput(label='Optional: line number | short note', style=discord.TextStyle.paragraph, max_length=1500, required=False)
 
@@ -108,7 +110,7 @@ class ImportPreview(discord.ui.View):
             self.stop()
         return True
 
-    @discord.ui.button(label='Post New Deals', style=discord.ButtonStyle.success)
+    @discord.ui.button(label='Post New Promotions', style=discord.ButtonStyle.success)
     async def post(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.active(interaction, consume=True):
             return

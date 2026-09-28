@@ -9,7 +9,7 @@ from weakref import WeakValueDictionary
 import discord
 from database import affiliate_deals
 from services import curated_deal_service as curated
-from services.gocdkeys_service import import_link, import_identity
+from services.gocdkeys_service import import_identity, promotion_link
 from services.server_service import ServerMessageError
 
 MAX_LINKS = 10
@@ -28,12 +28,14 @@ class Entry:
     note: str = ''
     state: str = 'new'
     reason: str = ''
+    promotion_type: str = 'DEAL'
 
 
 @dataclass(frozen=True)
 class Plan:
     channel_id: int
     entries: tuple[Entry, ...]
+    giveaway_channel_id: int = 0
 
 
 def known_links(guild_id):
@@ -47,23 +49,26 @@ def known_links(guild_id):
     return found
 
 
-def preview(guild, actor, text):
-    channel = curated.target(guild, actor)
+def preview(guild, actor, text, selected_type='AUTO'):
+    curated.authorize(guild, actor)
+    targets = {'DEAL': 0, 'GIVEAWAY': 0}
     lines = [(index, line.strip()) for index, line in enumerate(text.splitlines(), 1) if line.strip()]
     if not lines or len(lines) > MAX_LINKS or len(text) > MAX_INPUT:
         raise ServerMessageError('Paste 1–10 links, one per line (maximum 4000 characters).')
     known, seen, entries = known_links(guild.id), set(), []
     for index, url in lines:
         try:
-            validated, normalized, title = import_link(url)
+            validated, normalized, title, kind = promotion_link(url, selected_type)
         except (ServerMessageError, ValueError) as exc:
             # Do not echo rejected input: it could contain credentials.
             entries.append(Entry(index, '', state='invalid', reason=str(exc)))
             continue
         state = 'duplicate' if normalized in seen else known.get(normalized, 'new')
         seen.add(normalized)
-        entries.append(Entry(index, url, validated, normalized, title or '', state=state))
-    return Plan(channel.id, tuple(entries))
+        entries.append(Entry(index, url, validated, normalized, title or '', state=state, promotion_type=kind))
+    for kind in {e.promotion_type for e in entries if e.state == 'new'}:
+        targets[kind] = curated.target(guild, actor, kind).id
+    return Plan(targets['DEAL'], tuple(entries), targets['GIVEAWAY'])
 
 
 def draft_id(guild_id, normalized_url):
@@ -76,6 +81,10 @@ def render(entry):
     view = discord.ui.View()
     view.add_item(discord.ui.Button(label='Compare Prices', emoji='💰', url=entry.url))
     text = f'🎮 **{discord.utils.escape_markdown(entry.title)}**\n\nCompare current game-key prices on GoCDKeys.'
+    if entry.promotion_type == 'GIVEAWAY':
+        view.children[0].label = 'Enter Giveaway'
+        view.children[0].emoji = '🎁'
+        text = f'# 🎁 {discord.utils.escape_markdown(entry.title)}\n\nA new partner giveaway is available.'
     if entry.note:
         text += '\n\n' + discord.utils.escape_markdown(entry.note)
     return dict(content=text + '\n\nAffiliate / referral link', view=view,
@@ -83,13 +92,14 @@ def render(entry):
 
 
 async def publish(guild, actor, plan):
-    channel = curated.target(guild, actor)
-    if channel.id != plan.channel_id or not 1 <= len(plan.entries) <= MAX_LINKS:
+    curated.authorize(guild, actor)
+    if not 1 <= len(plan.entries) <= MAX_LINKS:
         raise ServerMessageError('Target or batch changed; create a new import preview.')
     # Validate all candidate titles/URLs before posting the first one.
     for entry in plan.entries:
         if entry.state == 'new':
-            url, normalized, _ = import_link(entry.url)
+            url, normalized, _, _ = promotion_link(entry.url, entry.promotion_type)
+            checked_target(guild, actor, plan, entry)
             if url != entry.url or normalized != entry.normalized_url:
                 raise ServerMessageError('Referral or URL changed; create a fresh import preview.')
             render(entry)
@@ -99,9 +109,7 @@ async def publish(guild, actor, plan):
             if entry.state != 'new':
                 results.append((entry, entry.state))
                 continue
-            channel = curated.target(guild, actor)
-            if channel.id != plan.channel_id:
-                raise ServerMessageError('Target changed during import. Existing deliveries retained; preview again.')
+            channel = checked_target(guild, actor, plan, entry)
             existing = known_links(guild.id).get(entry.normalized_url)
             if existing:
                 results.append((entry, existing))
@@ -109,11 +117,17 @@ async def publish(guild, actor, plan):
             delay = _next_send.get(guild.id, 0) - time.monotonic()
             if delay > 0:
                 await asyncio.sleep(delay)
-            channel = curated.target(guild, actor)
-            if channel.id != plan.channel_id:
-                raise ServerMessageError('Target changed during import. Existing deliveries retained; preview again.')
+            channel = checked_target(guild, actor, plan, entry)
             data = asdict(entry) | {'partner': 'gocdkeys', 'workflow': 'import-gocdkeys'}
             state = await curated.deliver(guild, actor, draft_id(guild.id, entry.normalized_url), channel, render(entry), data)
             _next_send[guild.id] = time.monotonic() + 1.0
             results.append((entry, state if state != 'posted' else 'created'))
     return results
+
+
+def checked_target(guild, actor, plan, entry):
+    channel = curated.target(guild, actor, entry.promotion_type)
+    expected = plan.giveaway_channel_id if entry.promotion_type == 'GIVEAWAY' else plan.channel_id
+    if channel.id != expected:
+        raise ServerMessageError('Target changed during import. Existing deliveries retained; preview again.')
+    return channel

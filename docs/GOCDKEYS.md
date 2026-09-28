@@ -15,7 +15,7 @@ product/title and prices. Review the private preview, then confirm Post Deal.
 GamerHQ never constructs or guesses a product URL for a manual post. See the
 [admin workflow](DEALS.md) for authorization, validation and durable delivery claims.
 
-Both manual commands accept the exact gocdkeys.com/gocdkeys.de hosts (with optional www). Conflicting or duplicate referral values are rejected rather than overwritten.
+Both manual commands accept the exact gocdkeys.com/gocdkeys.de hosts (with optional www). For product links, conflicting or duplicate referral values are rejected rather than overwritten. Giveaway links preserve the supplied referral/creator parameters; see the mixed-import section below.
 
 The existing `GOCDKEYS_REFERRAL_CODE` remains available (default `kas66b`). On
 manually supplied URLs matching the existing supported exact-host product pattern
@@ -67,7 +67,7 @@ Run `/deals import-gocdkeys`. Its modal accepts **1–10 non-empty lines**, one 
 per line, **4000 characters total** and 512 per URL. Surrounding whitespace and
 blank lines are ignored. Owner/Administrator access in the configured server is
 rechecked on the command, modal, buttons and confirmation; ordinary Staff without
-Administrator is not authorized. The target is only the stored gaming-deals ID.
+Administrator is not authorized. Targets are only the stored gaming-deals (DEAL) and giveaways (GIVEAWAY) IDs.
 
 Accepted product routes begin `/buy-` or `/kaufen-` with a lowercase ASCII slug.
 Only HTTPS on `gocdkeys.com`, `www.gocdkeys.com`, `gocdkeys.de` or `www.gocdkeys.de`
@@ -76,7 +76,7 @@ Unrelated domains, dashboard/search/root/unknown routes, malformed URLs and
 non-HTTPS schemes are invalid/manual-review. This syntactic acceptance is not
 remote verification: use links copied from your partner dashboard.
 
-Referral handling uses the configured code (currently `kas66b`):
+Product-link referral handling uses the configured code (currently `kas66b`):
 
 - An existing single `?ref=kas66b` or `#ref=kas66b` is preserved exactly, including
   other URL parameters. Conflicting codes, empty values, duplicate parameters or
@@ -94,7 +94,7 @@ solely from the supplied slug: anchored buy/kaufen prefixes and recognized termi
 platform/key suffixes are removed; Roman numerals stay uppercase and `marvels`
 is displayed as `Marvel's`. Edition/platform identity is retained for deduplication.
 Numeric, generic or unrecognized suffix cases require **Edit Titles** before Post
-New Deals becomes available. All suggested titles remain editable; no missing
+New Promotions becomes available. All suggested titles remain editable; no missing
 name, release date, availability, price or saving is invented.
 
 Edit Titles opens a modal with `line number | title` for every new entry, plus
@@ -105,7 +105,7 @@ to the unchanged preview. Cancel posts nothing. Sessions expire after five minut
 and unfinished drafts are memory-only. Dismissing an edit modal requires starting
 an import again; no existing delivery records are lost.
 
-**Post New Deals** sends one message per new URL, serialized with at least one
+**Post New Promotions** sends one message per new URL, serialized with at least one
 second between delivery attempts in this bot process (Discord's client additionally
 handles API rate limits). Each message contains:
 
@@ -150,8 +150,35 @@ links rather than inventing formats:
 
 1. Run `/deals import-gocdkeys` in Discord.
 2. Paste the prepared URL-only block into the modal, one link per line.
-3. Review every preview page, correct titles if needed, then confirm Post New Deals.
+3. Review every preview page, correct titles if needed, then confirm Post New Promotions.
 
 Do not paste the slash command itself into the URL field. Codex prepares the input;
 GamerHQ posts only after your confirmation. Plain text paste is supported; file or
 HTML/dashboard export parsing is not part of this phase.
+
+### Mixed deal / giveaway imports
+
+`/deals import-gocdkeys promotion_type:AUTO` accepts a mixed batch of up to ten
+URLs. Known `/buy-...` and `/kaufen-...` paths are DEAL; `/gewinnspiele/<slug>` and
+`/giveaways/<slug>` are GIVEAWAY. Preview shows each type and the fixed stored
+target: gaming-deals or giveaways. Conflicting explicit types are rejected.
+Unrecognized paths are skipped for review: import those separately with
+`promotion_type:DEAL` or `promotion_type:GIVEAWAY` after verifying their purpose.
+No arbitrary channel can be selected.
+
+An exact `/gewinnspiele/steam-guthabenkarte-<amount>-euro-kostenlos` slug supplies
+a conservative editable title using only that amount. Other giveaway titles require
+manual entry via **Edit Titles**; ambiguous slug text is not assumed to describe the prize. Enter `line number | title` for every new
+entry, plus optional notes. No prize or end date is inferred. Review all pages and
+select **Post New Promotions**. Nothing is posted until confirmation; repeated
+imports skip persistent URL claims, including giveaways and uncertain deliveries.
+The supplied giveaway URL is preserved exactly (including referral/creator/unknown
+parameters). Identity normalization is separate and never rewrites the posted URL.
+There is no scraping, login, automatic entry or automatic giveaway creation.
+
+For Codex-assisted preparation, ask “Prepare these for GamerHQ.” Codex can return
+separate **DEALS** and **GIVEAWAYS** URL blocks, plus titles requiring owner review.
+Paste only URLs, one per line, into the import modal; do not paste the headings or
+slash command. Either combine reliably classified blocks using AUTO, or import
+each block separately with its explicit type. Edit titles in the private preview,
+then confirm. Codex does not require Discord access.
