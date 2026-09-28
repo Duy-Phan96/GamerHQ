@@ -7,6 +7,7 @@ from database import db
 from services.onboarding_service import alias
 from services.community_structure_service import core_channel
 from services.server_service import ServerMessageError
+from services.operation_context import read_scope, fetch_message, measured
 from services.music_bot_service import resolve_music_role, should_allow_music_bots, VOICE_RIGHTS, TEXT_RIGHTS, GAME_CHANNEL_FIELDS, blocked_name
 
 
@@ -30,8 +31,9 @@ def command_inventory(bot, guild):
     return sorted(result)
 
 
+@measured('server_health')
 async def scan(guild, bot=None, *, messages=True):
-    with db.read_only():
+    with db.read_only(), read_scope():
         return await _scan(guild, bot, messages=messages)
 
 
@@ -97,7 +99,7 @@ async def _scan(guild, bot=None, *, messages=True):
                 if posting: add(f'{name} permissions','REPAIRABLE','Normal posting is not fully disabled.')
     from services.community_structure_service import event_order
     try:
-        current, ordered = event_order(guild, await guild.fetch_channels())
+        current, ordered = event_order(guild, guild.channels)
         correct = [c.id for c in current] == [c.id for c in ordered]
         add('EVENTS order', 'PASS' if correct else 'REPAIRABLE',
             'Community Events, Tournaments, Giveaways order OK.' if correct else 'Owner Repair restores managed event order.')
@@ -128,7 +130,7 @@ async def _scan(guild, bot=None, *, messages=True):
         from services.support_service import legacy_review_channels
         finance_channels = finance.candidates(guild)
         for channel in finance_channels:
-            reason = await finance.inspect(guild, channel)
+            reason = await finance.inspect(guild, channel) if messages else 'Open Details for deep legacy-content inspection.'
             add('Legacy partner channels', 'MANUAL_REVIEW',
                 f'finanzberatung — {reason}' if reason else 'finanzberatung — separate owner retirement review required; generic repair never deletes.')
         if any(c not in finance_channels for c in legacy_review_channels(guild)):
@@ -141,13 +143,13 @@ async def _scan(guild, bot=None, *, messages=True):
         direct = guild.get_channel(int(direct_id)) if direct_id and direct_id.isdigit() else None
         if direct_id:
             try:
-                reason = await direct_support_retirement_reason(guild, direct) if direct else None
+                reason = (await direct_support_retirement_reason(guild, direct) if direct else None) if messages else 'Open Details for deep legacy-content inspection.'
             except discord.HTTPException as exc:
                 reason = f'Cannot inspect direct-support: {type(exc).__name__}'
             add('Retired direct-support', 'MANUAL_REVIEW',
                 reason or 'Separate owner retirement review required; setup/repair/reconcile never delete channels.')
         from services.channel_adoption_service import order_plans, diagnostics as adoption_diagnostics
-        snapshot = await guild.fetch_channels()
+        snapshot = guild.channels
         for row in adoption_diagnostics(guild, snapshot):
             add(*row)
         plans = order_plans(guild, snapshot)
@@ -286,7 +288,7 @@ async def _scan(guild, bot=None, *, messages=True):
             if not channel or not raw or not str(raw).isdigit():
                 add(f'{name} pin','REPAIRABLE','Canonical mapping missing; setup can recover/create the managed message.'); continue
             try:
-                message=await channel.fetch_message(int(raw))
+                message=await fetch_message(channel, int(raw))
                 try:
                     state = managed.load(key)
                 except (ValueError, TypeError):
@@ -297,7 +299,7 @@ async def _scan(guild, bot=None, *, messages=True):
                 valid=guild.me and message.author.id==guild.me.id and (managed.owns(state, channel, message) if state else (message.content or '').startswith(prefix))
                 add(f'{name} pin','PASS' if valid and message.pinned else 'REPAIRABLE' if valid else 'MANUAL_REVIEW','Canonical author/content/pin checked.')
             except discord.NotFound: add(f'{name} pin','REPAIRABLE','Managed message deleted; setup can recreate it.')
-            except discord.HTTPException: add(f'{name} pin','WARN','Could not inspect message; check permissions and retry.')
+            except (discord.HTTPException, TimeoutError): add(f'{name} pin','WARN','Could not inspect message; check permissions and retry.')
     from services.managed_message_service import health as managed_health
     registry_issues = await managed_health(guild, messages=messages)
     add('Managed message registry', 'MANUAL_REVIEW' if registry_issues else 'PASS',
@@ -353,12 +355,12 @@ async def _scan(guild, bot=None, *, messages=True):
             channel=guild.get_channel(event['dashboard_channel_id'])
             if not channel: continue
             try:
-                message=await channel.fetch_message(event['dashboard_message_id'])
+                message=await fetch_message(channel, event['dashboard_message_id'])
                 if not guild.me or message.author.id!=guild.me.id:
                     add('LFG dashboard author','MANUAL_REVIEW',f'Lobby {event["id"]}: mapped message belongs to another author; preserve it.')
             except discord.NotFound:
                 add('LFG dashboard message','WARN',f'Lobby {event["id"]}: card deleted; scheduler will recover it.')
-            except discord.HTTPException:
+            except (discord.HTTPException, TimeoutError):
                 add('LFG dashboard message','WARN',f'Lobby {event["id"]}: inspection failed; retry after permissions recover.')
         if len(active)>10: add('LFG diagnostic limit','WARN','Newest 10 dashboard messages inspected; all DB mappings checked.')
     add('LFG persistence','PASS',f'{len(events)} stored lobbies readable; history retained.')
@@ -382,5 +384,6 @@ def summary(findings):
     counts={s:sum(f.state==s for f in findings) for s in ('PASS','WARN','REPAIRABLE','RECONCILE','MANUAL_REVIEW','CRITICAL')}
     lines=['# GamerHQ Health',f'✅ {counts["PASS"]} passed · 🔧 {counts["REPAIRABLE"]} repairable · 🔗 {counts["RECONCILE"]} need linking · ⚠️ {counts["WARN"]+counts["MANUAL_REVIEW"]} warnings/review · ❌ {counts["CRITICAL"]} critical']
     for f in [f for f in findings if f.state!='PASS'][:9]: lines.append(f'• {f.name}: {f.detail[:120]}')
+    lines.append('Fast checks use stored mappings and the server cache. **Details** checks messages and recovery in depth.')
     lines.append(f'{counts["RECONCILE"]} mappings need linking. `/server reconcile` links existing resources; `/server repair` previews fixes; `/server setup` creates missing resources. Health is read-only.')
     return '\n'.join(lines)[:1900]

@@ -6,7 +6,7 @@ This is the canonical day-to-day operating guide. [DEPLOY](../DEPLOY.md) covers 
 
 | Command | Responsibility | Writes |
 | --- | --- | --- |
-| `/server health` | Read-only diagnosis: PASS, WARNING, REPAIRABLE, RECONCILE, MANUAL REVIEW, CRITICAL | None; SQLite connections are read-only |
+| `/server health` | Fast DB/config/cache diagnosis; **Details** adds message and recovery inspection | None; SQLite connections are read-only |
 | `/server reconcile` | Link existing categories, channels, base/bot roles and canonical messages to their existing registry keys | IDs/managed metadata only, after owner/admin confirmation |
 | `/server setup` | Create genuinely missing blueprint categories/channels, base/bot roles and canonical messages | Owner-only preview and confirmation; never creates over uncertain candidates |
 | `/server repair` | Fix linked resource names/placement/order, scoped permissions, bot grouping, pins and uncustomized generated message content | Owner/admin preview and confirmation; no creation or deletion |
@@ -19,6 +19,26 @@ Run reconciliation again after linking channels to discover their messages. Setu
 The generic operations cover the core blueprint and canonical message registry. Optional Game Areas and game-specific roles retain `/game-admin recover-existing` and their existing guarded workflows; reconciliation cannot recover lost tickets, sessions, OAuth credentials or delivery claims. Retired legacy channels/messages are retained for separate owner review, not deleted by setup/repair/reconcile. Existing specialized commands (`/server instant-gaming`, `/server sync-support`, `/server roles`, `/server adopt`) keep their narrower contracts. `/server adopt` adopts a desired public layout; `/server reconcile` links resource IDs.
 
 Startup registers commands and persistent component handlers, initializes additive schema migrations and resumes normal member/event lifecycles. It does not refresh canonical boards or run structural repair. Existing member buttons remain available. Channel-change security enforcement and ordinary temporary-room cleanup retain their existing behavior. A restart is not an offline test.
+
+## Responsive scans and performance diagnostics
+
+Health, reconciliation, setup/repair previews and duplicate review acknowledge immediately and update one private status response with the result. Default health and **Refresh** use SQLite, local configuration and the Discord gateway cache; they do not fetch message history. **Details** runs the deeper, read-only Discord checks and attaches their results. `tools.production_doctor` remains the separate infrastructure/environment/database diagnostic; it does not connect to Discord.
+
+Reconciliation/setup previews prefer persisted IDs and cached channels/roles. Each valid mapped board is fetched by its exact message ID, without scanning pins or history. Missing/stale message IDs trigger discovery only in the expected channel. Boards sharing a channel reuse one snapshot. Duplicate review explicitly inspects at most 100 pins and 100 recent messages per channel, requesting one extra of each to detect truncation. Truncation requires manual review and blocks claims that a message is absent; it never licenses creation/deletion. Legacy feature refresh and destructive migration helpers retain their duplicate/ownership guards, even for mapped messages.
+
+Reads share a command-local cache and at most three concurrent network reads, with a 45-second timeout per read. SQLite read phases reuse one read-only connection and settings lookups; the scope ends before writes. There is no cross-command permission cache or database schema change. Confirming a plan revalidates affected resources and compares the original signatures. A message repair fetches only that board immediately before its write. Small plans for linked channels fetch the channel and relevant category; discovery/adoption, category/order and creation checks still need a fresh inventory. Repair previews also retain fresh structural permission checks. These safety checks may take longer than fast health.
+
+The `discord.gamerhq.performance` logger emits one concise INFO line per measured operation, including previews/apply, duplicate checks, command-guide refresh, role choices, ticket recovery, LFG join, voice controls, game-area scans and deal backfill/import. Nested work contributes to the outer operation. Set this logger to WARNING through normal Python logging configuration to suppress the optional diagnostics; no new environment setting is required.
+
+```text
+operation=server_reconcile_preview duration_ms=... api_reads=... discord_api_calls=... history_scans=... db_queries=... rate_limits=...
+```
+
+`api_reads` counts scoped read jobs; a history job can issue several HTTP requests. `discord_api_calls` counts calls at discord.py's HTTP request boundary, not internal retry attempts. `rate_limits` counts rate-limit warning records observed in that operation; it is not a packet-level count of every 429. Discord.py still handles backoff/retries. Logs contain counts and operation names, not request arguments, content, SQL text or configuration values.
+
+The offline six-board fixture in one channel reduced history scans **6 → 0**, pin scans **6 → 0**, full channel inventories **1 → 0**, and SQLite connections **332 → 1**. Six exact message lookups remain. Six boards with missing mappings share one bounded history read. These are deterministic call-count measurements, not live VPS latency guarantees. Repeated per-board discovery and full structural re-fetches were confirmed sources of request amplification; attributing a particular production 429 requires its corresponding operation logs.
+
+Member role changes, LFG joins, tickets and voice controls stay independent of global scans. Role changes retain the fresh member lookup inside their lock to avoid stale toggle races. LFG management defers before database work. Game-area deletion retains fresh dependency checks before each destructive step. Deal imports/backfills retain their bounded input and existing disabled-provider behavior; no provider scraping or new background mutation was introduced.
 
 ## Normal release and update
 

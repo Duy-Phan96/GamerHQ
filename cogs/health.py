@@ -19,14 +19,22 @@ class HealthView(SafeView):
 
     @discord.ui.button(label='Details')
     async def details(self,interaction,button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.edit_original_response(content='🔄 Checking GamerHQ in detail…\nInspecting managed messages and deeper recovery checks.')
+        try:
+            self.findings = await health_service.scan(self.guild, interaction.client, messages=True)
+        except (TimeoutError, discord.HTTPException):
+            await interaction.edit_original_response(content='Detailed checks could not finish. Discord may be busy or inaccessible. Nothing was changed; retry Details later.')
+            return
         text='\n'.join(f'{"WARNING" if f.state == "WARN" else f.state.replace("_", " ")}: {f.name} — {f.detail}' for f in self.findings)
         text+='\n\nRegistered commands\n'+'\n'.join('/'+name+' — '+description for name,description in health_service.command_inventory(interaction.client,self.guild))
-        await interaction.response.send_message(file=discord.File(io.BytesIO(text.encode('utf-8')),filename='gamerhq-health.txt'),ephemeral=True)
+        await interaction.edit_original_response(content='Detailed checks complete. Results are attached.', attachments=[discord.File(io.BytesIO(text.encode('utf-8')),filename='gamerhq-health.txt')])
 
     @discord.ui.button(label='Refresh')
     async def refresh(self,interaction,button):
         await interaction.response.defer(ephemeral=True)
-        self.findings=await health_service.scan(self.guild,interaction.client)
+        await interaction.edit_original_response(content='🔄 Checking GamerHQ…', view=None)
+        self.findings=await health_service.scan(self.guild,interaction.client,messages=False)
         await interaction.edit_original_response(content=health_service.summary(self.findings),view=self)
 
     @discord.ui.button(label='Review Matches')

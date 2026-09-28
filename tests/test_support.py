@@ -518,8 +518,13 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         finance=self.guild.add_channel('💶・finanzberatung',self.community)
         db.set_setting(support.channel_key(self.guild,'finanzberatung'),finance.id)
         self.guild.get_member=lambda uid:None
-        findings=await scan(self.guild)
-        self.assertTrue(any(f.state=='REPAIRABLE' and 'finanzberatung' in f.detail for f in findings))
+        before = db.DB_PATH.read_bytes()
+        for deep in (False, True):
+            findings = await scan(self.guild, messages=deep)
+            # Generic repair never retires legacy channels; separate owner review is required.
+            self.assertTrue(any(f.state == 'MANUAL_REVIEW' and 'finanzberatung' in f.detail for f in findings))
+            self.assertIs(self.guild.get_channel(finance.id), finance)
+            self.assertEqual(db.DB_PATH.read_bytes(), before)
         await support.sync_support_messages(self.guild)
         self.assertIs(self.guild.get_channel(finance.id),finance)
         changed=[]

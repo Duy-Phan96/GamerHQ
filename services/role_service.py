@@ -1,3 +1,4 @@
+from services.operation_context import measured
 import json
 import re
 import asyncio
@@ -30,6 +31,7 @@ def game_role(guild, game_id, expected_role_id):
     return role
 
 
+@measured('role_service_set_game_selection')
 async def set_game_selection(member, changes):
     """Serialize explicit choices with profile/preferences; never toggle stale state.
 
@@ -74,6 +76,7 @@ def preference_role(guild, kind, key):
     return role
 
 
+@measured('role_service_toggle_preference')
 async def toggle_preference(member, kind, key, *, exclusive=None):
     async with _preference_locks.setdefault((member.guild.id, member.id), asyncio.Lock()):
         # Refresh memberships, so repeated clicks cannot race the gateway cache.
@@ -218,6 +221,7 @@ def profile_roles(guild):
     return result
 
 
+@measured('role_service_save_profile')
 async def save_profile(member, mapping_ids, original_ids, selected_keys):
     """Apply only reviewed profile differences; stale/replaced mappings fail closed."""
     async with _preference_locks.setdefault((member.guild.id, member.id), asyncio.Lock()):

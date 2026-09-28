@@ -9,14 +9,22 @@ from config import DB_PATH, SEED_PATH
 
 SCHEMA_VERSION = 1  # 0 is the historical additive-migration schema.
 _read_only = ContextVar('database_read_only', default=False)
+_read_session = ContextVar('database_read_session', default=None)
 
 
 @contextmanager
 def read_only():
+    if _read_only.get():
+        yield
+        return
     token = _read_only.set(True)
+    session = {'connection': None, 'settings': {}}
+    session_token = _read_session.set(session)
     try:
         yield
     finally:
+        if session['connection'] is not None: session['connection'].close()
+        _read_session.reset(session_token)
         _read_only.reset(token)
 
 
@@ -261,12 +269,21 @@ CREATE TABLE IF NOT EXISTS streamer_channels (
 
 @contextmanager
 def connect():
+    from services.operation_context import count
     if _read_only.get():
-        conn = sqlite3.connect(DB_PATH.resolve().as_uri() + '?mode=ro', uri=True)
-        conn.execute('PRAGMA query_only=ON')
+        session = _read_session.get()
+        if session['connection'] is None:
+            conn = sqlite3.connect(DB_PATH.resolve().as_uri() + '?mode=ro', uri=True)
+            conn.execute('PRAGMA query_only=ON')
+            conn.row_factory = sqlite3.Row
+            conn.set_trace_callback(lambda _: count('db_queries'))
+            session['connection'] = conn
+        yield session['connection']
+        return
     else:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(DB_PATH)
+    conn.set_trace_callback(lambda _: count('db_queries'))
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -552,27 +569,35 @@ def set_setting(key, value):
 
 
 def get_setting(key):
+    session = _read_session.get()
+    if session is not None and key in session['settings']: return session['settings'][key]
     with connect() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        return row["value"] if row else None
+        value = row["value"] if row else None
+    if session is not None: session['settings'][key] = value
+    return value
 
 
 def get_settings(keys: Iterable[str]) -> dict[str, str]:
     """Read a bounded set of settings together; missing keys are omitted.
 
-    This is a call-local snapshot, never a cache. Chunk parameters for SQLite
+    Values are reused only inside the current read-only scope. Chunk parameters for SQLite
     builds with the historical 999-variable limit.
     """
     keys = tuple(dict.fromkeys(keys))
+    session = _read_session.get()
+    cached = session['settings'] if session is not None else {}
+    values = {key: cached[key] for key in keys if cached.get(key) is not None}
+    keys = tuple(key for key in keys if key not in cached)
     if not keys:
-        return {}
-    values = {}
+        return values
     with connect() as conn:
         for offset in range(0, len(keys), 500):
             chunk = keys[offset:offset + 500]
             placeholders = ','.join('?' for _ in chunk)
             rows = conn.execute(f'SELECT key,value FROM settings WHERE key IN ({placeholders})', chunk)
             values.update((row['key'], row['value']) for row in rows)
+    if session is not None: cached.update((key, values.get(key)) for key in keys)
     return values
 
 
