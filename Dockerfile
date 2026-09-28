@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt requirements.lock ./
+COPY requirements.txt requirements.lock .env.example ./
 RUN pip install --no-cache-dir --requirement requirements.lock \
     && pip check \
     && groupadd --gid 10001 gamerhq \

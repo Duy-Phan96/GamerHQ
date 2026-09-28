@@ -116,7 +116,7 @@ Discord roles and legacy profiles are not removed.
 
 ## Managed resources and rollout
 
-Explicit `/server setup` → Repair applies the hidden/enabled policy. Startup does
+Explicit `/server reconcile`, then `/server repair` (preview and confirm) applies the hidden/enabled policy. Startup does
 not create streamer channels. When disabled, confidently managed guide/commands,
 updates and choose-streamers are staff-only, and the guide has no Connect controls.
 When enabled, stream-updates is public read-only; guide/commands are available to
@@ -143,7 +143,7 @@ live delivery. Live acceptance remains a separate Dev-server step.
    redirect placeholder, it is unused by Device OAuth; no callback server is run.
 2. Use a separate Discord bot/guild and SQLite volume. Set its existing `GUILD_ID`;
    set `STREAMER_HUB_ENABLED=true`, keep `STREAMER_ROLE_SELECTION_ENABLED=false`.
-3. Restart the Dev bot; run `/server setup`, confirm Repair, then `/server health`.
+3. Restart the Dev bot; run `/server reconcile`, then `/server repair` (preview and confirm), then `/server health`.
    Resolve any ownership review before continuing. Manually assign 🎥 Streamer.
 4. Connect through streamer-guide and confirm the correct account. An ordinary
    member and a second user's confirmation must be denied.

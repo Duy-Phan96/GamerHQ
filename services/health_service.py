@@ -31,6 +31,11 @@ def command_inventory(bot, guild):
 
 
 async def scan(guild, bot=None, *, messages=True):
+    with db.read_only():
+        return await _scan(guild, bot, messages=messages)
+
+
+async def _scan(guild, bot=None, *, messages=True):
     findings = []
     def add(name, state, detail): findings.append(Finding(name,state,detail))
     if not db.DB_PATH.is_file():
@@ -70,18 +75,18 @@ async def scan(guild, bot=None, *, messages=True):
         categories = [c for c in guild.categories if alias(c.name)==group]
         add(group.upper(),'PASS' if len(categories)==1 else 'MANUAL_REVIEW' if len(categories)>1 else 'REPAIRABLE' if group=='events' else 'CRITICAL',f'{len(categories)} category matches.')
         if len(categories) == 1 and not db.get_setting(f'managed_category:{guild.id}:{group}'):
-            add(f'{group} category mapping', 'REPAIRABLE', 'Adoption available; owner Repair validates public permissions and persists the existing category ID.')
+            add(f'{group} category mapping', 'RECONCILE', 'Existing category needs linking. Run /server reconcile; nothing has changed.')
         for name in names:
             matches=[c for c in guild.text_channels if alias(c.name)==name and c.category and alias(c.category.name) in groups]
             if len(matches)>1: add(f'{name} duplicates','MANUAL_REVIEW','Multiple core channel names; mapped resource retained, others require review.')
             try: channel=core_channel(guild,name)
             except ServerMessageError:
-                add(name,'MANUAL_REVIEW','Multiple name matches; no automatic merge.'); continue
+                add(name,'MANUAL_REVIEW','Existing channel needs review. Open /server reconcile to review matches; nothing has changed.'); continue
             channels[name]=channel
             if not channel:
                 add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
             if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
-                add(f'{name} mapping', 'REPAIRABLE', 'Adoption available: exact public core channel found; owner Repair persists its ID.')
+                add(f'{name} mapping', 'RECONCILE', 'Existing channel needs linking. Run /server reconcile; no duplicate will be created.')
             issue = channel.category is None or alias(channel.category.name)!=group or (name=='guide' and channel.name!='📘・guide')
             if name == 'community-events':
                 issue = issue or channel.name != '🎉・community-events' or db.get_setting(f'managed_channel:{guild.id}:{name}') != str(channel.id)
@@ -124,8 +129,8 @@ async def scan(guild, bot=None, *, messages=True):
         finance_channels = finance.candidates(guild)
         for channel in finance_channels:
             reason = await finance.inspect(guild, channel)
-            add('Legacy partner channels', 'MANUAL_REVIEW' if reason else 'REPAIRABLE',
-                f'finanzberatung — {reason}' if reason else 'finanzberatung — safe retirement available through owner setup Repair.')
+            add('Legacy partner channels', 'MANUAL_REVIEW',
+                f'finanzberatung — {reason}' if reason else 'finanzberatung — separate owner retirement review required; generic repair never deletes.')
         if any(c not in finance_channels for c in legacy_review_channels(guild)):
             add('Legacy partner channels', 'MANUAL_REVIEW', 'Old channel/history retained; inspect before manual removal. Never delete unknown content.')
         if any(db.get_setting(f'{key}:{guild.id}') for key in ('partner_split', 'partner_reorder', 'household_migration')):
@@ -139,8 +144,8 @@ async def scan(guild, bot=None, *, messages=True):
                 reason = await direct_support_retirement_reason(guild, direct) if direct else None
             except discord.HTTPException as exc:
                 reason = f'Cannot inspect direct-support: {type(exc).__name__}'
-            add('Retired direct-support', 'MANUAL_REVIEW' if reason else 'REPAIRABLE',
-                reason or 'Owner setup Repair removes the obsolete managed channel/mappings.')
+            add('Retired direct-support', 'MANUAL_REVIEW',
+                reason or 'Separate owner retirement review required; setup/repair/reconcile never delete channels.')
         from services.channel_adoption_service import order_plans, diagnostics as adoption_diagnostics
         snapshot = await guild.fetch_channels()
         for row in adoption_diagnostics(guild, snapshot):
@@ -374,8 +379,8 @@ async def scan(guild, bot=None, *, messages=True):
 
 
 def summary(findings):
-    counts={s:sum(f.state==s for f in findings) for s in ('PASS','WARN','REPAIRABLE','MANUAL_REVIEW','CRITICAL')}
-    lines=['# GamerHQ Health',f'✅ {counts["PASS"]} passed · 🔧 {counts["REPAIRABLE"]} repairable · ⚠️ {counts["WARN"]+counts["MANUAL_REVIEW"]} warnings/review · ❌ {counts["CRITICAL"]} critical']
+    counts={s:sum(f.state==s for f in findings) for s in ('PASS','WARN','REPAIRABLE','RECONCILE','MANUAL_REVIEW','CRITICAL')}
+    lines=['# GamerHQ Health',f'✅ {counts["PASS"]} passed · 🔧 {counts["REPAIRABLE"]} repairable · 🔗 {counts["RECONCILE"]} need linking · ⚠️ {counts["WARN"]+counts["MANUAL_REVIEW"]} warnings/review · ❌ {counts["CRITICAL"]} critical']
     for f in [f for f in findings if f.state!='PASS'][:9]: lines.append(f'• {f.name}: {f.detail[:120]}')
-    lines.append('Health is read-only. `/server setup` previews repairs; `/server adopt` keeps intentional supported changes.')
+    lines.append(f'{counts["RECONCILE"]} mappings need linking. `/server reconcile` links existing resources; `/server repair` previews fixes; `/server setup` creates missing resources. Health is read-only.')
     return '\n'.join(lines)[:1900]

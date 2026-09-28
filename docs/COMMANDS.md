@@ -43,19 +43,23 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 - `/server pinned-messages` — Owner/admin: edit GamerHQ-managed pinned messages and buttons. Select channel → select message (automatic for one pin) → edit content/buttons → Preview → Save Changes. Multiple pins, persistent customization and confirmed Reset to Default are supported. See [managed message editing](MANAGED_MESSAGES.md).
 - `/server roles` — Admin: sync, review and safely clean up GamerHQ-managed roles.
 - `/server sync-support` — Admin: reconcile existing Support/partner names, parents and order with desired state, and synchronize their pinned messages; overview bullets use managed channel mentions.
-- `/server setup` — Owner only: inspect and repair core channels, guides and private suggestions.
+- `/server setup` — Owner only: preview and confirm creation of genuinely missing resources.
+- `/server reconcile` — Owner/admin: review existing candidates and confirm persisted ID mappings only.
+- `/server repair` — Owner/admin: preview and confirm fixes to linked resources; no creation/deletion.
+
+See [production operations](PRODUCTION_OPERATIONS.md) for the preferred workflow.
 
 `/server setup` is owner-only. Health, cleanup and the pinned-message editor check owner/admin access; other administrative commands retain their Administrator checks. Moderator permissions alone do not grant message-editor access. Destructive Game Area/library actions require their existing previews/confirmations. General member commands never grant server administration.
 
 Persistent components include game/role selectors, LFG cards/invites/proposals, suggestions and support ticket entry/actions. Temporary Voice panels can be reopened after restart. Community Events, Tournaments and Giveaways have separate boards; LFG event commands are active. No XP or development/debug commands are registered.
 
-If a partner mapping/channel is missing, `/server sync-support` omits that destination from the overview and reports incomplete setup. `/server health` identifies missing mappings; owner `/server setup` repairs them. Sync does not create replacement channels.
+If a partner mapping/channel is missing, `/server sync-support` omits that destination from the overview and reports incomplete setup. `/server health` identifies missing mappings; `/server reconcile` links them; owner setup creates only genuinely missing resources. Sync does not create replacement channels.
 
 Electricity uses the persistent `ELECTRICITY_REQUEST` button and existing private ticket actions, not a new slash command. Old energy/course/finance entry actions are retired. The optional external Instant Gaming bot has its own `/config`; it is not a GamerHQ command.
 
-Owner `/server setup` Repair also ensures Free Games immediately below Gaming Deals, a private AFFILIATE STATS category, and hoisted Music Bots/Gaming Bots roles for explicitly configured bot user IDs. `/server health` reports missing optional bot identities and unsafe hierarchy/access without changing state.
+For existing resources, use reconciliation followed by repair; setup creates missing blueprint resources. Existing specialized partner/Instant Gaming sync retains its ordering policy. Health reports optional bot identities and unsafe access without changing state.
 
-`/server health` checks DealGecko/Gaming Bots paid-channel access and comparison configuration. `/server setup` Repair restores scoped feed permissions; it does not configure the external DealGecko dashboard.
+`/server health` checks DealGecko/Gaming Bots paid-channel access and comparison configuration. `/server reconcile`, then `/server repair` (preview and confirm) restores scoped feed permissions; it does not configure the external DealGecko dashboard.
 
 ## Streamer Hub (hidden beta)
 

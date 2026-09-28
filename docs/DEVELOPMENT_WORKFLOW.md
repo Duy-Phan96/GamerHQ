@@ -46,7 +46,7 @@ CI tests Python 3.12/3.14, dependency integrity, repository/history audit, shell
 
 Documentation-only changes: inspect local links/paths, check consistency against code, run diff/status and the repository audit. No full runtime suite is needed when application/test/config files are unchanged; never claim prior test results as a new run. Repository audit is heuristic, not a guarantee that no secret exists.
 
-Do not start bot.py, use production SQLite or execute live repair/deployment to validate a normal code task. Real startup syncs Discord commands/messages and runs reconciliation. [Setup](SETUP.md) explains local configuration; [release checklist](../RELEASE_CHECKLIST.md) covers manual acceptance.
+Do not start bot.py, use production SQLite or execute live repair/deployment to validate a normal code task. Real startup syncs Discord commands and resumes member lifecycles; managed-board maintenance requires explicit commands. [Setup](SETUP.md) explains local configuration; [release checklist](../RELEASE_CHECKLIST.md) covers manual acceptance.
 
 ## Completion
 

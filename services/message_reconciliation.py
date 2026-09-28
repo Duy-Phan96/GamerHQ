@@ -53,9 +53,9 @@ def assert_unreferenced(message_id, key, *, equivalent_keys=()):
                     raise ServerMessageError('MANUAL_REVIEW: message is referenced elsewhere; nothing removed or adopted.')
 
 
-def boards(guild, bot=None):
+def boards(guild, bot=None, *, warnings=None):
     from services.managed_message_service import canonical_boards
-    return canonical_boards(guild, bot)
+    return canonical_boards(guild, bot, warnings=warnings)
 
 
 def fingerprint(message):
@@ -151,14 +151,16 @@ async def audit(guild, user=None, *, bot=None, managed_key=None):
     from services import managed_message_service as managed
     if user is not None:
         managed.require_admin(guild, user)
-    definitions = boards(guild, bot)
+    warnings = []
+    definitions = boards(guild, bot, warnings=warnings)
     if managed_key is not None:
         if managed_key not in definitions:
             raise ServerMessageError('Select a known canonical managed key.')
         definitions = {managed_key: definitions[managed_key]}
-    rows, snapshots = [], {}
+    rows = [dict(key='structure', label=warning, channel_id=None, matches=[], status='MANUAL_REVIEW', reason=warning) for warning in dict.fromkeys(warnings)]
+    snapshots = {}
     for key, (channel, content) in definitions.items():
-        if channel not in guild.text_channels:
+        if channel not in guild.text_channels or content is None:
             continue
         try:
             if channel.id not in snapshots:
@@ -178,7 +180,7 @@ async def preview(guild, user, key, *, bot=None):
     from services import managed_message_service as managed
     managed.require_admin(guild, user)
     channel, content = boards(guild, bot).get(key, (None, None))
-    if channel not in guild.text_channels:
+    if channel not in guild.text_channels or content is None:
         raise ServerMessageError('Select a known canonical message key with an existing target channel.')
     row = await inspect_board(guild, key, channel, content)
     matches = row['matches']
@@ -265,7 +267,7 @@ async def diagnostics(guild, bot=None):
         elif status == 'MANUAL_REVIEW':
             rows.append((key, status, row['reason']))
         elif status == 'UNIQUE' and row['mapping'] != str(row['matches'][0].id):
-            rows.append((key, 'REPAIRABLE', 'Adoption available: missing/stale mapping. Owner Repair reuses the existing message.'))
+            rows.append((key, 'RECONCILE', 'Adoption available: existing message needs linking. Run /server reconcile.'))
         elif status == 'MISSING':
             rows.append((key, 'REPAIRABLE', 'No exact default candidate; review stored/custom/legacy identity before repair.'))
     return rows

@@ -19,7 +19,7 @@ class HealthView(SafeView):
 
     @discord.ui.button(label='Details')
     async def details(self,interaction,button):
-        text='\n'.join(f'{f.state}: {f.name} — {f.detail}' for f in self.findings)
+        text='\n'.join(f'{"WARNING" if f.state == "WARN" else f.state.replace("_", " ")}: {f.name} — {f.detail}' for f in self.findings)
         text+='\n\nRegistered commands\n'+'\n'.join('/'+name+' — '+description for name,description in health_service.command_inventory(interaction.client,self.guild))
         await interaction.response.send_message(file=discord.File(io.BytesIO(text.encode('utf-8')),filename='gamerhq-health.txt'),ephemeral=True)
 
@@ -28,6 +28,11 @@ class HealthView(SafeView):
         await interaction.response.defer(ephemeral=True)
         self.findings=await health_service.scan(self.guild,interaction.client)
         await interaction.edit_original_response(content=health_service.summary(self.findings),view=self)
+
+    @discord.ui.button(label='Review Matches')
+    async def reconcile(self, interaction, button):
+        from cogs.server import open_operation
+        await open_operation(interaction, 'reconcile', replace=True)
 
     @discord.ui.button(label='Close')
     async def close(self,interaction,button):

@@ -98,3 +98,6 @@ node_modules/
 *.zip
 *.tar
 *.tar.gz
+
+# Local process guard; never publish runtime locks.
+*.instance.lock
