@@ -161,6 +161,7 @@ async def on_ready():
 
 
 if __name__ == "__main__":
+    print('[GamerHQ] Run only ONE active process against this live guild. Stop the local bot before starting the VPS bot; SQLite stores and process locks are separate.')
     try:
         validate_startup()
     except ConfigurationError as error:

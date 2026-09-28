@@ -102,3 +102,7 @@ Game selectors and LFG dashboards have specialized message lifecycles; reuse tho
 feature renderers instead of registering every generated message in the pin editor.
 
 Free Games uses `partner_message:<guild>:free_games` with Markdown/buttons/preview/save/reset and custom-content persistence. Its default has no affiliate text. Private purchases/buyer-ranking retain their old internal IG keys but now live in AFFILIATE STATS.
+
+## Lost runtime mappings and duplicates
+
+The shared helper now performs exact-body recovery even without a feature-specific recovery filter. Multiple matching messages require manual review; it no longer picks the first. `/server message-duplicates managed_key:server_future_giveaways_message_id` offers a confirmed pair cleanup for the existing Giveaways board. See [reconciliation and migration](DATABASE_MIGRATION.md) for scan limits, reference checks and whole-DB recovery.

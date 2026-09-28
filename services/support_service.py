@@ -138,6 +138,8 @@ def resource(guild, name, category=False):
             return stored
         if len(matches) > 1:
             raise ServerMessageError('Multiple partner categories found; review manually. No category created.')
+        if matches and matches[0].overwrites_for(guild.default_role).view_channel is False:
+            raise ServerMessageError('MANUAL_REVIEW: unmapped Marketplace category is private.')
         return matches[0] if matches else None
     named = unique(collection, name)
     if not category and name == 'electricity':
@@ -154,6 +156,11 @@ def resource(guild, name, category=False):
         if named and named.id != stored.id:
             raise ServerMessageError('Conflicting partner/support IDs and names; review before repair.')
         return stored
+    if named and not category and name in {'support-gamerhq', *PARTNER_CHANNELS} and (not named.category
+            or alias(named.category.name) not in {'start-here', 'partners-benefits', 'partner-benefits', 'marketplace', 'support-gamerhq'}
+            or named.overwrites_for(guild.default_role).view_channel is False
+            or named.category.overwrites_for(guild.default_role).view_channel is False):
+        raise ServerMessageError('MANUAL_REVIEW: unmapped partner channel has unexpected placement/privacy.')
     return named
 
 

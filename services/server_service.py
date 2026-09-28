@@ -83,9 +83,10 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
     from services import managed_message_service as managed
     spec = managed.specs(channel.guild).get(setting_key)
     if not spec:
-        return await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
-                                          pin=pin, view=view, recover_match=recover_match,
-                                          allowed_mentions=allowed_mentions)
+        async with managed.lock(setting_key):
+            return await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
+                                              pin=pin, view=view, recover_match=recover_match,
+                                              allowed_mentions=allowed_mentions)
     async with managed.lock(setting_key):
         state = managed.load(setting_key)
         defaults = managed.serialize_view(view)
@@ -114,7 +115,15 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
             if current and (not channel.guild.me or current.author.id != channel.guild.me.id or not match(current)):
                 raise ServerMessageError('Managed message fingerprint changed; manual review required. Message preserved.')
         elif state and state['customized']:
-            raise ServerMessageError('Customized message mapping changed; manual review required. Content retained.')
+            if state['channel_id'] != channel.id:
+                raise ServerMessageError('Customized message channel changed; manual review required. Content retained.')
+            if current_id:
+                try:
+                    await channel.fetch_message(int(current_id))
+                except discord.NotFound:
+                    pass
+                else:
+                    raise ServerMessageError('Customized message mapping changed; manual review required. Content retained.')
         message = await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
                                              pin=pin, view=view, recover_match=match,
                                              allowed_mentions=discord.AllowedMentions.none())
@@ -150,7 +159,7 @@ async def _upsert_fixed_message(
     message = None
     message_id = db.get_setting(setting_key)
 
-    if message_id:
+    if message_id and str(message_id).isdigit():
         try:
             message = await channel.fetch_message(int(message_id))
         except discord.NotFound:
@@ -167,18 +176,34 @@ async def _upsert_fixed_message(
         bot_user = channel.guild.me
         if message is not None and (bot_user is None or message.author.id != bot_user.id):
             message = None
+        if message is not None and recover_match is None and message.content != content:
+            raise ServerMessageError('MANUAL_REVIEW: stored message has unknown canonical content; preserved without replacement.')
         if message is not None and recover_match is not None and not recover_match(message):
             # A stale mapping must not overwrite an unrelated bot/admin notice.
             message = None
 
-        if message is None and recover_match is not None and bot_user:
-            candidates = [item async for item in channel.pins(limit=None)]
-            async for item in channel.history(limit=100):
-                if all(item.id != existing.id for existing in candidates):
-                    candidates.append(item)
-            message = next((item for item in candidates if item.author.id == bot_user.id and recover_match(item)), None)
-            if message:
-                db.set_setting(setting_key, message.id)
+        from services.message_reconciliation import candidates, assert_unreferenced
+        matches = await candidates(channel, content=content, recover_match=recover_match,
+                                   require_complete=message is None)
+        if message is not None and all(item.id != message.id for item in matches):
+            matches.append(message)
+        if len(matches) > 1:
+            raise ServerMessageError(
+                f'MANUAL_REVIEW: Duplicate managed messages in channel {channel.id}; '
+                f'key {setting_key}; candidates: {len(matches)}. '
+                'Use /server message-duplicates; no messages changed.')
+        if message is None and matches:
+            message = matches[0]
+            # The existing support migration deliberately retains its old intro
+            # alias until all destination pins are ready. It is the same board.
+            aliases = (f'support_message:{channel.guild.id}',) if setting_key == f'partner_message:{channel.guild.id}:intro' else ()
+            assert_unreferenced(message.id, setting_key, equivalent_keys=aliases)
+            if message.content == content and hasattr(message, 'components'):
+                expected = view.to_components() if view else []
+                if ([part.to_dict() for part in message.components] != expected
+                        or message.embeds or message.attachments):
+                    raise ServerMessageError('MANUAL_REVIEW: matching body has different controls/attachments; preserve it and import its original configuration.')
+            db.set_setting(setting_key, message.id)
 
         if message is None:
             message = await channel.send(content=content, view=view, allowed_mentions=allowed_mentions)

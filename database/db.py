@@ -6,6 +6,8 @@ from collections.abc import Iterable
 
 from config import DB_PATH, SEED_PATH
 
+SCHEMA_VERSION = 1  # 0 is the historical additive-migration schema.
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS curated_deals (
@@ -260,6 +262,9 @@ def connect():
 
 def init_db():
     with connect() as conn:
+        version = conn.execute('PRAGMA user_version').fetchone()[0]
+        if version not in (0, SCHEMA_VERSION):
+            raise ValueError('Unsupported GamerHQ database schema version; use the matching application release.')
         conn.executescript(SCHEMA)
         affiliate_cols = {row['name'] for row in conn.execute('PRAGMA table_info(processed_affiliate_deals)')}
         for name in ('normalized_game', 'source_key'):
@@ -324,6 +329,7 @@ def init_db():
         # Startup/migrations must never rewrite the curated Beta selection.
         # Visibility changes happen only through explicit admin actions such as
         # `/game-admin set-visible`, `/game-admin create`, or permanent delete.
+        conn.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
 
 
 def seed_catalog():

@@ -33,6 +33,9 @@ def command_inventory(bot, guild):
 async def scan(guild, bot=None, *, messages=True):
     findings = []
     def add(name, state, detail): findings.append(Finding(name,state,detail))
+    if not db.DB_PATH.is_file():
+        add('Database', 'CRITICAL', f'Runtime database missing: {db.DB_PATH}. No file created; restore the intended runtime store.')
+        return findings
     try:
         with db.connect() as conn:
             conn.execute('SELECT ticket_type FROM support_tickets LIMIT 1').fetchone()
@@ -43,6 +46,7 @@ async def scan(guild, bot=None, *, messages=True):
             suggestions = [dict(r) for r in conn.execute('SELECT * FROM suggestions WHERE guild_id=?',(guild.id,))]
         games = db.get_all_games()
         add('Database','PASS','Required tables readable.')
+        add('Runtime database', 'PASS', f'Active SQLite path: {db.DB_PATH}. One active GamerHQ process per live guild; local and VPS stores are separate.')
     except sqlite3.Error:
         add('Database','CRITICAL','Storage unavailable or schema incomplete; check runtime logs before repair.')
         return findings
@@ -65,6 +69,8 @@ async def scan(guild, bot=None, *, messages=True):
     for group,names in groups.items():
         categories = [c for c in guild.categories if alias(c.name)==group]
         add(group.upper(),'PASS' if len(categories)==1 else 'MANUAL_REVIEW' if len(categories)>1 else 'REPAIRABLE' if group=='events' else 'CRITICAL',f'{len(categories)} category matches.')
+        if len(categories) == 1 and not db.get_setting(f'managed_category:{guild.id}:{group}'):
+            add(f'{group} category mapping', 'REPAIRABLE', 'Adoption available; owner Repair validates public permissions and persists the existing category ID.')
         for name in names:
             matches=[c for c in guild.text_channels if alias(c.name)==name and c.category and alias(c.category.name) in groups]
             if len(matches)>1: add(f'{name} duplicates','MANUAL_REVIEW','Multiple core channel names; mapped resource retained, others require review.')
@@ -74,6 +80,8 @@ async def scan(guild, bot=None, *, messages=True):
             channels[name]=channel
             if not channel:
                 add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
+            if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
+                add(f'{name} mapping', 'REPAIRABLE', 'Adoption available: exact public core channel found; owner Repair persists its ID.')
             issue = channel.category is None or alias(channel.category.name)!=group or (name=='guide' and channel.name!='📘・guide')
             if name == 'community-events':
                 issue = issue or channel.name != '🎉・community-events' or db.get_setting(f'managed_channel:{guild.id}:{name}') != str(channel.id)
@@ -259,6 +267,11 @@ async def scan(guild, bot=None, *, messages=True):
     except ServerMessageError:
         add('Staff suggestions privacy','MANUAL_REVIEW','Missing, ambiguous or unsafe inbox; review STAFF and run setup.')
     if messages:
+        from services.message_reconciliation import diagnostics as reconciliation_diagnostics
+        try:
+            findings.extend(Finding(*row) for row in await reconciliation_diagnostics(guild))
+        except (ServerMessageError, ValueError, KeyError, TypeError):
+            add('Reconciliation', 'MANUAL_REVIEW', 'Ambiguous or invalid resource mappings; inspect before repair.')
         from services.support_service import support_sections, message_key, section_channel
         from services import managed_message_service as managed
         support_checks = [(section_channel(section), message_key(guild, section), content.split('\n', 1)[0])

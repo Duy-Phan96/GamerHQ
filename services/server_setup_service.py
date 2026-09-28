@@ -247,6 +247,15 @@ async def repair_server(guild: discord.Guild, bot=None, *, owner_id=None) -> tup
 
 async def _repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list[str]]:
     """Focused onboarding update. Unrelated categories/resources remain untouched."""
+    from database import db
+    from services.server_service import ServerMessageError
+    if not db.DB_PATH.is_file():
+        raise ServerMessageError('Runtime database is missing; restore/initialize it before Discord repair.')
+    with db.connect() as conn:
+        if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+            raise ServerMessageError('Runtime database integrity failed; repair stopped before Discord changes.')
+        for table in ('settings', 'managed_roles', 'managed_message_content', 'support_tickets', 'lfg_events'):
+            conn.execute(f'SELECT 1 FROM {table} LIMIT 1')
     from services.bot_group_service import sync as sync_bot_groups
     group_notes = await sync_bot_groups(guild)
     from services.onboarding_service import migrate_onboarding
@@ -264,6 +273,11 @@ async def _repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], lis
         await sync_roles(guild, repair=True)
         changed.append('Updated optional profile/notification roles and separate managed settings panels.')
     except (discord.HTTPException, ServerMessageError, ValueError) as exc:
+        failed.append(str(exc))
+    from cogs.server import refresh_future_community_messages
+    try:
+        await refresh_future_community_messages(guild)
+    except (discord.HTTPException, ServerMessageError) as exc:
         failed.append(str(exc))
     from services.streamer_hub_service import sync as sync_streamer
     try:

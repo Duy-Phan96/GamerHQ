@@ -395,13 +395,19 @@ def _managed_message_matches(message, content, view):
 
 
 async def refresh_choose_games_message(bot, view=None, intro_view=None):
+    from services.managed_message_service import lock
+    async with lock(f'choose_games_refresh:{CHOOSE_GAMES_CHANNEL_ID}'):
+        return await _refresh_choose_games_message(bot, view, intro_view)
+
+
+async def _refresh_choose_games_message(bot, view=None, intro_view=None):
     """
     Maintain pinned, bot-managed Choose Your Games messages.
 
     Existing GamerHQ Bot messages are rediscovered when stored IDs are missing,
     so refreshing the overview edits in place instead of reposting it. Duplicate
-    bot-managed overview/category messages are removed, while messages from users
-    or other bots are never touched.
+    bot-managed overview/category messages require manual review; refresh never
+    deletes candidate duplicates or unknown content.
     """
     if CHOOSE_GAMES_CHANNEL_ID == 0:
         return
@@ -426,9 +432,19 @@ async def refresh_choose_games_message(bot, view=None, intro_view=None):
         # message IDs and prevents /game-admin overview from posting duplicates.
         discovered = []
         if bot_id is not None:
-            async for candidate in channel.history(limit=100, oldest_first=False):
+            count = 0
+            async for candidate in channel.history(limit=1001, oldest_first=False):
+                count += 1
                 if candidate.author.id == bot_id and _looks_like_choose_games_message(candidate.content or ""):
                     discovered.append(candidate)
+            if count > 1000:
+                raise ValueError('MANUAL_REVIEW: selector history scan incomplete; import mappings before refresh.')
+            grouped = {}
+            for item in discovered:
+                identity = 'intro' if item.content.startswith('# 🎮 Choose Your Games') else _choose_games_section_key(item.content)
+                grouped.setdefault(identity, []).append(item)
+            if any(len(items) > 1 for items in grouped.values()):
+                raise ValueError('MANUAL_REVIEW: duplicate selector messages; no messages changed.')
         discovered_by_id = {message.id: message for message in discovered}
 
         intro_id = db.get_setting("choose_games_message_id")
@@ -453,10 +469,6 @@ async def refresh_choose_games_message(bot, view=None, intro_view=None):
         await _pin_managed_message(intro)
         db.set_setting("choose_games_message_id", str(intro.id))
 
-        # Remove only duplicate intros authored by this bot.
-        for duplicate in discovered_intros:
-            if duplicate.id != intro.id:
-                await duplicate.delete()
 
         try:
             stored_raw = json.loads(db.get_setting("choose_games_section_message_ids") or "{}")
@@ -469,7 +481,6 @@ async def refresh_choose_games_message(bot, view=None, intro_view=None):
         stored_ids = stored_raw if isinstance(stored_raw, dict) else {}
 
         discovered_sections = {}
-        duplicate_sections = []
         for message in discovered:
             content = message.content or ""
             if not content.startswith("## "):
@@ -477,8 +488,6 @@ async def refresh_choose_games_message(bot, view=None, intro_view=None):
             key = _choose_games_section_key(content)
             if key not in discovered_sections:
                 discovered_sections[key] = message
-            else:
-                duplicate_sections.append(message)
 
         sections = build_choose_games_sections()
         new_ids = {}
@@ -518,18 +527,7 @@ async def refresh_choose_games_message(bot, view=None, intro_view=None):
             used_ids.add(message.id)
             new_ids[key] = message.id
 
-        # Delete stale/duplicate category messages only when they are clearly
-        # bot-owned Choose Your Games messages. This also cleans up the duplicate
-        # messages created by older overview refreshes.
-        stale_candidates = [m for m in discovered if (m.content or "").startswith("## ")]
-        stale_candidates.extend(duplicate_sections)
-        seen = set()
-        for stale in stale_candidates:
-            if stale.id in seen or stale.id in used_ids:
-                continue
-            seen.add(stale.id)
-            await stale.delete()
-
+        # Stale sections remain for explicit review; refresh never deletes them.
         db.set_setting("choose_games_section_message_ids", json.dumps(new_ids))
         # Remove old pin notices created by previous managed-message versions.
         await cleanup_pin_system_messages(channel, bot_user_id=bot_id, limit=100)
