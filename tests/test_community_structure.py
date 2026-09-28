@@ -121,6 +121,7 @@ class SuggestionTests(unittest.IsolatedAsyncioTestCase):
         self.interaction = SimpleNamespace(guild=self.guild, user=SimpleNamespace(id=20, roles=[self.guild.default_role], guild=self.guild),
             response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock(), send_modal=AsyncMock()), followup=SimpleNamespace(send=AsyncMock()),
             channel_id=self.inbox.id, message=SimpleNamespace(id=777, edit=AsyncMock()))
+        self.guild.members = [self.interaction.user]
 
     async def test_submission_is_private_persisted_and_acknowledged_ephemerally(self):
         await suggestions.submit(self.interaction, ' More events ', ' Hearthstone please ', ' Fun ')

@@ -1,6 +1,7 @@
 """Consistent, private error replies; technical exceptions stay in runtime logs."""
 import logging
 import discord
+from discord import app_commands
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +21,32 @@ class SafeView(discord.ui.View):
 
 
 async def command_error(self, interaction, error):
-    await report_error(interaction,error,type(self).__name__)
+    await application_error(interaction, error)
+
+
+async def application_error(interaction, error):
+    """Expected command failures are private, actionable replies, not tracebacks."""
+    if isinstance(error, app_commands.CommandOnCooldown):
+        text = f'Please try again in {max(1, int(error.retry_after) + 1)} seconds.'
+    elif isinstance(error, app_commands.BotMissingPermissions):
+        text = 'The bot is missing required permissions. Please contact staff.'
+    elif isinstance(error, app_commands.CheckFailure):
+        text = 'You do not have access to this command here.'
+    else:
+        await report_error(interaction, getattr(error, 'original', error), 'command')
+        return
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True)
+    else:
+        await interaction.response.send_message(text, ephemeral=True)
+
+
+async def tree_error(interaction, error):
+    # discord.py invokes the tree handler after local/cog handlers as well.
+    command = interaction.command
+    if command and command._has_any_error_handlers():
+        return
+    await application_error(interaction, error)
 
 
 async def check_admin(interaction, guild=None):

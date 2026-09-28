@@ -468,6 +468,18 @@ class Streamer(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def legacy_staff(self, interaction):
+        """Old channel modals must recheck staff even after the slash menu closes."""
+        import config
+        from services.onboarding_service import is_staff
+        guild = interaction.guild
+        member = guild.get_member(interaction.user.id) if guild and guild.id == config.GUILD_ID else None
+        if member and (member.id == guild.owner_id or any(is_staff(r) for r in member.roles)):
+            return True
+        send = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
+        await send('These legacy tools are available to current staff only.', ephemeral=True)
+        return False
+
     @staticmethod
     def _safe_channel_name(value: str) -> str:
         value = value.strip().lower().replace(' ', '-')
@@ -606,6 +618,8 @@ class Streamer(commands.Cog):
         return await interaction.response.edit_message(content=content, view=view)
 
     async def create_streamer_channel(self, interaction, requested_name, channel_kind):
+        if not await self.legacy_staff(interaction):
+            return
         profile = db.get_streamer_profile(interaction.guild.id, interaction.user.id)
         if not profile:
             return await interaction.response.send_message('Create your Streamer profile first with `/streamer setup`.', ephemeral=True)
@@ -638,6 +652,8 @@ class Streamer(commands.Cog):
         )
 
     async def rename_streamer_channel(self, interaction, channel_id, requested_name):
+        if not await self.legacy_staff(interaction):
+            return
         record = db.get_streamer_channel(interaction.guild.id, interaction.user.id, channel_id)
         channel = interaction.guild.get_channel(channel_id)
         if not record or not isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
@@ -656,6 +672,8 @@ class Streamer(commands.Cog):
         await self.render_channel_manager(interaction, notice=f'✅ Renamed the channel to **{name}**.')
 
     async def delete_streamer_channel(self, interaction, channel_id):
+        if not await self.legacy_staff(interaction):
+            return
         record = db.get_streamer_channel(interaction.guild.id, interaction.user.id, channel_id)
         if not record:
             return await self.render_channel_manager(interaction, notice='⚠️ That channel is no longer managed by your Streamer profile.')

@@ -64,7 +64,7 @@ Run this after every release candidate before declaring it stable.
 ## Community migration
 
 - [ ] `tournaments` exists with Coming Soon copy.
-- [ ] `giveaways` exists with Coming Soon copy.
+- [ ] `giveaways` exists with its current managed copy; preserve unrelated posts and customizations.
 - [ ] Old community memes/clips channels are not duplicated.
 
 
@@ -96,7 +96,7 @@ Run this after every release candidate before declaring it stable.
 ## Affiliate support board
 
 - [ ] Review [partner defaults and migration](docs/PARTNERS.md) and the exact configured URLs.
-- [ ] Owner runs setup twice; verify the overview and five partner channels each have one canonical pin, preserved IDs/history and no duplicate active flows.
+- [ ] Owner runs setup twice; verify the overview and six Marketplace channels each have one canonical pin, preserved IDs/history and no duplicate active flows.
 - [ ] Test member read-only permissions and Staff/bot posting; inspect guide reference.
 - [ ] Confirm optional-use disclosure, Amazon bookmark wording, and absence of unrelated promotions/DMs.
 
@@ -115,23 +115,31 @@ Run this after every release candidate before declaring it stable.
 
 Ticket behavior and current limits are documented in [README](README.md) and [architecture](docs/ARCHITECTURE.md).
 
-## Haushaltscheck, managed editor and external deal posting
+## Marketplace, managed editor and external deal posting
 
-- [ ] START HERE retains need-support and support-gamerhq; overview has five unique mapped mentions and the short affiliate disclosure.
-- [ ] PARTNERS & BENEFITS is ordered Gaming News, Gaming Deals, Amazon, AI Tools, Haushaltscheck. Repair retires managed direct-support safely; the existing support-gamerhq pin explains both ways to support. Verify texts/links against docs/PARTNERS.md.
+- [ ] START HERE retains need-support and support-gamerhq; overview has six unique mapped mentions and the short affiliate disclosure.
+- [ ] MARKETPLACE is ordered Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. Repair retires managed direct-support safely; the existing support-gamerhq pin links to Marketplace. Verify texts/links against docs/PARTNERS.md.
 - [ ] Test migration from separate strom-gas/finanzberatung and older germany-services. Recorded channels are reused when appropriate; default old flows retire only after new pins exist. Unknown/manual/customized content survives and retained channels are reported for MANUAL_REVIEW.
 - [ ] Confirm new course/energy/finance requests cannot be created; existing tickets keep readable history and close/restart behavior.
-- [ ] Haushaltscheck creates HOUSEHOLD_CHECK_REQUEST, private to creator/Staff/bot. User B cannot view user A's request; repeated clicks do not duplicate it.
+- [ ] Electricity creates ELECTRICITY_REQUEST, private to creator/Staff/bot. User B cannot view user A's request; repeated clicks do not duplicate it.
 - [ ] Owner/admin can edit Markdown/buttons, preview, save in place and explicitly reset each supported board. Member/moderator without admin is denied. Repeated repair/restart preserves custom text/buttons and IDs; unrelated pins remain untouched.
 - [ ] Customized legacy overview/deal copy is reviewed explicitly before Reset to Default; normal repair does not silently replace it.
 - [ ] Instant Gaming setup follows docs/INSTANT_GAMING.md. Verified bot ID can post in all four feeds. Purchase notifications/buyer ranking remain disabled externally until private-channel acceptance; then route only to their respective Affiliate Stats channels.
 - [ ] Host build, Compose health, SELinux mounts, daily timer, off-host backup and restore drill pass before stable VPS release.
 
-- [ ] Confirm English defaults/buttons; Haushaltscheck remains German. Amazon offers a manual Ctrl + D tip. Gaming Deals uses the requested automatic-feed text and retains its affiliate button; overview disclosure remains.
+- [ ] Confirm English defaults/buttons; Electricity is English and Germany-only. Amazon offers a manual Ctrl + D tip. Gaming Deals uses the current managed offer text and retains its affiliate button; overview disclosure remains.
 - [ ] Completed migrations remove obsolete finance/energy mappings from active settings while preserving historical IDs/custom content for review. Finance is not a required partner channel; repeated repair creates no replacement finance flow.
 
-- [ ] Verify the updated support explanation, five unique mentions, neutral affiliate labels and retirement of the separate direct-support channel.
+- [ ] Verify the Marketplace overview, six unique mentions, neutral affiliate labels and retirement of the separate direct-support channel.
 - [ ] Verify empty/known managed finanzberatung deletes only through owner Repair; health and sync leave it intact. Check exact MANUAL_REVIEW reasons for manual/custom content, missing identity, dependencies, threads, denied inspection and renamed/protected channels.
 - [ ] Verify stale finance editor/channel/message mappings retire while historical tickets/audit remain.
 
 - [ ] Bot organization: verify gift-emoji Free Games immediately below Deals, DealGecko scoped access, private Affiliate Stats inherited/explicit IG access, both hoisted groups below Staff and no duplicate resources after repeated Repair.
+
+## Security regression acceptance
+
+- [ ] Normal members and moderators cannot open administration or owner-only setup; recheck after revoking access from an open panel.
+- [ ] Stale, shared, privileged, integration-managed or above-bot game roles are rejected. Profile and unrelated memberships remain intact.
+- [ ] Replaying a game/LFG confirmation does not duplicate or reverse the action. Distinct suggestions and lobby creation have a 30-second per-member cooldown; rapid voice generator joins have a 5-second guard.
+- [ ] Missing game categories never create public root-level temporary voice rooms. Private tickets, Affiliate Stats and private LFG remain invisible to unrelated members.
+- [ ] Read [security boundaries and limitations](docs/SECURITY_MODEL.md); keep both Twitch flags disabled for production.

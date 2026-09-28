@@ -13,7 +13,44 @@ _role_sync_locks = {}
 
 def assignable(role, guild):
     return bool(role and not role.is_default() and not role.managed and
-                role.permissions.value == 0 and guild.me and role < guild.me.top_role)
+                role.permissions.value == 0 and guild.me and guild.me.guild_permissions.manage_roles
+                and role < guild.me.top_role)
+
+
+def game_role(guild, game_id, expected_role_id):
+    """Resolve only the reviewed, currently selectable game-access mapping."""
+    game = next((g for g in db.get_selectable_games() if g['id'] == game_id), None)
+    role = guild.get_role(int(game['role_id'])) if game and game.get('role_id') else None
+    if not assignable(role, guild) or role.id != expected_role_id:
+        raise ValueError('This game role changed or is unavailable. Reopen the selector or contact staff.')
+    if (any(int(r['role_id']) == role.id for r in db.get_managed_roles()) or
+            any(g['id'] != game_id and g.get('role_id') == role.id
+                for g in db.get_all_games(active_only=False))):
+        raise ValueError('This game role mapping needs staff review.')
+    return role
+
+
+async def set_game_selection(member, changes):
+    """Serialize explicit choices with profile/preferences; never toggle stale state.
+
+    Each change is (game ID, reviewed role ID, enabled, notification preference).
+    Validate the entire batch after refreshing membership and before any write.
+    """
+    async with _preference_locks.setdefault((member.guild.id, member.id), asyncio.Lock()):
+        member = await member.guild.fetch_member(member.id)
+        selected = []
+        for game_id, expected_id, enabled, notification in changes:
+            role = (preference_role(member.guild, 'lfg', str(game_id)) if notification
+                    else game_role(member.guild, game_id, expected_id))
+            if role.id != expected_id:
+                raise ValueError('A role mapping changed. Reopen the selector.')
+            selected.append((role, enabled))
+        add = [r for r, enabled in selected if enabled and r not in member.roles]
+        remove = [r for r, enabled in selected if not enabled and r in member.roles]
+        if add:
+            await member.add_roles(*add, reason='GamerHQ confirmed game selection')
+        if remove:
+            await member.remove_roles(*remove, reason='GamerHQ confirmed game selection')
 
 
 def preference_role(guild, kind, key):

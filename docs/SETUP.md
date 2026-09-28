@@ -55,7 +55,7 @@ Before core repair, create START HERE and COMMUNITY categories. Add the channels
 
 ## Maintenance utilities
 
-`python -m tools.backup_database <PRIVATE_BACKUP_PATH>` creates a verified SQLite backup from the configured DB. `python -m tools.production_preflight --db-path <EXISTING_PRIVATE_DB>` checks an already configured deployment; it rehearses migrations on a temporary copy. `--allow-new` explicitly permits a missing DB but does not create it. See [production setup](../DEPLOY.md) for external paths, directory permissions and backups. `tools/cleanup_catalog.py` is retained legacy maintenance source, not a setup step; it changes catalog/database data and must not be run casually. Local ignored root patch scripts and old README variants are not installation dependencies.
+`python -m tools.backup_database <PRIVATE_BACKUP_PATH>` creates a verified SQLite backup from the configured DB. `python -m tools.production_preflight --db-path <EXISTING_PRIVATE_DB>` checks an already configured deployment; it rehearses migrations on a temporary copy. `--allow-new` explicitly permits a missing DB but does not create it. See [production setup](../DEPLOY.md) for external paths, directory permissions and backups. Local ignored root patch scripts and old README variants are not installation dependencies.
 
 ## Partner navigation verification
 

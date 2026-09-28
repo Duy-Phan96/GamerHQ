@@ -1,5 +1,15 @@
 # GamerHQ Changelog
 
+## Security hardening
+
+- Revalidate game role mappings, hierarchy, bot permissions and current membership before changes; reject stale confirmations and preserve unrelated roles.
+- Recheck current Staff membership for tickets, temporary voice and legacy streamer edits; recheck suggestion review access after waiting.
+- Serialize full owner repairs, add durable suggestion/LFG submission throttles and prevent duplicate game/LFG confirmations and rapid voice creation.
+- Refuse temporary voice creation when a linked game category is missing or moved; escape untrusted LFG mentions and reject control characters in public URLs.
+- Keep LFG and managed-change maintenance running after transient SQLite inventory failures.
+- Add private application-command error replies and regression coverage; retain existing managed IDs, private access, recovery mechanisms and default-off Twitch beta.
+- Update command/security documentation and stale Marketplace acceptance instructions. Repository clone examples already use the official URL.
+
 ## Interactive read-only boards and community events
 
 - Distinguish static information feeds from interactive read-only boards in the existing permission helpers. Repair selectors, onboarding, suggestions, LFG and support/offer interactions without enabling member chat or threads.

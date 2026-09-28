@@ -281,7 +281,7 @@ class MusicCleanupTests(unittest.IsolatedAsyncioTestCase):
     async def test_setup_confirmation_reports_music_and_cleanup_without_deletion(self):
         from cogs.server import ConfirmServerRepairView
         from services import server_setup_service
-        request = SimpleNamespace(user=self.actor, client=SimpleNamespace(),
+        request = SimpleNamespace(guild=self.guild, user=self.actor, client=SimpleNamespace(),
             response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock()),
             edit_original_response=AsyncMock())
         with patch.object(server_setup_service, 'repair_server', AsyncMock(return_value=([], []))), patch.object(server_setup_service, 'analyze_server', return_value={}), patch.object(server_setup_service, 'render_summary', return_value='Inventory'):

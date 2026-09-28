@@ -1,4 +1,6 @@
 import logging
+import asyncio
+import time
 import discord
 from discord.ext import commands
 
@@ -16,6 +18,8 @@ LEGACY_GLOBAL_VOICES = {"🎮 Gaming 1", "🎮 Gaming 2"}
 class VoiceGenerator(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._creation_locks = {}
+        self._last_creation = {}
 
     @staticmethod
     def _global_category(guild: discord.Guild):
@@ -109,6 +113,26 @@ class VoiceGenerator(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
+        channel = after.channel
+        generator = channel and (
+            (channel.name.casefold() == GLOBAL_CREATE_VOICE.casefold() and channel.category
+             and channel.category.name.casefold() == GLOBAL_VOICE_CATEGORY.casefold())
+            or db.get_streamer_profile_by_create_voice(member.guild.id, channel.id)
+            or any(g['create_voice_channel_id'] == channel.id for g in db.get_area_games()))
+        if not member.bot and generator and before.channel != channel:
+            key = (member.guild.id, member.id)
+            async with self._creation_locks.setdefault(key, asyncio.Lock()):
+                # Gateway duplicates and rapid reconnects must not create many rooms.
+                if time.monotonic() - self._last_creation.get(key, float('-inf')) < 5:
+                    if before.channel and db.get_temp_voice(before.channel.id):
+                        await empty_cleanup(before.channel)
+                    return
+                self._last_creation[key] = time.monotonic()
+                await self._handle_voice_state_update(member, before, after)
+        else:
+            await self._handle_voice_state_update(member, before, after)
+
+    async def _handle_voice_state_update(self, member, before, after):
         if before.channel == after.channel:
             return
         if member.bot:
@@ -149,6 +173,10 @@ class VoiceGenerator(commands.Cog):
                             return
                         category = member.guild.get_channel(game["category_id"])
                         role = member.guild.get_role(game["role_id"])
+                        if (not isinstance(category, discord.CategoryChannel) or role is None
+                                or after.channel.category_id != category.id):
+                            logging.getLogger(__name__).warning('Temporary voice skipped: stale game area mapping game=%s', game['id'])
+                            return
                         bot_member = member.guild.me
 
                         overwrites = dict(category.overwrites) if isinstance(category, discord.CategoryChannel) else {}

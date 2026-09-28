@@ -14,7 +14,7 @@ def validate_url(url):
         hostname = parsed.hostname.encode('idna').decode() if parsed.hostname else ''
         valid_host = bool(re.fullmatch(r'(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?', hostname))
         valid = (len(url) <= 512 and parsed.scheme == 'https' and parsed.hostname and '.' in parsed.hostname
-                 and valid_host and not parsed.username and not parsed.password and not re.search(r'[\s\\<>]', url))
+                 and valid_host and not parsed.username and not parsed.password and not re.search(r'[\s\x00-\x1f\x7f\\<>]', url))
         parsed.port
         sensitive = re.compile(r'token|secret|password|credential|authorization|api.?key|signature', re.I)
         if not valid or any(sensitive.search(key) for key, _ in parse_qsl(parsed.query) + parse_qsl(parsed.fragment)):

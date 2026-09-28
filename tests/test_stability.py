@@ -24,7 +24,8 @@ GAME = {"id": 1, "name": "Test Game", "emoji": "🎮", "role_id": 10,
 def interaction():
     member = MagicMock(spec=discord.Member)
     member.id = 123
-    return SimpleNamespace(user=member, guild=MagicMock(), channel_id=456,
+    member.guild = MagicMock()
+    return SimpleNamespace(user=member, guild=member.guild, channel_id=456,
                            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock(),
                                                     edit_message=AsyncMock(), send_modal=AsyncMock()),
                            edit_original_response=AsyncMock())

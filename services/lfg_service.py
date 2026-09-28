@@ -90,7 +90,7 @@ def render_event(guild: discord.Guild, event: dict) -> str:
     host_label = host.mention if host else f"<@{event['host_id']}>"
 
     lines = [
-        f"# 🎮 {event['title']}",
+        f"# 🎮 {discord.utils.escape_mentions(event['title'])}",
         "",
         game_label,
         f"📅 {discord_timestamp(int(event['start_at']), 'F')} ({discord_timestamp(int(event['start_at']), 'R')})",
@@ -111,7 +111,7 @@ def render_event(guild: discord.Guild, event: dict) -> str:
     label = ('FULL' if len(joined) >= int(event['max_players']) else 'OPEN') if status == 'scheduled' else status.upper()
     lines.append(f"**Status: {label}**")
     if event.get('note'):
-        lines.append(discord.utils.escape_markdown(event['note'])[:500])
+        lines.append(discord.utils.escape_mentions(discord.utils.escape_markdown(event['note']))[:500])
     if event.get('voice_channel_id'):
         lines.append(f"🎧 Voice: <#{event['voice_channel_id']}>")
     if status == 'scheduled':
