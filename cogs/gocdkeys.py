@@ -74,33 +74,35 @@ class GoCdKeysWatcher(commands.Cog):
 
     @deals.command(name='import-gocdkeys', description='Owner/admin: paste and preview up to ten GoCDKeys partner links.')
     @app_commands.guild_only()
-    async def import_gocdkeys(self, interaction: discord.Interaction):
+    @app_commands.choices(promotion_type=[app_commands.Choice(name=n, value=n) for n in ('AUTO', 'DEAL', 'GIVEAWAY')])
+    async def import_gocdkeys(self, interaction: discord.Interaction, promotion_type: str = 'AUTO'):
         from cogs.deal_import import ImportModal
-        from services.curated_deal_service import target
+        from services.curated_deal_service import authorize
         from services.server_service import ServerMessageError
         try:
-            target(interaction.guild, interaction.user)
+            authorize(interaction.guild, interaction.user)
         except ServerMessageError as exc:
             return await interaction.response.send_message(str(exc), ephemeral=True)
-        await interaction.response.send_modal(ImportModal(interaction.guild.id, interaction.user.id))
+        await interaction.response.send_modal(ImportModal(interaction.guild.id, interaction.user.id, promotion_type))
 
     @deals.command(name='create', description='Owner/admin: preview and post a curated partner deal.')
     @app_commands.guild_only()
     @app_commands.choices(partner=[app_commands.Choice(name=label, value=value) for value, label in
         [('amazon', 'Amazon'), ('instant-gaming', 'Instant Gaming'), ('gocdkeys', 'GoCDKeys'), ('other', 'Other')]])
-    async def create(self, interaction: discord.Interaction, partner: str, image_url: str = ''):
+    @app_commands.choices(promotion_type=[app_commands.Choice(name=n, value=n) for n in ('DEAL', 'GIVEAWAY')])
+    async def create(self, interaction: discord.Interaction, partner: str, image_url: str = '', promotion_type: str = 'DEAL'):
         from cogs.deal_editor import DealModal
         from services import curated_deal_service as curated
         from services.server_service import ServerMessageError
         try:
-            curated.target(interaction.guild, interaction.user)
+            curated.target(interaction.guild, interaction.user, promotion_type)
             if partner not in curated.PARTNERS:
                 raise ServerMessageError('Choose a supported partner.')
             if image_url:
                 image_url = curated.public_url(image_url)
         except ServerMessageError as exc:
             return await interaction.response.send_message(str(exc), ephemeral=True)
-        await interaction.response.send_modal(DealModal(interaction.guild.id, interaction.user.id, partner, image_url))
+        await interaction.response.send_modal(DealModal(interaction.guild.id, interaction.user.id, partner, image_url, promotion_type=promotion_type))
 
     @deals.command(name='backfill', description='Owner/admin: preview missing comparisons on recent gaming deals.')
     @app_commands.guild_only()

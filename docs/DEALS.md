@@ -1,4 +1,4 @@
-# Curated Gaming Deals
+# Curated Partner Promotions
 
 `/deals create` extends the existing deal group. Only the configured server's owner
 or a member with Administrator may create/confirm. Moderator, helper, Streamer
@@ -44,8 +44,8 @@ status and delivered message ID. Price metadata is stored as decimal strings;
 discount is derived rather than duplicated. An atomic claim is written before send.
 Double clicks, concurrent confirmation and replay of the same draft cannot send
 twice, including after restart. A send timeout remains uncertain and is not retried
-automatically: inspect Discord before making another draft. Different new drafts
-are separate intentional posts; this is not content-based deduplication.
+automatically: inspect Discord before making another draft. For DEAL, different new drafts are separate intentional posts. GIVEAWAY uses
+a durable guild/normalized-URL claim shared with imports, even across new drafts.
 
 `/deals manage`, post-publication edit/removal/expiry and analytics are deferred.
 No active/expired state is advertised yet. Stored message IDs provide a future
@@ -65,8 +65,33 @@ SQLite table and at-most-once send helper with this editor. Its deterministic UR
 claim additionally prevents duplicate imports across sessions/restarts. Import
 metadata identifies `workflow=import-gocdkeys`; Amazon/Instant Gaming curated
 cards and official bot posts are unaffected. Prior GoCDKeys curated records are
-also checked before importing. `/deals create` remains an intentional per-draft
+also checked before importing. For DEAL, `/deals create` remains an intentional per-draft
 posting flow: it does not become a global URL deduplicator, so simultaneously
 creating a separate curated draft for the same product is outside import dedupe.
 See [manual import](GOCDKEYS.md#manual-batch-import) for exact URL/referral rules,
 preview/title editing and Codex-assisted paste preparation.
+
+## Giveaways (shared editor)
+
+Use `/deals create partner:gocdkeys promotion_type:GIVEAWAY` (or Amazon,
+Instant Gaming, Other). The existing `/deals` entry point is retained for compatibility;
+`promotion_type` selects DEAL (default) or GIVEAWAY. This is one shared promotion
+editor/delivery system, not an automatic giveaway engine.
+
+The giveaway modal asks for title, optional prize, optional end date (include the
+timezone), verified HTTPS URL and optional note. An image remains an optional command
+argument. Empty prize/end date are omitted. No values are scraped or invented.
+Review the private preview → **Post Giveaway**, **Edit**, or **Cancel**.
+Confirmed giveaways contain a short announcement, **🎁 Enter Giveaway** link and
+neutral referral disclosure; no automatic entry, winner selection or expiry.
+
+Targets are fixed persisted IDs: DEAL → gaming-deals; GIVEAWAY → giveaways.
+Missing mappings/permissions stop publication; neither flow creates or modifies
+channels, pins, existing posts, permissions or notification roles. Existing giveaway
+board functionality remains intact. Giveaways require only their own target channel.
+GoCDKeys giveaway links retain all supplied referral/creator/unknown parameters
+exactly after outer whitespace trimming. Domain/HTTPS/credential safety checks still
+apply; unlike product links, giveaway referrals are not rewritten or forced to match
+the configured product referral. The owner must verify the supplied legitimate link.
+Giveaway URL claims survive restart and block duplicate/uncertain sends across
+manual creation and imports. Do not clear records to force another attempt.

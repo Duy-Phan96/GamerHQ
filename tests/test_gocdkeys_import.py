@@ -147,7 +147,7 @@ class ImportTests(unittest.IsolatedAsyncioTestCase):
         modal.links._value = URL + '\n' + WOLVERINE
         await modal.on_submit(interaction)
         view = interaction.response.send_message.call_args.kwargs['view']
-        self.assertIn('New deals: 2', preview_embed(view.plan, 0).description)
+        self.assertIn('New promotions: 2', preview_embed(view.plan, 0).description)
         self.assertEqual(self.rows(), [])
         await view.edit.callback(interaction)
         edit = interaction.response.send_modal.call_args.args[0]

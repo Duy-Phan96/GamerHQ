@@ -113,6 +113,32 @@ def manual_partner_url(url, *, require_referral=False):
     return url
 
 
+def promotion_link(url, selected_type='AUTO'):
+    """Classify known paths; explicit selection required for unfamiliar paths."""
+    from services.managed_message_service import validate_url
+    from services.server_service import ServerMessageError
+    url = url.strip()
+    validate_url(url)
+    parts = urlsplit(url)
+    if parts.hostname.lower() not in {'gocdkeys.com', 'www.gocdkeys.com', 'gocdkeys.de', 'www.gocdkeys.de'} or parts.port not in (None, 443):
+        raise ServerMessageError('Use an HTTPS GoCDKeys link.')
+    kind = ('GIVEAWAY' if re.fullmatch(r'/(?:gewinnspiele|giveaways)/[^/]+/?', parts.path)
+            else 'DEAL' if re.fullmatch(r'/(?:buy|kaufen)-[a-z0-9-]+/?', parts.path) else None)
+    if selected_type not in ('AUTO', 'DEAL', 'GIVEAWAY') or (kind and selected_type not in ('AUTO', kind)):
+        raise ServerMessageError('Selected type conflicts with the URL structure.')
+    kind = kind or (selected_type if selected_type != 'AUTO' else None)
+    if not kind:
+        raise ServerMessageError('Unknown URL type. Import separately with an explicit DEAL or GIVEAWAY selection.')
+    if kind == 'DEAL' and re.fullmatch(r'/(?:buy|kaufen)-[a-z0-9-]+/?', parts.path):
+        validated, identity, title = import_link(url)
+        return validated, identity, title, kind
+    # Giveaways preserve the supplied URL exactly, including creator/referral parameters.
+    # Recognize only an exact, unambiguous gift-card slug; other titles need editing.
+    match = re.fullmatch(r'/gewinnspiele/steam-guthabenkarte-([1-9][0-9]{0,3})-euro-kostenlos/?', parts.path)
+    title = f'Steam-Guthabenkarte über {match[1]} €' if match else None
+    return url, import_identity(url), title, kind
+
+
 def import_link(url):
     """Return supplied partner URL, conservative identity and optional slug title."""
     from services.server_service import ServerMessageError
