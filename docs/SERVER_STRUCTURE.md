@@ -9,7 +9,7 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 - START HERE: public onboarding, selectors and LFG/guide/support entries.
 - COMMUNITY: general conversation, newbies, introductions, suggestions and bot commands.
 - MARKETPLACE: public read-only boards in managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. The support-gamerhq overview links to useful Marketplace offers; the former direct-support channel is retained for separate owner review.
-- STAFF: private staff conversation, suggestion inbox, ticket/bot/mod logs and commands.
+- STAFF: private staff conversation, suggestion inbox, ticket/bot/mod logs, `📜・server-log` operational notices and commands. Server Log uses the existing managed-channel key; only reviewed setup creates it.
 - AFFILIATE STATS: private purchases/buyer-ranking using existing IG channel IDs and explicit Instant Gaming access.
 - SUPPORT TICKETS: private ticket channels created on demand.
 - EVENTS: 🎉・community-events → 🏆・tournaments → 🎁・giveaways. Reconciliation links existing Community Events; setup creates it only if genuinely missing; repair fixes known permissions/pins. Existing specialized layout sync retains its ordering policy. Full tournament/giveaway engines are not implemented.
@@ -21,7 +21,8 @@ Text channels commonly use emoji + ・ + kebab-case; category labels commonly us
 
 | Resource | Identity / owner |
 | --- | --- |
-| Guild, external IG bot, legacy selector/intro channels | config.py and environment; see .env.example |
+| Guild and legacy selector/intro channels | config.py and environment bootstrap; see .env.example |
+| External bot identities | bot_member:<guild>:<name> settings via Setup/Manage; legacy/environment fallback |
 | Core channels/categories | settings keys managed_channel:<guild>:<name> and managed_category:<guild>:<name>, plus existing onboarding/legacy keys |
 | Base profile roles | services/role_service.py; managed_roles stores kind/key/group and role ID |
 | Game roles and optional areas | games columns; [Game system](GAME_SYSTEM.md) |

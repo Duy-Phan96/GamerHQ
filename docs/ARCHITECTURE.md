@@ -8,7 +8,7 @@ feature references needed for the task.
 
 | Area | Responsibility / extension point |
 | --- | --- |
-| bot.py | Bot construction, intents, extension loading, guild command sync and on_ready reconciliation |
+| bot.py | Bot construction, intents, extension loading, guild command sync and guarded startup notices |
 | config.py | Environment/.env loading, typed IDs, startup validation and DB/seed paths |
 | cogs/ | Slash commands, buttons, modals, event listeners, scheduling and authorization at interaction boundaries |
 | services/ | Feature rules, permissions, identity resolution, rendering and Discord/DB coordination |
@@ -35,9 +35,11 @@ introducing abstractions.
    server/roles/suggestions/tickets/LFG/streamer extensions and persistent views.
    It synchronizes guild commands and clears legacy global commands.
 4. In a container, a local heartbeat reports event-loop/gateway readiness.
-5. on_ready cleans empty tracked voice and refreshes known guides/selectors/
-   managed boards. It can run again after reconnect. Startup is not read-only
-   and must never be treated as a smoke test against production.
+5. on_ready cleans empty tracked voice and reports legacy state. It never runs
+   structural repair or refreshes canonical boards. Private operational notices
+   run once per guild/process; deployment/warning claims persist in SQLite to
+   prevent duplicate posts across restarts. Startup is not read-only and must
+   never be treated as offline validation against production.
 
 The supported deployment is one bot instance per guild/database. Per-key/event
 asyncio locks are process-local; they are not a distributed coordination system.
@@ -47,6 +49,9 @@ asyncio locks are process-local; they are not a distributed coordination system.
 | Feature | Start reading | Contract / tests |
 | --- | --- | --- |
 | Server structure | server_setup_service → onboarding_service → community_structure_service | [Structure](SERVER_STRUCTURE.md); test_onboarding, test_community_structure |
+| Admin entry points | cogs/server_management.py + existing cogs/server.py previews and server_operations | [Production operations](PRODUCTION_OPERATIONS.md); test_production_management, test_server_operations |
+| Operational log | server_log_service + release_info.py + stored STAFF channel | No startup resource creation; durable pre-send claims; test_production_management |
+| DB recovery | tools/compare_databases.py + tools/import_database.py + existing backup/migrations | Read-only comparison, conflict confirmation, backup and stopped-bot gate; test_production_management, test_reconciliation |
 | Read-only diagnostics | health_service.scan; cogs/health.py | test_acceptance_health; health must not repair |
 | Fixed pins/editor | server_service.upsert_fixed_message + managed_message_service; cogs/managed_messages.py | [Managed messages](MANAGED_MESSAGES.md); test_managed_messages |
 | Games/areas | game_service, area_management_service, game_area_safety/cleanup; cogs/games.py and area.py | [Games](GAME_SYSTEM.md); test_voice_area, test_music_cleanup |

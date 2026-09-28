@@ -7,7 +7,9 @@ Giveaways had no recovery predicate and a missing message ID caused another post
 
 ## What must migrate
 
-Normally transfer the **whole verified SQLite snapshot**, not selected ID rows.
+When the source has been reviewed as authoritative, transfer the **whole verified
+SQLite snapshot**, not isolated ID rows. Compare first; a richer catalog does not
+justify discarding newer production activity.
 The schema audit below describes tables only; no live database content was read.
 
 | Tables | Persistent state |
@@ -36,7 +38,12 @@ private ticket content, sessions, OAuth credentials or delivery claims.
 
 ## Safe reconciliation
 
-Run `/server health`, then `/server reconcile`. Existing mappings are preferred; a single confident candidate can be linked on confirmation, while multiple candidates open an owner/admin choice. No Discord resource is edited or deleted by reconciliation. Rescan after linking channels, then review `/server message-duplicates` and `/server repair`. Use owner `/server setup` only for genuinely missing resources. See the [canonical operations guide](PRODUCTION_OPERATIONS.md).
+Use `/server manage` → Server Structure → Review Structure. Existing mappings are
+preferred; a single confident candidate can be linked on confirmation, while
+multiple candidates open an owner/admin choice. No Discord resource is edited or
+deleted by reconciliation. Rescan after linking channels, review duplicate messages,
+then preview common fixes. Owners can separately preview missing resources. Advanced
+diagnostics remain under `/server dev`. See the [canonical operations guide](PRODUCTION_OPERATIONS.md).
 
 Optional game areas and their roles retain the existing `/game-admin recover-existing` workflow; arbitrary resources cannot be inferred from names alone.
 
@@ -126,7 +133,8 @@ prints this warning; there is no distributed instance lock.
    window: disable any automatic/manual restarts until finished.
 2. Back up both installations using SQLite backup, never a live plain file copy.
 3. Transfer the local snapshot to a *new* file in the VPS backups directory.
-4. Rehearse compatibility/migrations, then explicitly import only if the chosen
+4. Compare source and production snapshots; review every production-only/changed
+   row count and schema difference. Rehearse compatibility/migrations, then explicitly import only if the chosen
    source is authoritative. Import creates a new verified backup of the current
    VPS DB before atomic replacement. Never copy over the live target directly.
 5. Start one VPS bot, inspect health, then preview setup. Review duplicates
@@ -137,7 +145,8 @@ Windows, from the checkout with the local bot stopped:
 ```powershell
 $transfer = Join-Path $env:USERPROFILE ('GamerHQ-Transfer-' + (Get-Date -Format yyyyMMdd-HHmmss))
 New-Item -ItemType Directory -Path $transfer
-.\.venv\Scripts\python.exe -m tools.backup_database "$transfer\local-runtime.db"
+$oldDatabase = Read-Host 'Full path to the previous Windows GamerHQ database'
+.\.venv\Scripts\python.exe -m tools.backup_database "$transfer\local-runtime.db" --source "$oldDatabase"
 $destination = Read-Host 'SSH destination (user@host) for the GamerHQ VPS'
 scp "$transfer\local-runtime.db" "${destination}:/opt/gamerhq/backups/local-runtime.db"
 ```
@@ -151,9 +160,12 @@ VPS, using the reviewed image containing the import tool, with no running bot:
 ```bash
 cd /opt/gamerhq/app
 docker compose stop gamerhq
-docker compose build gamerhq
+docker compose build --build-arg VCS_REF="$(git rev-parse HEAD)" gamerhq
+docker compose run --rm --no-deps --entrypoint python gamerhq -m tools.backup_database
+docker compose run --rm --no-deps --entrypoint python gamerhq -m tools.compare_databases \
+  /app/backups/local-runtime.db /app/runtime/data/gamerhq.db
 docker compose run --rm --no-deps --entrypoint python gamerhq -m tools.import_database \
-  --source /app/backups/local-runtime.db --target /app/runtime/data/gamerhq.db
+  --source /app/backups/local-runtime.db --target /app/runtime/data/gamerhq.db --dry-run
 ```
 
 The default mode only migrates a temporary copy. Historical databases have
@@ -162,13 +174,27 @@ missing core columns/tables, corrupt files and incomplete migrations are rejecte
 Normal additive application migrations run on the copy; all runtime tables and
 unknown extra tables survive. Catalog seeding is not run by the import.
 
+Stop here unless whole-store replacement has been explicitly approved. If the
+comparison finds production-only/changed state or a schema difference, retain
+production and review scoped recovery on copies by default. A whole-store import
+discards those differences; it is not a merge. Only after accepting that specific
+loss, copy the exact review token from the current comparison. Changed snapshots
+invalidate it. The importer also holds the cooperative local instance lock;
+shutdown on other hosts remains the owner's responsibility.
+
 After reviewing which store to keep, explicitly replace the production DB:
 
 ```bash
 backup="/app/backups/pre-import-$(date -u +%Y%m%dT%H%M%SZ).db"
+read -r -p 'Exact reviewed comparison token: ' review_token
 docker compose run --rm --no-deps --entrypoint python gamerhq -m tools.import_database \
   --source /app/backups/local-runtime.db --target /app/runtime/data/gamerhq.db \
-  --backup "$backup" --bots-stopped --apply
+  --backup "$backup" --bots-stopped --apply --confirm-comparison "$review_token"
+```
+
+Continue only if import completed successfully and the backup was verified:
+
+```bash
 docker compose up -d --wait gamerhq
 docker compose ps
 ```
@@ -183,10 +209,12 @@ For a target that does not yet exist, follow the first-install procedure in
 Discord after startup:
 
 ```text
-/server health
-/server setup
+/server manage
 ```
 
-Review the preview before Repair. For duplicates use the separate command above.
+Review Structure before Fix Common Issues; use advanced diagnostics when required.
+Verify Select Games, saved roles and private channels before allowing normal use.
+For duplicates use the separate confirmed review above. Production becomes the sole
+live source; retain the former local DB only as a private archive or sanitized fixture.
 Keep the pre-import snapshot for recovery; see [rollback](../ROLLBACK.md). Do not
 roll back over newer production activity without explicitly accepting its loss.

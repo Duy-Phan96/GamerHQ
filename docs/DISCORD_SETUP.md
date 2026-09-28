@@ -20,7 +20,11 @@ Owner Repair preserves News, Deals, Amazon, AI Tools and Germany-only Electricit
 
 The Free Games adjacency rule takes precedence over older adopted absolute positions. If health reports an adopted-position conflict after repair, review the resulting order and adopt the intended positions again; unrelated channels retain their relative order.
 
-Instant Gaming retains its verified environment/stored user-ID mapping. DealGecko, Jockie Music and Pancake have central public defaults in `config.THIRD_PARTY_BOTS`; no environment changes are needed when these IDs are unset or `0`. Positive environment values explicitly override the defaults. Configuration keys:
+Select installed bots through `/server manage` → Integrations. Confirmed guild
+assignments in SQLite take precedence over environment/bootstrap values; the
+legacy Instant Gaming identity remains a final fallback. DealGecko, Jockie Music and Pancake retain public
+defaults in `config.THIRD_PARTY_BOTS`. Without a stored assignment, a positive
+environment value overrides the default. Bootstrap configuration keys:
 
 - `INSTANT_GAMING_BOT_ID`
 - `DEALGECKO_BOT_ID`

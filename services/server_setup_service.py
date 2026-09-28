@@ -67,6 +67,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("💡・staff-suggestions"),
             ChannelSpec("🎫・ticket-logs"),
             ChannelSpec("🚨・mod-log"),
+            ChannelSpec("📜・server-log"),
             ChannelSpec("🤖・bot-log"),
             ChannelSpec("🛠️・mod-commands"),
         ),

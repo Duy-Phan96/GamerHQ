@@ -34,7 +34,7 @@ main() {
     git merge-base --is-ancestor HEAD origin/main || { echo 'Local main is ahead or diverged; review manually.' >&2; return 1; }
     git pull --ff-only origin main
     docker compose config --quiet 2>/dev/null || { echo 'Compose configuration invalid; inspect privately with production_doctor.' >&2; return 1; }
-    docker compose build
+    docker compose build --build-arg VCS_REF="$(git rev-parse HEAD)"
     if (( first )) && [[ -f ../data/gamerhq.db ]]; then
         docker compose run --rm --no-deps gamerhq python -m tools.backup_database
     fi
@@ -46,7 +46,7 @@ main() {
     docker compose ps
     printf 'Running release: '
     git rev-parse --short HEAD
-    echo 'Next: inspect private logs, Discord /server health and the release checklist.'
+    echo 'Check private server-log for startup status. If attention is needed, open /server manage. Technical checks: /server dev.'
 }
 
 main "$@"

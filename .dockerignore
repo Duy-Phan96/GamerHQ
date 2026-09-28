@@ -7,6 +7,7 @@
 !config.py
 !release_info.py
 !VERSION
+!CHANGELOG.md
 !cogs/
 !cogs/**/*.py
 !services/

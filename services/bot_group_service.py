@@ -25,7 +25,9 @@ def member_id(guild, name):
     import config
     configured = getattr(config, CONFIG[name])
     legacy = db.get_setting(f'instant_gaming_bot:{guild.id}') if name == 'instant-gaming' else None
-    raw = str(configured or db.get_setting(f'bot_member:{guild.id}:{name}') or legacy or '')
+    # The old IG key also records the previously granted bot for revocation; it
+    # must not override a later environment rotation when no UI assignment exists.
+    raw = str(db.get_setting(f'bot_member:{guild.id}:{name}') or configured or legacy or '')
     return int(raw) if raw.isdigit() and int(raw) else None
 
 
@@ -36,6 +38,13 @@ def member(guild, name):
     if result is None and cached and cached[0] is guild and cached[1] > time.monotonic():
         result = cached[2]
     return result if result and result.bot and result != guild.me else None
+
+
+def remember_member(guild, result):
+    """Retain a verified exact-member lookup until the gateway cache catches up."""
+    if len(_members) >= 256:
+        _members.clear()
+    _members[(guild.id, result.id)] = (guild, time.monotonic() + 60, result)
 
 
 async def fetch_member(guild, name):

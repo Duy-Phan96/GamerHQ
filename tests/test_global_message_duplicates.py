@@ -245,7 +245,8 @@ class GlobalDuplicateTests(unittest.IsolatedAsyncioTestCase):
         draft = await reconcile.preview(self.guild, owner, key)
         text = server.duplicate_review_text(draft)
         self.assertIn('Created:', text)
-        self.assertIn('Current DB mapping:', text)
+        self.assertIn('Currently managed:', text)
+        self.assertNotIn(f'`{key}`', text)
         self.assertIn('Candidate B', text)
         review = server.DuplicateMessageView(self.guild, draft, bot=self.bot)
         interaction = SimpleNamespace(user=owner, guild=self.guild,

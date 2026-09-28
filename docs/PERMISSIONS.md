@@ -11,6 +11,7 @@ There is no single permission engine. Reuse the helper belonging to the feature;
 | Staff identification | onboarding_service.is_staff recognizes non-default, non-managed roles with administrator/manage_guild/manage_messages/moderate_members |
 | Tickets | ticket_service.private and check_private: creator + authorized Staff + GamerHQ; closed tickets preserve history and lock creator posting |
 | Suggestions | cogs/suggestions.py private_overwrites and existing STAFF aliases/inbox mapping |
+| Server Log | server_log_service: stored STAFF channel only; everyone/nonstaff denied view, Staff read/history, GamerHQ post/embed. No startup creation; unsafe visibility blocks notices. Administrators bypass Discord denies. |
 | Game areas | game_service creates category/children gated by the game's role; @everyone denied visibility |
 | LFG private events | cogs/lfg.py participant-specific text/voice access, reconciled after membership changes |
 | Temporary voice | temp_voice_service resolves DB ownership, rechecks owner/Staff, preserves/restores connect overrides on lock/unlock |
@@ -23,7 +24,7 @@ An @everyone deny alone is insufficient if another role/member explicitly grants
 
 Build private overwrites at creation time. Move channels without blindly syncing permissions from the destination; apply necessary privacy changes together with relocation. Preserve unrelated bits where the feature allows them. Read-only includes thread posting/creation where implemented, not just send_messages.
 
-For Instant Gaming, environment INSTANT_GAMING_BOT_ID must resolve to an actual external bot member. Grant only that identity the five posting/read/embed/attachment rights; do not grant everyone a bot permission or invent a role by name. Other integrations have separate boundaries.
+For Instant Gaming, the stored bot assignment (or INSTANT_GAMING_BOT_ID bootstrap fallback) must resolve to an actual external bot member. Grant only that identity the five posting/read/embed/attachment rights; do not grant everyone a bot permission or invent a role by name. Other integrations have separate boundaries.
 
 Host/creator status is not blanket administration. /server setup is owner-only; administrative commands and persistent UI recheck current authorization. Temporary voice owners use GamerHQ controls rather than receiving general channel-management power.
 

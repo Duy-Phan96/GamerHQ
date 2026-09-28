@@ -2,13 +2,54 @@
 
 This is the canonical day-to-day operating guide. [DEPLOY](../DEPLOY.md) covers first installation and AlmaLinux prerequisites; [database migration](DATABASE_MIGRATION.md) covers explicit snapshot import. The VPS SQLite database is authoritative for production. Local databases are development data, not replacement production state.
 
-## Choose the right Discord operation
+## Server setup
+
+`/server setup` is an owner-only first-time wizard: Core Server → Integrations →
+Roles & Permissions → Features → Review → Finish. Each section opens the existing
+manager; return with `/server setup`. Finish checks persisted core resources and
+records completion only when their cached structure/permissions are ready.
+Completed servers show **Open Server Management** and **Run Setup Again — Advanced**.
+An older installation without the completion marker needs one reviewed Finish;
+the wizard never infers ownership or creates resources merely by opening it.
+
+## Server manage
+
+Use `/server manage` for normal administration: Server Structure, Roles & Permissions,
+Integrations, Managed Messages, Features and Server Log. The landing panel does
+not scan Discord messages. Structure uses the gateway cache and read-only SQLite.
+
+**Review Structure** links existing resources after preview/confirmation. Ambiguous
+matches show readable channel/category choices. **Fix Common Issues** previews
+placement, scoped permissions and managed-message repairs. The owner can separately
+preview missing resources. **Review Duplicate Messages** runs the existing bounded
+scan and explicit pair-by-pair keep/remove confirmation; there is no bulk deletion.
+After linking channels, review again to discover their messages. Normal views hide
+internal statuses, mapping keys and fingerprints. Features routes to existing
+feature commands; it does not enable hidden beta features automatically.
+
+Integrations → select Instant Gaming, DealGecko, Jockie or Pancake → Select Bot →
+Confirm Bot verifies the current guild bot member and persists its ID. Stored IDs
+take precedence over legacy IDs and environment/bootstrap defaults. Saving an ID
+does not grant permissions: review structure/fixes afterwards. Secrets remain in
+the private VPS environment. External bot absence is optional, not a failed setup.
+
+## Server dev
+
+`/server dev` is owner-only: Health, Reconcile, Repair, Duplicate Scan, Production
+Doctor, Resource Mappings and Raw Diagnostics. Health opens fast diagnostics with
+the existing deeper Details action. Resource Mappings opens the mapping preview;
+Raw Diagnostics opens the diagnostic findings. Production Doctor provides the
+offline CLI route below, never a shell executing private configuration in Discord.
+Legacy technical slash commands remain for compatibility with their existing
+owner/admin checks; normal administration should start with `/server manage`.
+
+## Internal operations
 
 | Command | Responsibility | Writes |
 | --- | --- | --- |
 | `/server health` | Fast DB/config/cache diagnosis; **Details** adds message and recovery inspection | None; SQLite connections are read-only |
 | `/server reconcile` | Link existing categories, channels, base/bot roles and canonical messages to their existing registry keys | IDs/managed metadata only, after owner/admin confirmation |
-| `/server setup` | Create genuinely missing blueprint categories/channels, base/bot roles and canonical messages | Owner-only preview and confirmation; never creates over uncertain candidates |
+| Setup / Manage → Preview Missing Resources | Create genuinely missing blueprint categories/channels, base/bot roles and canonical messages | Owner-only preview and confirmation; never creates over uncertain candidates |
 | `/server repair` | Fix linked resource names/placement/order, scoped permissions, bot grouping, pins and uncustomized generated message content | Owner/admin preview and confirmation; no creation or deletion |
 | `/server message-duplicates` | Review duplicate canonical messages separately from structure warnings | Existing pair-by-pair explicit keep/remove confirmation |
 
@@ -54,17 +95,41 @@ docker compose logs --tail=100 gamerhq
 
 The script requires clean `main`, the official origin, the expected deployment path and a private mode-600 `.env`. Under a maintenance lock it saves the previous image/commit, backs up the database using the old image, fetches and runs `git pull --ff-only origin main`, builds the candidate image, validates the private environment and rehearses DB migrations on a temporary copy. Only then does it run Compose with a bounded health wait and show final status. Building before the file validator avoids requiring Python dependencies on the VPS host; validation still happens before replacing the running bot. The script does not run Discord setup/repair/reconciliation.
 
-3. Inspect logs privately, then run `/server health` and the relevant [release acceptance checks](../RELEASE_CHECKLIST.md). Investigate failures before retrying; preserve the saved previous image for [rollback](../ROLLBACK.md).
+3. Check the private Server Log and container status. If healthy, no routine repair is required. If settings need attention, open `/server manage`. Use `/server dev` and the relevant [release acceptance checks](../RELEASE_CHECKLIST.md) for a migration or affected feature. Investigate failures before retrying; preserve the saved previous image for [rollback](../ROLLBACK.md).
+
+## Server log
+
+Owner-reviewed setup creates/reuses `📜・server-log` in the managed STAFF category.
+Normal members cannot view it. Staff can read; posting is reserved for GamerHQ
+(Discord Administrators inherently bypass channel denies). No broad admin permission
+is granted to GamerHQ. The channel ID uses the existing managed-channel registry.
+Startup never creates/discovers a log by name; if missing or exposed, notices are
+withheld and Health reports a repairable finding.
+
+Startup announces VERSION + build commit once, with up to three bullets from the
+first CHANGELOG section. `scripts/update.sh` embeds Git HEAD through `VCS_REF`;
+manual builds should use the same argument. Without a known commit, deduplication
+falls back to VERSION. A same-version/commit restart or reconnect does not post
+again. Persistent views and database startup precede the notice. Setup completion,
+confirmed management fixes and integration changes also post concise notices.
+Actionable cached health findings produce a deduplicated warning with an
+**Open Server Management** button. Private details and stack traces are omitted.
+
+Delivery is reserved in SQLite before sending. Uncertain/failed sends are not
+automatically retried; check private process logs. This favors no duplicates over
+guaranteed delivery. Backup/import CLIs retain their safe terminal output; they do
+not connect to Discord. Critical failures before login cannot post to Server Log;
+container health and private process logs remain necessary. No role/LFG join spam.
 
 ## After a fresh database or migration
 
 1. Back up the authoritative VPS DB before an explicit migration; never overwrite it with a local development DB automatically.
 2. Deploy reviewed code using the update script and inspect container health.
-3. Run `/server health`, then `/server reconcile`.
+3. Open `/server manage` → Server Structure → Review Structure.
 4. Review candidates, resolve ambiguity and confirm the chosen mappings. Rescan after linking structural resources.
-5. Run `/server message-duplicates`; other structure warnings do not block unrelated duplicate groups. **Open Reconciliation** returns to mapping review.
-6. Run `/server repair`, review the plan and confirm. Use owner `/server setup` separately only for genuinely missing resources, then rescan.
-7. Run `/server health` again and verify ordinary-member/private-channel access. Manual-review findings are not permission to delete or recreate resources.
+5. Use **Review Duplicate Messages**; other structure warnings do not block unrelated duplicate groups. **Review Structure** returns to mapping review.
+6. Use **Fix Common Issues**, review the plan and confirm. Owners can separately **Preview Missing Resources**, then rescan.
+7. Verify ordinary-member/private-channel access. For unresolved issues use `/server dev` → Health. Review findings are not permission to delete or recreate resources.
 
 ## Backups
 
@@ -103,4 +168,129 @@ Docker output is restricted to health, restart policy and expected mount destina
 
 Keep one GamerHQ process per live guild. The OS-held lock beside the resolved DB rejects another process using that same database and releases on process exit. It does not coordinate different databases or machines; stop the local production-credential bot before starting the VPS bot.
 
-Development stays local/on development branches; production stays on `main` at `/opt/gamerhq/app`. VS Code Remote SSH is optional and is not required for normal operation. Before any future remote assistance read [PRODUCTION_RULES](../PRODUCTION_RULES.md): never print `.env`, automatically modify secrets, force-push, reset hard, replace the production DB, or delete Discord resources without explicit authorization. Back up before DB changes and share safe diagnostic summaries instead of private runtime data.
+Before remote assistance read [PRODUCTION_RULES](../PRODUCTION_RULES.md): never print
+`.env`, automatically modify secrets, force-push, reset hard, replace the production
+DB, or delete Discord resources without explicit authorization.
+
+## Database migration decision
+
+The current owner-reported situation is a richer Windows database and a fresh VPS
+database. **No actual snapshot comparison has been supplied for this change.**
+Local/production counts and production-only tickets/messages/activity remain unknown;
+there is no evidence supporting automatic replacement.
+
+The empty Select Games response means there are no games with both `selectable=1`
+and a nonempty role mapping. `active=1` alone does not make a game visible. A fresh catalog
+seeds games hidden by default; seeding updates descriptive metadata and preserves
+existing visibility/role/area IDs. Missing role IDs also exclude games from this
+button. Verify the running path (`/app/runtime/data/gamerhq.db` in Compose,
+host `/opt/gamerhq/data/gamerhq.db`) before changing state. Wrong paths, absent
+catalog rows and missing/incomplete migrations must be distinguished using doctor
+and snapshot counts; the screenshot alone does not establish which occurred.
+
+Compare consistent private snapshots first:
+
+```bash
+python -m tools.compare_databases /private/local-copy.db /private/production-copy.db
+python -m tools.import_database --source /private/local-copy.db --target /private/production-copy.db --dry-run
+```
+
+The report prints known-table counts, selection/role/area state, schema differences,
+production-only and changed rows, and a review token. Unknown table names are
+aggregated. It does not print row contents, credentials or Discord IDs. Differences
+are not proof of creation time; conservative conflicts include changed schema.
+Managed-message counts include matching settings keys, so review them as inventory
+indicators rather than proof that every Discord message exists.
+
+If production contains newer/divergent state, **keep production authoritative** and
+review a scoped recovery on copies, including game-role mappings and dependent
+records. No generic table merge is provided: tickets, message IDs, delivery claims
+and foreign references cannot safely be merged by row count. If local is verified
+as the right whole-store basis, follow [the stopped-bot import procedure](DATABASE_MIGRATION.md#transfer-and-validate-owner-operations-only).
+Dry-run rehearses additive migrations on a temporary copy; apply requires shutdown
+attestation and a new verified backup. Divergence additionally requires the exact
+comparison token after explicitly accepting what would be replaced. The token is
+not a merge and does not make discarding newer activity harmless.
+
+After the reviewed migration, VPS SQLite is the only live runtime source. Archive
+the Windows DB; never resume its live bot. Verify existing Select Games controls,
+game roles, private areas and mappings. Repair only reviewed issues; no hardcoded
+replacement game catalog or automatic Discord cleanup is used.
+
+## Direct VPS development
+
+Until a separate Dev server exists, the owner may explicitly authorize a bounded
+production maintenance window for low-risk work. Install VS Code Remote - SSH,
+connect as the `gamerhq` account using **Remote-SSH: Connect to Host**, and open
+`/opt/gamerhq/app`. Terminal commands and extensions can execute on that host;
+verify the remote indicator before running anything. See the
+[official Remote SSH guide](https://code.visualstudio.com/docs/remote/ssh).
+Do not open `.env` or private DB rows in agent context. Read safe diagnostics and
+redacted logs instead. Do not store passwords or tokens in prompts or Git.
+
+Required sequence: inspect Git → backup before state/schema work → edit → offline
+tests → build → explicitly authorized restart → smoke test → reviewed commit →
+explicit push main. High-risk migrations, destructive changes and broad permission
+changes should wait for the future Dev environment. A live restart is not a test.
+
+Preparation on the VPS (owner-invoked; requires Python 3.12 or a supported newer
+version on the host, installed separately if needed; never reuse the bot process):
+
+```bash
+cd /opt/gamerhq/app
+git status --short
+git branch --show-current
+bash scripts/backup.sh
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock -r requirements-dev.txt
+```
+
+After scoped edits:
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m tools.repository_audit --history
+git diff --check
+git diff
+```
+
+Stop if checks fail. Before an owner-approved candidate restart, retain rollback
+image and commit. A dirty build uses a unique review identifier (recorded privately
+with its diff); it is a temporary maintenance candidate, not a released commit:
+
+```bash
+docker image tag gamerhq-bot:local gamerhq-bot:previous
+git rev-parse HEAD > /opt/gamerhq/previous-commit
+candidate="$(git diff HEAD | sha256sum | cut -d ' ' -f 1)"
+docker compose build --build-arg VCS_REF="$candidate"
+docker compose run --rm --no-deps gamerhq python -m tools.production_preflight --backup-dir /app/backups
+```
+
+Stage new permanent files before computing the candidate hash so `git diff HEAD`
+includes them; never stage `.env`, DBs, backups or reports. **Owner approval to
+restart is separate from approval to edit/build.** Then:
+
+```bash
+docker compose up -d --wait --wait-timeout 240
+docker compose ps
+```
+
+Smoke test only the affected features and privacy with the single VPS bot. If it
+fails, follow [rollback](../ROLLBACK.md); do not leave experiments silently running.
+After successful review, stage only intended permanent files, review
+`git diff --cached`, commit with a descriptive message, then rebuild with
+`docker compose build --build-arg VCS_REF="$(git rev-parse HEAD)"` and perform the
+owner-approved final restart. This makes the running release traceable to the
+commit. Once healthy and clean, explicitly run `git push origin main`. Do not use
+the normal update script to discard dirty/ahead local work; it deliberately refuses
+that state. Suspend competing scheduled updates during this maintenance window.
+
+## Future Dev server
+
+Production remains `main` + production bot + production guild + production DB.
+Future development uses `develop` + a separate Dev bot token + Dev guild + Dev DB
+and separate storage/backups. Configure environment-specific bootstrap IDs; later
+resource assignments remain in each DB. Never reuse production credentials, mapped
+Discord IDs, private tickets or OAuth data as Dev fixtures. No Dev server, bot or
+database is created by this change. After Dev exists, use it for live acceptance
+before promoting reviewed changes to production.

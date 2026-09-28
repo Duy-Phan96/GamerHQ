@@ -1,6 +1,6 @@
 """Offline, whole-database import. Never merges divergent installations."""
 import argparse
-from contextlib import closing
+from contextlib import closing, nullcontext
 import os
 from pathlib import Path
 import re
@@ -9,6 +9,8 @@ import tempfile
 from unittest.mock import patch
 
 from tools.backup_database import backup_database, verify
+from tools.compare_databases import compare, render, inspect_database
+from tools.instance_lock import instance_lock
 
 
 def validate_source(path):
@@ -48,7 +50,7 @@ def migrate_copy(source, destination):
                     raise ValueError('Migrated schema has incompatible columns')
 
 
-def import_database(source, target, *, backup=None, apply=False, bots_stopped=False):
+def import_database(source, target, *, backup=None, apply=False, bots_stopped=False, confirm_comparison=None):
     source, target = Path(source).absolute(), Path(target).absolute()
     if source.is_symlink() or target.is_symlink() or source.resolve() == target.resolve():
         raise ValueError('Source and target must be distinct regular paths without symlinks')
@@ -60,11 +62,24 @@ def import_database(source, target, *, backup=None, apply=False, bots_stopped=Fa
         raise ValueError('Apply requires --bots-stopped and a new --backup path')
     if apply and not target.is_file():
         raise ValueError('Apply requires an existing production DB to back up; first-install transfer is documented separately')
-    with tempfile.TemporaryDirectory(prefix='gamerhq-import-', dir=target.parent) as folder:
+    with instance_lock(target) if apply else nullcontext(), tempfile.TemporaryDirectory(prefix='gamerhq-import-', dir=target.parent) as folder:
+        validate_source(source)
+        source_state = inspect_database(source)
+        original = source_state['fingerprint']
         staged = Path(folder) / 'migrated.db'
         migrate_copy(source, staged)
+        if inspect_database(source)['fingerprint'] != original:
+            raise ValueError('Source changed during migration rehearsal; use a stopped, consistent snapshot')
+        if target.is_file():
+            validate_source(target)
+        report = compare(source, target) if target.is_file() else None
         if not apply:
-            return 'Compatibility/migrations passed on a temporary copy; source and target unchanged.'
+            staged_state = inspect_database(staged)
+            migration = 'required' if (source_state['schema_version'], source_state['schema']) != (staged_state['schema_version'], staged_state['schema']) else 'not required'
+            return (f'Compatibility: OK. Schema migration: {migration} (rehearsed on a temporary copy); source and target unchanged.\n'
+                    + (render(report) if report else 'Production snapshot unavailable; no replacement permitted.'))
+        if report['potential_conflicts'] and confirm_comparison != report['review_token']:
+            raise ValueError('Production-only or changed state exists; compare snapshots and confirm the exact review token before replacement')
         backup = Path(backup).absolute()
         if backup.resolve() in (source.resolve(), target.resolve()) or backup.exists():
             raise ValueError('Backup must be a new, separate file')
@@ -74,11 +89,15 @@ def import_database(source, target, *, backup=None, apply=False, bots_stopped=Fa
         validate_source(target)
         before = target.stat()
         backup_database(backup, source=target)
+        if compare(source, backup)['review_token'] != report['review_token']:
+            raise ValueError('Snapshots changed since comparison; review again. Backup retained')
         after = target.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError('Target changed during backup; import refused')
         if any(Path(str(target) + suffix).exists() for suffix in ('-wal', '-shm', '-journal')):
             raise ValueError('Target acquired SQLite sidecars during backup; import refused')
+        if compare(source, target)['review_token'] != report['review_token']:
+            raise ValueError('Source or target changed; import refused. Backup retained')
         os.chmod(staged, 0o600)
         with staged.open('r+b') as stream:
             os.fsync(stream.fileno())
@@ -92,12 +111,17 @@ def main():
     parser.add_argument('--target', type=Path, required=True)
     parser.add_argument('--backup', type=Path)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--dry-run', '--check', action='store_true', help='Explicit non-destructive compatibility and comparison mode (default)')
+    parser.add_argument('--confirm-comparison', help='Exact reviewed comparison token; required when replacing divergent state')
     parser.add_argument('--bots-stopped', action='store_true')
     args = parser.parse_args()
+    if args.apply and args.dry_run:
+        parser.error('--apply cannot be combined with --dry-run/--check')
     try:
-        print(import_database(args.source, args.target, backup=args.backup, apply=args.apply, bots_stopped=args.bots_stopped))
-    except (OSError, ValueError, sqlite3.Error):
-        print('Import refused: check paths, compatibility, integrity, shutdown and exclusive backup destination. No private values printed.')
+        print(import_database(args.source, args.target, backup=args.backup, apply=args.apply,
+                              bots_stopped=args.bots_stopped, confirm_comparison=args.confirm_comparison))
+    except (OSError, ValueError, sqlite3.Error, RuntimeError):
+        print('Import refused: check compatibility, integrity, shutdown, backup destination and --confirm-comparison for divergent state. Run --dry-run again. No private values printed.')
         return 1
     return 0
 
