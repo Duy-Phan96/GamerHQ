@@ -66,25 +66,55 @@ is not permission to repost or delete an unknown message.
 
 ## Confirmed duplicate cleanup
 
-For the example Giveaways pair:
+Run without arguments to audit every active canonical board in the managed-message
+registry, including LFG, Giveaways, welcome/guide, role panels, game selectors,
+Support/Marketplace messages, command guides and the managed Streamer Hub guide:
+
+```text
+/server message-duplicates
+```
+
+The read-only, paginated summary includes unique boards and duplicate groups in
+their expected channels. **Review Duplicates** opens each group; **Close** changes
+nothing. To restrict the scan, use the optional existing key:
 
 ```text
 /server message-duplicates managed_key:server_future_giveaways_message_id
 ```
 
 Only the current guild owner/admin can open and confirm the three-minute session.
-It shows message A/B links, explains why retaining the older identical message
-preserves the old link, and offers **Keep A / Remove B**, **Keep B / Remove A** and
-**Cancel**. There is no automatic canonical selection.
+Each pair shows channel, message IDs/links, creation/edit dates, current DB mapping
+and content previews. The recommendation prefers a valid persisted mapping, then
+exact canonical content with matching controls, then the older original when only
+line endings differ. An age tie-break never overrides a valid mapping. Choosing
+**Keep A / Remove B** or **Keep B / Remove A** explicitly confirms that single
+removal. **Skip** leaves the group unchanged; **Cancel** ends the remaining review.
+Earlier confirmed removals are not undone. Groups larger than two require another
+fresh pair confirmation for every removal; there is no bulk delete.
 
-Cleanup supports exactly two exact canonical candidates with identical bodies,
-buttons, embeds and attachments. Different/legacy/custom-unknown candidates or
-larger groups remain manual review. Before removal it re-fetches both messages,
-checks authors/fingerprints, current authorization, unchanged mappings and all
-other runtime references (including JSON). It saves the selected ID first, then
-deletes only the other message. An audit records intent; successful deletion is
-logged. Failed/uncertain deletion requires a fresh review, never automatic retry.
-The selected message, links, history and pin are retained. Run health afterwards.
+Only GamerHQ-authored messages with the canonical body (or stored customized body)
+in the expected channel qualify. CRLF/LF and trailing newlines may differ; similar
+headings/prose alone never qualify. Unknown/manual and unrecognized legacy messages
+are ignored. Differing buttons, embeds, attachments, unresolved customization and
+incomplete history scans require manual review. Inactive legacy streamer directories, event posts and private
+ticket records are not canonical boards and are never swept as duplicates.
+
+Before removal the bot re-fetches both messages and rechecks their channel,
+authors/fingerprints, current authorization, unchanged group/mappings/custom state
+and all other runtime references (including JSON). It saves the selected ID and
+customization metadata first, then deletes only the confirmed other message.
+Game section IDs update their existing JSON slot without replacing other slots.
+External references block cleanup rather than being erased. The retained message
+is not edited: its ID, body, buttons and pin stay intact; normal feature refresh
+continues to use it and recover its persistent controls. Audit intent and successful
+cleanup are logged without message content. Failed/uncertain deletion requires a
+fresh review, never automatic retry.
+
+Health reports the number of duplicate groups and the global command without
+mutating messages. Setup Repair adopts a single valid candidate, reports multiple
+candidates for review and never posts a third. LFG Repair uses this same helper.
+After review run `/server health`, then `/server setup` → **Repair**, and repeat the
+global audit to verify that the repaired mapping remains stable.
 
 ## Transfer and validate (owner operations only)
 

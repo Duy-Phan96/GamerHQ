@@ -269,7 +269,7 @@ async def scan(guild, bot=None, *, messages=True):
     if messages:
         from services.message_reconciliation import diagnostics as reconciliation_diagnostics
         try:
-            findings.extend(Finding(*row) for row in await reconciliation_diagnostics(guild))
+            findings.extend(Finding(*row) for row in await reconciliation_diagnostics(guild, bot))
         except (ServerMessageError, ValueError, KeyError, TypeError):
             add('Reconciliation', 'MANUAL_REVIEW', 'Ambiguous or invalid resource mappings; inspect before repair.')
         from services.support_service import support_sections, message_key, section_channel

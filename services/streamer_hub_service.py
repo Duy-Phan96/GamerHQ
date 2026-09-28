@@ -101,6 +101,12 @@ async def legacy_channel(guild, name):
     return None
 
 
+def guide_text(guild):
+    target = channel(guild, 'stream-updates')
+    return ('# 🎥 Streamer Hub — Beta\n\nConnect your Twitch account to GamerHQ and automatically appear in '
+            f'{target.mention} when you go live.') if config.STREAMER_HUB_ENABLED and target else '# 🎥 Streamer Hub — Beta\n\nCurrently disabled.'
+
+
 async def sync(guild):
     from cogs.twitch_hub import HubView
     if guild.id != config.GUILD_ID:
@@ -147,9 +153,7 @@ async def sync(guild):
                 await edit(resource, overwrites=rights, reason='GamerHQ hidden streamer beta access')
         guide = resources['streamer-guide']
         if guide:
-            target = resources['stream-updates']
-            content = ('# 🎥 Streamer Hub — Beta\n\nConnect your Twitch account to GamerHQ and automatically appear in '
-                       f'{target.mention} when you go live.') if config.STREAMER_HUB_ENABLED and target else '# 🎥 Streamer Hub — Beta\n\nCurrently disabled.'
+            content = guide_text(guild)
             await upsert_fixed_message(guide, setting_key='streamer_guide_message_id', content=content, pin=True,
                 view=HubView() if config.STREAMER_HUB_ENABLED else None,
                 recover_match=lambda m: m.content.startswith(('# 🎥 GamerHQ Streamers', '# 🎥 Streamer Hub')))

@@ -274,7 +274,11 @@ async def _repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], lis
         changed.append('Updated optional profile/notification roles and separate managed settings panels.')
     except (discord.HTTPException, ServerMessageError, ValueError) as exc:
         failed.append(str(exc))
-    from cogs.server import refresh_future_community_messages
+    from cogs.server import refresh_future_community_messages, refresh_lfg_guide_message
+    try:
+        await refresh_lfg_guide_message(guild)
+    except (discord.HTTPException, ServerMessageError) as exc:
+        failed.append(str(exc))
     try:
         await refresh_future_community_messages(guild)
     except (discord.HTTPException, ServerMessageError) as exc:

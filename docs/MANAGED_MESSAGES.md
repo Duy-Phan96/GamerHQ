@@ -83,6 +83,10 @@ that supplies its default text and existing setting key.
    actions to managed_message_service.specs. That layers canonical content/buttons,
    versions, hashes, customized/pending state and audit onto the same message ID.
    Fixed private notices may use the shared helper without entering the public editor.
+   Register canonical non-editor boards in `managed_message_service.canonical_boards`,
+   reusing the feature renderer and expected channel/key. Both global duplicate
+   audit and health consume this registry; active editor records enter automatically.
+   Do not register per-event posts, user content or private ticket transcripts.
 4. Hook the feature's authorized setup/repair/sync and existing startup refresh as
    appropriate; health only inspects. Repeated execution must not create duplicate
    managed pins. Use the feature lock for non-editor fixed-message concurrency;
@@ -105,4 +109,4 @@ Free Games uses `partner_message:<guild>:free_games` with Markdown/buttons/previ
 
 ## Lost runtime mappings and duplicates
 
-The shared helper now performs exact-body recovery even without a feature-specific recovery filter. Multiple matching messages require manual review; it no longer picks the first. `/server message-duplicates managed_key:server_future_giveaways_message_id` offers a confirmed pair cleanup for the existing Giveaways board. See [reconciliation and migration](DATABASE_MIGRATION.md) for scan limits, reference checks and whole-DB recovery.
+The shared helper now performs exact-body recovery even without a feature-specific recovery filter. Multiple matching messages require manual review; it no longer picks the first. `/server message-duplicates` scans the complete canonical registry; optional `managed_key` limits the scan. Review shows candidate metadata and recommends the valid stored mapping before age. Every pair needs an explicit keep/remove choice; Skip/Cancel preserve unresolved groups. LFG, game selectors and generated guides participate in the audit without becoming editable in the pin editor. See [reconciliation and migration](DATABASE_MIGRATION.md) for scan limits, reference checks and whole-DB recovery.

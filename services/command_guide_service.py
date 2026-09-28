@@ -137,27 +137,30 @@ async def ensure_staff_guide_channel(guild: discord.Guild) -> discord.TextChanne
     return channel
 
 
-async def refresh_staff_command_guide(bot, guild: discord.Guild, channel: discord.TextChannel | None = None):
-    if channel is None:
-        channel = await ensure_staff_guide_channel(guild)
-    else:
-        db.set_setting(STAFF_GUIDE_CHANNEL_KEY, channel.id)
-
-    content = build_staff_command_guide(bot, guild)
+def staff_command_pages(bot, guild):
     pages, chunk = [], ''
-    for line in content.splitlines(keepends=True):
+    for line in build_staff_command_guide(bot, guild).splitlines(keepends=True):
         if len(chunk) + len(line) > 1850:
             pages.append(chunk.rstrip())
             chunk = ''
         chunk += line
     if chunk:
         pages.append(chunk.rstrip())
+    return [(STAFF_GUIDE_MESSAGE_KEY if index == 1 else f'{STAFF_GUIDE_MESSAGE_KEY}:page:{index}',
+             page if index == 1 else f'# 🛠️ GamerHQ Staff Commands — Page {index}\n\n{page}')
+            for index, page in enumerate(pages, 1)]
+
+
+async def refresh_staff_command_guide(bot, guild: discord.Guild, channel: discord.TextChannel | None = None):
+    if channel is None:
+        channel = await ensure_staff_guide_channel(guild)
+    else:
+        db.set_setting(STAFF_GUIDE_CHANNEL_KEY, channel.id)
+
+    pages = staff_command_pages(bot, guild)
     messages = []
-    for index, page in enumerate(pages, 1):
-        heading = '# 🛠️ GamerHQ Staff Commands' if index == 1 else f'# 🛠️ GamerHQ Staff Commands — Page {index}'
-        if index > 1:
-            page = heading + '\n\n' + page
-        key = STAFF_GUIDE_MESSAGE_KEY if index == 1 else f'{STAFF_GUIDE_MESSAGE_KEY}:page:{index}'
+    for key, page in pages:
+        heading = page.split('\n', 1)[0]
         messages.append(await upsert_fixed_message(channel, setting_key=key, content=page, pin=True,
             recover_match=lambda m, heading=heading: (m.content or '').split('\n', 1)[0] == heading))
     # Only mapped, owned continuation pages may be retired if the guide shrinks.
