@@ -22,6 +22,11 @@ def staff(actor):
 
 
 def resolve(guild, actor, channel_id):
+    if not actor or actor.guild.id != guild.id:
+        raise ValueError('Current server membership is required.')
+    actor = guild.get_member(actor.id)
+    if not actor:
+        raise ValueError('Current server membership is required.')
     channel = guild.get_channel(channel_id)
     row = db.get_temp_voice(channel_id)
     if not isinstance(channel, discord.VoiceChannel) or not row or row['game_id'] < 0:

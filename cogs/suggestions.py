@@ -83,11 +83,17 @@ async def submit(interaction, title, content, reason=''):
             duplicate = conn.execute('SELECT staff_message_id FROM suggestions WHERE guild_id=? AND author_discord_id=? AND title=? AND content=? AND reason=? AND created_at>=? ORDER BY id DESC LIMIT 1', (interaction.guild.id, interaction.user.id, title, content, reason, now-30)).fetchone()
             if duplicate:
                 sid = None
+            elif conn.execute('SELECT 1 FROM suggestions WHERE guild_id=? AND author_discord_id=? AND created_at>=? LIMIT 1',
+                              (interaction.guild.id, interaction.user.id, now-30)).fetchone():
+                sid = None
             else:
                 cursor = conn.execute('INSERT INTO suggestions (guild_id,author_discord_id,title,content,reason,created_at,updated_at,staff_channel_id) VALUES (?,?,?,?,?,?,?,?)', (interaction.guild.id, interaction.user.id, title, content, reason, now, now, channel.id))
                 sid = cursor.lastrowid
         if sid is None:
-            await interaction.followup.send(SUCCESS if duplicate['staff_message_id'] else 'ℹ️ This suggestion is already being processed. If delivery is not confirmed, contact an admin before retrying.', ephemeral=True)
+            text = ('Please wait 30 seconds between suggestions.' if not duplicate else
+                    SUCCESS if duplicate['staff_message_id'] else
+                    'ℹ️ This suggestion is already being processed. If delivery is not confirmed, contact an admin before retrying.')
+            await interaction.followup.send(text, ephemeral=True)
             return
         item = dict(id=sid, author_discord_id=interaction.user.id, title=title, content=content, reason=reason, status='NEW')
         message = await channel.send(embed=card(item), view=StaffSuggestionView(), allowed_mentions=discord.AllowedMentions.none())
@@ -135,6 +141,9 @@ class StaffSuggestionView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         async with _locks.setdefault(interaction.message.id, asyncio.Lock()):
             try:
+                member = interaction.guild.get_member(interaction.user.id)
+                if not member or not staff_member(member):
+                    raise ServerMessageError('Staff access is no longer available.')
                 channel = inbox(interaction.guild)
                 item = get_suggestion(interaction.message.id, interaction.guild.id)
                 if not item or item['staff_channel_id'] != channel.id or interaction.channel_id != channel.id:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import re
 import secrets
+import sqlite3
 import traceback
 import discord
 from discord import app_commands
@@ -333,8 +334,10 @@ async def create_private_event_channel(guild: discord.Guild, event: dict, game: 
             topic=f"Private GamerHQ event #{int(event['id'])} · {event['title']}",
             reason=f"GamerHQ private LFG event #{int(event['id'])}",
         )
-    except (discord.Forbidden, discord.HTTPException):
-        return None
+    except discord.HTTPException as exc:
+        if exc.status in (400, 403):
+            return None  # Discord definitively rejected creation.
+        raise  # Retain the event claim after an uncertain remote outcome.
     db.set_lfg_event_private_channel(int(event["id"]), channel.id)
     return channel
 
@@ -388,19 +391,25 @@ class AddGameAndJoinView(discord.ui.View):
         self.guild_id = int(guild_id)
         self.user_id = int(user_id)
         self.share_token = share_token
+        self.used = False
 
     async def interaction_check(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
+        if interaction.user.id != self.user_id or (interaction.guild and interaction.guild.id != self.guild_id):
             await interaction.response.send_message("This confirmation belongs to another user.", ephemeral=interaction.guild is not None)
             return False
         return True
 
     @discord.ui.button(label="Add Game & Join", emoji="🎮", style=discord.ButtonStyle.success)
     async def add_and_join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.interaction_check(interaction):
+            return
+        if self.used:
+            return await interaction.response.send_message('This confirmation was already submitted. Reopen the lobby.', ephemeral=interaction.guild is not None)
+        self.used = True
         guild = interaction.client.get_guild(self.guild_id)
         event = db.get_lfg_event(self.event_id)
         member = guild.get_member(self.user_id) if guild else None
-        if guild is None or member is None or not event or event.get("status") != "scheduled":
+        if guild is None or member is None or not event or event.get("status") != "scheduled" or event.get("guild_id") != self.guild_id:
             return await interaction.response.edit_message(content="❌ This event is no longer available.", view=None)
         game = db.get_game_by_id(int(event["game_id"]))
         role = guild.get_role(int(game["role_id"])) if game and game.get("role_id") else None
@@ -408,12 +417,14 @@ class AddGameAndJoinView(discord.ui.View):
             return await interaction.response.edit_message(content="❌ The game role is currently unavailable.", view=None)
         await interaction.response.defer()
         try:
-            if role not in member.roles:
-                await member.add_roles(role, reason="GamerHQ Add Game & Join")
+            from services.role_service import set_game_selection
+            await set_game_selection(member, [(game['id'], role.id, True, False)])
+        except ValueError as exc:
+            return await interaction.edit_original_response(content=str(exc), view=None)
         except discord.Forbidden:
             return await interaction.edit_original_response(content="❌ I couldn't add the game role. Please ask staff to check my role permissions.", view=None)
-        except discord.HTTPException as exc:
-            return await interaction.edit_original_response(content=f"❌ Discord couldn't add the game role: `{exc}`", view=None)
+        except discord.HTTPException:
+            return await interaction.edit_original_response(content="❌ The role update could not be confirmed. Check your roles before retrying.", view=None)
 
         result = await _finish_join(guild, event, member, share_token=self.share_token)
         # Adding a member role does not change selector content. Refreshing here
@@ -431,6 +442,9 @@ class AddGameAndJoinView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.interaction_check(interaction):
+            return
+        self.used = True
         await interaction.response.edit_message(content="Cancelled. Nothing was changed.", view=None)
         self.stop()
 
@@ -761,7 +775,7 @@ class EventDraftView(discord.ui.View):
         )
 
     async def interaction_check(self, interaction):
-        if interaction.user.id != self.host.id:
+        if not interaction.guild or interaction.guild.id != self.host.guild.id or interaction.user.id != self.host.id:
             await interaction.response.send_message("This draft belongs to another user.", ephemeral=True)
             return False
         return True
@@ -774,10 +788,19 @@ class EventDraftView(discord.ui.View):
 
     @discord.ui.button(label="Create Event", emoji="✅", style=discord.ButtonStyle.success, row=1)
     async def create_event(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        if getattr(self.builder, 'submitted', False):
+            return await interaction.response.send_message('This draft has already been submitted. Open /lfg manage.', ephemeral=True)
+        self.builder.submitted = True
         # Creating channels/posts/DMs can take longer than Discord's interaction
         # acknowledgement window. Defer first, then edit the same ephemeral draft.
         await interaction.response.defer(ephemeral=True, thinking=True)
         b = self.builder
+        current = interaction.guild.get_member(self.host.id)
+        fresh_game = db.get_game_by_id(b.game['id']) if b.game else None
+        if not current or not fresh_game or not fresh_game.get('area_enabled') or not member_has_game_role(current, fresh_game):
+            return await interaction.edit_original_response(content='Your game access changed. Reopen the event builder.', view=None)
         general = find_lfg_channel(interaction.guild)
         game_channel = find_game_lfg_channel(interaction.guild, b.game)
         if not general:
@@ -795,7 +818,7 @@ class EventDraftView(discord.ui.View):
                 guild_id=interaction.guild.id, game_id=b.game["id"], host_id=b.host.id,
                 title=b.title, start_at=start_at, max_players=b.max_players,
                 invite_lead_minutes=b.invite_lead, visibility=b.visibility,
-                share_token=secrets.token_urlsafe(8),
+                share_token=secrets.token_urlsafe(8), enforce_member_limits=True,
             )
         except ValueError as exc:
             return await interaction.edit_original_response(content=str(exc), view=None)
@@ -809,7 +832,11 @@ class EventDraftView(discord.ui.View):
         posts = []
         target_channels = []
         if b.visibility == "private":
-            private_channel = await create_private_event_channel(interaction.guild, event, b.game)
+            try:
+                private_channel = await create_private_event_channel(interaction.guild, event, b.game)
+            except (discord.HTTPException, TimeoutError, OSError):
+                return await interaction.edit_original_response(
+                    content="❌ Private lobby creation could not be confirmed. The lobby record is retained; ask staff to inspect Discord before retrying.", view=None)
             if not private_channel:
                 db.delete_lfg_event(int(event["id"]))
                 return await interaction.edit_original_response(content="❌ I could not create the private event channel.", view=None)
@@ -843,6 +870,9 @@ class EventDraftView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", emoji="✖️", style=discord.ButtonStyle.danger, row=1)
     async def cancel(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.builder.submitted = True
         await interaction.response.edit_message(content="✖️ Event creation cancelled.", view=None)
         self.stop()
 
@@ -1117,7 +1147,12 @@ class LFG(commands.Cog):
                 await cleanup_ended(guild, reconcile=self.voice_scheduler.current_loop % 10 == 0)
             except Exception:
                 logging.getLogger(__name__).exception('LFG terminal recovery failed guild=%s; retry next cycle.', guild.id)
-            for event in db.get_active_lfg_events(guild.id):
+            try:
+                events = db.get_active_lfg_events(guild.id)
+            except sqlite3.Error:
+                logging.getLogger(__name__).exception('LFG inventory unavailable guild=%s; retry next cycle.', guild.id)
+                continue
+            for event in events:
                 try:
                     event_id = int(event["id"])
                     # Periodically repair missing cards and failed Discord updates.

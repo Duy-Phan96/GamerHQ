@@ -501,13 +501,15 @@ class ConfirmServerRepairView(SafeView):
         self.running = False
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id or interaction.user.id != self.guild.owner_id:
+        if not interaction.guild or interaction.guild.id != self.guild.id or interaction.user.id != self.owner_id or interaction.user.id != self.guild.owner_id:
             await interaction.response.send_message("❌ Only the server owner can confirm server changes.", ephemeral=True)
             return False
         return True
 
     @discord.ui.button(label="Confirm Repair", emoji="✅", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self.interaction_check(interaction):
+            return
         if self.running:
             await interaction.response.send_message("⏳ Setup is already running.", ephemeral=True)
             return
@@ -516,8 +518,11 @@ class ConfirmServerRepairView(SafeView):
             item.disabled = True
         await interaction.response.edit_message(content="⏳ Updating GamerHQ core channels, guides and suggestions…", view=self)
 
+        if interaction.user.id != self.guild.owner_id:
+            await interaction.followup.send('Only the current server owner can confirm changes.', ephemeral=True)
+            return
         from services.server_setup_service import analyze_server, render_summary, repair_server
-        created, failed = await repair_server(self.guild, interaction.client)
+        created, failed = await repair_server(self.guild, interaction.client, owner_id=self.owner_id)
         from services.music_bot_service import sync_music_access, render_music_result
         from services.game_area_cleanup import scan_areas
         music_result = await sync_music_access(self.guild)

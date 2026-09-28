@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import re
 
 import discord
+
+_repair_locks = {}
 
 
 @dataclass(frozen=True)
@@ -235,7 +238,14 @@ def render_details(report: dict) -> str:
     return "\n".join(lines)
 
 
-async def repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list[str]]:
+async def repair_server(guild: discord.Guild, bot=None, *, owner_id=None) -> tuple[list[str], list[str]]:
+    async with _repair_locks.setdefault(guild.id, asyncio.Lock()):
+        if owner_id is not None and guild.owner_id != owner_id:
+            raise ValueError('Server ownership changed while waiting. Reopen setup as the current owner.')
+        return await _repair_server(guild, bot)
+
+
+async def _repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], list[str]]:
     """Focused onboarding update. Unrelated categories/resources remain untouched."""
     from services.bot_group_service import sync as sync_bot_groups
     group_notes = await sync_bot_groups(guild)

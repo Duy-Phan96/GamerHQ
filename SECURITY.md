@@ -11,3 +11,5 @@ Run `python -m tools.repository_audit --history` and inspect staged changes befo
 Runtime action logs retain IDs/timestamps/status for diagnosis, not ticket descriptions or private invite codes. Tracebacks remain useful operational data and must be treated as private: do not upload raw logs. Restrict access to the runtime DB, because it contains community activity and support text. There is no automatic closed-ticket deletion or full transcript export.
 
 Use separate development and production applications, guilds and databases. The test runner avoids loading local credentials and blocks Discord HTTP; running `bot.py` connects and reconciles real resources. Keep operating-system backups private and test restores independently of Git.
+
+See [command authorization, abuse controls and recovery boundaries](docs/SECURITY_MODEL.md) for the maintainer security model and offline regression coverage.

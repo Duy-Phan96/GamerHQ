@@ -35,7 +35,7 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 - `/game-admin set-visible` — Admin: show/hide a library game in Choose Your Games without changing its area.
 - `/game-admin setup` — Admin: inspect/reconcile Discord areas enabled in the Game Library.
 - `/game-admin status` — Admin: inspect one game's DB state and linked Discord resources.
-- `/server adopt channel:<managed channel> aspect:<name|category|position|all>` — Owner/admin: compare current Discord layout with desired state, then explicitly confirm selected properties. Initial scope: Support GamerHQ and the five public partner/feed channels. Permissions are not imported. See [desired state and adoption](SERVER_STRUCTURE.md#explicit-channel-adoption).
+- `/server adopt channel:<managed channel> aspect:<name|category|position|all>` — Owner/admin: compare current Discord layout with desired state, then explicitly confirm selected properties. Initial scope: Support GamerHQ and the six public Marketplace channels. Permissions are not imported. See [desired state and adoption](SERVER_STRUCTURE.md#explicit-channel-adoption).
 - `/server cleanup-game-areas` — Owner/admin: preview unused managed game areas before confirming cleanup.
 - `/server health` — Owner/admin: read-only diagnostics and acceptance-test details.
 - `/server instant-gaming` — Admin: sync public gaming-news/gaming-deals and private Affiliate Stats purchases/buyer-ranking. Reports channels, permissions, pins and bot access using INSTANT_GAMING_BOT_ID.
@@ -47,7 +47,7 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 
 `/server setup` is owner-only. Health, cleanup and the pinned-message editor check owner/admin access; other administrative commands retain their Administrator checks. Moderator permissions alone do not grant message-editor access. Destructive Game Area/library actions require their existing previews/confirmations. General member commands never grant server administration.
 
-Persistent components include game/role selectors, LFG cards/invites/proposals, suggestions and support ticket entry/actions. Temporary Voice panels can be reopened after restart. Events remain Coming Soon; no XP commands exist.
+Persistent components include game/role selectors, LFG cards/invites/proposals, suggestions and support ticket entry/actions. Temporary Voice panels can be reopened after restart. Community Events, Tournaments and Giveaways have separate boards; LFG event commands are active. No XP or development/debug commands are registered.
 
 If a partner mapping/channel is missing, `/server sync-support` omits that destination from the overview and reports incomplete setup. `/server health` identifies missing mappings; owner `/server setup` repairs them. Sync does not create replacement channels.
 
@@ -74,3 +74,5 @@ quick toggles. Empty playstyle sections are hidden. Suggest Role is the last boa
 Games remain exclusively in choose-your-games. GamerHQ is English, with no language
 selection. Main controls survive restart; unfinished drafts do not. See
 [profile settings](ROLE_SETTINGS.md) for explicit Repair and legacy-role retention.
+
+For maintainers, [authorization and recovery boundaries](SECURITY_MODEL.md) classify all command groups and their component actions.

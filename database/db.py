@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from collections.abc import Iterable
 
@@ -612,10 +613,21 @@ def delete_managed_role(role_id):
         conn.execute("DELETE FROM managed_roles WHERE role_id=?", (role_id,))
 
 
-def create_lfg_event(*, guild_id, game_id, host_id, title, start_at, max_players, invite_lead_minutes, visibility="public", share_token=None):
+def create_lfg_event(*, guild_id, game_id, host_id, title, start_at, max_players, invite_lead_minutes, visibility="public", share_token=None, enforce_member_limits=False):
     from services.game_area_safety import require_available
     require_available(game_id)
     with connect() as conn:
+        if enforce_member_limits:
+            conn.execute('BEGIN IMMEDIATE')
+            now = int(time.time())
+            key = f'lfg_create_cooldown:{guild_id}:{host_id}'
+            previous = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+            if previous and now - int(previous['value']) < 30:
+                raise ValueError('Please wait 30 seconds between creating lobbies.')
+            if conn.execute("SELECT 1 FROM lfg_events WHERE guild_id=? AND host_id=? AND game_id=? AND start_at=? AND title=? AND visibility=? AND status='scheduled'",
+                            (guild_id, host_id, game_id, start_at, title, visibility)).fetchone():
+                raise ValueError('An identical lobby already exists. Open /lfg manage.')
+            conn.execute('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, str(now)))
         cur = conn.execute(
             """
             INSERT INTO lfg_events(guild_id,game_id,host_id,title,start_at,max_players,invite_lead_minutes,visibility,share_token)

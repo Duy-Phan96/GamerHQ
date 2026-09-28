@@ -1,4 +1,5 @@
 from services.response_service import check_admin
+from services.role_service import game_role, set_game_selection
 import asyncio
 import json
 import sqlite3
@@ -27,7 +28,10 @@ class ToggleGameView(discord.ui.View):
         super().__init__(timeout=120)
         self.game = game
         self.role = role
+        self.remove = role in member.roles
         self.member_id = member.id
+        self.guild_id = member.guild.id
+        self.used = False
 
         if role in member.roles:
             self.toggle.label = "Remove Game"
@@ -36,25 +40,24 @@ class ToggleGameView(discord.ui.View):
 
     @discord.ui.button(label="Add Game", emoji="➕", style=discord.ButtonStyle.success)
     async def toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.member_id:
+        if not interaction.guild or interaction.guild.id != self.guild_id or interaction.user.id != self.member_id:
             await interaction.response.send_message(
                 "This selector belongs to another user.", ephemeral=True
             )
             return
 
+        if self.used:
+            await interaction.response.send_message("This selection was already submitted. Reopen the selector.", ephemeral=True)
+            return
+        self.used = True
         await interaction.response.defer()
-
         try:
-            if self.role in interaction.user.roles:
-                await interaction.user.remove_roles(self.role, reason="GamerHQ game select")
-                result_text = f"✅ Removed **{self.game['name']}**."
-            else:
-                await interaction.user.add_roles(self.role, reason="GamerHQ game select")
-                result_text = f"✅ Added **{self.game['name']}**."
-        except discord.Forbidden:
-            result_text = "❌ I could not update that role. Please ask staff to check the bot role position/permissions."
-        except discord.HTTPException as exc:
-            result_text = f"❌ Discord could not update the role: `{exc}`"
+            await set_game_selection(interaction.user, [(self.game['id'], self.role.id, not self.remove, False)])
+            result_text = f"✅ {'Removed' if self.remove else 'Added'} **{self.game['name']}**."
+        except ValueError as exc:
+            result_text = str(exc)
+        except discord.HTTPException:
+            result_text = "❌ The role update could not be confirmed. Check your roles before retrying; contact staff if needed."
 
         await interaction.edit_original_response(
             content=result_text,
@@ -568,6 +571,8 @@ class GameRoleConfirmView(discord.ui.View):
         super().__init__(timeout=90)
         self.game = game
         self.member_id = member.id
+        self.guild_id = member.guild.id
+        self.used = False
         self.remove = remove
 
         action = discord.ui.Button(
@@ -587,7 +592,7 @@ class GameRoleConfirmView(discord.ui.View):
         self.add_item(keep)
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.member_id:
+        if not interaction.guild or interaction.guild.id != self.guild_id or interaction.user.id != self.member_id:
             await interaction.response.send_message("This confirmation belongs to another user.", ephemeral=True)
             return False
         return True
@@ -596,34 +601,18 @@ class GameRoleConfirmView(discord.ui.View):
         if not await self._guard(interaction):
             return
 
-        # A role update is a Discord API request and may occasionally take longer
-        # than the component interaction acknowledgement window. Acknowledge the
-        # click first, then perform the role change.
-        await interaction.response.defer()
-
-        fresh = db.get_game_by_id(int(self.game["id"]))
-        role_id = fresh.get("role_id") if fresh else None
-        role = interaction.guild.get_role(int(role_id)) if role_id else None
-        if role is None:
-            await interaction.edit_original_response(
-                content="❌ The game role is missing. Please contact staff.",
-                embed=None,
-                view=None,
-            )
-            self.stop()
+        if self.used:
+            await interaction.response.send_message("This selection was already submitted. Reopen the selector.", ephemeral=True)
             return
-
+        self.used = True
+        await interaction.response.defer()
         try:
-            if self.remove:
-                await interaction.user.remove_roles(role, reason="GamerHQ game button")
-                result_text = f"✅ **{fresh['name']}** removed from your games."
-            else:
-                await interaction.user.add_roles(role, reason="GamerHQ game button")
-                result_text = f"✅ **{fresh['name']}** added to your games."
-        except discord.Forbidden:
-            result_text = "❌ I could not update that role. Please ask staff to check the bot role position/permissions."
-        except discord.HTTPException as exc:
-            result_text = f"❌ Discord could not update the role: `{exc}`"
+            await set_game_selection(interaction.user, [(self.game['id'], self.game.get('role_id'), not self.remove, False)])
+            result_text = f"✅ **{self.game['name']}** {'removed from' if self.remove else 'added to'} your games."
+        except ValueError as exc:
+            result_text = str(exc)
+        except discord.HTTPException:
+            result_text = "❌ The role update could not be confirmed. Check your roles before retrying; contact staff if needed."
 
         await interaction.edit_original_response(
             content=result_text,
@@ -635,6 +624,7 @@ class GameRoleConfirmView(discord.ui.View):
     async def cancel(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
+        self.used = True
         await interaction.response.edit_message(
             content=(f"Kept **{self.game['name']}**." if self.remove else "Cancelled. Nothing was changed."),
             view=None,
@@ -751,6 +741,8 @@ class GameSelectionSession(discord.ui.View):
     def __init__(self, member, games, *, notifications=False):
         super().__init__(timeout=300)
         self.member_id = member.id
+        self.guild_id = member.guild.id
+        self.used = False
         self.guild = member.guild
         self.notifications = notifications
         self.games = games
@@ -762,6 +754,7 @@ class GameSelectionSession(discord.ui.View):
             role = self.selected_role(game)
             if role and role in member.roles:
                 self.original_ids.add(game["id"])
+        self.role_ids = {g['id']: r.id for g in games if (r := self.selected_role(g))}
         self.page = 0
         self.pending_ids = set(self.original_ids)
         self.current_group = next((g for g in DISPLAY_GROUP_ORDER if self.games_by_group.get(g)), None)
@@ -774,9 +767,10 @@ class GameSelectionSession(discord.ui.View):
                 return preference_role(self.guild, 'lfg', str(game['id']))
             except ValueError:
                 return None
-        fresh = next((g for g in db.get_selectable_games() if g['id'] == game['id']), None)
-        role = self.guild.get_role(int(fresh['role_id'])) if fresh and fresh.get('role_id') else None
-        return role if assignable(role, self.guild) else None
+        try:
+            return game_role(self.guild, game['id'], game.get('role_id'))
+        except ValueError:
+            return None
 
     def rebuild(self):
         self.clear_items()
@@ -790,7 +784,7 @@ class GameSelectionSession(discord.ui.View):
                 for label, delta in [('Previous', -1), ('Next', 1)]:
                     button = discord.ui.Button(label=label, row=2, disabled=not 0 <= self.page + delta < pages)
                     async def turn(interaction, delta=delta):
-                        if interaction.user.id != self.member_id:
+                        if not interaction.guild or interaction.guild.id != self.guild_id or interaction.user.id != self.member_id:
                             await interaction.response.send_message('This selector belongs to another member.', ephemeral=True)
                             return
                         self.page = max(0, min(pages - 1, self.page + delta))
@@ -817,38 +811,43 @@ class GameSelectionSession(discord.ui.View):
         )
 
     async def confirm_selection(self, interaction: discord.Interaction):
-        if interaction.user.id != self.member_id:
+        if not interaction.guild or interaction.guild.id != self.guild_id or interaction.user.id != self.member_id:
             await interaction.response.send_message("This game selector belongs to another user.", ephemeral=True)
             return
-        await interaction.response.edit_message(content="⏳ **Saving your game selection…**", view=None)
-        by_id = {g["id"]: g for g in self.games}
-        add_roles, remove_roles, added, removed = [], [], [], []
-        for gid in self.pending_ids-self.original_ids:
-            game=by_id.get(gid); role=self.selected_role(game) if game else None
-            if role: add_roles.append(role); added.append(game["name"])
-        for gid in self.original_ids-self.pending_ids:
-            game=by_id.get(gid); role=self.selected_role(game) if game else None
-            if role: remove_roles.append(role); removed.append(game["name"])
-        if len(add_roles) + len(remove_roles) != len(self.pending_ids ^ self.original_ids):
-            await interaction.edit_original_response(content='A game role is missing or unsafe. Ask staff to sync roles, then reopen this selector.', view=None)
+        if self.used:
+            await interaction.response.send_message('This selection was already submitted. Reopen the selector.', ephemeral=True)
             return
+        self.used = True
+        await interaction.response.edit_message(content="⏳ **Saving your game selection…**", view=None)
+        added = self.pending_ids - self.original_ids
+        removed = self.original_ids - self.pending_ids
+        changes = [(gid, self.role_ids.get(gid), gid in self.pending_ids, self.notifications)
+                   for gid in self.pending_ids ^ self.original_ids]
         try:
-            if add_roles: await interaction.user.add_roles(*add_roles, reason="GamerHQ confirmed multi-game selection")
-            if remove_roles: await interaction.user.remove_roles(*remove_roles, reason="GamerHQ confirmed multi-game selection")
-        except discord.Forbidden:
-            await interaction.edit_original_response(content="❌ I could not update your game roles. Please ask staff to check the bot role position/permissions.", view=None); self.stop(); return
-        except discord.HTTPException as exc:
-            await interaction.edit_original_response(content=f"❌ Discord could not save the selection: `{exc}`", view=None); self.stop(); return
+            await set_game_selection(interaction.user, changes)
+        except ValueError as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+            self.stop()
+            return
+        except discord.HTTPException:
+            await interaction.edit_original_response(content='❌ The selection update could not be confirmed. Check your roles before retrying; contact staff if needed.', view=None)
+            self.stop()
+            return
         lines=["✅ **LFG notification preferences saved.**" if self.notifications else
-               "✅ **You're ready!**\nYou can customize notifications, languages and other preferences anytime in #choose-your-roles.\nGame LFG notifications are a separate opt-in in #choose-your-games."]
-        if added: lines.append("\n**Added:** "+", ".join(sorted(added)))
-        if removed: lines.append("\n**Removed:** "+", ".join(sorted(removed)))
+               "✅ **You're ready!**\nYou can customize notifications and other preferences anytime in #choose-your-roles.\nGame LFG notifications are a separate opt-in in #choose-your-games."]
+        heading = lines[0]
+        if added: lines.append("\n**Added:** " + ", ".join(sorted(g['name'] for g in self.games if g['id'] in added)))
+        if removed: lines.append("\n**Removed:** " + ", ".join(sorted(g['name'] for g in self.games if g['id'] in removed)))
         if not added and not removed: lines.append("\nNo roles needed to be changed.")
-        await interaction.edit_original_response(content="".join(lines), view=None); self.stop()
+        text = "".join(lines)
+        if len(text.encode('utf-16-le')) // 2 > 2000:
+            text = heading + f"\n**Added:** {len(added)} game(s).\n**Removed:** {len(removed)} game(s)."
+        await interaction.edit_original_response(content=text, view=None); self.stop()
 
     async def cancel_selection(self, interaction: discord.Interaction):
-        if interaction.user.id != self.member_id:
+        if not interaction.guild or interaction.guild.id != self.guild_id or interaction.user.id != self.member_id:
             await interaction.response.send_message("This game selector belongs to another user.", ephemeral=True); return
+        self.used = True
         await interaction.response.edit_message(content="✖️ Game selection cancelled. Nothing was changed.", view=None); self.stop()
 
 

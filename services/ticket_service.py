@@ -206,6 +206,9 @@ async def open_ticket(guild,member,subject,description,feature='Other', *, ticke
 def authorize(guild,actor,item,staff_only=False):
     if not item or item['guild_id']!=guild.id or actor.guild.id!=guild.id:
         raise ValueError('This ticket is unavailable.')
+    actor = guild.get_member(actor.id)
+    if not actor:
+        raise ValueError('Current server membership is required.')
     if not staff(actor) and (staff_only or item['creator_discord_id']!=actor.id):
         raise ValueError('Only the ticket creator or authorized staff can use this action.' if not staff_only else 'Staff only.')
 

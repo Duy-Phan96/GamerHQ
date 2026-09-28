@@ -1,6 +1,7 @@
 """Private persistent approval buttons for managed-channel drift."""
 import logging
 import asyncio
+import sqlite3
 import discord
 from discord.ext import commands, tasks
 
@@ -170,6 +171,12 @@ class ServerChanges(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def maintenance(self):
+        try:
+            await self._maintenance()
+        except sqlite3.Error:
+            log.exception('Managed channel maintenance database unavailable; retry next cycle.')
+
+    async def _maintenance(self):
         changes.expire()
         for record in changes.records():
             guild = self.bot.get_guild(record['guild_id'])
