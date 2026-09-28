@@ -160,7 +160,13 @@ async def diagnostics(guild, *, messages=False):
                 if sum(normalize_role_name(r.name) == normalize_role_name(role.name) for r in guild.roles) > 1:
                     issues.append(f'Duplicate role: {option.label}')
             except ValueError:
-                issues.append(f'Missing/unsafe role mapping: {option.label}')
+                from services.role_service import find_discord_role, assignable
+                try:
+                    candidate = find_discord_role(guild, option)
+                    detail = 'Adoption available' if assignable(candidate, guild) else 'Missing/unsafe role mapping'
+                except ValueError:
+                    detail = 'Duplicate role detected; MANUAL_REVIEW'
+                issues.append(f'{detail}: {option.label}')
     for game in db.get_selectable_games():
         try:
             role = preference_role(guild, 'lfg', str(game['id']))

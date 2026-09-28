@@ -55,7 +55,7 @@ First pass `python -m pytest`, `python -m pip check` and `python -m tools.reposi
 .\.venv\Scripts\python.exe -m tools.backup_database C:\GamerHQ-Transfer\gamerhq.db
 ```
 
-Transfer that snapshot privately over SSH/SFTP to `/opt/gamerhq/data/gamerhq.db`, owned by 10001:10001 with mode 600. Preserve the original. Never transfer an uncoordinated copy of a running SQLite file. Run only one bot against the guild/database.
+For a first installation where the target does not exist, transfer that snapshot privately over SSH/SFTP to `/opt/gamerhq/data/gamerhq.db`, owned by 10001:10001 with mode 600. **If the VPS already has a DB, never overwrite it directly:** use the [verified import and reconciliation procedure](docs/DATABASE_MIGRATION.md). Local/VPS databases are separate stores; preserve newer VPS activity before choosing the authoritative snapshot. Preserve the original. Never transfer an uncoordinated copy of a running SQLite file. Run only one bot against the guild/database.
 
 As `gamerhq`:
 

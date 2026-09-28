@@ -54,6 +54,14 @@ def resolve(guild, name, *, mapped_only=False):
     matches = candidates(guild, name)
     if len(matches) > 1:
         raise ServerMessageError(f'Multiple {name} candidates; manual review required. No duplicate created.')
+    if matches:
+        target = matches[0]
+        allowed = {'start-here', 'marketplace', 'partners-benefits', 'partner-benefits'} if name in PUBLIC else {'staff', 'affiliate-stats'}
+        if not target.category or alias(target.category.name) not in allowed:
+            raise ServerMessageError(f'MANUAL_REVIEW: unmapped {name} has unexpected placement.')
+        if name in PUBLIC and (target.overwrites_for(guild.default_role).view_channel is False
+                               or target.category.overwrites_for(guild.default_role).view_channel is False):
+            raise ServerMessageError(f'MANUAL_REVIEW: unmapped {name} is private.')
     return matches[0] if matches else None
 
 

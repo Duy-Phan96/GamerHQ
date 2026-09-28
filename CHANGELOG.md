@@ -1,5 +1,13 @@
 # GamerHQ Changelog
 
+## Runtime database reconciliation
+
+- Recover missing/stale canonical message mappings, including Giveaways, before posting; stop for duplicate candidates and incomplete history inspection.
+- Add owner/admin confirmed identical-message pair cleanup with revalidation, reference checks and audit; preserve unknown content.
+- Reuse safe existing channels/roles, preserve modern welcome identity on a fresh DB, and stop selector refresh from deleting duplicates.
+- Add offline whole-DB import with compatibility checks, schema versioning, additive migrations, explicit shutdown attestation and mandatory production backup.
+- Document runtime state inventory, divergent DB limitations and the single active bot requirement.
+
 ## Security hardening
 
 - Revalidate game role mappings, hierarchy, bot permissions and current membership before changes; reject stale confirmations and preserve unrelated roles.

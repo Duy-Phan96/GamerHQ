@@ -8,9 +8,20 @@ EVENTS_INTRO = ('# 🎉 Community Events\n\n'
                 'Join upcoming GamerHQ community events, game nights and special sessions here.')
 
 
+def core_category(guild, name):
+    raw = db.get_setting(f'managed_category:{guild.id}:{name}')
+    stored = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    named = unique(guild.categories, name)
+    if stored in guild.categories:
+        if named and named.id != stored.id:
+            raise ServerMessageError(f'MANUAL_REVIEW: conflicting {name} category identities.')
+        return stored
+    return named
+
+
 def event_order(guild, snapshot):
     """Replace only managed event slots; unrelated children's relative order stays intact."""
-    events = unique(guild.categories, 'events')
+    events = core_category(guild, 'events')
     current = sorted((c for c in snapshot if getattr(c, 'category_id', None) == getattr(events, 'id', None)
                       and c in guild.text_channels), key=lambda c: (c.position, c.id)) if events else []
     by_id = {c.id: c for c in current}
@@ -31,7 +42,15 @@ def core_channel(guild, name):
         channel = guild.get_channel(int(raw))
         if channel in guild.text_channels:
             return channel
-    return unique([c for c in guild.text_channels if c.category and alias(c.category.name) in {'start-here', 'community', 'events'}], name)
+    channel = unique([c for c in guild.text_channels if c.category
+                      and alias(c.category.name) in {'start-here', 'community', 'events'}], name)
+    if channel is None and name != 'looking-for-group' and any(alias(c.name) == name for c in guild.text_channels):
+        raise ServerMessageError(f'MANUAL_REVIEW: #{name} exists outside the expected core categories. No duplicate created.')
+    if channel and (not channel.category or alias(channel.category.name) not in {'start-here', 'community', 'events'}
+                    or channel.overwrites_for(guild.default_role).view_channel is False
+                    or channel.category.overwrites_for(guild.default_role).view_channel is False):
+        raise ServerMessageError(f'MANUAL_REVIEW: unmapped #{name} has an unexpected category/privacy pattern. No duplicate created.')
+    return channel
 
 
 def mention(guild, name):
@@ -79,7 +98,7 @@ async def refresh_boards(guild):
 
 async def migrate_boards(guild, changed, failed):
     from cogs.suggestions import STAFF_ALIASES, private_overwrites
-    start, community = unique(guild.categories, 'start-here'), unique(guild.categories, 'community')
+    start, community = core_category(guild, 'start-here'), core_category(guild, 'community')
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
     channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
     for name in ('guide', 'suggestions', 'community-events'):
@@ -96,7 +115,7 @@ async def migrate_boards(guild, changed, failed):
         or event.category.overwrites_for(guild.default_role).view_channel is False
     ):
         raise ServerMessageError('Unmapped community-events is private; review before adopting it as a public board.')
-    events = unique(guild.categories, 'events')
+    events = core_category(guild, 'events')
     staff_categories = [c for c in guild.categories if alias(c.name) in STAFF_ALIASES]
     if len(staff_categories) > 1:
         raise ServerMessageError('Multiple STAFF categories found; review manually.')
@@ -105,6 +124,9 @@ async def migrate_boards(guild, changed, failed):
     if not events:
         events = await guild.create_category('🏆 EVENTS', reason='GamerHQ tournaments and giveaways')
         changed.append('Created EVENTS')
+    elif events.overwrites_for(guild.default_role).view_channel is False:
+        raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
+    db.set_setting(f'managed_category:{guild.id}:events', events.id)
     for name, target in [('looking-for-group', start), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
         if channel and channel.category_id != target.id:

@@ -114,10 +114,14 @@ async def _ensure_lfg_roles(guild):
         row = db.get_managed_role_by_key('lfg', key)
         role = guild.get_role(int(row['role_id'])) if row else None
         if role is None:
-            # Do not duplicate/adopt an unrecorded role after an uncertain API result.
-            if any(r.name == display for r in guild.roles):
-                raise ValueError(f'Unmapped LFG role already exists for {game["name"]}; owner review required.')
-            role = await guild.create_role(name=display, reason='GamerHQ per-game LFG opt-in')
+            matches = [r for r in guild.roles if r.name == display]
+            if len(matches) > 1 or any(not assignable(r, guild) for r in matches):
+                raise ValueError(f'MANUAL_REVIEW: ambiguous/unsafe LFG role for {game["name"]}.')
+            role = matches[0] if matches else await guild.create_role(name=display, reason='GamerHQ per-game LFG opt-in')
+            if any(g.get('role_id') == role.id for g in db.get_all_games(active_only=False)) or any(
+                    int(r['role_id']) == role.id and (r['role_kind'], r['role_key']) != ('lfg', key)
+                    for r in db.get_managed_roles()):
+                raise ValueError('MANUAL_REVIEW: role already belongs to another resource.')
             db.upsert_managed_role(role_id=role.id, role_kind='lfg', role_key=key, role_group='Game LFG')
         if not assignable(role, guild):
             raise ValueError(f"Unsafe LFG role for {game['name']}; owner review required.")
@@ -286,10 +290,6 @@ def find_discord_role(guild: discord.Guild, option: RoleOption) -> discord.Role 
     if not exact:
         return None
 
-    # Prefer the canonical label when several legacy aliases exist.
-    canonical = [role for role in exact if normalize_role_name(role.name) == normalize_role_name(option.label)]
-    if len(canonical) == 1:
-        return canonical[0]
     if len(exact) == 1:
         return exact[0]
     raise ValueError(f"Ambiguous role aliases for {option.label}; owner review required.")
@@ -339,6 +339,10 @@ async def _ensure_base_roles(guild: discord.Guild) -> tuple[list[discord.Role], 
                 created.append(role)
             if not assignable(role, guild):
                 raise ValueError(f"Unsafe managed role: {option.key}; review permissions/hierarchy.")
+            if any(g.get('role_id') == role.id for g in db.get_all_games(active_only=False)) or any(
+                    int(r['role_id']) == role.id and (r['role_kind'], r['role_key']) != ('base', option.key)
+                    for r in db.get_managed_roles()):
+                raise ValueError('MANUAL_REVIEW: profile role already belongs to another managed resource.')
             db.upsert_managed_role(
                 role_id=role.id,
                 role_kind="base",

@@ -738,14 +738,77 @@ class ServerAdmin(commands.Cog):
         from cogs.managed_messages import open_editor
         await open_editor(interaction)
 
+    @server.command(name='message-duplicates', description='Owner/admin: review two identical canonical messages before removing one.')
+    @app_commands.guild_only()
+    async def message_duplicates(self, interaction: discord.Interaction, managed_key: str):
+        from services.message_reconciliation import preview
+        if not await check_admin(interaction, interaction.guild):
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            draft = await preview(interaction.guild, interaction.user, managed_key)
+            await interaction.followup.send(
+                f"Duplicate managed message: `{managed_key}` in <#{draft['channel_id']}>.\n"
+                f"A (older): https://discord.com/channels/{draft['guild_id']}/{draft['channel_id']}/{draft['ids'][0]}\n"
+                f"B (newer): https://discord.com/channels/{draft['guild_id']}/{draft['channel_id']}/{draft['ids'][1]}\n"
+                'Both have identical content and controls. Prefer A to preserve the older link, '
+                'unless your review identifies B as canonical. Your choice deletes only the other message.',
+                view=DuplicateMessageView(interaction.guild, draft), ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none())
+        except (ServerMessageError, discord.HTTPException) as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+
+
+class DuplicateMessageView(RoleAdminSession):
+    def __init__(self, guild, draft):
+        super().__init__(timeout=180)
+        self.guild, self.admin_id, self.draft = guild, draft['actor_id'], draft
+        self.finished = False
+
+    async def interaction_check(self, interaction):
+        if self.finished:
+            await interaction.response.send_message('This review is already processing or closed.', ephemeral=True)
+            return False
+        return await super().interaction_check(interaction)
+
+    async def choose(self, interaction, index):
+        from services.message_reconciliation import confirm
+        if self.finished or not await self.interaction_check(interaction):
+            return
+        self.finished = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            kept = await confirm(self.guild, interaction.user, self.draft, self.draft['ids'][index], confirmed=True)
+            text = f'Kept message {kept}; removed only the confirmed duplicate.'
+        except (ServerMessageError, discord.HTTPException) as exc:
+            text = str(exc)
+        await interaction.edit_original_response(content=text, view=None)
+        self.stop()
+
+    @discord.ui.button(label='Keep A / Remove B', style=discord.ButtonStyle.danger)
+    async def keep_a(self, interaction, button):
+        await self.choose(interaction, 0)
+
+    @discord.ui.button(label='Keep B / Remove A', style=discord.ButtonStyle.danger)
+    async def keep_b(self, interaction, button):
+        await self.choose(interaction, 1)
+
+    @discord.ui.button(label='Cancel', style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.finished = True
+        await interaction.response.edit_message(content='Cancelled. No messages changed.', view=None)
+        self.stop()
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerAdmin(bot))
 
 
-async def refresh_future_community_messages(guild: discord.Guild):
-    """Keep the V27 tournament/giveaway coming-soon pins current."""
-    copies = {
+def future_community_copies():
+    """Canonical event board text shared by refresh and read-only reconciliation."""
+    return {
         "tournaments": (
             "# 🏆 GamerHQ Tournaments\n\n"
             "Community tournaments are coming to GamerHQ!\n\n"
@@ -761,9 +824,12 @@ async def refresh_future_community_messages(guild: discord.Guild):
             "**Stay tuned — more is coming. 🚀**"
         ),
     }
+async def refresh_future_community_messages(guild: discord.Guild):
+    """Keep the tournament/giveaway pins current without guessing identity."""
+    from services.community_structure_service import core_channel
     results = []
-    for alias, content in copies.items():
-        channel = next((ch for ch in guild.text_channels if _channel_alias(ch.name) == alias), None)
+    for alias, content in future_community_copies().items():
+        channel = core_channel(guild, alias)
         if not isinstance(channel, discord.TextChannel):
             continue
         message = await upsert_fixed_message(

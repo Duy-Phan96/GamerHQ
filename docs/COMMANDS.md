@@ -76,3 +76,5 @@ selection. Main controls survive restart; unfinished drafts do not. See
 [profile settings](ROLE_SETTINGS.md) for explicit Repair and legacy-role retention.
 
 For maintainers, [authorization and recovery boundaries](SECURITY_MODEL.md) classify all command groups and their component actions.
+
+`/server message-duplicates managed_key:<key>` — owner/admin-only review of two identical canonical messages, with explicit keep/remove or cancel. Revalidates author, fingerprint, authorization and runtime references before deleting only the confirmed duplicate. Keys and limitations: [database reconciliation](DATABASE_MIGRATION.md).

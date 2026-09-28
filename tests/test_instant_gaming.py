@@ -48,11 +48,11 @@ class InstantGamingTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(channel.overwrites_for(self.guild.mod).view_channel)
         self.assertIs(ig.configured_bot(self.guild), bot)
 
-    async def test_adopts_alias_anywhere_and_removes_public_grants_only_on_targets(self):
+    async def test_adopts_staff_alias_and_removes_public_grants_only_on_targets(self):
         other = self.guild.add_channel('unrelated', self.community)
         other.overwrites[self.guild.custom] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
         before = other.overwrites.copy()
-        purchases = self.guild.add_channel('💸・affiliate-purchases', self.community)
+        purchases = self.guild.add_channel('💸・affiliate-purchases', self.staff)
         purchases.overwrites[self.guild.custom] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=False)
         user = self.member(777, bot=False)
         purchases.overwrites[user] = discord.PermissionOverwrite(view_channel=True)
@@ -66,6 +66,15 @@ class InstantGamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(other.overwrites, before)
         self.assertFalse(note.deleted)
         self.assertEqual(note.edits, 0)
+
+    async def test_unmapped_purchase_name_outside_staff_requires_review(self):
+        purchases = self.guild.add_channel('💸・affiliate-purchases', self.community)
+        before = list(self.guild.channels)
+        with self.assertRaisesRegex(ServerMessageError, 'MANUAL_REVIEW'):
+            await ig.sync(self.guild)
+        self.assertEqual(self.guild.channels, before)
+        self.assertEqual(purchases.edits, [])
+        self.assertIsNone(db.get_setting(ig.channel_key(self.guild, 'ig-purchases')))
 
     async def test_ambiguous_names_do_not_mutate_or_create(self):
         self.guild.add_channel('ig-purchases', self.staff)

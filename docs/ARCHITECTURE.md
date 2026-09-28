@@ -194,3 +194,7 @@ compatibility dependencies, not dead code. Existing locks assume one bot process
 No dependency upgrade, new feature, Discord migration or deployment was introduced.
 
 Read-only board modes remain in `onboarding_service`; feature helpers retain their own bot/private-access rules. `community_structure_service` owns Community Events identity, canonical pin and EVENTS ordering, with inventory in `server_setup_service` and read-only diagnostics in `health_service`. See [permission modes](PERMISSIONS.md#read-only-modes).
+
+## Production reconciliation
+
+The shared `server_service` delegates read-only candidate discovery and confirmed duplicate cleanup to `message_reconciliation`, retaining existing settings, managed-content locks and audit storage. Missing/stale IDs use exact canonical or feature-provided legacy fingerprints; ambiguity blocks writes, and incomplete history scans block new adoption/creation while validated stored IDs remain usable. Giveaways/Tournaments use their existing keys and shared default renderer. The import tool rehearses normal additive migrations on a snapshot, verifies schema version/columns and requires a verified backup and explicit stopped-bot attestation before replacement. [Runtime table inventory, limitations and procedures](DATABASE_MIGRATION.md).

@@ -102,3 +102,7 @@ See [profile settings](ROLE_SETTINGS.md) for migration and recovery details.
 ## Interactive boards and Community Events
 
 After restarting the updated bot, run `/server health`, then owner `/server setup` → Repair. Repair creates/reuses `🎉・community-events` above tournaments and giveaways in EVENTS and maintains one canonical intro pin. It also repairs the selectors’ reaction/application-command permissions without allowing normal chat or threads. Check buttons/select menus and reactions using an ordinary member account. Existing event posts, IDs and private channels remain intact. See [permission modes](PERMISSIONS.md#read-only-modes).
+
+## Existing live server / production cutover
+
+A fresh local or VPS database does not contain old Discord IDs, private runtime state or delivery claims. [Migrate the runtime snapshot or reconcile safely](DATABASE_MIGRATION.md). Use one active bot process per live guild. Health previews adoption and duplicate warnings; `/server message-duplicates` requires an explicit owner/admin choice before removal.

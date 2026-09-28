@@ -201,12 +201,16 @@ async def migrate_onboarding(guild, bot=None):
     async with _locks.setdefault(guild.id, asyncio.Lock()):
         changed, failed = [], []
         try:
-            from services.community_structure_service import recover_core_ids
+            from services.community_structure_service import recover_core_ids, core_category
             await recover_core_ids(guild)
-            start = unique(guild.categories, 'start-here')
-            community = unique(guild.categories, 'community')
+            start = core_category(guild, 'start-here')
+            community = core_category(guild, 'community')
             if not start or not community:
                 raise ServerMessageError('START HERE and COMMUNITY must already exist; unrelated categories were not created.')
+            for name, category in (('start-here', start), ('community', community)):
+                if category.overwrites_for(guild.default_role).view_channel is False:
+                    raise ServerMessageError('MANUAL_REVIEW: core category is private; no public adoption performed.')
+                db.set_setting(f'managed_category:{guild.id}:{name}', category.id)
             # Detect collisions before the first mutation.
             newbies = unique(guild.text_channels, 'newbies')
             welcome = unique(guild.text_channels, 'welcome')
@@ -214,6 +218,11 @@ async def migrate_onboarding(guild, bot=None):
             legacy_commands = unique(guild.text_channels, 'community-commands')
             old_id = db.get_setting(key(guild, 'old_welcome'))
             new_id = db.get_setting(key(guild, 'welcome'))
+            # A modern read-only welcome is not the legacy discussion channel.
+            # Missing runtime state must never trigger the destructive rename path.
+            if welcome and not new_id and welcome.category_id == start.id and welcome.overwrites_for(guild.default_role).send_messages is False:
+                db.set_setting(key(guild, 'welcome'), welcome.id)
+                new_id = str(welcome.id)
             if welcome and not newbies and str(welcome.id) != str(new_id):
                 # Persist identity before moving, so retries never migrate the replacement welcome.
                 db.set_setting(key(guild, 'old_welcome'), welcome.id)
