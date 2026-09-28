@@ -20,11 +20,13 @@ geschlossen. Die öffentlichen Feeds erlauben keine Mitgliederposts oder Threads
 
 1. Den echten Bot über die [offizielle Bot-Seite](https://www.instant-gaming.com/en/discord/bot/)
    mit dem Partnerkonto verbinden und dessen Discord-User-ID prüfen.
-2. `INSTANT_GAMING_BOT_ID` in der bestehenden privaten Environment-Konfiguration
-   setzen und GamerHQ neu starten. Keine fest einprogrammierte ID, keine neue
-   Bot-ID in SQLite. `0` bedeutet unkonfiguriert.
-3. In Discord `/server instant-gaming`, danach `/server health` ausführen.
-   Der Sync zeigt für jeden Channel Kategorie, Permissions, Pin und Botzugriff.
+2. `/server manage` → Integrations → Instant Gaming → Select Bot verwenden und
+   das installierte Bot-Mitglied bestätigen. Die gespeicherte SQLite-Zuordnung
+   hat Vorrang. `INSTANT_GAMING_BOT_ID` bleibt als Bootstrap-Fallback erhalten;
+   `0` bedeutet ohne gespeicherte Zuordnung unkonfiguriert.
+3. Über Server Structure bestehende Zuordnungen prüfen und Fix Common Issues
+   bestätigen. `/server instant-gaming` bleibt als spezialisierter Sync verfügbar;
+   technische Diagnose liegt unter `/server dev`.
 4. Mit einem normalen Mitglied und Staff Sichtbarkeit und mit dem externen Bot
    Posts, Links, Embeds und Anhänge testen; anschließend nochmals synchronisieren.
 5. In der externen `/config` die tatsächlichen Channel-IDs zuordnen:

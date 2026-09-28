@@ -24,6 +24,7 @@ class GamerHQBot(commands.Bot):
         from services.response_service import tree_error
         self.tree.on_error = tree_error
         self.health_task = None
+        self.operational_log_started = set()
 
     async def setup_hook(self):
         # Container-only, ephemeral heartbeat. Local development needs no /tmp.
@@ -62,7 +63,7 @@ class GamerHQBot(commands.Bot):
 
         print(f"Synced {len(guild_synced)} command group(s) to GamerHQ.")
         print(f"Cleared global commands: {len(global_synced)} remaining.")
-        logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Use /server health, /server reconcile and /server repair for explicit maintenance.", len(self.extensions), len(self.persistent_views))
+        logging.getLogger(__name__).warning("GamerHQ startup: %s extensions, %s persistent views. Administration: /server manage; technical tools: /server dev.", len(self.extensions), len(self.persistent_views))
 
     async def close(self):
         # Each owned resource must close even if an earlier cleanup fails.
@@ -86,6 +87,13 @@ bot = GamerHQBot()
 async def on_ready():
     print(f"GamerHQ Bot is online as {bot.user}!")
     for guild in bot.guilds:
+        if guild.id not in bot.operational_log_started:
+            bot.operational_log_started.add(guild.id)
+            from services.server_log_service import startup
+            try:
+                await startup(guild, bot)
+            except Exception:
+                logging.getLogger(__name__).warning('Startup diagnostics unavailable; review /server manage.')
         # Legacy channel migration is an explicit maintenance operation only.
         # Startup must not delete DB-linked game channels or rename community channels.
         try:
@@ -101,7 +109,7 @@ async def on_ready():
 
         # Managed structure/message maintenance is now an explicit admin operation.
         # Persistent handlers are registered by cogs; ordinary member/event lifecycles continue.
-        print('[GamerHQ] Managed resources unchanged at startup. Use /server health, /server reconcile, /server repair or /server setup as appropriate.')
+        print('[GamerHQ] Managed resources unchanged at startup. Administration: /server manage.')
 
 
 if __name__ == "__main__":

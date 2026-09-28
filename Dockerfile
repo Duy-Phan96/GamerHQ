@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir --requirement requirements.lock \
     && useradd --create-home --uid 10001 --gid 10001 gamerhq
 
 # Copy only reviewed application sources; local runtime/private files stay out.
-COPY --chown=gamerhq:gamerhq bot.py config.py release_info.py VERSION ./
+COPY --chown=gamerhq:gamerhq bot.py config.py release_info.py VERSION CHANGELOG.md ./
+ARG VCS_REF=unknown
+RUN printf '%s\n' "$VCS_REF" > /app/BUILD_COMMIT
 COPY --chown=gamerhq:gamerhq cogs/ ./cogs/
 COPY --chown=gamerhq:gamerhq services/ ./services/
 COPY --chown=gamerhq:gamerhq database/ ./database/

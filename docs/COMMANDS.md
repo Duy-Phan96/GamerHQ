@@ -17,6 +17,13 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 
 ## Admin / Owner commands
 
+Start with `/server manage` for everyday administration. `/server setup` is the
+owner's first-time wizard (with advanced rerun after completion); `/server dev`
+contains owner-only technical tools. Legacy technical commands below remain for
+compatibility. See [operations](PRODUCTION_OPERATIONS.md).
+
+- `/server manage` — Owner/admin: structure, roles, integrations, managed messages, features and private Server Log.
+- `/server dev` — Owner only: Health, Reconcile, Repair, Duplicate Scan, Production Doctor CLI guidance, Resource Mappings and Raw Diagnostics.
 - `/deals import-gocdkeys` — Owner/admin: choose promotion_type AUTO (default), DEAL or GIVEAWAY; paste 1–10 partner links into the modal, review paginated results, optionally Edit Titles/notes, then Post New Promotions or Cancel. URL duplicates and existing delivery claims are skipped. See [manual import](GOCDKEYS.md#manual-batch-import).
 
 - `/deals create` — Owner/admin: select Amazon, Instant Gaming, GoCDKeys or Other; enter prices and a verified product/affiliate URL; Preview → Post Deal / Edit / Cancel. Optional image URL; promotion_type DEAL (default) targets gaming-deals, GIVEAWAY targets giveaways and offers optional prize/end date/note instead of prices. See [curated deals](DEALS.md).
@@ -43,7 +50,7 @@ Staff review suggestions and take/mark waiting/close support tickets via private
 - `/server pinned-messages` — Owner/admin: edit GamerHQ-managed pinned messages and buttons. Select channel → select message (automatic for one pin) → edit content/buttons → Preview → Save Changes. Multiple pins, persistent customization and confirmed Reset to Default are supported. See [managed message editing](MANAGED_MESSAGES.md).
 - `/server roles` — Admin: sync, review and safely clean up GamerHQ-managed roles.
 - `/server sync-support` — Admin: reconcile existing Support/partner names, parents and order with desired state, and synchronize their pinned messages; overview bullets use managed channel mentions.
-- `/server setup` — Owner only: preview and confirm creation of genuinely missing resources.
+- `/server setup` — Owner only: first-time setup wizard; completed servers redirect to management with an advanced rerun option.
 - `/server reconcile` — Owner/admin: review existing candidates and confirm persisted ID mappings only.
 - `/server repair` — Owner/admin: preview and confirm fixes to linked resources; no creation/deletion.
 

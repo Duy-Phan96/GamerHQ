@@ -57,6 +57,9 @@ async def _scan(guild, bot=None, *, messages=True):
     except sqlite3.Error:
         add('Database','CRITICAL','Storage unavailable or schema incomplete; check runtime logs before repair.')
         return findings
+    from services.server_log_service import channel as server_log_channel
+    add('Server Log', 'PASS' if server_log_channel(guild) else 'REPAIRABLE',
+        'Private operational log ready.' if server_log_channel(guild) else 'Private STAFF server log needs review in /server manage.')
     from services.instant_gaming_service import diagnostics
     findings.extend(Finding(*row) for row in await diagnostics(guild, messages=messages))
     if bot:

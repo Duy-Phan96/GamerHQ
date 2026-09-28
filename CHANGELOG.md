@@ -1,5 +1,11 @@
 # GamerHQ Changelog
 
+## Server administration and production recovery
+
+- Use Server Management for structure, integrations, managed messages and features; first-time setup guides owners through reviewed changes.
+- Private STAFF Server Log announces deployments once and directs owners to settings that need attention.
+- Compare runtime database snapshots without exposing private rows; divergent imports require a reviewed comparison and verified backup.
+
 ## Runtime database reconciliation
 
 - Recover missing/stale canonical message mappings, including Giveaways, before posting; stop for duplicate candidates and incomplete history inspection.

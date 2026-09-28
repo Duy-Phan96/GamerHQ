@@ -32,10 +32,11 @@ Marketplace messages are English. Electricity is a Germany-only electricity tari
 
 ### Administration
 
+- `/server setup` guides first-time configuration; `/server manage` opens everyday administration; owner-only `/server dev` keeps technical tools available. Changes retain existing previews and confirmations.
+- Private STAFF `server-log` announces deployed versions once and directs owners to settings needing review. See [production operations and safe DB recovery](docs/PRODUCTION_OPERATIONS.md).
 - Optional [Instant Gaming setup](docs/INSTANT_GAMING.md) is an external owner configuration.
 
-- Preview and confirm incremental server setup/repair, preserving managed channel identities where possible.
-- Inspect read-only server health diagnostics and the deployed command inventory.
+- Inspect read-only diagnostics through Server Dev when deeper investigation is needed.
 - Add or remove multiple Game Areas, with dependency checks and explicit removal confirmation.
 - Manage game-library entries, managed roles, information messages and Music Bots role configuration.
 - Edit GamerHQ-managed pinned messages with `/server pinned-messages` (owner/admin): Markdown, configurable link/action buttons, Preview → Save, and independent selection of multiple messages in a channel. Customizations survive restart and repair; confirmed Reset to Default restores generated content. See the [editor guide](docs/MANAGED_MESSAGES.md).
@@ -104,6 +105,7 @@ STAFF (private)
 ├─ staff-suggestions
 ├─ ticket-logs
 ├─ mod-log
+├─ server-log
 ├─ bot-log
 └─ mod-commands
 ```

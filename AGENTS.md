@@ -13,6 +13,9 @@
 - Preserve unrelated channels, messages, pins, custom overrides and user content. Destructive operations retain existing confirmation/dependency checks.
 - Keep secrets, runtime DBs, logs, backups, transcripts and private user data out of source/output. Use existing environment/config for deployment-specific IDs and settings for managed runtime IDs.
 - Keep health/inspection read-only. A real bot start changes Discord state; it is not a test.
+- Production is `/opt/gamerhq/app` on `main`; `/opt/gamerhq/data` is authoritative runtime state. Follow [production rules](PRODUCTION_RULES.md) and [operations](docs/PRODUCTION_OPERATIONS.md) for Remote SSH work.
+- Never read/expose real `.env` values. Back up before DB/schema work; no local + VPS bot against the live guild, force-push, `reset --hard`, automatic deploy or uncontrolled Discord deletion.
+- Normal administration starts at `/server manage`; first-time setup is `/server setup`, technical tools belong under owner-only `/server dev`. Preserve the existing confirmed operation services.
 
 ## Validation and handoff
 - Run relevant offline tests for behavior changes; add regression coverage for bugs, authorization, retries and persistence where affected.

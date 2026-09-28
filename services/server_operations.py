@@ -129,6 +129,9 @@ def display_name(guild, row):
 
 def rights(guild, row, resource):
     from services.channel_change_service import safe_rights
+    if row['name'] == 'server-log':
+        from services.server_log_service import overwrites
+        return overwrites(guild, resource)
     if row.get('existing_only'):
         import config
         from services.streamer_hub_service import overwrites, role
