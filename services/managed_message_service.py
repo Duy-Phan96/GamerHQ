@@ -309,3 +309,73 @@ async def save(guild, user, draft, *, reset=False, confirmed=False):
         updated.update(pending=False, content_hash=digest(updated['content']))
         store(updated)
         return updated
+
+
+def canonical_boards(guild, bot=None):
+    """Existing owning renderers supply defaults; no second copy of canonical text."""
+    from services.community_structure_service import core_channel, guide_text, EVENTS_INTRO
+    from services.support_service import support_sections, section_channel, resource, message_key, support_text, PARTNER_CHANNELS
+    from services.instant_gaming_service import CHANNELS, resolve, message_key as ig_key
+    from cogs.server import future_community_copies
+    result = {}
+    for name, content in future_community_copies().items():
+        result[f'server_future_{name}_message_id'] = (core_channel(guild, name), content)
+    for name, key, content in [('guide', f'central_guide:{guild.id}', guide_text(guild)),
+                               ('community-events', f'community_events:{guild.id}', EVENTS_INTRO)]:
+        result[key] = (core_channel(guild, name), content)
+    for section, content, _ in support_sections():
+        if section == 'intro':
+            content = support_text({name: target for name in ['support-gamerhq', *PARTNER_CHANNELS]
+                                    if (target := resource(guild, name))})
+        result[message_key(guild, section)] = (resource(guild, section_channel(section)), content)
+    for name, (_, content) in CHANNELS.items():
+        if name != 'gaming-deals':
+            result[ig_key(guild, name)] = (resolve(guild, name), content)
+    from services import role_panel_service as panels
+    board = panels.channel(guild)
+    if board:
+        keys = panels.message_keys(guild, board)
+        result[keys['intro']] = (board, panels.INTRO)
+        for section, group, text in panels.SECTIONS:
+            result[keys[section]] = (board, panels.panel_text(group, text))
+    from services.onboarding_service import unique, welcome_text
+    raw = db.get_setting(f'onboarding:{guild.id}:welcome')
+    welcome = guild.get_channel(int(raw)) if raw and raw.isdigit() else unique(guild.text_channels, 'welcome')
+    if welcome and welcome.category and welcome.category.name:
+        result[f'server_pinned_message_{welcome.id}'] = (welcome, welcome_text(guild))
+    from cogs.suggestions import ENTRY_TEXT
+    result[f'suggestions_entry:{guild.id}'] = (core_channel(guild, 'suggestions'), ENTRY_TEXT)
+    from services.ticket_service import ENTRY_TEXT as ticket_text
+    result[f'ticket_entry:{guild.id}'] = (core_channel(guild, 'need-support'), ticket_text)
+    editor_specs = specs(guild)
+    for state in records(guild):
+        if state['key'] in editor_specs:
+            raw = db.get_setting(editor_specs[state['key']][1])
+            target = guild.get_channel(int(raw)) if raw and raw.isdigit() else result.get(state['key'], (None,))[0]
+            result[state['key']] = (target, state['content'])
+    # These are audit definitions, not additions to the editor action allowlist.
+    from cogs.server import setting_key_for, default_copy_for, resolve_channel_placeholders
+    lfg = core_channel(guild, 'looking-for-group')
+    if lfg:
+        result[setting_key_for(lfg)] = (lfg, resolve_channel_placeholders(guild, default_copy_for(lfg)))
+    from services import game_service as games
+    board = guild.get_channel(games.CHOOSE_GAMES_CHANNEL_ID)
+    if board in guild.text_channels:
+        result['choose_games_message_id'] = (board, games.build_choose_games_message())
+        for title, _ in games.build_choose_games_sections():
+            result['choose_games_section_message_ids:' + games._choose_games_section_key(title)] = (board, title)
+    from services import command_guide_service as guides
+    def mapped_channel(key):
+        raw = db.get_setting(key)
+        return guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    result[guides.COMMUNITY_GUIDE_MESSAGE_KEYS[0]] = (
+        mapped_channel(guides.COMMUNITY_GUIDE_CHANNEL_KEY) or core_channel(guild, 'bot-commands'),
+        guides.build_community_command_guide_pages(bot, guild)[0])
+    if bot is not None:
+        for key, page in guides.staff_command_pages(bot, guild):
+            result[key] = (mapped_channel(guides.STAFF_GUIDE_CHANNEL_KEY), page)
+        result[guides.STREAMER_GUIDE_MESSAGE_KEY] = (
+            mapped_channel(guides.STREAMER_GUIDE_CHANNEL_KEY), guides.build_streamer_command_guide(bot, guild))
+    from services import streamer_hub_service as hub
+    result['streamer_guide_message_id'] = (hub.channel(guild, 'streamer-guide'), hub.guide_text(guild))
+    return result

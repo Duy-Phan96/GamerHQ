@@ -738,31 +738,112 @@ class ServerAdmin(commands.Cog):
         from cogs.managed_messages import open_editor
         await open_editor(interaction)
 
-    @server.command(name='message-duplicates', description='Owner/admin: review two identical canonical messages before removing one.')
+    @server.command(name='message-duplicates', description='Owner/admin: scan managed messages and review duplicate cleanup.')
     @app_commands.guild_only()
-    async def message_duplicates(self, interaction: discord.Interaction, managed_key: str):
-        from services.message_reconciliation import preview
+    async def message_duplicates(self, interaction: discord.Interaction, managed_key: str | None = None):
+        from services.message_reconciliation import audit
         if not await check_admin(interaction, interaction.guild):
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            draft = await preview(interaction.guild, interaction.user, managed_key)
-            await interaction.followup.send(
-                f"Duplicate managed message: `{managed_key}` in <#{draft['channel_id']}>.\n"
-                f"A (older): https://discord.com/channels/{draft['guild_id']}/{draft['channel_id']}/{draft['ids'][0]}\n"
-                f"B (newer): https://discord.com/channels/{draft['guild_id']}/{draft['channel_id']}/{draft['ids'][1]}\n"
-                'Both have identical content and controls. Prefer A to preserve the older link, '
-                'unless your review identifies B as canonical. Your choice deletes only the other message.',
-                view=DuplicateMessageView(interaction.guild, draft), ephemeral=True,
-                allowed_mentions=discord.AllowedMentions.none())
+            rows = await audit(interaction.guild, interaction.user, bot=self.bot, managed_key=managed_key)
+            view = DuplicateAuditView(interaction.guild, interaction.user.id, rows, self.bot)
+            await interaction.followup.send(view.text(), view=view, ephemeral=True,
+                                            allowed_mentions=discord.AllowedMentions.none())
         except (ServerMessageError, discord.HTTPException) as exc:
             await interaction.followup.send(str(exc), ephemeral=True)
 
 
+class DuplicateAuditView(RoleAdminSession):
+    def __init__(self, guild, actor_id, rows, bot):
+        super().__init__(timeout=180)
+        self.guild, self.admin_id, self.rows, self.bot = guild, actor_id, rows, bot
+        self.page = 0
+        self.finished = False
+        self.review.disabled = not any(row['status'] == 'DUPLICATE' for row in rows)
+
+    async def interaction_check(self, interaction):
+        if self.finished:
+            await interaction.response.send_message('This scan is already processing or closed.', ephemeral=True)
+            return False
+        return await super().interaction_check(interaction)
+
+    def text(self):
+        count = sum(row['status'] == 'DUPLICATE' for row in self.rows)
+        incomplete = sum(row['status'] == 'MANUAL_REVIEW' for row in self.rows)
+        lines = ['# Managed Message Duplicate Scan',
+                 f'{count} duplicate groups require review. {incomplete} boards could not be fully inspected.']
+        for row in self.rows[self.page * 8:(self.page + 1) * 8]:
+            icon = '✅' if row['status'] == 'UNIQUE' else '⚠️'
+            label = discord.utils.escape_markdown(row['label'])[:90]
+            candidates = '?' if row['status'] == 'MANUAL_REVIEW' else len(row['matches'])
+            lines.append(f"{icon} **{label}** — <#{row['channel_id']}> — Candidates: {candidates} ({row['status']})")
+        lines.append(f'Page {self.page + 1}/{max(1, (len(self.rows) + 7) // 8)}. Nothing has been changed.')
+        return '\n'.join(lines)
+
+    @discord.ui.button(label='Review Duplicates', style=discord.ButtonStyle.primary)
+    async def review(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.finished = True
+        await interaction.response.defer(ephemeral=True)
+        keys = [r['key'] for r in self.rows if r['status'] == 'DUPLICATE']
+        await show_duplicate_review(interaction, self.guild, keys, self.bot)
+        self.stop()
+
+    @discord.ui.button(label='Next Page', style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.page = (self.page + 1) % max(1, (len(self.rows) + 7) // 8)
+        await interaction.response.edit_message(content=self.text(), view=self, allowed_mentions=discord.AllowedMentions.none())
+
+    @discord.ui.button(label='Close', style=discord.ButtonStyle.secondary)
+    async def close(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.finished = True
+        await interaction.response.edit_message(content='Scan closed. No messages changed.', view=None)
+        self.stop()
+
+
+def duplicate_review_text(draft):
+    lines = [f"# {discord.utils.escape_markdown(draft['label'])[:100]}",
+             f"Channel: <#{draft['channel_id']}> · `{draft['key']}`",
+             f"Group candidates: {len(draft['group_ids'])}"]
+    for letter, info in zip('AB', draft['metadata']):
+        preview = discord.utils.escape_markdown(info['preview']).replace('\n', ' ')[:200]
+        lines.append(f"**Candidate {letter}**: https://discord.com/channels/{draft['guild_id']}/{draft['channel_id']}/{info['id']}\n"
+                     f"Created: {info['created']} · Edited: {info['edited']}\n"
+                     f"Current DB mapping: {'yes' if info['mapped'] else 'no'}\n{preview}")
+    letter = 'AB'[draft['ids'].index(draft['recommended'])]
+    lines.append(f"**Recommended: Keep {letter}** — {draft['reason']}\n"
+                 'Choosing Keep confirms deletion of only the other displayed message. The kept message and pin are preserved.')
+    return '\n\n'.join(lines)
+
+
+async def show_duplicate_review(interaction, guild, keys, bot, notice=''):
+    from services.message_reconciliation import preview
+    if not keys:
+        await interaction.edit_original_response(content=(notice + '\nReview complete. Run /server message-duplicates and /server health again.').strip(), view=None)
+        return
+    try:
+        draft = await preview(guild, interaction.user, keys[0], bot=bot)
+        text = duplicate_review_text(draft)
+    except (ServerMessageError, discord.HTTPException) as exc:
+        draft = dict(actor_id=interaction.user.id, key=keys[0])
+        text = f'`{keys[0]}`: MANUAL_REVIEW — {exc}\nNothing removed. Skip or cancel.'
+    view = DuplicateMessageView(guild, draft, remaining=keys[1:], bot=bot)
+    await interaction.edit_original_response(content=(notice + '\n' + text).strip(), view=view,
+                                             allowed_mentions=discord.AllowedMentions.none())
+
+
 class DuplicateMessageView(RoleAdminSession):
-    def __init__(self, guild, draft):
+    def __init__(self, guild, draft, *, remaining=(), bot=None):
         super().__init__(timeout=180)
         self.guild, self.admin_id, self.draft = guild, draft['actor_id'], draft
+        self.remaining, self.bot = list(remaining), bot
+        self.keep_a.disabled = self.keep_b.disabled = 'ids' not in draft
         self.finished = False
 
     async def interaction_check(self, interaction):
@@ -778,11 +859,13 @@ class DuplicateMessageView(RoleAdminSession):
         self.finished = True
         await interaction.response.defer(ephemeral=True)
         try:
-            kept = await confirm(self.guild, interaction.user, self.draft, self.draft['ids'][index], confirmed=True)
+            kept = await confirm(self.guild, interaction.user, self.draft, self.draft['ids'][index], confirmed=True, bot=self.bot)
             text = f'Kept message {kept}; removed only the confirmed duplicate.'
+            if len(self.draft.get('group_ids', ())) > 2:
+                self.remaining.insert(0, self.draft['key'])
         except (ServerMessageError, discord.HTTPException) as exc:
             text = str(exc)
-        await interaction.edit_original_response(content=text, view=None)
+        await show_duplicate_review(interaction, self.guild, self.remaining, self.bot, text)
         self.stop()
 
     @discord.ui.button(label='Keep A / Remove B', style=discord.ButtonStyle.danger)
@@ -793,12 +876,21 @@ class DuplicateMessageView(RoleAdminSession):
     async def keep_b(self, interaction, button):
         await self.choose(interaction, 1)
 
+    @discord.ui.button(label='Skip', style=discord.ButtonStyle.secondary)
+    async def skip(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        self.finished = True
+        await interaction.response.defer(ephemeral=True)
+        await show_duplicate_review(interaction, self.guild, self.remaining, self.bot, 'Skipped this group; nothing removed from it.')
+        self.stop()
+
     @discord.ui.button(label='Cancel', style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction, button):
         if not await self.interaction_check(interaction):
             return
         self.finished = True
-        await interaction.response.edit_message(content='Cancelled. No messages changed.', view=None)
+        await interaction.response.edit_message(content='Review cancelled. No further messages changed.', view=None)
         self.stop()
 
 

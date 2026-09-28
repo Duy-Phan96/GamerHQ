@@ -77,4 +77,4 @@ selection. Main controls survive restart; unfinished drafts do not. See
 
 For maintainers, [authorization and recovery boundaries](SECURITY_MODEL.md) classify all command groups and their component actions.
 
-`/server message-duplicates managed_key:<key>` — owner/admin-only review of two identical canonical messages, with explicit keep/remove or cancel. Revalidates author, fingerprint, authorization and runtime references before deleting only the confirmed duplicate. Keys and limitations: [database reconciliation](DATABASE_MIGRATION.md).
+`/server message-duplicates` — owner/admin-only global audit of registered canonical boards; optional `managed_key:<key>` restricts it to one board. Review candidates and the mapping/fingerprint recommendation, then explicitly Keep A / Remove B, Keep B / Remove A, Skip or Cancel. Every removal revalidates identity, authorization and runtime references. Keys and limitations: [database reconciliation](DATABASE_MIGRATION.md).
