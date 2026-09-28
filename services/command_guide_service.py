@@ -1,3 +1,4 @@
+from services.operation_context import measured, count
 import discord
 from discord import app_commands
 
@@ -151,6 +152,7 @@ def staff_command_pages(bot, guild):
             for index, page in enumerate(pages, 1)]
 
 
+@measured('command_guide_service_refresh_staff_command_guide')
 async def refresh_staff_command_guide(bot, guild: discord.Guild, channel: discord.TextChannel | None = None):
     if channel is None:
         channel = await ensure_staff_guide_channel(guild)
@@ -303,6 +305,7 @@ async def _delete_managed_message_by_setting(guild: discord.Guild, setting_key: 
     return False
 
 
+@measured('command_guide_service_refresh_community_command_guide')
 async def refresh_community_command_guide(bot, guild: discord.Guild, channel: discord.TextChannel | None = None):
     if channel is None:
         channel = await ensure_community_guide_channel(guild)
@@ -324,6 +327,7 @@ async def refresh_community_command_guide(bot, guild: discord.Guild, channel: di
     # Recover obsolete pages even when their setting was lost. Only exact managed
     # headings on our own messages qualify; user/admin history is never removed.
     candidates = {m.id: m async for m in channel.pins(limit=None)}
+    count('history_scans')
     async for candidate in channel.history(limit=100):
         candidates[candidate.id] = candidate
     for candidate in candidates.values():

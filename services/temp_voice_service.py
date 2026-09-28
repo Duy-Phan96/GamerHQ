@@ -1,4 +1,5 @@
 """Bot-mediated controls scoped to persisted Create Voice rooms."""
+from services.operation_context import measured
 import asyncio
 import json
 import logging
@@ -66,6 +67,7 @@ async def empty_cleanup(channel):
         forget(channel.id)
 
 
+@measured('temp_voice_service_act')
 async def act(guild, actor, channel_id, action, value=None):
     async with room_lock(channel_id):
         channel, row = resolve(guild, actor, channel_id)

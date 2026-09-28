@@ -47,6 +47,8 @@ async def cleanup_pin_system_messages(
 
     deleted = 0
     try:
+        from services.operation_context import count
+        count('history_scans')
         async for message in channel.history(limit=limit):
             if (
                 message.type == discord.MessageType.pins_add
@@ -105,7 +107,9 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
             return bool(original_match and original_match(message))
 
         current_id = db.get_setting(setting_key)
+        current, lookup_done = None, False
         if state and current_id and str(state['message_id']) == current_id:
+            lookup_done = True
             try:
                 current = await channel.fetch_message(int(current_id))
             except discord.NotFound:
@@ -126,7 +130,8 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
                     raise ServerMessageError('Customized message mapping changed; manual review required. Content retained.')
         message = await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
                                              pin=pin, view=view, recover_match=match,
-                                             allowed_mentions=discord.AllowedMentions.none())
+                                             allowed_mentions=discord.AllowedMentions.none(),
+                                             prefetched=current, lookup_done=lookup_done)
         buttons = state['buttons'] if state and state['customized'] else defaults
         version = state['version'] if state else 0
         if state and any((state['content'] != content, state['buttons'] != buttons,
@@ -150,16 +155,18 @@ async def _upsert_fixed_message(
     view: discord.ui.View | None = None,
     recover_match=None,
     allowed_mentions=None,
+    prefetched=None,
+    lookup_done=False,
 ):
     """Create or edit one bot-managed fixed message and persist its message ID.
 
     The stored message is edited in place. If it was deleted, a new one is
     created and the stored ID is replaced.
     """
-    message = None
+    message = prefetched
     message_id = db.get_setting(setting_key)
 
-    if message_id and str(message_id).isdigit():
+    if not lookup_done and message_id and str(message_id).isdigit():
         try:
             message = await channel.fetch_message(int(message_id))
         except discord.NotFound:
@@ -209,7 +216,13 @@ async def _upsert_fixed_message(
             message = await channel.send(content=content, view=view, allowed_mentions=allowed_mentions)
             db.set_setting(setting_key, message.id)
         else:
-            await message.edit(content=content, embed=None, view=view, allowed_mentions=allowed_mentions)
+            expected = view.to_components() if view else []
+            # Interactive views must still be installed in discord.py's dispatcher.
+            unchanged = (view is None and message.content == content and not message.embeds and hasattr(message, 'components')
+                         and [part.to_dict() for part in message.components] == expected)
+            if not unchanged:
+                updated = await message.edit(content=content, embed=None, view=view, allowed_mentions=allowed_mentions)
+                if updated is not None: message = updated
 
         if pin:
             await pin_managed_message(

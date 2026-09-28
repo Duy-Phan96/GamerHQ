@@ -1,4 +1,5 @@
 """Conservative preview and one-area-at-a-time confirmed deletion."""
+from services.operation_context import measured
 import logging
 
 import discord
@@ -66,13 +67,16 @@ def inspect_area(guild, game, *, channels=None, manual=False):
             'reasons': reasons or ['No events, temporary resources or unrelated children'], 'fingerprint': fingerprint, 'manual': manual}
 
 
+@measured('game_area_cleanup_scan_areas')
 def scan_areas(guild):
-    areas = [inspect_area(guild, game) for game in db.get_all_games() if game.get('category_id')]
+    with db.read_only():
+        areas = [inspect_area(guild, game) for game in db.get_all_games() if game.get('category_id')]
     known = {row['game']['category_id'] for row in areas}
     unknown = [c for c in guild.categories if c.id not in known]
     return areas, unknown
 
 
+@measured('game_area_cleanup_delete_confirmed_area')
 async def delete_confirmed_area(guild, actor, preview):
     if not authorized(guild, actor):
         raise ValueError('Only the server owner or an administrator can confirm cleanup.')

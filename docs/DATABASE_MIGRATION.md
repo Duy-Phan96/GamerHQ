@@ -40,8 +40,11 @@ Run `/server health`, then `/server reconcile`. Existing mappings are preferred;
 
 Optional game areas and their roles retain the existing `/game-admin recover-existing` workflow; arbitrary resources cannot be inferred from names alone.
 
-The shared fixed-message helper checks the expected channel's pins and up to 1000
-history messages. Only this GamerHQ bot's messages with exact canonical content or
+The legacy shared fixed-message helper checks at most 100 pins and 100 recent
+history messages in the expected channel, with an extra item to detect truncation.
+Reconciliation previews validate mapped messages by exact ID without history;
+explicit duplicate review still inspects the bounded channel snapshot.
+Only this GamerHQ bot's messages with exact canonical content or
 an owning feature's known legacy fingerprint qualify. It reuses one match, persists
 its ID and updates in place. A missing recovery callback now still gets exact-body
 recovery (including Giveaways). Multiple candidates stop the update, even if one

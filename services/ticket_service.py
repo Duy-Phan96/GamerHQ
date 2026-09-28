@@ -1,4 +1,5 @@
 """Private persisted support tickets; channels/history are never automatically deleted."""
+from services.operation_context import measured
 import asyncio
 import logging
 import time
@@ -160,6 +161,7 @@ async def audit(guild,item,actor_id,action):
         log.exception('Ticket log delivery failed ticket=%s; DB audit retained.',item['id'])
 
 
+@measured('ticket_service_open_ticket')
 async def open_ticket(guild,member,subject,description,feature='Other', *, ticket_type='GENERAL_SUPPORT'):
     if ticket_type not in ACTIVE_TICKET_TYPES:
         raise ValueError('Unknown ticket type.')
@@ -242,6 +244,7 @@ async def change(guild,actor,ticket_id,action):
         return item
 
 
+@measured('ticket_service_recover')
 async def recover(guild, member_id=None):
     async with _recovery_locks.setdefault(guild.id,asyncio.Lock()):
         await _recover(guild,member_id)

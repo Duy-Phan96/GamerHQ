@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from services.operation_context import measured
 from datetime import datetime, timedelta
 import re
 import secrets
@@ -362,6 +363,7 @@ async def make_server_invite(channel: discord.TextChannel) -> str | None:
         return None
 
 
+@measured('lfg__finish_join')
 async def _finish_join(guild: discord.Guild, event: dict, member: discord.Member, *, share_token=None) -> str:
     try:
         result = lobby_rules.join(int(event['id']), guild.id, member.id, share_token=share_token)
@@ -1252,17 +1254,17 @@ class LFG(commands.Cog):
     async def lfg_manage(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
         events = [
             event for event in db.get_active_lfg_events(interaction.guild.id)
             if int(event["host_id"]) == interaction.user.id and event.get("status") == "scheduled"
         ]
         events.sort(key=lambda event: int(event["start_at"]))
         if not events:
-            return await interaction.response.send_message("🎮 You don't currently have any active LFG events to manage.", ephemeral=True)
-        await interaction.response.send_message(
-            "# ⚙️ Manage Your LFG Events\n\nChoose one of your events below. Only you can see this panel.",
+            return await interaction.edit_original_response(content="🎮 You don't currently have any active LFG events to manage.")
+        await interaction.edit_original_response(
+            content="# ⚙️ Manage Your LFG Events\n\nChoose one of your events below. Only you can see this panel.",
             view=LFGManageView(interaction.user.id, events),
-            ephemeral=True,
         )
     async def cog_load(self):
         from cogs.lobby_management import ProposalDMView

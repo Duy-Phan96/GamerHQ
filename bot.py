@@ -19,6 +19,8 @@ class GamerHQBot(commands.Bot):
         intents.message_content = GOCDKEYS_ENABLED and GOCDKEYS_AUTOMATIC_SUPPORTED
         intents.voice_states = True
         super().__init__(command_prefix="!", intents=intents)
+        from services.operation_context import install_http_metrics
+        install_http_metrics(self.http)
         from services.response_service import tree_error
         self.tree.on_error = tree_error
         self.health_task = None

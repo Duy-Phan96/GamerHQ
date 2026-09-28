@@ -11,6 +11,7 @@ import re
 import time
 
 import discord
+from services.operation_context import fetch_message
 from database import db
 from services.server_service import ServerMessageError
 from services.authorization_service import authorized
@@ -224,7 +225,7 @@ async def inspect(guild, state):
     channel = guild.get_channel(state['channel_id'])
     if channel not in guild.text_channels:
         raise ServerMessageError('Managed channel is missing.')
-    message = await channel.fetch_message(state['message_id'])
+    message = await fetch_message(channel, state['message_id'])
     if (not owns(state, channel, message) or not message.pinned or state.get('pending')
             or digest(state['content']) != state['content_hash']):
         raise ServerMessageError('Message ownership, fingerprint, pin or pending delivery needs repair. Reopen after health/setup.')
@@ -237,7 +238,7 @@ async def available(guild):
         try:
             validate(guild, state['key'], state['content'], state['buttons'])
             await inspect(guild, state)
-        except (ServerMessageError, discord.HTTPException, KeyError, TypeError, ValueError):
+        except (ServerMessageError, discord.HTTPException, KeyError, TypeError, ValueError, TimeoutError):
             continue
         result.append(state)
     return result
@@ -263,7 +264,7 @@ async def health(guild, *, messages=True):
                 seen.add(identity)
                 if messages:
                     await inspect(guild, state)
-            except (ServerMessageError, discord.HTTPException, KeyError, TypeError, ValueError):
+            except (ServerMessageError, discord.HTTPException, KeyError, TypeError, ValueError, TimeoutError):
                 issues.append('A managed board has invalid configuration, ownership, mapping, pin or pending delivery.')
     except (KeyError, TypeError, ValueError):
         issues.append('Managed content storage is malformed; manual review required.')

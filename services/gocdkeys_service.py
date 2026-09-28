@@ -1,4 +1,5 @@
 """Optional compact comparisons; fail closed on uncertain product matches."""
+from services.operation_context import measured, count
 import asyncio
 import html
 from html.parser import HTMLParser
@@ -227,6 +228,7 @@ class GoCdKeysService:
 
     async def recent_messages(self, channel, limit):
         messages = []
+        count('history_scans')
         async for message in channel.history(limit=limit):
             messages.append(message)
             if len(messages) >= limit:
@@ -239,6 +241,7 @@ class GoCdKeysService:
         return {getattr(getattr(m, 'reference', None), 'message_id', None) for m in messages
                 if m.author.id == guild.me.id and m.content in {COPY, DISABLED_COPY}}
 
+    @measured('gocdkeys_service_preview_backfill')
     async def preview_backfill(self, guild, limit=50):
         if limit not in (25, 50, 100):
             raise ValueError('Choose 25, 50 or 100 messages.')
@@ -262,6 +265,7 @@ class GoCdKeysService:
                 plan['candidates'].append(message.id)
         return plan
 
+    @measured('gocdkeys_service_run_backfill')
     async def run_backfill(self, guild, plan):
         channel = self.backfill_channel(guild)
         if channel.id != plan['channel_id'] or len(plan['candidates']) > 100:

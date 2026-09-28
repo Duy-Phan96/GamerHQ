@@ -1,4 +1,5 @@
 """Bounded manual imports using existing provider validation and curated delivery."""
+from services.operation_context import measured
 import asyncio
 from dataclasses import asdict, dataclass
 import hashlib
@@ -91,6 +92,7 @@ def render(entry):
                 allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
 
 
+@measured('gocdkeys_import_service_publish')
 async def publish(guild, actor, plan):
     curated.authorize(guild, actor)
     if not 1 <= len(plan.entries) <= MAX_LINKS:

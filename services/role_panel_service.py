@@ -2,6 +2,7 @@
 import asyncio
 import discord
 from database import db
+from services.operation_context import fetch_message
 from services.server_service import upsert_fixed_message, ServerMessageError
 from services.onboarding_service import unique, set_read_only
 
@@ -202,21 +203,24 @@ async def diagnostics(guild, *, messages=False):
         ids.add(raw)
         if messages:
             try:
-                msg = await board.fetch_message(int(raw))
+                msg = await fetch_message(board, int(raw))
                 if msg.author.id != guild.me.id or not msg.pinned:
                     issues.append(f'Invalid/unpinned role message: {key}')
-            except discord.HTTPException:
+            except (discord.HTTPException, TimeoutError):
                 issues.append(f'Role message unavailable: {key}')
     if messages:
         titles = [INTRO.split('\n')[0]] + [f'# {group}' for _, group, _ in SECTIONS]
         counts = dict.fromkeys(titles, 0)
         try:
-            async for msg in board.history(limit=100):
+            from services.message_reconciliation import history_snapshot, SCAN_LIMIT
+            found, count = await history_snapshot(board)
+            if count > SCAN_LIMIT: issues.append('Role history inspection is bounded; older unpinned content was not inspected.')
+            for msg in found.values():
                 if msg.author.id == guild.me.id:
                     title = (msg.content or '').split('\n')[0]
                     if title in counts:
                         counts[title] += 1
-        except discord.HTTPException:
+        except (discord.HTTPException, TimeoutError):
             issues.append('Role message history unavailable; duplicate inspection incomplete.')
         issues.extend(f'Duplicate role messages: {title}' for title, count in counts.items() if count > 1)
     return issues

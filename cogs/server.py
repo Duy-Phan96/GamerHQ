@@ -621,8 +621,9 @@ class ServerAdmin(commands.Cog):
         if not interaction.guild or not authorized(interaction.guild, interaction.user):
             return await interaction.response.send_message('❌ Owner or administrator access required.', ephemeral=True)
         await interaction.response.defer(ephemeral=True)
-        findings = await scan(interaction.guild, interaction.client)
-        await interaction.followup.send(summary(findings), view=HealthView(interaction.guild, interaction.user.id, findings), ephemeral=True)
+        await interaction.edit_original_response(content='🔄 Checking GamerHQ…\nChecking configuration, stored mappings and current server access.')
+        findings = await scan(interaction.guild, interaction.client, messages=False)
+        await interaction.edit_original_response(content=summary(findings), view=HealthView(interaction.guild, interaction.user.id, findings))
 
     @server.command(name='adopt', description='Owner/admin: preview and adopt selected public managed channel properties.')
     @app_commands.guild_only()
@@ -736,28 +737,30 @@ class ServerAdmin(commands.Cog):
         if not await check_admin(interaction, interaction.guild):
             return
         await interaction.response.defer(ephemeral=True)
+        await interaction.edit_original_response(content='🔄 Reviewing managed messages…\nChecking recent messages and pins in their expected channels.')
         try:
             rows = await audit(interaction.guild, interaction.user, bot=self.bot, managed_key=managed_key)
             view = DuplicateAuditView(interaction.guild, interaction.user.id, rows, self.bot)
-            await interaction.followup.send(view.text(), view=view, ephemeral=True,
+            await interaction.edit_original_response(content=view.text(), view=view,
                                             allowed_mentions=discord.AllowedMentions.none())
         except (ServerMessageError, discord.HTTPException) as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
+            await interaction.edit_original_response(content=str(exc), view=None)
 
 
 async def open_operation(interaction, mode, *, replace=False):
     from services.server_operations import preview
     if not await check_admin(interaction, interaction.guild): return
     await interaction.response.defer(ephemeral=True)
+    titles = {'reconcile': 'Reconciling GamerHQ', 'repair': 'Checking GamerHQ repairs', 'setup': 'Checking GamerHQ setup'}
+    await interaction.edit_original_response(content=f'🔄 {titles[mode]}…\nChecking existing channels, roles and managed messages.', view=None)
     try:
         draft = await preview(interaction.guild, interaction.user, mode, interaction.client)
         view = OperationsView(interaction.guild, draft, interaction.client)
-        if replace:
-            await interaction.edit_original_response(content=view.text(), view=view, allowed_mentions=discord.AllowedMentions.none())
-        else:
-            await interaction.followup.send(view.text(), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.edit_original_response(content=view.text(), view=view, allowed_mentions=discord.AllowedMentions.none())
+    except TimeoutError:
+        await interaction.edit_original_response(content='Checks could not finish while Discord was busy. Nothing was changed; open a fresh preview later.', view=None)
     except (ServerMessageError, discord.HTTPException) as exc:
-        await interaction.followup.send(str(exc), ephemeral=True)
+        await interaction.edit_original_response(content=str(exc), view=None)
 
 
 class ResourceChoice(discord.ui.Select):
@@ -881,12 +884,13 @@ class ConfirmOperationsView(RoleAdminSession):
         if self.parent.finished or not await self.interaction_check(interaction): return
         self.parent.finished = True
         await interaction.response.defer(ephemeral=True)
+        await interaction.edit_original_response(content='🔄 Applying your reviewed changes…\nChecking the affected resources before making changes.', view=None)
         try:
             done, skipped = await apply(self.guild, interaction.user, self.parent.draft, self.parent.bot,
                                         confirmed=True, choices=self.choices)
             text = f'Applied {len(done)} changes; {len(skipped)} need another review.\n' + '\n'.join(skipped[:8])
             text += '\nRun /server health. After linking channels, rescan reconciliation for their messages. Use /server setup only for missing resources.'
-        except (ServerMessageError, discord.HTTPException, ValueError) as exc:
+        except (ServerMessageError, discord.HTTPException, ValueError, TimeoutError) as exc:
             text = 'Stopped safely. Some confirmed changes may already be applied. Run health and open a fresh preview.\n' + str(exc)
         await interaction.edit_original_response(content=text[:1900], view=None)
         self.stop()

@@ -209,7 +209,7 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 
 | Commands | Purpose |
 | --- | --- |
-| `/server health` | Owner/admin read-only diagnostics |
+| `/server health` | Fast owner/admin diagnostics; Details runs deeper message checks |
 | `/server setup` | Owner-only creation of genuinely missing resources after preview/confirmation |
 | `/server repair` | Owner/admin confirmed fixes to linked resources only |
 | `/server reconcile` | Owner/admin confirmed linking of existing Discord IDs |

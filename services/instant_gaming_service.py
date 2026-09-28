@@ -3,6 +3,7 @@ import asyncio
 import logging
 import discord
 from database import db
+from services.operation_context import fetch_message
 from services.onboarding_service import alias, is_staff, unique
 from services.server_service import ServerMessageError, upsert_fixed_message
 
@@ -298,21 +299,25 @@ async def diagnostics(guild, *, messages=True, channels=None):
                 msg = None
                 raw = db.get_setting(message_key(guild, name))
                 try:
-                    msg = await channel.fetch_message(int(raw)) if raw and raw.isdigit() else None
+                    msg = await fetch_message(channel, int(raw)) if raw and raw.isdigit() else None
                     valid_pin = msg and msg.pinned and guild.me and msg.author.id == guild.me.id
                     if valid_pin and name not in PUBLIC:
                         valid_pin = msg.content == CHANNELS[name][1]
-                except discord.HTTPException:
+                except (discord.HTTPException, TimeoutError):
                     valid_pin = False
                 rows.append((name + ' pin', 'PASS' if valid_pin else 'REPAIRABLE', 'Managed message pinned.' if valid_pin else 'Managed pin missing/unavailable; run sync.'))
                 try:
                     headings = {CHANNELS[name][1].split('\n')[0]}
                     if name == 'gaming-deals': headings.add('# 🎮 Gaming Deals')
-                    owned = {m.id async for m in channel.pins(limit=None) if guild.me and m.author.id == guild.me.id
+                    from services.message_reconciliation import pins_snapshot, SCAN_LIMIT
+                    pins = await pins_snapshot(channel)
+                    if len(pins) > SCAN_LIMIT:
+                        rows.append((name + ' pins', 'MANUAL_REVIEW', 'Pin inspection limit reached; older pins were not inspected.'))
+                    owned = {m.id for m in pins.values() if guild.me and m.author.id == guild.me.id
                              and (m.id == (msg.id if msg else None) or (m.content or '').split('\n')[0] in headings)}
                     if len(owned) > 1:
                         rows.append((name + ' duplicate pins', 'MANUAL_REVIEW', 'Multiple managed-looking pins; review before removing.'))
-                except discord.HTTPException:
+                except (discord.HTTPException, TimeoutError):
                     rows.append((name + ' pins', 'WARN', 'Could not inspect pinned messages.'))
     except ServerMessageError as exc:
         rows.append(('Instant Gaming channels', 'MANUAL_REVIEW', str(exc)))

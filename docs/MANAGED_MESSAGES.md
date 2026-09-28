@@ -56,7 +56,7 @@ If Discord delivery fails after confirmation, canonical changes and metadata aud
 
 If Discord definitively rejects the payload as invalid (HTTP 400), the previous canonical configuration is restored and a rejection audit entry is recorded. Reopen the editor to correct the draft; the rejected version cannot be saved again from the old confirmation.
 
-Health reads registry state without changing it. It checks missing channels/messages, duplicate mappings, ownership, fingerprints, button configuration/action IDs and pending delivery. Customized headings are healthy. Only confirmed setup may create a genuinely missing message after candidate inspection; repair, editor saves and resets never recreate messages.
+Health reads registry state without changing it. Default health uses fast DB/config/cache checks; **Details** adds message ownership, fingerprints, pins, button configuration/action IDs and duplicate inspection. Customized headings are healthy. Mapped-message reconciliation uses exact IDs; missing mappings and explicit duplicate checks share a bounded channel snapshot. Incomplete discovery requires review. Only confirmed setup may create a genuinely missing message after candidate inspection; repair, editor saves and resets never recreate messages. See [scan limits and diagnostics](PRODUCTION_OPERATIONS.md#responsive-scans-and-performance-diagnostics).
 
 The private audit table records actor, channel, stable key, content/buttons changed flags, time and before/after hashes. It does not store full edited content or URLs in audit entries. Keep the runtime database and backups out of Git; run only one bot instance against a guild/database.
 

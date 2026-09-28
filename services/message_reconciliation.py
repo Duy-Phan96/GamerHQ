@@ -1,4 +1,5 @@
 """Read-only discovery and explicitly confirmed canonical-message cleanup."""
+import asyncio
 import json
 import logging
 import re
@@ -7,20 +8,35 @@ import time
 import discord
 from database import db
 from services.server_service import ServerMessageError
+from services.operation_context import read_once, fetch_message, count, read_scope, measured, remember_message
 
 log = logging.getLogger(__name__)
-SCAN_LIMIT = 1000
+SCAN_LIMIT = 100
+
+
+async def pins_snapshot(channel):
+    if not channel.guild.me:
+        raise ServerMessageError('MANUAL_REVIEW: bot identity unavailable.')
+    async def read():
+        found = {m.id: m async for m in channel.pins(limit=SCAN_LIMIT + 1)}
+        for message in found.values(): remember_message(message)
+        return found
+    return await read_once(('pins', channel.id), read)
 
 
 async def history_snapshot(channel):
-    if not channel.guild.me:
-        raise ServerMessageError('MANUAL_REVIEW: bot identity unavailable.')
-    found = {m.id: m async for m in channel.pins(limit=None)}
-    count = 0
-    async for message in channel.history(limit=SCAN_LIMIT + 1):
-        count += 1
-        found[message.id] = message
-    return found, count
+    pins = await pins_snapshot(channel)
+    async def read():
+        count('history_scans')
+        found = dict(pins)
+        truncated_pins = len(found) > SCAN_LIMIT
+        total = 0
+        async for message in channel.history(limit=SCAN_LIMIT + 1):
+            total += 1
+            found[message.id] = message
+        for message in found.values(): remember_message(message)
+        return found, max(total, SCAN_LIMIT + 1 if truncated_pins else 0)
+    return await read_once(('history', channel.id), read)
 
 
 async def candidates(channel, *, content, recover_match=None, require_complete=True, snapshot=None):
@@ -107,13 +123,25 @@ def controls(message):
                    [a.id for a in getattr(message, 'attachments', [])]])
 
 
-async def inspect_board(guild, key, channel, content, *, snapshot=None):
+async def inspect_board(guild, key, channel, content, *, snapshot=None, mapped_first=False):
     from services import managed_message_service as managed
     raw = mapping(key)
-    matches = await candidates(channel, content=content, snapshot=snapshot)
+    matches = None
+    if mapped_first and raw and raw.isdigit():
+        try:
+            current = await fetch_message(channel, int(raw))
+            if (guild.me and current.author.id == guild.me.id and current.type == discord.MessageType.default
+                    and (canonical_equal(current.content, content) or
+                         (not managed.load(key) and current.content.split('\n', 1)[0] == content.split('\n', 1)[0]))):
+                matches = [current]
+            else:
+                raise ServerMessageError('Mapped message has changed; review its ownership/content before recovery.')
+        except discord.NotFound:
+            pass
+    if matches is None: matches = await candidates(channel, content=content, snapshot=snapshot)
     if raw and raw.isdigit() and all(str(m.id) != raw for m in matches):
         try:
-            current = await channel.fetch_message(int(raw))
+            current = await fetch_message(channel, int(raw))
             if (guild.me and current.author.id == guild.me.id and current.type == discord.MessageType.default
                     and canonical_equal(current.content, content)):
                 matches.append(current)
@@ -146,7 +174,13 @@ async def inspect_board(guild, key, channel, content, *, snapshot=None):
                 state=state, safe=safe, recommended=recommended, reason=reason)
 
 
+@measured('message_duplicates')
 async def audit(guild, user=None, *, bot=None, managed_key=None):
+    with db.read_only(), read_scope(reuse=True):
+        return await _audit(guild, user, bot=bot, managed_key=managed_key)
+
+
+async def _audit(guild, user=None, *, bot=None, managed_key=None):
     """Read-only global inventory. Bounded history reads in expected channels only."""
     from services import managed_message_service as managed
     if user is not None:
@@ -158,16 +192,18 @@ async def audit(guild, user=None, *, bot=None, managed_key=None):
             raise ServerMessageError('Select a known canonical managed key.')
         definitions = {managed_key: definitions[managed_key]}
     rows = [dict(key='structure', label=warning, channel_id=None, matches=[], status='MANUAL_REVIEW', reason=warning) for warning in dict.fromkeys(warnings)]
-    snapshots = {}
+    channels = {channel.id: channel for channel, content in definitions.values()
+                if channel in guild.text_channels and content is not None}
+    results = await asyncio.gather(*(history_snapshot(c) for c in channels.values()), return_exceptions=True)
+    snapshots = dict(zip(channels, results))
     for key, (channel, content) in definitions.items():
         if channel not in guild.text_channels or content is None:
             continue
         try:
-            if channel.id not in snapshots:
-                snapshots[channel.id] = await history_snapshot(channel)
+            if isinstance(snapshots[channel.id], BaseException): raise snapshots[channel.id]
             row = await inspect_board(guild, key, channel, content, snapshot=snapshots[channel.id])
             row['status'] = 'DUPLICATE' if len(row['matches']) > 1 else ('UNIQUE' if row['matches'] else 'MISSING')
-        except (ServerMessageError, discord.HTTPException, ValueError) as exc:
+        except (ServerMessageError, discord.HTTPException, ValueError, TimeoutError) as exc:
             row = dict(key=key, label=key, channel_id=channel.id, matches=[], status='MANUAL_REVIEW',
                        reason=str(exc) if isinstance(exc, ServerMessageError) else 'Cannot completely inspect this board.')
         rows.append(row)
