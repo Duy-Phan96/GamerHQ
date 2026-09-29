@@ -1108,17 +1108,7 @@ class LFGHubView(discord.ui.View):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            games = user_games(interaction.user)
-            if not games:
-                return await interaction.edit_original_response(content="🎮 Select a game in Choose Your Games first.", view=None)
-            channel_game = game_for_lfg_channel(interaction.guild, interaction.channel_id)
-            if channel_game and not any(int(g["id"]) == int(channel_game["id"]) for g in games):
-                return await interaction.edit_original_response(
-                    content=f"🎮 Add **{channel_game['name']}** to your games first.", view=None
-                )
-            builder = EventBuilderView(
-                host=interaction.user, games=games[:25], game=channel_game, game_locked=channel_game is not None
-            )
+            builder = EventBuilderView(host=interaction.user)
             await interaction.edit_original_response(content=builder.content(), view=builder)
         except Exception as exc:
             print(f"[GamerHQ][LFG] Create Event button failed: {exc}")
@@ -1199,20 +1189,7 @@ class LFG(commands.Cog):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            games = user_games(interaction.user)
-            if not games:
-                return await interaction.edit_original_response(content="🎮 Select a game in Choose Your Games first.", view=None)
-            channel_game = game_for_lfg_channel(interaction.guild, interaction.channel_id)
-            if channel_game and not any(int(g["id"]) == int(channel_game["id"]) for g in games):
-                return await interaction.edit_original_response(
-                    content=f"🎮 Add **{channel_game['name']}** to your games first.", view=None
-                )
-            builder = EventBuilderView(
-                host=interaction.user,
-                games=games[:25],
-                game=channel_game,
-                game_locked=channel_game is not None,
-            )
+            builder = EventBuilderView(host=interaction.user)
             await interaction.edit_original_response(content=builder.content(), view=builder)
         except Exception as exc:
             print(f"[GamerHQ][LFG] /lfg create failed: {exc}")
@@ -1221,7 +1198,7 @@ class LFG(commands.Cog):
                 content="❌ Event creation could not be opened. The error was logged for GamerHQ staff.", view=None
             )
 
-    @lfg.command(name="create", description="Create a GamerHQ Looking for Group event.")
+    @lfg.command(name="create", description="Create a scheduled GamerHQ event.")
     async def lfg_create(self, interaction: discord.Interaction):
         await self._open_event_builder(interaction)
 
@@ -1233,10 +1210,8 @@ class LFG(commands.Cog):
         event = db.get_lfg_event_by_share_token(code.strip())
         if not event or int(event["guild_id"]) != interaction.guild.id or event.get("visibility") != "private":
             return await interaction.response.send_message("❌ This private event invite is invalid, disabled, or expired.", ephemeral=True)
-        game = db.get_game_by_id(int(event["game_id"]))
-        if not game:
-            return await interaction.response.send_message("❌ This event's game is unavailable.", ephemeral=True)
-        if not member_has_game_role(interaction.user, game):
+        game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+        if game and not member_has_game_role(interaction.user, game):
             return await prompt_add_game_and_join(interaction, event, game, interaction.guild, share_token=code.strip())
         await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(interaction.guild, event, interaction.user, share_token=code.strip())
@@ -1248,7 +1223,7 @@ class LFG(commands.Cog):
             return await interaction.followup.send("✅ You're already in this private event.", ephemeral=True)
         await interaction.followup.send("✅ You've joined the private event and now have access to its event channel.", ephemeral=True)
 
-    @lfg.command(name="manage", description="Manage or cancel LFG events you created.")
+    @lfg.command(name="manage", description="Manage or cancel events you created.")
     async def lfg_manage(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
@@ -1259,9 +1234,9 @@ class LFG(commands.Cog):
         ]
         events.sort(key=lambda event: int(event["start_at"]))
         if not events:
-            return await interaction.edit_original_response(content="🎮 You don't currently have any active LFG events to manage.")
+            return await interaction.edit_original_response(content="📅 You don't currently have any active events to manage.")
         await interaction.edit_original_response(
-            content="# ⚙️ Manage Your LFG Events\n\nChoose one of your events below. Only you can see this panel.",
+            content="# ⚙️ Manage Your Events\n\nChoose one of your events below. Only you can manage events you created.",
             view=LFGManageView(interaction.user.id, events),
         )
     async def cog_load(self):
