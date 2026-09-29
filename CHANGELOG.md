@@ -3,8 +3,8 @@
 ## Game-independent event scheduling
 
 - Create Event no longer requires a selected game or game role; public events post to the central LFG board and private events keep their existing invite-only space.
-- Event drafts now include duration, and event cards offer a one-click Google Calendar link using the configured start time and duration.
-- Only the event creator can edit, reschedule, invite/remove participants, open voice, close or cancel the event. Participants retain join/leave/share/calendar actions.
+- Event cards offer a one-click Google Calendar link; event duration is intentionally not a user setting.
+- Only the event creator can edit, reschedule, invite/remove participants, open voice, close or cancel the event. Event voice is created under the shared VOICE CHANNELS category; private event voice stays hidden from non-participants.
 - Existing legacy game-linked events remain readable and joinable for backwards compatibility.
 
 ## Personal game selector polish
