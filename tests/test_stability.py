@@ -52,11 +52,17 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
                 result = request.edit_original_response.call_args.kwargs
                 self.assertIn("Create GamerHQ Event", result["content"])
                 self.assertNotIn("Game:", result["content"])
+                self.assertNotIn("Duration", result["content"])
                 builder = result["view"]
                 self.assertIsInstance(builder, lfg.EventBuilderView)
                 rows = builder.to_components()
-                self.assertEqual(len(rows), 5)
-                self.assertEqual(len(rows[4]["components"]), 5)
+                # Date, time and participants each use one row; controls use the last row.
+                self.assertEqual(len(rows), 4)
+                self.assertEqual([len(row["components"]) for row in rows], [1, 1, 1, 5])
+                self.assertEqual(
+                    [component["label"] for component in rows[-1]["components"]],
+                    ["Title", "PM", "15m", "Public", "Preview"],
+                )
                 for row in rows:
                     self.assertLessEqual(len(row["components"]), 5)
                     for component in row["components"]:
