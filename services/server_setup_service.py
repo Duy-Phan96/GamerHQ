@@ -23,7 +23,13 @@ class CategorySpec:
 
 
 SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
-    CategorySpec("🎮 GAMING", (), private=True),
+    CategorySpec(
+        "🎮 GAMES",
+        (
+            ChannelSpec("💬・gaming-chat"),
+            ChannelSpec("🔎・looking-for-group"),
+        ),
+    ),
     CategorySpec(
         "👋 START HERE",
         (
@@ -32,7 +38,6 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("📢・announcements"),
             ChannelSpec("🎮・choose-your-games"),
             ChannelSpec("👤・choose-your-roles"),
-            ChannelSpec("🎯・looking-for-group"),
             ChannelSpec("📘・guide"),
             ChannelSpec("🆘・need-support"),
             ChannelSpec("💜・support-gamerhq"),
@@ -94,13 +99,21 @@ def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.Category
         except ServerMessageError:
             return None
     for category in guild.categories:
-        if normalize_name(category.name) == wanted:
+        normalized = normalize_name(category.name)
+        if normalized == wanted or (wanted == 'games' and normalized == 'gaming'):
             return category
     return None
 
 
 def _find_channel(category: discord.CategoryChannel, spec: ChannelSpec):
     wanted = normalize_name(spec.name)
+    logical = {'looking-for-group': 'looking-for-group', 'gaming-chat': 'gaming-chat'}.get(wanted)
+    if logical:
+        from database import db
+        raw = db.get_setting(f'managed_channel:{category.guild.id}:{logical}')
+        mapped = category.guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+        if isinstance(mapped, discord.TextChannel):
+            return mapped
     from services.channel_adoption_service import supported
     if wanted in supported():
         from services.support_service import resource
@@ -205,7 +218,7 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
 
     lines.extend([
         "",
-        f"🎮 **GAME SYSTEM** — {report['managed_games']} managed game categories detected",
+        f"🎮 **GAME SYSTEM** — {report['managed_games']} legacy per-game categories detected",
         f"🎥 **STREAMER SYSTEM** — {'✅ Installed' if report['streamer_installed'] else 'ℹ️ Not installed'}",
         "",
     ])
@@ -237,7 +250,7 @@ def render_details(report: dict) -> str:
                 icon = "🔊" if channel_spec.kind == "voice" else "#️⃣"
                 lines.append(f"⚠️ {icon} {channel_spec.name} — missing")
         lines.append("")
-    lines.append("**Update preserves welcome/newbies history; moves LFG to START HERE, adds/reuses community-events above tournaments/giveaways in EVENTS, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
+    lines.append("**Update preserves welcome/newbies history; keeps the central LFG under GAMES once Game System V3 is linked, adds/reuses community-events above tournaments/giveaways in EVENTS, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
     return "\n".join(lines)
 
 
