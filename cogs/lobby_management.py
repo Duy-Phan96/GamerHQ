@@ -72,16 +72,15 @@ class EditModal(discord.ui.Modal):
             self.name = discord.ui.TextInput(label='Title', default=event['title'], max_length=100)
             self.note = discord.ui.TextInput(label='Note / description', default=event.get('note', ''), required=False, max_length=500, style=discord.TextStyle.paragraph)
             self.seats = discord.ui.TextInput(label='Seats including host (1–99)', default=str(event['max_players']), max_length=2)
-            self.duration = discord.ui.TextInput(label='Duration in minutes (30–1440)', default=str(event.get('duration_minutes') or 120), max_length=4)
             self.reminder = discord.ui.TextInput(label='Voice reminder: minutes before (0–1440)', default=str(event['invite_lead_minutes']), max_length=4)
-            for item in (self.name, self.note, self.seats, self.duration, self.reminder): self.add_item(item)
+            for item in (self.name, self.note, self.seats, self.reminder): self.add_item(item)
 
     async def on_submit(self, interaction):
         try:
             old = authorized_event(interaction, self.event_id, host=True)
             values = {'start_at': parse_server_datetime(str(self.date), str(self.time))} if self.schedule else {
                 'title': str(self.name), 'note': str(self.note), 'max_players': int(str(self.seats)),
-                'duration_minutes': int(str(self.duration)), 'invite_lead_minutes': int(str(self.reminder))}
+                'invite_lead_minutes': int(str(self.reminder))}
             await interaction.response.defer(ephemeral=True)
             event = rules.edit(self.event_id, interaction.guild.id, interaction.user.id, **values)
             await changed(interaction.guild, event, time_changed=event['start_at'] != old['start_at'])
@@ -279,7 +278,7 @@ class ActionSelect(discord.ui.Select):
     def __init__(self, event, user_id):
         labels = [
             'View Participants',
-            'Edit Details / Seats / Duration / Reminder',
+            'Edit Details / Seats / Reminder',
             'Change Date / Time',
             'Invite Player',
             'Remove Player',
