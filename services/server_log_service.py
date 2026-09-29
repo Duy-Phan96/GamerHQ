@@ -30,8 +30,8 @@ def overwrites(guild, channel):
     return result
 
 
-def channel(guild):
-    raw = db.get_setting(f'managed_channel:{guild.id}:server-log')
+def channel(guild, *, name='server-log'):
+    raw = db.get_setting(f'managed_channel:{guild.id}:{name}')
     parent = db.get_setting(f'managed_category:{guild.id}:staff')
     value = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
     if not value or value not in guild.text_channels or not parent or str(value.category_id) != parent:

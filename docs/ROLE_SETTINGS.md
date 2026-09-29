@@ -59,10 +59,10 @@ channel separation without writing; pending legacy cleanup is staff-facing only.
 
 ## Per-game LFG opt-in
 
-The existing Choose Games intro gains **LFG Notifications**, opening the same categorized
-game selector in notification mode. Categories with more than 25 choices are paginated.
-Game selection and notification membership are independent; neither enables the other.
-No per-game permanent notification messages are created.
+Choose Your Games now offers only Select Games and Suggest Game. Its former LFG
+Notifications section/button is removed. Existing notification memberships and separate
+notification services remain independent; game selection never enables pings.
+No per-game permanent notification messages are created. See [personal games](GAME_SYSTEM.md).
 
 Owner setup/role sync derives `🔔 <game name> LFG` roles from selectable database games.
 Mappings use `managed_roles` kind `lfg`, key `<game-id>`. Hidden/deleted games are no longer
@@ -73,7 +73,7 @@ adopted/recreated; this avoids duplicates after uncertain creation failures.
 Only the first successful public LFG post mentions that game's opt-in role. Private events,
 secondary posts and refreshes never ping it. Missing/unsafe mappings suppress the ping,
 not event creation. Discord must permit GamerHQ to mention the role for delivery; game
-notification membership grants no game-area access.
+notification membership grants no dedicated game-channel access.
 
 ## Health and owner acceptance
 

@@ -322,6 +322,29 @@ async def _scan(guild, bot=None, *, messages=True):
         members=getattr(guild,'members',[])
         bots=[m for m in members if getattr(m,'bot',False) and role in m.roles]
         add('Music bot membership','PASS' if bots else 'WARN',f'{len(bots)} cached bot members carry the role; third-party playback is not tested.')
+    from services import game_channel_service as game_channels
+    game_parent = None
+    try:
+        game_parent = game_channels.category(guild)
+        add('Gaming category', 'PASS', 'Shared managed category found.')
+    except ValueError:
+        add('Gaming category', 'REPAIRABLE', 'Review/add the shared GAMING category in Server Structure.')
+    add('Games log', 'PASS' if game_channels.log_channel(guild) else 'REPAIRABLE', 'Private STAFF games-log must be linked and writable by GamerHQ.')
+    channel_ids = set()
+    for game in games:
+        if game.get('channel_id'):
+            channel = guild.get_channel(game['channel_id'])
+            role = guild.get_role(game.get('role_id'))
+            if game['channel_id'] in channel_ids:
+                add('Game channel duplicate', 'MANUAL_REVIEW', 'A channel is linked to multiple games.')
+            channel_ids.add(game['channel_id'])
+            valid = (isinstance(channel, discord.TextChannel) and game_parent and channel.category_id == game_parent.id and role)
+            valid = valid and channel.overwrites == game_channels.overwrites(guild, role, channel)
+            add('Game channel', 'PASS' if valid else 'MANUAL_REVIEW', f'Game {game["id"]}: shared category and role-gated access checked.')
+        if game_channels.legacy_hints(game):
+            add('Legacy game resources', 'MANUAL_REVIEW', f'Game {game["id"]}: retained migration hints; preview migration in /server dev. No automatic deletion.')
+    for current, ordered in game_channels.order_plan(guild):
+        add('Game channel order', 'PASS' if current == ordered else 'REPAIRABLE', 'Dedicated game channels use alphabetical order.')
     mapped=set()
     for game in games:
         if game.get('selectable') and not game.get('role_id'): add('Game role','MANUAL_REVIEW',f'Game {game["id"]}: visible game has no role mapping.')
@@ -336,7 +359,7 @@ async def _scan(guild, bot=None, *, messages=True):
                 if game.get(field) and (not ch or ch.category_id!=cid): add('Game Area mapping','MANUAL_REVIEW',f'Game {game["id"]}: {field} missing/moved.')
         elif game.get('area_enabled'): add('Game Area','MANUAL_REVIEW',f'Game {game["id"]}: enabled area lacks category ID.')
     if not any(f.name.startswith('Game') and f.state!='PASS' for f in findings): add('Game Areas','PASS',f'{len(mapped)} area mappings checked.')
-    known_categories={'start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits','marketplace'}
+    known_categories={'gaming','start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits','marketplace'}
     unknown=[c for c in guild.categories if c.id not in mapped and alias(c.name) not in known_categories]
     if unknown: add('Unknown categories','MANUAL_REVIEW',f'{len(unknown)} unmapped categories retained; may include legitimate custom/Streamer areas.')
     for row in temps:

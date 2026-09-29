@@ -134,180 +134,8 @@ def format_plan(plan: dict) -> str:
 
 @coordinated_game_creation
 async def create_game_structure_confirmed(guild: discord.Guild, game: dict, plan: dict, *, fresh=False):
-    """
-    Executes ONLY after explicit admin confirmation.
-    Existing matching objects are reused.
-    On failure, resources created by THIS operation are rolled back.
-    """
-    if fresh:
-        game = db.get_game_by_id(game['id'])
-        if not game or not game.get('selectable') or game.get('category_id') or game.get('area_enabled'):
-            raise GameStructureError('ALREADY EXISTS', RuntimeError('Area already mapped or game changed.'))
-        plan = inspect_game_structure(guild, game)
-        if plan['category'] is not None:
-            raise GameStructureError('ALREADY EXISTS', RuntimeError('Matching category exists; review existing mappings.'))
-        if game.get('role_id'):
-            mapped_role = guild.get_role(game['role_id'])
-            if mapped_role:
-                plan['role'] = mapped_role
-    current = db.get_game_by_id(game['id'])
-    if current and current.get('category_id') and (plan['category'] is None or plan['category'].id != current['category_id']):
-        raise GameStructureError('ALREADY EXISTS', RuntimeError('Area mapping changed; open a fresh preview.'))
-    if plan["conflicts"]:
-        raise GameStructureError(
-            "PRE-CHECK",
-            RuntimeError("Conflicts exist. Resolve duplicate names before continuing.")
-        )
-    if plan['category'] is not None and guild.get_channel(plan['category'].id) is None:
-        raise GameStructureError('PRE-CHECK', RuntimeError('The area changed after the preview. Open a fresh setup preview.'))
-
-    bot_member = guild.me
-    if bot_member is None:
-        raise GameStructureError("BOT MEMBER LOOKUP", RuntimeError("Bot member not found."))
-
-    created = {
-        "role": None,
-        "category": None,
-        "channels": [],
-    }
-
-    role = plan["role"]
-    category = plan["category"]
-
-    try:
-        if role is None:
-            try:
-                role = await guild.create_role(
-                    name=plan["role_name"],
-                    reason=f"GamerHQ confirmed game setup: {game['name']}",
-                )
-                created["role"] = role
-            except Exception as exc:
-                raise GameStructureError("CREATE ROLE", exc) from exc
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            role: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                connect=True,
-                speak=True,
-            ),
-            bot_member: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                manage_channels=True,
-                connect=True,
-                speak=True,
-                move_members=True,
-            ),
-        }
-
-        overwrites = with_music_access(guild, overwrites, 'category', parent=category)
-        if category is None:
-            try:
-                category = await guild.create_category(
-                    name=plan["category_name"],
-                    overwrites=overwrites,
-                    reason=f"GamerHQ confirmed game setup: {game['name']}",
-                )
-                created["category"] = category
-            except Exception as exc:
-                raise GameStructureError("CREATE CATEGORY", exc) from exc
-        else:
-            # Never silently change an existing category. We reuse it as-is.
-            # The admin explicitly confirmed that existing resources may be reused.
-            pass
-
-        async def ensure_channel(key, creator, stage):
-            existing = plan["channels"][key]["existing"]
-            if existing is not None:
-                return existing
-            try:
-                channel = await creator()
-                created["channels"].append(channel)
-                return channel
-            except Exception as exc:
-                raise GameStructureError(stage, exc) from exc
-
-        chat = await ensure_channel(
-            "chat",
-            lambda: guild.create_text_channel(
-                "💬・chat", category=category,
-                reason=f"GamerHQ confirmed game setup: {game['name']}"
-            ),
-            "CREATE CHAT CHANNEL",
-        )
-        lfg = None
-        if game.get("area_has_lfg", 1):
-            lfg = await ensure_channel(
-                "lfg",
-                lambda: guild.create_text_channel(
-                    "🎯・looking-for-group", category=category,
-                    reason=f"GamerHQ confirmed game setup: {game['name']}"
-                ),
-                "CREATE GAME LFG CHANNEL",
-            )
-        create_voice = await ensure_channel(
-            "create_voice",
-            lambda: guild.create_voice_channel(
-                "➕・create-voice", category=category,
-                reason=f"GamerHQ confirmed voice generator: {game['name']}"
-            ),
-            "CREATE VOICE GENERATOR",
-        )
-
-        try:
-            db.set_game_structure(
-                game["id"],
-                role_id=role.id,
-                category_id=category.id,
-                chat_id=chat.id,
-                memes_id=None,
-                lfg_id=lfg.id if lfg else None,
-                create_voice_id=create_voice.id,
-                has_lfg=bool(game.get("area_has_lfg", 1)),
-            )
-        except Exception as exc:
-            raise GameStructureError("SAVE DATABASE", exc) from exc
-
-        # Existing resources get only the dedicated music-role overwrite; keep all others.
-        music_role, music_error = resolve_music_role(guild)
-        if music_role:
-            for resource in (category, chat, lfg, create_voice):
-                if resource is not None:
-                    try:
-                        await apply_music_access(resource, music_role)
-                    except discord.HTTPException:
-                        import logging
-                        logging.getLogger(__name__).warning('Music permissions need /server setup repair for channel %s', resource.id)
-
-        return db.get_game_by_id(game["id"])
-
-    except Exception:
-        # Roll back ONLY what this confirmed operation created.
-        # Existing role/category/channels are never deleted.
-        for channel in reversed(created["channels"]):
-            try:
-                await channel.delete(reason="Rollback failed GamerHQ game setup")
-            except Exception:
-                pass
-
-        if created["category"] is not None:
-            try:
-                await created["category"].delete(reason="Rollback failed GamerHQ game setup")
-            except Exception:
-                pass
-
-        if created["role"] is not None:
-            try:
-                await created["role"].delete(reason="Rollback failed GamerHQ game setup")
-            except Exception:
-                pass
-
-        raise
+    """Deprecated entry point: old confirmations cannot create multi-channel areas."""
+    raise GameStructureError('DEPRECATED', ValueError('Use Games in /server manage for one optional game channel.'))
 
 
 async def remove_game_structure(guild: discord.Guild, game: dict):
@@ -319,14 +147,11 @@ def build_choose_games_message():
     return (
         "# 🎮 Choose Your Games\n\n"
         "Pick the games you play or are interested in. Your game roles are part of your "
-        "GamerHQ profile and may also give you access to dedicated game areas.\n\n"
-        "**Game Buttons**\n"
-        "Browse the categories below and click a game to quickly add or remove it.\n\n"
+        "GamerHQ profile and may also give you access to dedicated game channels.\n\n"
         "**Select Games**\n"
-        "Want to manage several games at once? Use the **Select Games** button below. "
+        "Want to manage several games at once? Use **Select Games** below. Browse Popular or A–Z "
+        "and choose a game to add or remove it immediately. "
         "You can also use `/game select` in chat for a quick single-game change.\n\n"
-        "**LFG Notifications**\n"
-        "Opt into LFG notifications for individual games separately. Selecting a game does not enable pings.\n\n"
         "**Suggest Game**\n"
         "Can't find the game you're looking for? Use **Suggest Game** below or `/game suggest` in chat.\n\n"
         "You can change your games anytime."
@@ -334,23 +159,9 @@ def build_choose_games_message():
 
 
 def build_choose_games_sections():
-    games = db.get_selectable_games()
-    grouped = {group: [] for group in DISPLAY_GROUP_ORDER}
-    for game in games:
-        grouped.setdefault(game["display_group"], []).append(game)
-
-    sections = []
-    for group in DISPLAY_GROUP_ORDER:
-        entries = grouped.get(group, [])
-        for index in range(0, len(entries), 25):
-            chunk = entries[index:index + 25]
-            page = index // 25 + 1
-            pages = (len(entries) + 24) // 25
-            title = f"## {group}"
-            if pages > 1:
-                title += f" · {page}/{pages}"
-            sections.append((title, chunk))
-    return sections
+    # Selection now lives in a personal panel. Existing section messages/IDs
+    # remain available for explicit duplicate/legacy review, never auto-deleted.
+    return []
 
 
 def _choose_games_section_key(title: str) -> str:
@@ -528,7 +339,7 @@ async def _refresh_choose_games_message(bot, view=None, intro_view=None):
             new_ids[key] = message.id
 
         # Stale sections remain for explicit review; refresh never deletes them.
-        db.set_setting("choose_games_section_message_ids", json.dumps(new_ids))
+        db.set_setting("choose_games_section_message_ids", json.dumps(dict(stored_ids, **new_ids) if sections else stored_raw))
         # Remove old pin notices created by previous managed-message versions.
         await cleanup_pin_system_messages(channel, bot_user_id=bot_id, limit=100)
 

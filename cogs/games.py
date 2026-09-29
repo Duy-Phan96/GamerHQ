@@ -1,4 +1,5 @@
 from services.response_service import check_admin
+from cogs.game_selector import GameSelectionSession
 from services.role_service import game_role, set_game_selection
 import asyncio
 import json
@@ -123,6 +124,8 @@ class ConfirmGameAddView(discord.ui.View):
                 fresh_plan,
             )
             game = db.get_game_by_id(game["id"])
+            from services.game_channel_service import audit
+            await audit(interaction.guild, 'Game Approved', game['name'])
 
             # Area operations must preserve Game Library identity and visibility.
             if game is None:
@@ -216,6 +219,7 @@ class DeleteGameConfirmView(discord.ui.View):
             await interaction.response.edit_message(
                 content=(
                     "❌ Permanent deletion was blocked because this game is still referenced by data:\n"
+                    f"• Dedicated game channels: **{deps['game_channels']}**\n"
                     f"• LFG events: **{deps['lfg_events']}**\n"
                     f"• Streamer applications: **{deps['streamer_applications']}**\n"
                     f"• Streamer profiles: **{deps['streamer_profiles']}**\n\n"
@@ -737,7 +741,7 @@ class CategoryButton(discord.ui.Button):
         await interaction.response.edit_message(content=self.session.status_text(), view=self.session)
 
 
-class GameSelectionSession(discord.ui.View):
+class NotificationSelectionSession(discord.ui.View):
     def __init__(self, member, games, *, notifications=False):
         super().__init__(timeout=300)
         self.member_id = member.id
@@ -858,19 +862,10 @@ class ChooseGamesButtons(discord.ui.View):
 
     @discord.ui.button(label="Select Games", emoji="🎮", style=discord.ButtonStyle.primary, custom_id="gamerhq:select_games_categories")
     async def select_games(self, interaction: discord.Interaction, button: discord.ui.Button):
-        games = [g for g in db.get_selectable_games() if g.get("selectable") and g.get("role_id")]
+        games = db.get_selector_games()
         if not games:
             await interaction.response.send_message("No games are currently available for selection.", ephemeral=True); return
         session = GameSelectionSession(interaction.user, games)
-        await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
-
-    @discord.ui.button(label="LFG Notifications", emoji="🔔", custom_id="gamerhq:game_lfg_settings")
-    async def lfg_notifications(self, interaction, button):
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message('Use this inside GamerHQ.', ephemeral=True)
-            return
-        games = db.get_selectable_games()
-        session = GameSelectionSession(interaction.user, games, notifications=True)
         await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
 
     @discord.ui.button(label="Suggest Game", emoji="💡", style=discord.ButtonStyle.secondary, custom_id="gamerhq:suggest_game")
@@ -1317,8 +1312,16 @@ class Games(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.add_view(ChooseGamesButtons(self))
-        for _, games in build_choose_games_sections():
-            self.bot.add_view(GameCategoryView(games))
+        from cogs.game_channels import CandidateView
+        with db.connect() as conn:
+            candidates = conn.execute("SELECT DISTINCT game_id FROM game_channel_candidates WHERE status='PENDING'").fetchall()
+        for row in candidates:
+            self.bot.add_view(CandidateView(row['game_id']))
+        # Retain old public buttons until owners explicitly retire those messages.
+        # New boards only render the personal selector entry.
+        legacy_games = db.get_selectable_games()
+        for offset in range(0, len(legacy_games), 25):
+            self.bot.add_view(GameCategoryView(legacy_games[offset:offset+25]))
 
     game = app_commands.Group(
         name="game",
@@ -1659,6 +1662,9 @@ class Games(commands.Cog):
                 return
 
         db.set_game_selectable(selected["id"], visible)
+        if bool(selected['selectable']) != visible:
+            from services.game_channel_service import audit
+            await audit(interaction.guild, 'Game Available' if visible else 'Game Hidden', selected['name'])
         try:
             await refresh_choose_games_message(self.bot, view=GameCategoryView, intro_view=lambda: ChooseGamesButtons(self))
         except GameStructureError as exc:
@@ -1747,6 +1753,8 @@ class Games(commands.Cog):
             db.set_game_role(game["id"], role.id)
             db.set_game_selectable(game["id"], visible)
             game = db.get_game_by_id(game["id"])
+            from services.game_channel_service import audit
+            await audit(interaction.guild, 'Game Approved', game['name'])
         except Exception as exc:
             if role is not None and not reused_existing_role:
                 try:
@@ -1949,7 +1957,8 @@ class Games(commands.Cog):
         if any(deps.values()):
             dependency_text = (
                 "\n\n❌ **Deletion is currently blocked by references:**\n"
-                f"• LFG events: **{deps['lfg_events']}**\n"
+                f"• Dedicated game channels: **{deps['game_channels']}**\n"
+                    f"• LFG events: **{deps['lfg_events']}**\n"
                 f"• Streamer applications: **{deps['streamer_applications']}**\n"
                 f"• Streamer profiles: **{deps['streamer_profiles']}**\n"
                 "Reassign or clean these records first."

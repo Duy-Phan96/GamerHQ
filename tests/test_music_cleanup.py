@@ -144,7 +144,7 @@ class MusicCleanupTests(unittest.IsolatedAsyncioTestCase):
         for channel in (suggestions, lfg_board, inbox):
             channel.set_permissions.assert_not_awaited()
 
-    async def test_new_game_area_creation_has_music_overwrite(self):
+    async def test_deprecated_area_creation_never_creates_resources(self):
         # Empty plan creates a fresh category, with inherited and explicit child grants.
         self.guild.channels.clear(); self.guild.categories.clear()
         db.deactivate_game(self.game['id'])
@@ -157,11 +157,11 @@ class MusicCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.guild.create_text_channel = AsyncMock(side_effect=text)
         self.guild.create_voice_channel = AsyncMock(side_effect=generator)
         plan = {'conflicts': [], 'role': self.game_role, 'category': None, 'category_name': '🎮 TEST GAME', 'channels': {'chat': {'existing': None}, 'create_voice': {'existing': None}}}
-        await game_service.create_game_structure_confirmed(self.guild, db.get_game_by_id(self.game['id']), plan)
-        created = self.guild.get_channel(300)
-        self.assertTrue(created.overwrites[self.music].connect)
-        self.assertTrue(self.guild.get_channel(301).overwrites[self.music].send_messages)
-        self.assertTrue(self.guild.get_channel(302).overwrites[self.music].speak)
+        with self.assertRaises(game_service.GameStructureError):
+            await game_service.create_game_structure_confirmed(self.guild, db.get_game_by_id(self.game['id']), plan)
+        self.guild.create_category.assert_not_awaited()
+        self.guild.create_text_channel.assert_not_awaited()
+        self.guild.create_voice_channel.assert_not_awaited()
 
     async def test_global_temp_voice_contains_music_and_private_lobby_stays_private(self):
         category = self.channel(200, voice.GLOBAL_VOICE_CATEGORY, discord.CategoryChannel)

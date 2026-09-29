@@ -60,7 +60,7 @@ def inspect_database(path):
                                         if set(required) <= columns.get(table, set()) else None)
         count('active_games', 'games', ['active'], 'active=1')
         count('visible_games', 'games', ['selectable'], 'selectable=1')
-        count('selector_games', 'games', ['selectable', 'role_id'], 'selectable=1 AND role_id IS NOT NULL AND role_id != 0')
+        count('selector_games', 'games', ['active', 'selectable', 'role_id'], 'active=1 AND selectable=1 AND role_id IS NOT NULL AND role_id != 0')
         count('game_role_mappings', 'games', ['role_id'], 'role_id IS NOT NULL AND role_id != 0')
         count('visible_games_without_role', 'games', ['selectable', 'role_id'], 'selectable=1 AND (role_id IS NULL OR role_id=0)')
         fields = [f for f in columns['games'] if f == 'category_id' or f.endswith('_channel_id')]

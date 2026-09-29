@@ -10,7 +10,7 @@ from services import managed_message_service as managed
 from services.server_setup_service import repair_server
 from services.health_service import scan
 from cogs.roles import RoleToggleView, RoleSelectionSession, OnboardingEntry
-from cogs.games import GameSelectionSession, ChooseGamesButtons
+from cogs.games import GameSelectionSession, NotificationSelectionSession, ChooseGamesButtons
 
 
 class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
@@ -25,10 +25,12 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.game = db.get_game_by_id(self.game['id'])
         self.member = MagicMock(spec=discord.Member)
         self.member.id, self.member.guild, self.member.roles = 77, self.guild, []
+        self.member.bot, self.member.name = False, 'Fixture Member'
         async def add(*rs, **kwargs): self.member.roles.extend(r for r in rs if r not in self.member.roles)
         async def remove(*rs, **kwargs): self.member.roles[:] = [r for r in self.member.roles if r not in rs]
         self.member.add_roles = AsyncMock(side_effect=add)
         self.member.remove_roles = AsyncMock(side_effect=remove)
+        self.guild.members = [self.member]
         self.guild.fetch_member = AsyncMock(return_value=self.member)
         self.guild.get_member = lambda mid: self.member if mid == self.member.id else None
         roles._preference_locks.clear(); roles._role_sync_locks.clear(); panels._locks.clear()
@@ -120,8 +122,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         game_role = self.guild.get_role(self.game['role_id'])
         lfg_role = roles.preference_role(self.guild, 'lfg', str(self.game['id']))
         session = GameSelectionSession(self.member, [self.game])
-        session.pending_ids.add(self.game['id'])
-        await session.confirm_selection(self.interaction())
+        await session.toggle(self.interaction(), self.game['id'])
         self.assertIn(game_role, self.member.roles); self.assertNotIn(lfg_role, self.member.roles)
         self.assertTrue(await roles.toggle_preference(self.member, 'lfg', str(self.game['id'])))
         self.assertIn(lfg_role, self.member.roles)
@@ -129,7 +130,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(game_role, self.member.roles)
 
     async def test_lfg_session_and_public_ping_target_correct_game_only(self):
-        session = GameSelectionSession(self.member, [self.game], notifications=True)
+        session = NotificationSelectionSession(self.member, [self.game], notifications=True)
         session.pending_ids.add(self.game['id'])
         await session.confirm_selection(self.interaction())
         role = roles.preference_role(self.guild, 'lfg', str(self.game['id']))
@@ -201,7 +202,7 @@ class RoleSettingsTests(unittest.IsolatedAsyncioTestCase):
     async def test_many_game_preferences_are_paginated(self):
         from cogs.games import CategoryGameSelect
         games = [dict(self.game, id=n, name=f'Game {n}') for n in range(100, 126)]
-        session = GameSelectionSession(self.member, games, notifications=True)
+        session = NotificationSelectionSession(self.member, games, notifications=True)
         first = next(c for c in session.children if isinstance(c, CategoryGameSelect))
         self.assertEqual(len(first.options), 25)
         await next(c for c in session.children if getattr(c, 'label', '') == 'Next').callback(self.interaction())

@@ -1,37 +1,46 @@
-# Game library and optional game areas
+# Games: personal selection and optional channels
 
-The games table in [database/db.py](../database/db.py) is runtime authority. data/games_seed.json supplies a public starter catalog; init/seed is not a replacement for live custom games. deleted_games prevents intentionally removed catalog entries from being blindly reseeded.
+SQLite is authoritative. The public seed supplies starter metadata; it does not replace owner selection, Discord IDs or deletion tombstones.
 
-## Separate concepts
+## Independent state
 
-- Library record: name, emoji, aliases/group, selection state and role ID.
-- Game role: membership/selection can exist without any Game Area.
-- Game LFG notification role: independent opt-in from Choose Games; see [role settings](ROLE_SETTINGS.md).
-- Optional Game Area: category and linked chat, optional LFG, and create-voice channel IDs. area_enabled and area_has_lfg are separate from selectable.
-- Legacy columns such as memes/clips remain for compatibility and cleanup; they do not imply new areas should create those channels.
+- `active` + `selectable` + a nonzero `role_id` make a game available in the personal selector. Visibility means library visibility, not channel existence.
+- `channel_id` is nullable: one optional text channel under the shared **🎮 GAMING** category. The role works without a channel.
+- Notification roles remain separate opt-ins. Selecting a game never enables pings.
+- Legacy area/category/chat/LFG/create-voice columns are migration evidence only. New multi-channel area creation is disabled.
 
-Normal areas use an emoji/name role and uppercase category, 💬・chat, optional 🎯・looking-for-group and ➕・create-voice. Access is game-role gated. Music bot access is an explicit scoped exception.
+Choose Your Games retains Select Games, Suggest Game, `/game select` and `/game suggest`. The public board carries no personal state. Select Games opens an ephemeral actor-bound panel with ✅ selected / ➕ add entries; choosing one immediately updates that game role and the personal page. No Save is required. The quick slash command retains its existing confirmation.
 
-## Owners and lifecycle
+Popular shows the current top 25 by cached role-member counts, descending with alphabetical ties. These games also appear in the complete A–Z list. Empty letters are omitted; lists and letter navigation paginate at Discord's 25-option limit. Opening uses one catalog query and one pass over cached members, no Discord inventory/history/member download. Each change refreshes only that member for authorization and preserves unrelated roles. Reopening recomputes Popular.
 
-| Work | Entry points |
-| --- | --- |
-| Member selection/suggestions | cogs/games.py, /game select and /game suggest |
-| Library administration | /game-admin create, rename, set-visible, delete, database and status |
-| Area creation/recovery | game_service.inspect_game_structure and create_game_structure_confirmed; /game-admin setup/add-area/recover-existing |
-| Batch area controls | cogs/area.py and area_management_service; /area manage |
-| Conservative area removal | game_area_cleanup + game_area_safety; /game-admin remove-area and confirmed area flows |
-| Selector messages | game_service.refresh_choose_games_message; existing section keys and views |
-| Base non-game roles | role_service and cogs/roles.py; do not conflate with game roles |
+## Administration
 
-See [command reference](COMMANDS.md) for the full current command list.
+Server Management → Games contains Library, Channels, Candidates, Create/Remove and Suggested Games guidance. Library Show Game creates/reuses a role and makes the game selectable. Hiding preserves membership and channels. New approved games use `/game-admin create`; suggestions retain their existing staff inbox.
 
-Hiding a game from selection does not mean deleting its category, role or history. Removing an area preserves the library/role unless the explicitly chosen operation says otherwise. Permanent game deletion checks dependencies and requires its own admin confirmation.
+Defaults in `config.py`:
 
-Creation uses coordination and records Discord IDs as resources are established. Existing inspection still checks role/category names and reports collisions; persisted fields and fresh DB checks must be considered before creating. Never replace an ambiguous or partially created area with another category just to finish a retry.
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `GAME_CHANNEL_MEMBER_THRESHOLD` | 10 | Candidate threshold, never automatic creation |
+| `GAME_CHANNEL_SOFT_LIMIT` | 20 | Initial operational limit; explicit Create Anyway allowed |
+| `POPULAR_GAMES_COUNT` | 25 | Maximum Popular shortcuts; independent of channel count |
 
-Removal revalidates the preview and resource dependencies; active events, occupied voice, uncertain ownership/content or new changes can block it. Unknown channels and old memes links are review evidence, not permission to delete. Startup reports legacy links rather than performing that cleanup.
+After a successful game-role grant, only that game's count is checked. At the threshold a private STAFF **🎮・games-log** candidate is reserved in SQLite before sending. `game_channel_candidates` stores guild/game, timestamp, message ID and PENDING/CREATED/IGNORED state. Repeated grants and restarts do not post it again. An uncertain delivery stays reserved and is available in Games → Candidates; staff can decide there without reposting. Ignore suppresses immediate re-notification.
 
-## Tests
+Creating manually works below threshold. Every creation/migration/removal opens an actor-bound expiring preview and confirmation. Permission, stored IDs and resource signatures are rechecked; simultaneous submissions serialize. A durable creation reservation blocks retries after uncertain delivery: inspect Discord and the stored state privately rather than clearing it blindly. Missing/stale stored channel IDs require review and are never replaced by guessing names.
 
-Use test_voice_area.py, test_music_cleanup.py and test_repository_safety.py for area lifecycle, permissions and fresh/seeded storage; test_lobby_management.py for event dependencies. Cover selection-vs-area separation, double creation, stale previews, hidden games, failed Discord operations and preserved roles/history.
+Channels use normalized names and alphabetical ordering. Everyone is denied visibility; the game role can read and chat; staff and GamerHQ retain access. Repair uses stored channel IDs and scoped permissions; no new per-game category, LFG or create-voice resource is generated. Other channels retain their relative order.
+
+Removal only targets the persisted managed channel after dependency checks and explicit confirmation. Discord channel history is deleted with the channel as the preview warns; the game, role, selection and stored event records remain. Export/archive wanted Discord history before confirming. No routine test or startup deletes live channels. Games-log records administrative actions; high-level channel changes also use server-log. Normal member toggles do not spam either log.
+
+## Legacy migration
+
+Owner Server Dev → Legacy Game Migration lists recorded legacy resources. Preview Migration prefers the existing stored chat ID, moves/renames that channel into GAMING, applies game-role access and persists `channel_id`. History and IDs survive. Old resource IDs are retained in `game_legacy_hints`; old categories, LFG and create-voice resources remain untouched for separate manual review. Never infer ownership of an arbitrary channel from its name. Empty old categories may be removed only through a separately reviewed owner cleanup.
+
+Legacy `/area manage` removal and dependency checks remain; its creation backend now refuses new multi-channel areas. Existing centralized LFG and temporary voice systems remain functional during migration.
+
+For an empty production selector, use the [games-scope recovery dry-run](DATABASE_MIGRATION.md#games-scope-recovery-on-copies). Recover catalog metadata, flags and roles; old areas become hints, never active canonical channels. Production-only fields, settings, runtime tables and already adopted role/channel IDs remain authoritative.
+
+## Implementation and validation
+
+`game_selector`, `game_catalog_service`, `game_channel_service` and the existing role/managed-server services own this lifecycle. Regression coverage includes `test_game_channels_v2.py`, role/security tests and the existing LFG/voice suites. Health is read-only and checks shared category, games-log, stored channels, access, ordering and legacy review evidence. Offline tests are not live Discord acceptance.

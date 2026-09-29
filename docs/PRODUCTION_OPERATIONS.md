@@ -179,7 +179,7 @@ database. **No actual snapshot comparison has been supplied for this change.**
 Local/production counts and production-only tickets/messages/activity remain unknown;
 there is no evidence supporting automatic replacement.
 
-The empty Select Games response means there are no games with both `selectable=1`
+The empty Select Games response means there are no games with `active=1`, `selectable=1`
 and a nonempty role mapping. `active=1` alone does not make a game visible. A fresh catalog
 seeds games hidden by default; seeding updates descriptive metadata and preserves
 existing visibility/role/area IDs. Missing role IDs also exclude games from this
@@ -192,7 +192,7 @@ Compare consistent private snapshots first:
 
 ```bash
 python -m tools.compare_databases /private/local-copy.db /private/production-copy.db
-python -m tools.import_database --source /private/local-copy.db --target /private/production-copy.db --dry-run
+python -m tools.import_database --scope games --source /private/local-copy.db --target /private/production-copy.db --dry-run
 ```
 
 The report prints known-table counts, selection/role/area state, schema differences,
@@ -203,14 +203,15 @@ Managed-message counts include matching settings keys, so review them as invento
 indicators rather than proof that every Discord message exists.
 
 If production contains newer/divergent state, **keep production authoritative** and
-review a scoped recovery on copies, including game-role mappings and dependent
-records. No generic table merge is provided: tickets, message IDs, delivery claims
-and foreign references cannot safely be merged by row count. If local is verified
-as the right whole-store basis, follow [the stopped-bot import procedure](DATABASE_MIGRATION.md#transfer-and-validate-owner-operations-only).
-Dry-run rehearses additive migrations on a temporary copy; apply requires shutdown
-attestation and a new verified backup. Divergence additionally requires the exact
-comparison token after explicitly accepting what would be replaced. The token is
-not a merge and does not make discarding newer activity harmless.
+review the games-scope recovery on copies. It restores known game metadata,
+selection flags and missing role mappings while preserving adopted production
+roles/channels, settings, extra schema and runtime tables. Legacy category/chat/LFG/
+create-voice IDs become migration hints only; no old areas are restored as active
+canonical channels. There is no generic cross-table merge. Follow the
+[copy-only dry-run and review](DATABASE_MIGRATION.md#games-scope-recovery-on-copies)
+before any owner-approved live recovery. Apply requires the exact current review
+token, shutdown attestation and a new verified backup. Do not deploy directly
+before reviewing recovery output.
 
 After the reviewed migration, VPS SQLite is the only live runtime source. Archive
 the Windows DB; never resume its live bot. Verify existing Select Games controls,
@@ -294,3 +295,20 @@ resource assignments remain in each DB. Never reuse production credentials, mapp
 Discord IDs, private tickets or OAuth data as Dev fixtures. No Dev server, bot or
 database is created by this change. After Dev exists, use it for live acceptance
 before promoting reviewed changes to production.
+
+## Game channels after recovery review
+
+Use `/server manage` → Games. The personal selector is Popular Top 25 plus A–Z
+with immediate private role changes. A game role needs no channel. The shared
+GAMING category contains at most one optional text channel per game, alphabetically
+ordered and restricted to its game role, staff and GamerHQ. At 10 members a private
+STAFF games-log candidate asks for approval; Ignore is persisted. The soft limit
+is 20, with explicit Create Anyway. No channels are created from popularity alone.
+
+First-time setup previews GAMING and games-log alongside the existing core
+structure. Legacy chat migration is owner-accessible under Server Dev. Preview
+moves the recorded chat ID; other legacy resources require separate manual review.
+Uncertain candidate deliveries or channel-creation reservations are retained to
+prevent duplicates. Inspect Games → Candidates and private diagnostics rather than
+clearing state or repeatedly retrying. These changes do not start a bot or migrate
+production by themselves.

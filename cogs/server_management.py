@@ -96,8 +96,13 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         for label, callback in [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
                                 ('Integrations', self.integrations), ('Managed Messages', self.messages),
-                                ('Features', self.features), ('Server Log', self.server_log)]:
+                                ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log)]:
             self.action(label, callback)
+
+    async def games(self, interaction):
+        from cogs.game_channels import GamesMenu
+        view = GamesMenu(self.guild, self.admin_id)
+        await interaction.response.edit_message(content=view.text(), view=view)
 
     async def structure(self, interaction):
         issues = structure_issues(self.guild)
@@ -121,7 +126,7 @@ class ManagementView(Menu):
         import config
         await interaction.response.edit_message(content='# Features\n'
             '• Game catalog and visibility: `/game-admin set-visible`\n'
-            '• Optional game areas: `/area manage`\n'
+            '• Optional game channels: Games in `/server manage`\n'
             '• Events: `/lfg manage`\n'
             '• Voice rooms: `/voice manage`\n'
             f'• Streamer Hub beta: {"Enabled" if config.STREAMER_HUB_ENABLED else "Disabled"}\n'
@@ -266,7 +271,7 @@ class SetupWizard(Menu):
         descriptions = ('Review existing channels before adding missing core resources.',
             'Choose installed bots. Optional integrations can be left unconfigured.',
             'Review managed roles and private areas before confirming changes.',
-            'Configure game visibility, optional areas and events through the existing feature managers.',
+            'Configure the game library and optional channels in Games; events remain centralized.',
             'Review links, preview missing resources and fix permissions. Every change requires confirmation.',
             'Finish checks the core structure using stored resources. Unresolved items remain available for review.')
         return f'# GamerHQ Setup — {SECTIONS[self.page]}\nStep {self.page + 1} of 6\n{descriptions[self.page]}\n' + \
@@ -282,7 +287,7 @@ class SetupWizard(Menu):
         elif self.page == 2:
             await manager.roles(interaction)
         elif self.page == 3:
-            await manager.features(interaction)
+            await manager.games(interaction)
         else:
             if structure_issues(self.guild):
                 return await interaction.response.edit_message(content='Some core items still need review. Open the structure panel to continue.', view=StructureView(self.guild, self.admin_id))
@@ -318,6 +323,7 @@ class DeveloperView(Menu):
             self.action(label, self.health)
         self.action('Duplicate Scan', self.duplicates)
         self.action('Production Doctor', self.doctor)
+        self.action('Legacy Game Migration', self.legacy_games)
 
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
@@ -336,6 +342,11 @@ class DeveloperView(Menu):
         rows = await audit(self.guild, interaction.user, bot=interaction.client)
         view = DuplicateAuditView(self.guild, self.admin_id, rows, interaction.client)
         await interaction.edit_original_response(content=view.text(), view=view)
+
+    async def legacy_games(self, interaction):
+        from cogs.game_channels import GamesList
+        view = GamesList(self.guild, self.admin_id, 'legacy')
+        await interaction.response.edit_message(content=view.text(), view=view)
 
     async def doctor(self, interaction):
         await interaction.response.send_message('Production Doctor runs on the VPS without Discord changes:\n'
