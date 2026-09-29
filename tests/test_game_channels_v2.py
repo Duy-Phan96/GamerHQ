@@ -299,6 +299,13 @@ class ChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(game['lfg_channel_id'])
         self.assertIsNone(game['create_voice_channel_id'])
 
+        from services import game_area_cleanup as cleanup
+        rows, unknown = cleanup.scan_areas(self.guild)
+        legacy = next(row for row in rows if row.get('legacy') and row['game']['id'] == self.game['id'])
+        self.assertEqual(legacy['game']['category_id'], old.id)
+        self.assertTrue(legacy['safe'])
+        self.assertNotIn(old, unknown)
+
     async def test_removal_requires_unchanged_preview_and_preserves_catalog(self):
         channel = await channels.apply(self.guild,self.actor,channels.preview(self.guild,self.actor,self.game['id']))
         plan = channels.preview(self.guild,self.actor,self.game['id'],'remove')
