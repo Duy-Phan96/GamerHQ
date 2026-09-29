@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from services.operation_context import measured
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 import re
 import secrets
@@ -474,7 +474,7 @@ async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict
 def google_calendar_url(event: dict) -> str:
     start = datetime.fromtimestamp(int(event["start_at"]), SERVER_TZ)
     end = start + timedelta(minutes=int(event.get("duration_minutes") or 120))
-    dates = f"{start.astimezone().strftime('%Y%m%dT%H%M%SZ')}/{end.astimezone().strftime('%Y%m%dT%H%M%SZ')}"
+    dates = f"{start.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}/{end.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     return "https://calendar.google.com/calendar/render?" + urlencode({
         "action": "TEMPLATE",
         "text": str(event["title"]),
