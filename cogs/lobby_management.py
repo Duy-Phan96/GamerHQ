@@ -11,9 +11,9 @@ from services.lfg_service import SERVER_TZ, parse_server_datetime, render_event,
 def authorized_event(interaction, event_id, *, host=False):
     event = db.get_lfg_event(event_id)
     if not interaction.guild or not event or event['guild_id'] != interaction.guild.id or event['status'] != 'scheduled':
-        raise ValueError('This lobby is no longer available here.')
+        raise ValueError('This event is no longer available here.')
     if host and event['host_id'] != interaction.user.id:
-        raise ValueError('Only the host can manage this lobby.')
+        raise ValueError('Only the event creator can manage this event.')
     if not host and interaction.user.id not in [r['user_id'] for r in db.get_lfg_event_members(event_id) if r['status'] == 'joined']:
         raise ValueError('Join the lobby to use these actions.')
     return event
@@ -72,18 +72,20 @@ class EditModal(discord.ui.Modal):
             self.name = discord.ui.TextInput(label='Title', default=event['title'], max_length=100)
             self.note = discord.ui.TextInput(label='Note / description', default=event.get('note', ''), required=False, max_length=500, style=discord.TextStyle.paragraph)
             self.seats = discord.ui.TextInput(label='Seats including host (1–99)', default=str(event['max_players']), max_length=2)
+            self.duration = discord.ui.TextInput(label='Duration in minutes (30–1440)', default=str(event.get('duration_minutes') or 120), max_length=4)
             self.reminder = discord.ui.TextInput(label='Voice reminder: minutes before (0–1440)', default=str(event['invite_lead_minutes']), max_length=4)
-            for item in (self.name, self.note, self.seats, self.reminder): self.add_item(item)
+            for item in (self.name, self.note, self.seats, self.duration, self.reminder): self.add_item(item)
 
     async def on_submit(self, interaction):
         try:
             old = authorized_event(interaction, self.event_id, host=True)
             values = {'start_at': parse_server_datetime(str(self.date), str(self.time))} if self.schedule else {
-                'title': str(self.name), 'note': str(self.note), 'max_players': int(str(self.seats)), 'invite_lead_minutes': int(str(self.reminder))}
+                'title': str(self.name), 'note': str(self.note), 'max_players': int(str(self.seats)),
+                'duration_minutes': int(str(self.duration)), 'invite_lead_minutes': int(str(self.reminder))}
             await interaction.response.defer(ephemeral=True)
             event = rules.edit(self.event_id, interaction.guild.id, interaction.user.id, **values)
             await changed(interaction.guild, event, time_changed=event['start_at'] != old['start_at'])
-            await interaction.edit_original_response(content='✅ Lobby updated.', view=LobbyPanel(event, interaction.user.id))
+            await interaction.edit_original_response(content='✅ Event updated.', view=LobbyPanel(event, interaction.user.id))
         except ValueError as exc:
             await error(interaction, exc)
 
@@ -268,63 +270,52 @@ class EndConfirm(BackView):
 
 class ActionSelect(discord.ui.Select):
     def __init__(self, event, user_id):
-        labels = ['View Participants', 'Time Proposals', 'Suggest New Time', 'Open / Join Voice']
-        if user_id == event['host_id']:
-            labels += ['Edit Details / Seats / Reminder', 'Change Date / Time', 'Invite Player', 'Remove Player', 'Share Lobby', 'Regenerate Private Invite', 'Close Lobby', 'Cancel Lobby']
-        else:
-            labels += ['Leave Lobby']
-        super().__init__(placeholder='Choose lobby action', options=[discord.SelectOption(label=s, value=s) for s in labels])
+        labels = [
+            'View Participants',
+            'Edit Details / Seats / Duration / Reminder',
+            'Change Date / Time',
+            'Invite Player',
+            'Remove Player',
+            'Share Event',
+            'Open / Join Voice',
+            'Close Event',
+            'Cancel Event',
+        ]
+        super().__init__(placeholder='Choose event action', options=[discord.SelectOption(label=s, value=s) for s in labels])
 
     async def callback(self, interaction):
         try:
             action = self.values[0]
-            host_action = action in {'Edit Details / Seats / Reminder', 'Change Date / Time', 'Invite Player', 'Remove Player', 'Share Lobby', 'Regenerate Private Invite', 'Close Lobby', 'Cancel Lobby'}
-            event = authorized_event(interaction, self.view.event_id, host=host_action)
+            event = authorized_event(interaction, self.view.event_id, host=True)
             if action.startswith('Edit Details') or action == 'Change Date / Time':
                 return await interaction.response.send_modal(EditModal(event, schedule=action == 'Change Date / Time'))
-            if action == 'Suggest New Time':
-                return await interaction.response.send_modal(SuggestModal(event['id']))
             if action in {'Invite Player', 'Remove Player'}:
                 view = BackView(event['id'], interaction.user.id)
                 view.add_item(PlayerSelect(event['id'], remove=action == 'Remove Player'))
                 return await interaction.response.edit_message(content=action, view=view)
-            if action == 'Time Proposals':
-                rows = rules.proposals(event['id'])
-                view = BackView(event['id'], interaction.user.id)
-                if rows: view.add_item(ProposalSelect(rows))
-                return await interaction.response.edit_message(content='Choose a suggestion. Only the host may accept or decline.' if rows else 'No pending time proposals.', view=view)
             if action == 'View Participants':
                 rows = [r for r in db.get_lfg_event_members(event['id']) if r['status'] == 'joined']
-                # Embeds allow the complete 99-seat roster without exceeding message limits.
-                embed = discord.Embed(title='Lobby Participants', description='\n'.join(f"<@{r['user_id']}>" for r in rows))
+                embed = discord.Embed(
+                    title='Event Participants',
+                    description='\n'.join(f"<@{r['user_id']}>" for r in rows) or 'No participants yet.',
+                )
                 return await interaction.response.send_message(embed=embed, ephemeral=True)
-            if action in {'Close Lobby', 'Cancel Lobby'}:
-                return await interaction.response.edit_message(content=f"{action}? This ends the lobby for everyone and cannot be undone.", view=EndConfirm(event['id'], interaction.user.id, 'completed' if action == 'Close Lobby' else 'cancelled'))
-            if action == 'Share Lobby':
+            if action in {'Close Event', 'Cancel Event'}:
+                status = 'completed' if action == 'Close Event' else 'cancelled'
+                return await interaction.response.edit_message(
+                    content=f"{action}? This ends the event for everyone and cannot be undone.",
+                    view=EndConfirm(event['id'], interaction.user.id, status),
+                )
+            if action == 'Share Event':
                 from cogs.lfg import LFGEventView
                 return await LFGEventView(event['id']).share_event(interaction)
-            if action == 'Regenerate Private Invite':
-                if event['visibility'] != 'private':
-                    raise ValueError('Public lobbies use their message link.')
-                import secrets
-                token = secrets.token_urlsafe(8)
-                db.rotate_lfg_share_token(event['id'], token)
-                return await interaction.response.send_message(f'Old code disabled. New private access: `{token}`', ephemeral=True)
             await interaction.response.defer(ephemeral=True)
-            if action == 'Leave Lobby':
-                rules.remove(event['id'], interaction.guild.id, interaction.user.id, interaction.user.id)
-                try:
-                    await revoke_access(interaction.guild, event, interaction.user.id)
-                    result = 'You left the lobby.'
-                except discord.HTTPException:
-                    result = 'You left. Discord access cleanup failed; please ask staff to remove the channel override.'
-                await changed(interaction.guild, event)
-            elif action == 'Open / Join Voice':
+            if action == 'Open / Join Voice':
                 from cogs.lfg import create_event_voice
                 voice = interaction.guild.get_channel(event['voice_channel_id']) if event.get('voice_channel_id') else None
-                if not voice and interaction.user.id == event['host_id']:
+                if not voice:
                     voice = await create_event_voice(interaction.guild, event)
-                result = f'🎧 {voice.jump_url}' if voice else 'Voice is not open yet. The host can open it or wait for the scheduled reminder.'
+                result = f'🎧 {voice.jump_url}' if voice else 'Voice could not be opened yet.'
             else:
                 raise ValueError('Unknown action.')
             await interaction.edit_original_response(content=result, view=None)
@@ -340,7 +331,7 @@ class LobbyPanel(BackView):
 
 async def open_panel(interaction, event_id, *, update=False):
     try:
-        event = authorized_event(interaction, event_id)
+        event = authorized_event(interaction, event_id, host=True)
         kwargs = dict(content=render_event(interaction.guild, event), view=LobbyPanel(event, interaction.user.id), allowed_mentions=discord.AllowedMentions.none())
         if update:
             await interaction.response.edit_message(**kwargs)
