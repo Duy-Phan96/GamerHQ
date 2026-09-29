@@ -154,15 +154,15 @@ async def send_voice_ready_dm(guild: discord.Guild, event: dict, member: discord
     if not fresh or fresh.get("status") != "scheduled":
         return False
 
-    game = db.get_game_by_id(int(fresh["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(fresh["game_id"])) if int(fresh.get("game_id") or 0) else None
+    game_suffix = f" · **{game['name']}**" if game else ""
     host = guild.get_member(int(fresh["host_id"]))
     host_label = host.mention if host else f"<@{int(fresh['host_id'])}>"
     lead = int(fresh["invite_lead_minutes"])
     try:
         await member.send(
             f"# 🎧 Your GamerHQ Voice is Ready\n\n"
-            f"**{fresh['title']}** · **{game_name}**\n"
+            f"**{fresh['title']}**{game_suffix}\n"
             f"👤 Hosted by {host_label}\n"
             f"📅 <t:{int(fresh['start_at'])}:F> (<t:{int(fresh['start_at'])}:R>)\n"
             f"🔔 Starts in about **{lead} minutes**\n\n"
@@ -188,11 +188,14 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
         if isinstance(existing, discord.VoiceChannel):
             return existing
 
-    game = db.get_game_by_id(int(fresh["game_id"]))
+    game = db.get_game_by_id(int(fresh["game_id"])) if int(fresh.get("game_id") or 0) else None
     category = guild.get_channel(int(game["category_id"])) if game and game.get("category_id") else None
+    if not isinstance(category, discord.CategoryChannel):
+        lfg_channel = find_lfg_channel(guild)
+        category = lfg_channel.category if isinstance(lfg_channel, discord.TextChannel) else None
     try:
         channel = await guild.create_voice_channel(
-            name=f"🎮・{fresh['title']}"[:100],
+            name=f"📅・{fresh['title']}"[:100],
             category=category if isinstance(category, discord.CategoryChannel) else None,
             overwrites=event_voice_overwrites(guild, fresh),
             reason=f"GamerHQ LFG event #{event_id} voice",
@@ -302,8 +305,11 @@ async def _revoke_private_event_access(guild: discord.Guild, event: dict, member
         await channel.set_permissions(member, overwrite=None)
 
 
-async def create_private_event_channel(guild: discord.Guild, event: dict, game: dict) -> discord.TextChannel | None:
-    category = guild.get_channel(int(game["category_id"])) if game.get("category_id") else None
+async def create_private_event_channel(guild: discord.Guild, event: dict, game: dict | None = None) -> discord.TextChannel | None:
+    category = guild.get_channel(int(game["category_id"])) if game and game.get("category_id") else None
+    if not isinstance(category, discord.CategoryChannel):
+        lfg_channel = find_lfg_channel(guild)
+        category = lfg_channel.category if isinstance(lfg_channel, discord.TextChannel) else None
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
     }
@@ -496,13 +502,6 @@ class LFGEventView(discord.ui.View):
                 label="Google Calendar", emoji="📅", style=discord.ButtonStyle.link,
                 url=google_calendar_url(event),
             ))
-        manage = discord.ui.Button(label="Manage Event", emoji="⚙️", style=discord.ButtonStyle.primary,
-                                   custom_id=f"gamerhq:lfg:manage:{self.event_id}")
-        async def manage_callback(interaction):
-            from cogs.lobby_management import open_panel
-            await open_panel(interaction, self.event_id)
-        manage.callback = manage_callback
-        self.add_item(manage)
 
     async def join_event(self, interaction: discord.Interaction):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
