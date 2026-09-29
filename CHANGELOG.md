@@ -7,6 +7,11 @@
 - Only the event creator can edit, reschedule, invite/remove participants, open voice, close or cancel the event. Participants retain join/leave/share/calendar actions.
 - Existing legacy game-linked events remain readable and joinable for backwards compatibility.
 
+## Personal game selector polish
+
+- Personal selection uses direct green/neutral game buttons, immediate role toggles and stable pages.
+- Popular Top 25 opens first; A–Z ranges and 0–9 / Other keep the full catalog reachable without nested dropdowns.
+- Keep the public Select Games / Suggest Game guidance; unavailable roles show a friendly error with private diagnostics.
 
 ## Personal games and shared game channels
 
