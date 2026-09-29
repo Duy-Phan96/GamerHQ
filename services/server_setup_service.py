@@ -23,7 +23,12 @@ class CategorySpec:
 
 
 SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
-    CategorySpec("🎮 GAMING", (), private=True),
+    CategorySpec(
+        "🎮 GAMES",
+        (
+            ChannelSpec("💬・gaming-chat"),
+        ),
+    ),
     CategorySpec(
         "👋 START HERE",
         (
@@ -94,7 +99,10 @@ def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.Category
         except ServerMessageError:
             return None
     for category in guild.categories:
-        if normalize_name(category.name) == wanted:
+        current = normalize_name(category.name)
+        if current == wanted:
+            return category
+        if wanted == "games" and current == "gaming":
             return category
     return None
 
@@ -217,7 +225,7 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
         )
     lines.extend([
         "",
-        "Setup organizes the core boards and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and MARKETPLACE, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID. Streamer repair hides managed legacy discovery channels; Twitch controls remain disabled unless STREAMER_HUB_ENABLED is explicitly enabled.",
+        "Setup organizes the core boards, shared GAMES and EVENTS, publishes the central guide, and configures private suggestions. It repairs Support and MARKETPLACE, public gaming-news/gaming-deals/free-games and private AFFILIATE STATS purchases/buyer-ranking with managed pins, and ensures hoisted Music Bots/Gaming Bots groups below Staff. Instant Gaming uses INSTANT_GAMING_BOT_ID. Streamer repair hides managed legacy discovery channels; Twitch controls remain disabled unless STREAMER_HUB_ENABLED is explicitly enabled.",
     ])
     return "\n".join(lines)
 
@@ -237,7 +245,7 @@ def render_details(report: dict) -> str:
                 icon = "🔊" if channel_spec.kind == "voice" else "#️⃣"
                 lines.append(f"⚠️ {icon} {channel_spec.name} — missing")
         lines.append("")
-    lines.append("**Update preserves welcome/newbies history; moves LFG to START HERE, adds/reuses community-events above tournaments/giveaways in EVENTS, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
+    lines.append("**Update preserves welcome/newbies history; moves LFG into the shared GAMES category, adds/reuses community-events above tournaments/giveaways in EVENTS, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
     return "\n".join(lines)
 
 
