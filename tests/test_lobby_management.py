@@ -56,16 +56,15 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(date=date, clock=clock), self.assertRaises(ValueError): parse_server_datetime(date, clock)
         self.assertGreater(parse_server_datetime('2030-01-01', '20:00'), time.time())
 
-    def test_generic_event_needs_no_game_and_has_calendar_duration(self):
+    def test_generic_event_needs_no_game_and_hides_duration(self):
         event = db.create_lfg_event(
             guild_id=1, game_id=None, host_id=10, title='Community Meetup',
-            start_at=self.start, max_players=8, invite_lead_minutes=15, duration_minutes=90,
+            start_at=self.start, max_players=8, invite_lead_minutes=15,
         )
         self.assertEqual(event['game_id'], 0)
-        self.assertEqual(event['duration_minutes'], 90)
         rendered = render_event(self.guild, event)
         self.assertNotIn('Unknown Game', rendered)
-        self.assertIn('90 minutes', rendered)
+        self.assertNotIn('Duration', rendered)
         url = lfg.google_calendar_url(event)
         self.assertIn('calendar.google.com/calendar/render?', url)
         self.assertIn('Community+Meetup', url)
@@ -74,6 +73,7 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         host.id = 10
         builder = lfg.EventBuilderView(host=host)
         self.assertNotIn('Game:', builder.content())
+        self.assertNotIn('Duration', builder.content())
         self.assertIn('Google Calendar', builder.content())
 
     def test_invites_duplicates_capacity_and_private_security(self):
@@ -252,12 +252,16 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
     async def test_voice_creation_claim_and_existing_room_reuse(self):
         voice = MagicMock(spec=discord.VoiceChannel)
         voice.id = 555; voice.delete = AsyncMock()
+        voice_category = MagicMock(spec=discord.CategoryChannel)
+        voice_category.name = '🔊 VOICE CHANNELS'
+        self.guild.categories = [voice_category]
         self.guild.create_voice_channel = AsyncMock(return_value=voice)
         self.guild.me = None
         with patch.object(lfg, 'refresh_event_posts', AsyncMock()):
             result = await lfg.create_event_voice(self.guild, self.event)
             self.assertIs(result, voice)
             self.assertEqual(db.get_lfg_event(self.eid)['voice_channel_id'], 555)
+            self.assertIs(self.guild.create_voice_channel.call_args.kwargs['category'], voice_category)
             self.guild.get_channel.return_value = voice
             self.assertIs(await lfg.create_event_voice(self.guild, db.get_lfg_event(self.eid)), voice)
         self.guild.create_voice_channel.assert_awaited_once()
