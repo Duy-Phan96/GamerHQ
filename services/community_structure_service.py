@@ -42,11 +42,14 @@ def core_channel(guild, name):
         channel = guild.get_channel(int(raw))
         if channel in guild.text_channels:
             return channel
+    allowed_categories = {'start-here', 'community', 'events'}
+    if name == 'looking-for-group':
+        allowed_categories |= {'games', 'gaming'}
     channel = unique([c for c in guild.text_channels if c.category
-                      and alias(c.category.name) in {'start-here', 'community', 'events'}], name)
+                      and alias(c.category.name) in allowed_categories], name)
     if channel is None and name != 'looking-for-group' and any(alias(c.name) == name for c in guild.text_channels):
         raise ServerMessageError(f'MANUAL_REVIEW: #{name} exists outside the expected core categories. No duplicate created.')
-    if channel and (not channel.category or alias(channel.category.name) not in {'start-here', 'community', 'events'}
+    if channel and (not channel.category or alias(channel.category.name) not in allowed_categories
                     or channel.overwrites_for(guild.default_role).view_channel is False
                     or channel.category.overwrites_for(guild.default_role).view_channel is False):
         raise ServerMessageError(f'MANUAL_REVIEW: unmapped #{name} has an unexpected category/privacy pattern. No duplicate created.')
@@ -99,6 +102,14 @@ async def refresh_boards(guild):
 async def migrate_boards(guild, changed, failed):
     from cogs.suggestions import STAFF_ALIASES, private_overwrites
     start, community = core_category(guild, 'start-here'), core_category(guild, 'community')
+    # Once Game System V3 has linked the shared GAMES category, setup/repair must
+    # respect that canonical LFG location instead of moving it back to START HERE.
+    try:
+        from services.game_channel_service import category as game_category
+        games_parent = game_category(guild)
+    except ValueError:
+        games_parent = None
+    lfg_target = games_parent or start
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
     channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
     for name in ('guide', 'suggestions', 'community-events'):
@@ -127,7 +138,7 @@ async def migrate_boards(guild, changed, failed):
     elif events.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
     db.set_setting(f'managed_category:{guild.id}:events', events.id)
-    for name, target in [('looking-for-group', start), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
+    for name, target in [('looking-for-group', lfg_target), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
         if channel and channel.category_id != target.id:
             channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ core channel organization')
@@ -155,7 +166,8 @@ async def migrate_boards(guild, changed, failed):
     if channels['community-events'].name != '🎉・community-events':
         channels['community-events'] = await channels['community-events'].edit(name='🎉・community-events', reason='GamerHQ community events naming')
     if channels['looking-for-group']:
-        await channels['looking-for-group'].edit(name='🎯・looking-for-group', reason='GamerHQ LFG naming')
+        lfg_name = '🔎・looking-for-group' if games_parent else '🎯・looking-for-group'
+        await channels['looking-for-group'].edit(name=lfg_name, reason='GamerHQ LFG naming')
     for name in ('looking-for-group', 'guide', 'suggestions', 'community-events'):
         if channels[name]:
             await set_read_only(channels[name])
