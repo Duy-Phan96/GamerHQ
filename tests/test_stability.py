@@ -32,58 +32,48 @@ def interaction():
 
 
 class EventTests(unittest.IsolatedAsyncioTestCase):
-    async def open_entry(self, entry, games, channel_game=None):
+    async def open_entry(self, entry):
         request = interaction()
-
-        def load_games(member):
-            request.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
-            return games
-
-        with patch.object(lfg, "user_games", side_effect=load_games), patch.object(
-            lfg, "game_for_lfg_channel", return_value=channel_game
-        ):
-            if entry == "button":
-                hub = lfg.LFGHubView()
-                self.assertTrue(hub.is_persistent())
-                self.assertEqual(hub.create_event.custom_id, "gamerhq:lfg:create")
-                await hub.create_event.callback(request)
-            else:
-                cog = object.__new__(lfg.LFG)
-                await lfg.LFG.lfg_create.callback(cog, request)
+        if entry == "button":
+            hub = lfg.LFGHubView()
+            self.assertTrue(hub.is_persistent())
+            self.assertEqual(hub.create_event.custom_id, "gamerhq:lfg:create")
+            await hub.create_event.callback(request)
+        else:
+            cog = object.__new__(lfg.LFG)
+            await lfg.LFG.lfg_create.callback(cog, request)
         return request
 
-    async def test_both_entries_open_valid_serializable_builder(self):
+    async def test_both_entries_open_valid_serializable_builder_without_game(self):
         for entry in ("button", "slash"):
-            for locked in (False, True):
-                with self.subTest(entry=entry, locked=locked):
-                    request = await self.open_entry(entry, [GAME], GAME if locked else None)
-                    result = request.edit_original_response.call_args.kwargs
-                    self.assertIn("Create GamerHQ Event", result["content"])
-                    builder = result["view"]
-                    self.assertIsInstance(builder, lfg.EventBuilderView)
-                    self.assertEqual(builder.game_locked, locked)
-                    rows = builder.to_components()
-                    self.assertEqual(len(rows), 5)
-                    self.assertEqual(len(rows[4]["components"]), 5)
-                    for row in rows:
-                        self.assertLessEqual(len(row["components"]), 5)
-                        for component in row["components"]:
-                            self.assertLessEqual(len(component.get("options", [])), 25)
-                    builder.stop()
+            with self.subTest(entry=entry):
+                request = await self.open_entry(entry)
+                request.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+                result = request.edit_original_response.call_args.kwargs
+                self.assertIn("Create GamerHQ Event", result["content"])
+                self.assertNotIn("Game:", result["content"])
+                builder = result["view"]
+                self.assertIsInstance(builder, lfg.EventBuilderView)
+                rows = builder.to_components()
+                self.assertEqual(len(rows), 5)
+                self.assertEqual(len(rows[4]["components"]), 5)
+                for row in rows:
+                    self.assertLessEqual(len(row["components"]), 5)
+                    for component in row["components"]:
+                        self.assertLessEqual(len(component.get("options", [])), 25)
+                builder.stop()
 
-    async def test_both_entries_handle_no_games_and_missing_channel_role(self):
+    async def test_event_creation_does_not_require_games_or_channel_role(self):
         for entry in ("button", "slash"):
-            for games, channel_game, expected in (([], None, "Select a game"),
-                                                 ([GAME], {**GAME, "id": 2}, "Add **")):
-                request = await self.open_entry(entry, games, channel_game)
-                self.assertIn(expected, request.edit_original_response.call_args.kwargs["content"])
-                self.assertIsNone(request.edit_original_response.call_args.kwargs["view"])
+            request = await self.open_entry(entry)
+            self.assertIsInstance(request.edit_original_response.call_args.kwargs["view"], lfg.EventBuilderView)
+            self.assertNotIn("Select a game", request.edit_original_response.call_args.kwargs["content"])
 
     async def test_builder_modal_preview_edit_and_cancel(self):
         request = interaction()
-        builder = lfg.EventBuilderView(host=request.user, games=[GAME], game=GAME)
+        builder = lfg.EventBuilderView(host=request.user)
         await builder.preview.callback(request)
-        self.assertIn("Choose a game, date and time", request.response.send_message.call_args.args[0])
+        self.assertIn("Choose a date and time", request.response.send_message.call_args.args[0])
         await builder.edit_title.callback(request)
         self.assertIsInstance(request.response.send_modal.call_args.args[0], lfg.EventTitleModal)
         builder.date = (datetime.now(lfg.SERVER_TZ) + timedelta(days=1)).date().isoformat()
