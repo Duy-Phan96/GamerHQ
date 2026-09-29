@@ -6,6 +6,9 @@ from services.game_catalog_service import member_counts, sections
 from services.role_service import set_game_selection
 
 log = logging.getLogger(__name__)
+PAGE_SIZE = 20  # Four rows of games, one row reserved for navigation.
+POPULAR = '🔥 Popular'
+LETTER_RANGES = ('A–E', 'F–J', 'K–O', 'P–T', 'U–Z')
 
 
 class GameSelectionSession(SafeView):
@@ -16,9 +19,17 @@ class GameSelectionSession(SafeView):
         self.role_ids = {g['id']: g['role_id'] for g in games}
         held = {r.id for r in member.roles}
         self.selected = {g['id'] for g in games if g['role_id'] in held}
-        self.games_by_group = sections(games, member_counts(member.guild, games))
+        ranked = sections(games, member_counts(member.guild, games))
+        self.games_by_group = {POPULAR: ranked[POPULAR]} if POPULAR in ranked else {}
+        for label in (*LETTER_RANGES, '#'):
+            entries = [g for letter, rows in ranked.items() if letter != POPULAR
+                       and (letter == '#' if label == '#' else label[0] <= letter <= label[-1])
+                       for g in rows]
+            if entries:
+                self.games_by_group[label] = sorted(entries, key=lambda g: (g['name'].casefold(), g['id']))
         self.current_group = next(iter(self.games_by_group), None)
-        self.page = self.group_page = 0
+        self.page = 0
+        self.browsing = False
         self.busy = False
         self.rebuild()
 
@@ -29,46 +40,62 @@ class GameSelectionSession(SafeView):
         return False
 
     def status_text(self):
-        return ('# 🎮 Your Games\nChoose a game to add or remove it immediately. '
-                '✅ Selected · ➕ Add\nYour game roles never enable notifications automatically.\n\n'
-                f'**{self.current_group or "No games available"}** · Page {self.page + 1}')
+        group_label = '0–9 / Other' if self.current_group == '#' else self.current_group
+        heading = 'Browse A–Z' if self.browsing else (
+            f"{group_label if self.current_group == POPULAR else '🎮 Games ' + (group_label or '')}"
+            f" · {self.page + 1}/{self.page_count()}")
+        return ('# 🎮 Your Games\n\nChoose a game to add or remove it immediately.\n'
+                '✅ Selected · ➕ Add\n\n## ' + heading)
+
+    def page_count(self):
+        return max(1, (len(self.games_by_group.get(self.current_group, [])) + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    def navigation(self, label, callback, *, row, disabled=False):
+        button = discord.ui.Button(label=label, row=row, disabled=disabled)
+        button.callback = callback
+        self.add_item(button)
+
+    async def navigate(self, interaction, *, group=None, delta=0, browse=False):
+        if not await self.interaction_check(interaction): return
+        if self.busy:
+            return await interaction.response.send_message('Please wait a moment, then try again.', ephemeral=True)
+        self.browsing = browse
+        if group is not None:
+            self.current_group, self.page = group, 0
+        self.page = max(0, min(self.page_count() - 1, self.page + delta))
+        self.rebuild()
+        await interaction.response.edit_message(content=self.status_text(), view=self)
 
     def rebuild(self):
         self.clear_items()
-        groups = list(self.games_by_group)
-        if not groups:
+        if not self.games_by_group:
             return
-        nav = discord.ui.Select(placeholder='Popular / A–Z', row=0, options=[
-            discord.SelectOption(label=k, value=k, default=k == self.current_group)
-            for k in groups[self.group_page * 25:(self.group_page + 1) * 25]])
-        async def choose(interaction):
-            if not await self.interaction_check(interaction): return
-            self.current_group, self.page = nav.values[0], 0
-            self.rebuild()
-            await interaction.response.edit_message(content=self.status_text(), view=self)
-        nav.callback = choose
-        self.add_item(nav)
+        async def popular(interaction): await self.navigate(interaction, group=POPULAR)
+        async def browse(interaction): await self.navigate(interaction, browse=True)
+        if self.browsing:
+            for index, group in enumerate(g for g in self.games_by_group if g != POPULAR):
+                async def choose(interaction, group=group): await self.navigate(interaction, group=group)
+                self.navigation('0–9 / Other' if group == '#' else group, choose, row=index // 5)
+            self.navigation('Back to Popular', popular, row=2)
+            return
         games = self.games_by_group[self.current_group]
-        picker = discord.ui.Select(placeholder='Choose one game to toggle', row=1, options=[
-            discord.SelectOption(label=(('✅ ' if g['id'] in self.selected else '➕ ') + g['name'])[:100], value=str(g['id']))
-            for g in games[self.page * 25:(self.page + 1) * 25]])
-        async def toggle(interaction):
-            await self.toggle(interaction, int(picker.values[0]))
-        picker.callback = toggle
-        self.add_item(picker)
-        for label, field, delta, total in [('Previous', 'page', -1, (len(games)+24)//25),
-                                          ('Next', 'page', 1, (len(games)+24)//25),
-                                          ('Earlier letters', 'group_page', -1, (len(groups)+24)//25),
-                                          ('More letters', 'group_page', 1, (len(groups)+24)//25)]:
-            if total < 2: continue
-            button = discord.ui.Button(label=label, row=2, disabled=not 0 <= getattr(self, field)+delta < total)
-            async def turn(interaction, field=field, delta=delta, total=total):
-                if not await self.interaction_check(interaction): return
-                setattr(self, field, max(0, min(total-1, getattr(self, field)+delta)))
-                self.rebuild()
-                await interaction.response.edit_message(content=self.status_text(), view=self)
-            button.callback = turn
+        for index, game in enumerate(games[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]):
+            selected = game['id'] in self.selected
+            # Discord buttons permit 80 characters; bound UTF-16 too for emoji names.
+            label = (('✅ ' if selected else '➕ ') + game['name']).encode('utf-16-le')[:160].decode('utf-16-le', errors='ignore')
+            button = discord.ui.Button(label=label, row=index // 5,
+                style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
+                custom_id=f'gamerhq:personal_game:{game["id"]}')
+            async def toggle(interaction, game_id=game['id']): await self.toggle(interaction, game_id)
+            button.callback = toggle
             self.add_item(button)
+        async def previous(interaction): await self.navigate(interaction, delta=-1)
+        async def next_page(interaction): await self.navigate(interaction, delta=1)
+        self.navigation('◀ Previous', previous, row=4, disabled=self.page == 0)
+        self.navigation('Next ▶', next_page, row=4, disabled=self.page + 1 >= self.page_count())
+        self.navigation('Browse A–Z' if self.current_group == POPULAR else 'Other Letter Ranges', browse, row=4)
+        if self.current_group != POPULAR:
+            self.navigation('Back to Popular', popular, row=4)
 
     async def toggle(self, interaction, game_id):
         if not await self.interaction_check(interaction): return
@@ -88,8 +115,9 @@ class GameSelectionSession(SafeView):
             (self.selected.add if enabled else self.selected.discard)(game_id)
             self.rebuild()
             await interaction.edit_original_response(content=self.status_text(), view=self)
-        except (ValueError, discord.HTTPException):
-            log.warning('Personal game selection failed for game %s', game_id)
-            await interaction.followup.send('This game could not be updated. Reopen Select Games or ask staff for help.', ephemeral=True)
+        except (ValueError, discord.HTTPException) as exc:
+            log.warning('Personal game unavailable: guild=%s game=%s reviewed_role=%s error=%s',
+                        self.guild_id, game_id, self.role_ids[game_id], type(exc).__name__)
+            await interaction.followup.send('This game is temporarily unavailable.', ephemeral=True)
         finally:
             self.busy = False
