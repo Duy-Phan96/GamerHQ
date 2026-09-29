@@ -603,15 +603,13 @@ class HostedEventSelect(discord.ui.Select):
         self.parent_view = parent
         options = []
         for event in events[:25]:
-            game = db.get_game_by_id(int(event["game_id"]))
-            game_name = game["name"] if game else "Unknown game"
             start_at = int(event["start_at"])
             options.append(
                 discord.SelectOption(
                     label=str(event["title"])[:100],
-                    description=f"{game_name} • {datetime.fromtimestamp(start_at, SERVER_TZ).strftime('%b %d, %H:%M')}"[:100],
+                    description=f"{datetime.fromtimestamp(start_at, SERVER_TZ).strftime('%b %d, %H:%M')} • {int(event.get('duration_minutes') or 120)} min"[:100],
                     value=str(event["id"]),
-                    emoji="🎮",
+                    emoji="📅",
                 )
             )
         super().__init__(
@@ -699,10 +697,8 @@ class LFGInviteDMView(discord.ui.View):
         event = db.get_lfg_event(self.event_id)
         if member is None or event is None or event.get("status") != "scheduled":
             return await interaction.response.send_message("❌ This event is no longer available.")
-        game = db.get_game_by_id(int(event["game_id"]))
-        if not game:
-            return await interaction.response.send_message("❌ This event's game is unavailable.")
-        if not member_has_game_role(member, game):
+        game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+        if game and not member_has_game_role(member, game):
             return await prompt_add_game_and_join(interaction, event, game, guild)
         await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(guild, event, member)
@@ -716,8 +712,8 @@ class LFGInviteDMView(discord.ui.View):
 
 
 async def send_event_invites(guild: discord.Guild, event: dict, event_message: discord.Message) -> None:
-    game = db.get_game_by_id(int(event["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+    game_suffix = f" for **{game['name']}**" if game else ""
     host = guild.get_member(int(event["host_id"]))
     host_label = host.mention if host is not None else f"<@{int(event['host_id'])}>"
     invited = [
@@ -730,8 +726,8 @@ async def send_event_invites(guild: discord.Guild, event: dict, event_message: d
             continue
         try:
             await member.send(
-                f"# 🎮 GamerHQ Event Invite\n\n"
-                f"You've been invited to **{event['title']}** for **{game_name}**.\n"
+                f"# 📅 GamerHQ Event Invite\n\n"
+                f"You've been invited to **{event['title']}**{game_suffix}.\n"
                 f"👤 **Invited by:** {host_label}\n"
                 f"📅 <t:{int(event['start_at'])}:F> (<t:{int(event['start_at'])}:R>)\n\n"
                 f"Click **Join Event** below to join immediately.\n"
