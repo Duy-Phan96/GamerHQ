@@ -18,7 +18,8 @@ Discord cards display state; they are not membership/capacity authority.
 3. Invitations and joins are distinct persisted states. Final join rechecks active status, private authorization, exclusions and capacity transactionally. Discord access and any required game-role assignment accompany the feature flow.
 4. Hosts manage title/note/time/capacity/invites and remove participants through /lfg manage. Joined members can propose a new time; only the host decides. The host cannot simply leave their own active lobby.
 5. The 30-second scheduler reconciles cards, creates/claims event voice near the configured lead time and records notifications. Rescheduling resets due-notification state; rescheduling after voice has opened is blocked.
-6. Closing/completing and cancellation preserve a final card before cleanup. Cancellation keeps its existing admin override and notifies participants. Occupied voice is retained until empty; terminal cards/private resources are eligible for cleanup after 24 hours. The scheduler also handles overdue sessions.
+6. Only the event creator manages or dissolves an event. A private event card includes **Dissolve Event**; confirmation marks the event completed. Automatic expiry occurs six hours after the scheduled start. No cleanup ever disconnects an occupied voice channel.
+7. Once an event is terminal and its voice is empty, its private event text channel and event voice are removed immediately. Public/final event cards remain for up to 24 hours for context, then their managed posts are removed. Failed cleanup remains retryable by the scheduler.
 
 Keep private tokens, invite codes, participant data and notification state in runtime storage; never log them as debugging context. Role/Discord delivery can fail after a DB transition; preserve retry/reconciliation state rather than recreating an event.
 
