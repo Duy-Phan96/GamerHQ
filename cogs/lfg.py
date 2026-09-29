@@ -378,6 +378,7 @@ async def delete_private_event_channel(guild: discord.Guild, event: dict) -> boo
             pass
         except discord.HTTPException:
             return False
+    db.set_lfg_event_private_channel(int(event["id"]), None)
     return True
 
 
@@ -521,6 +522,15 @@ class LFGEventView(discord.ui.View):
                 label="Google Calendar", emoji="📅", style=discord.ButtonStyle.link,
                 url=google_calendar_url(event),
             ))
+            if event.get("visibility") == "private":
+                dissolve = discord.ui.Button(
+                    label="Dissolve Event",
+                    emoji="🗑️",
+                    style=discord.ButtonStyle.danger,
+                    custom_id=f"gamerhq:lfg:dissolve:{self.event_id}",
+                )
+                dissolve.callback = self.dissolve_event
+                self.add_item(dissolve)
 
     async def join_event(self, interaction: discord.Interaction):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
@@ -586,6 +596,23 @@ class LFGEventView(discord.ui.View):
         if not url:
             return await interaction.followup.send("❌ Event link is currently unavailable.", ephemeral=True)
         await interaction.followup.send(f"# 🔗 Share Event\n\n{url}", ephemeral=True)
+
+    async def dissolve_event(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
+        event = db.get_lfg_event(self.event_id)
+        if not event or event.get("status") != "scheduled":
+            return await interaction.response.send_message("❌ This event is no longer active.", ephemeral=True)
+        if interaction.user.id != int(event["host_id"]):
+            return await interaction.response.send_message("❌ Only the event creator can dissolve this event.", ephemeral=True)
+        await interaction.response.send_message(
+            "✅ Event dissolved. The private event chat will close now. "
+            "An active voice channel stays open until everyone leaves.",
+            ephemeral=True,
+        )
+        event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, "completed")
+        await delete_private_event_channel(interaction.guild, event)
+        await delete_event_voice(interaction.guild, event)
 
     async def leave_event(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -1148,9 +1175,6 @@ class LFG(commands.Cog):
                     # events after a generous fixed window, but never kick an occupied voice room.
                     stale_at = int(event["start_at"]) + 6 * 3600
                     if now >= stale_at:
-                        voice = guild.get_channel(int(voice_id)) if voice_id else None
-                        if isinstance(voice, discord.VoiceChannel) and voice.members:
-                            continue
                         lobby_rules.end(event_id, guild.id, event['host_id'], 'completed')
                         await refresh_event_posts(guild, event_id)
                         continue
