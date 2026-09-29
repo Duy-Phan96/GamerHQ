@@ -94,7 +94,9 @@ For maintainers, [authorization and recovery boundaries](SECURITY_MODEL.md) clas
 
 Choose Your Games → Select Games opens a private panel: Popular Top 25 (current
 cached role-member counts, alphabetical ties), all selectable games under A–Z,
-and immediate add/remove choices. There is no Save step and no LFG Notifications
+and direct green ✅ / neutral ➕ game buttons. Changes apply immediately and keep
+the current page open. Browse A–Z uses letter ranges plus 0–9 / Other; each game
+page holds up to 20 buttons. There is no Save step and no LFG Notifications
 button on that board. `/game select` retains its quick single-game confirmation;
 `/game suggest` and separate notification preferences remain available.
 

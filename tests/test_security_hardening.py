@@ -91,7 +91,8 @@ class GameRoleSecurityTests(unittest.IsolatedAsyncioTestCase):
         games = [dict(self.game, id=i, name='🎮' * 100) for i in range(1, 121)]
         session = GameSelectionSession(self.member, games)
         self.assertLessEqual(len(session.status_text().encode('utf-16-le')) // 2, 2000)
-        self.assertLessEqual(max(len(c.options) for c in session.children if isinstance(c, discord.ui.Select)), 25)
+        self.assertLessEqual(len(session.children), 25)
+        self.assertTrue(all(len(c.label.encode('utf-16-le')) // 2 <= 80 for c in session.children))
 
     async def test_notification_mapping_changed_after_preview_denied(self):
         session = NotificationSelectionSession(self.member, [self.game], notifications=True)

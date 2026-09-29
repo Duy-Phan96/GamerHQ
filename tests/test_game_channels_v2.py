@@ -34,17 +34,24 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         unrelated = self.guild.custom
         self.member.roles = [unrelated]
         view = GameSelectionSession(self.member, db.get_selector_games())
-        self.assertTrue(any(o.label.startswith('➕ ') for c in view.children if isinstance(c, discord.ui.Select) for o in c.options))
+        self.assertTrue(any(c.label.startswith('➕ ') for c in view.children))
         self.assertFalse(any('Confirm' in (getattr(c, 'label', '') or '') for c in view.children))
+        self.assertFalse(any('Save' in c.label for c in view.children))
         interaction = self.interaction()
         interaction.message = SimpleNamespace(edit=AsyncMock())
         await view.toggle(interaction, self.game['id'])
         self.assertIn(self.guild.get_role(self.game['role_id']), self.member.roles)
-        self.assertTrue(any(o.label.startswith('✅ ') for c in view.children if isinstance(c, discord.ui.Select) for o in c.options))
+        self.assertTrue(any(c.label.startswith('✅ ') for c in view.children))
         await view.toggle(self.interaction(), self.game['id'])
         self.assertEqual(self.member.roles, [unrelated])
         interaction.message.edit.assert_not_awaited()
         self.assertIsNone(db.get_game_by_id(self.game['id'])['channel_id'])
+
+    async def test_existing_selection_is_green_on_open(self):
+        self.member.roles = [self.guild.get_role(self.game['role_id'])]
+        view = GameSelectionSession(self.member, [self.game])
+        self.assertEqual(view.children[0].label, '✅ ' + self.game['name'])
+        self.assertEqual(view.children[0].style, discord.ButtonStyle.success)
 
     async def test_actor_binding_and_stale_role_do_not_mutate(self):
         view = GameSelectionSession(self.member, [self.game])
@@ -55,6 +62,70 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         db.set_game_selectable(self.game['id'], False)
         await view.toggle(self.interaction(), self.game['id'])
         self.member.add_roles.assert_not_awaited()
+
+    async def test_button_toggle_keeps_letter_page_and_selected_style(self):
+        games = [dict(self.game, id=900+n, name=f'A Game {n:02}') for n in range(20)] + [self.game]
+        view = GameSelectionSession(self.member, games)
+        await view.navigate(self.interaction(), group='A–E', delta=1)
+        button = next(c for c in view.children if c.custom_id == f'gamerhq:personal_game:{self.game["id"]}')
+        self.assertEqual(button.style, discord.ButtonStyle.secondary)
+        interaction = self.interaction()
+        await button.callback(interaction)
+        self.assertEqual((view.current_group, view.page), ('A–E', 1))
+        button = next(c for c in view.children if c.custom_id == button.custom_id)
+        self.assertEqual(button.style, discord.ButtonStyle.success)
+        self.assertTrue(button.label.startswith('✅ '))
+        self.assertIs(interaction.edit_original_response.call_args.kwargs['view'], view)
+        await button.callback(self.interaction())
+        self.assertNotIn(self.guild.get_role(self.game['role_id']), self.member.roles)
+        self.assertEqual(view.page, 1)
+
+    async def test_button_navigation_reaches_popular_and_all_ranges_without_queries(self):
+        games = [dict(self.game, id=n+1, name=f'{chr(65+n%26)} Game {n:03}') for n in range(60)]
+        games.append(dict(self.game, id=1000, name='123 Game'))
+        view = GameSelectionSession(self.member, games)
+        self.assertEqual(view.status_text().count('Popular'), 1)
+        self.assertEqual(sum(c.label.startswith('➕ ') for c in view.children), 20)
+        async def click(label):
+            await next(c for c in view.children if c.label == label).callback(self.interaction())
+        with patch.object(db, 'get_selector_games', side_effect=AssertionError('navigation queried DB')), patch('cogs.game_selector.member_counts', side_effect=AssertionError('navigation reranked')):
+            await click('Next ▶')
+            self.assertEqual(sum(c.label.startswith('➕ ') for c in view.children), 5)
+            await click('Browse A–Z')
+            self.assertEqual([c.label for c in view.children[:-1]], ['A–E', 'F–J', 'K–O', 'P–T', 'U–Z', '0–9 / Other'])
+            await click('0–9 / Other')
+            self.assertTrue(any(c.label == '➕ 123 Game' for c in view.children))
+            await click('Back to Popular')
+        self.guild.fetch_member.assert_not_awaited()
+        self.assertEqual({g['id'] for k, rows in view.games_by_group.items() if k != '🔥 Popular' for g in rows}, {g['id'] for g in games})
+
+    async def test_missing_role_is_friendly_and_logged_without_closing_panel(self):
+        view = GameSelectionSession(self.member, [self.game])
+        interaction = self.interaction()
+        with patch.object(self.guild, 'get_role', return_value=None), self.assertLogs('cogs.game_selector', level='WARNING') as logs:
+            await view.children[0].callback(interaction)
+        interaction.followup.send.assert_awaited_once_with('This game is temporarily unavailable.', ephemeral=True)
+        self.assertIn(f'game={self.game["id"]}', logs.output[0])
+        self.member.add_roles.assert_not_awaited()
+        self.assertFalse(view.busy)
+        await view.children[0].callback(self.interaction())
+        self.assertIn(self.game['id'], view.selected)
+
+    async def test_empty_library_distinguishes_broken_role_mappings(self):
+        from cogs.games import ChooseGamesButtons
+        for rows, expected in [([], 'No games are currently available for selection.'),
+                               ([dict(self.game, role_id=None)], 'Game selection is temporarily unavailable. Please try again later.')]:
+            interaction = self.interaction()
+            with patch.object(db, 'get_selector_games', return_value=[]), patch.object(db, 'get_selectable_games', return_value=rows):
+                await ChooseGamesButtons().select_games.callback(interaction)
+            interaction.response.send_message.assert_awaited_once_with(expected, ephemeral=True)
+
+    async def test_public_copy_preserves_guidance_without_notification_section(self):
+        from services.game_service import build_choose_games_message
+        text = build_choose_games_message()
+        for phrase in ('game roles', 'dedicated game channels', 'Select Games', 'Suggest Game', '/game select', '/game suggest'):
+            self.assertIn(phrase, text)
+        self.assertNotIn('LFG', text)
 
     async def test_open_selector_one_batch_no_inventory_and_no_public_lfg_button(self):
         from cogs.games import ChooseGamesButtons
@@ -81,12 +152,15 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(catalog.sections(games, catalog.member_counts(self.guild, games))['🔥 Popular'][0], games[40])
         session = GameSelectionSession(self.member, games)
         for group in session.games_by_group:
+            if group != '🔥 Popular':
+                self.assertEqual(session.games_by_group[group], sorted(session.games_by_group[group], key=lambda g: (g['name'].casefold(), g['id'])))
             session.current_group = group
-            for page in range((len(session.games_by_group[group])+24)//25):
+            for page in range((len(session.games_by_group[group])+19)//20):
                 session.page = page
                 session.rebuild()
                 self.assertLessEqual(len(session.children), 25)
-                self.assertTrue(all(len(c.options)<=25 for c in session.children if isinstance(c, discord.ui.Select)))
+                self.assertTrue(all(isinstance(c, discord.ui.Button) for c in session.children))
+                self.assertTrue(all(sum(c.row == row for c in session.children) <= 5 for row in range(5)))
 
 
 class ChannelTests(unittest.IsolatedAsyncioTestCase):

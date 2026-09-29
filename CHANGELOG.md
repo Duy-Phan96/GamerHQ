@@ -1,5 +1,11 @@
 # GamerHQ Changelog
 
+## Personal game selector polish
+
+- Personal selection uses direct green/neutral game buttons, immediate role toggles and stable pages.
+- Popular Top 25 opens first; A–Z ranges and 0–9 / Other keep the full catalog reachable without nested dropdowns.
+- Keep the public Select Games / Suggest Game guidance; unavailable roles show a friendly error with private diagnostics.
+
 ## Personal games and shared game channels
 
 - Choose Your Games opens personal Popular Top 25 / A–Z browsing with immediate role choices, independent of channel existence.
