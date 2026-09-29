@@ -39,8 +39,8 @@ def _reschedule(conn, event, start_at):
 
 
 def edit(event_id, guild_id, actor_id, **changes):
-    if not changes or set(changes) - {'title', 'note', 'start_at', 'max_players', 'invite_lead_minutes'}:
-        raise ValueError('Unsupported lobby change.')
+    if not changes or set(changes) - {'title', 'note', 'start_at', 'max_players', 'invite_lead_minutes', 'duration_minutes'}:
+        raise ValueError('Unsupported event change.')
     with db.connect() as conn:
         event = _event(conn, event_id, guild_id)
         _host(event, actor_id)
@@ -56,6 +56,8 @@ def edit(event_id, guild_id, actor_id, **changes):
                 raise ValueError(f'Seats must be between {max(1, count)} and 99 (including the host).')
         if 'invite_lead_minutes' in changes and not 0 <= changes['invite_lead_minutes'] <= 1440:
             raise ValueError('Voice reminder must be 0–1440 minutes before start.')
+        if 'duration_minutes' in changes and not 30 <= changes['duration_minutes'] <= 1440:
+            raise ValueError('Event duration must be between 30 minutes and 24 hours.')
         if event.get('voice_channel_id') and changes.get('invite_lead_minutes', event['invite_lead_minutes']) != event['invite_lead_minutes']:
             raise ValueError('The voice reminder has already fired; voice is open.')
         if 'start_at' in changes and changes['start_at'] != event['start_at']:
@@ -162,9 +164,8 @@ def end(event_id, guild_id, actor_id, status, *, administrator=False):
         raise ValueError('Invalid final state.')
     with db.connect() as conn:
         event = _event(conn, event_id, guild_id)
-        # Preserve the pre-existing administrator cancellation override only.
-        if not (administrator and status == 'cancelled'):
-            _host(event, actor_id)
+        # Event management is creator-owned. Administrators do not bypass host ownership here.
+        _host(event, actor_id)
         conn.execute('UPDATE lfg_events SET status=?, ended_at=? WHERE id=?', (status, int(time.time()), event_id))
         conn.execute("UPDATE lfg_time_proposals SET status='EXPIRED' WHERE event_id=? AND status='PENDING'", (event_id,))
     logging.getLogger(__name__).warning('lobby timestamp=%s actor=%s target=%s result=%s', int(time.time()), actor_id, event_id, status)
