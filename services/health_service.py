@@ -71,7 +71,8 @@ async def _scan(guild, bot=None, *, messages=True):
         required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:electricity'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
-        'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],
+        'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','guide','need-support'],
+        'games': ['gaming-chat','looking-for-group'],
         'community': ['newbies','general','introductions','suggestions','bot-commands'],
         'events': ['community-events','tournaments','giveaways'],
     }
