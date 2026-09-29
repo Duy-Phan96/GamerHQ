@@ -1144,9 +1144,10 @@ class LFG(commands.Cog):
                     if not event or event['status'] != 'scheduled':
                         continue
                     voice_id = event.get("voice_channel_id")
-                    # Retire old events after a generous six-hour window. Never kick an
+                    # Retire events after their configured duration. Never kick an
                     # active voice room; cleanup waits until it is empty.
-                    if now >= int(event["start_at"]) + 6 * 3600:
+                    end_at = int(event["start_at"]) + int(event.get("duration_minutes") or 120) * 60
+                    if now >= end_at:
                         voice = guild.get_channel(int(voice_id)) if voice_id else None
                         if isinstance(voice, discord.VoiceChannel) and voice.members:
                             continue
@@ -1154,14 +1155,14 @@ class LFG(commands.Cog):
                         await refresh_event_posts(guild, event_id)
                         continue
                     invite_at = int(event["start_at"]) - int(event["invite_lead_minutes"]) * 60
-                    if not voice_id and now >= invite_at and now < int(event["start_at"]) + 2 * 3600:
+                    if not voice_id and now >= invite_at and now < end_at:
                         await create_event_voice(guild, event)
                         continue
                     if voice_id:
                         channel = guild.get_channel(int(voice_id))
                         if channel is None:
                             db.clear_lfg_event_voice(event_id)
-                        elif isinstance(channel, discord.VoiceChannel) and now >= int(event["start_at"]) + 2 * 3600 and not channel.members:
+                        elif isinstance(channel, discord.VoiceChannel) and now >= end_at and not channel.members:
                             try:
                                 await channel.delete(reason=f"GamerHQ LFG event #{event_id} finished and voice is empty")
                             except discord.NotFound:
