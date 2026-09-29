@@ -15,7 +15,7 @@ def authorized_event(interaction, event_id, *, host=False):
     if host and event['host_id'] != interaction.user.id:
         raise ValueError('Only the event creator can manage this event.')
     if not host and interaction.user.id not in [r['user_id'] for r in db.get_lfg_event_members(event_id) if r['status'] == 'joined']:
-        raise ValueError('Join the lobby to use these actions.')
+        raise ValueError('Join the event to use these actions.')
     return event
 
 
@@ -33,7 +33,7 @@ async def notify_members(guild, event, text):
         member = guild.get_member(row['user_id'])
         if member and not member.bot:
             try:
-                await member.send(f"🎮 **{event['title']}**\n{text}", allowed_mentions=discord.AllowedMentions.none())
+                await member.send(f"📅 **{event['title']}**\n{text}", allowed_mentions=discord.AllowedMentions.none())
             except discord.HTTPException:
                 pass
 
@@ -42,7 +42,7 @@ async def changed(guild, event, *, time_changed=False):
     from cogs.lfg import refresh_event_posts
     await refresh_event_posts(guild, event['id'])
     if time_changed:
-        await notify_members(guild, event, f"The host changed the start to <t:{event['start_at']}:F>. Voice reminder: {event['invite_lead_minutes']} minutes before.")
+        await notify_members(guild, event, f"The event creator changed the start to <t:{event['start_at']}:F>. Voice reminder: {event['invite_lead_minutes']} minutes before.")
 
 
 async def revoke_access(guild, event, user_id):
@@ -55,12 +55,12 @@ async def revoke_access(guild, event, user_id):
     if isinstance(voice, discord.VoiceChannel):
         await voice.set_permissions(member, overwrite=None)
         if member.voice and member.voice.channel and member.voice.channel.id == voice.id:
-            await member.move_to(None, reason='Left or removed from GamerHQ lobby')
+            await member.move_to(None, reason='Left or removed from GamerHQ event')
 
 
 class EditModal(discord.ui.Modal):
     def __init__(self, event, schedule=False):
-        super().__init__(title='Change Date / Time' if schedule else 'Edit Lobby Details')
+        super().__init__(title='Change Date / Time' if schedule else 'Edit Event Details')
         self.event_id = event['id']
         self.schedule = schedule
         if schedule:
