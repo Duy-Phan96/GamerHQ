@@ -773,15 +773,15 @@ class EventDraftView(discord.ui.View):
         start_at = int(dt.timestamp())
         inv = " · ".join(f"<@{x}>" for x in sorted(b.invited_ids)) or "None"
         return (
-            "# 🎮 Event Preview\n\n"
+            "# 📅 Event Preview\n\n"
             f"**Title:** {b.title}\n"
-            f"**Game:** {b.game['emoji']} {b.game['name']}\n"
             f"**Start:** <t:{start_at}:F> (<t:{start_at}:R>)\n"
+            f"**Duration:** {b.duration_minutes} minutes\n"
             f"**Players:** {b.max_players} total\n"
             f"**Voice invite:** {b.invite_lead} minutes before\n"
             f"**Visibility:** {'🔒 Private · Invite only' if b.visibility == 'private' else '🌐 Public'}\n\n"
             f"**Invited:** {inv}\n\n"
-            "Optionally select players to invite above. They can join even if they have not selected the game yet; GamerHQ will offer to add the game role when they join.\n\n"
+            "Optionally select players to invite above.\n\n"
             "Nothing has been posted yet."
         )
 
@@ -809,11 +809,9 @@ class EventDraftView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         b = self.builder
         current = interaction.guild.get_member(self.host.id)
-        fresh_game = db.get_game_by_id(b.game['id']) if b.game else None
-        if not current or not fresh_game or not fresh_game.get('area_enabled') or not member_has_game_role(current, fresh_game):
-            return await interaction.edit_original_response(content='Your game access changed. Reopen the event builder.', view=None)
+        if not current:
+            return await interaction.edit_original_response(content='Your server membership changed. Reopen the event builder.', view=None)
         general = find_lfg_channel(interaction.guild)
-        game_channel = find_game_lfg_channel(interaction.guild, b.game)
         if not general:
             return await interaction.edit_original_response(content="❌ General looking-for-group channel not found.", view=None)
 
@@ -826,9 +824,9 @@ class EventDraftView(discord.ui.View):
             return await interaction.edit_original_response(content=str(exc), view=None)
         try:
             event = db.create_lfg_event(
-                guild_id=interaction.guild.id, game_id=b.game["id"], host_id=b.host.id,
+                guild_id=interaction.guild.id, game_id=0, host_id=b.host.id,
                 title=b.title, start_at=start_at, max_players=b.max_players,
-                invite_lead_minutes=b.invite_lead, visibility=b.visibility,
+                invite_lead_minutes=b.invite_lead, duration_minutes=b.duration_minutes, visibility=b.visibility,
                 share_token=secrets.token_urlsafe(8), enforce_member_limits=True,
             )
         except ValueError as exc:
@@ -844,7 +842,7 @@ class EventDraftView(discord.ui.View):
         target_channels = []
         if b.visibility == "private":
             try:
-                private_channel = await create_private_event_channel(interaction.guild, event, b.game)
+                private_channel = await create_private_event_channel(interaction.guild, event, None)
             except (discord.HTTPException, TimeoutError, OSError):
                 return await interaction.edit_original_response(
                     content="❌ Private lobby creation could not be confirmed. The lobby record is retained; ask staff to inspect Discord before retrying.", view=None)
@@ -854,16 +852,14 @@ class EventDraftView(discord.ui.View):
             event = db.get_lfg_event(event["id"])
             target_channels = [private_channel]
         else:
-            target_channels = list(dict.fromkeys([general, game_channel]))
+            target_channels = [general]
         for channel in target_channels:
             if not isinstance(channel, discord.TextChannel):
                 continue
             try:
-                from services.role_service import lfg_notification
-                prefix, mentions = lfg_notification(interaction.guild, b.game['id'], private=b.visibility == 'private', already_posted=bool(posts))
                 post = await channel.send(
-                    prefix + render_event(interaction.guild, event), view=view,
-                    allowed_mentions=mentions,
+                    render_event(interaction.guild, event), view=view,
+                    allowed_mentions=discord.AllowedMentions.none(),
                 )
                 db.add_lfg_event_message(event["id"], channel_id=channel.id, message_id=post.id)
                 posts.append(post)
