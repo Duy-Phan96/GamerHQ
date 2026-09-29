@@ -794,7 +794,6 @@ class EventDraftView(discord.ui.View):
             "# 📅 Event Preview\n\n"
             f"**Title:** {b.title}\n"
             f"**Start:** <t:{start_at}:F> (<t:{start_at}:R>)\n"
-"
             f"**Players:** {b.max_players} total\n"
             f"**Voice invite:** {b.invite_lead} minutes before\n"
             f"**Visibility:** {'🔒 Private · Invite only' if b.visibility == 'private' else '🌐 Public'}\n\n"
