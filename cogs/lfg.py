@@ -69,8 +69,8 @@ async def delete_event_posts(guild: discord.Guild, event: dict) -> None:
     return success
 
 async def notify_cancelled_users(guild: discord.Guild, event: dict) -> None:
-    game = db.get_game_by_id(int(event["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+    game_suffix = f" for **{game['name']}**" if game else ""
     recipients = {
         int(row["user_id"])
         for row in db.get_lfg_event_members(int(event["id"]))
@@ -83,7 +83,7 @@ async def notify_cancelled_users(guild: discord.Guild, event: dict) -> None:
         try:
             await member.send(
                 f"# ❌ GamerHQ Event Cancelled\n\n"
-                f"**{event['title']}** for **{game_name}** was cancelled by the host."
+                f"**{event['title']}**{game_suffix} was cancelled by the creator."
             )
         except (discord.Forbidden, discord.HTTPException):
             pass
@@ -258,18 +258,17 @@ class ConfirmCancelEventView(discord.ui.View):
         if not event:
             return await interaction.response.edit_message(content="❌ This event no longer exists.", view=None)
 
-        is_admin = isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
-        if interaction.user.id != int(event["host_id"]) and not is_admin:
-            return await interaction.response.send_message("❌ Only the host or an administrator can delete this event.", ephemeral=True)
+        if interaction.user.id != int(event["host_id"]):
+            return await interaction.response.send_message("❌ Only the event creator can cancel this event.", ephemeral=True)
 
         try:
-            event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, 'cancelled', administrator=is_admin)
+            event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, 'cancelled')
         except ValueError as exc:
             return await interaction.response.send_message(str(exc), ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await notify_cancelled_users(interaction.guild, event)
         await refresh_event_posts(interaction.guild, self.event_id)
-        await interaction.edit_original_response(content="Lobby cancelled. The final card remains for 24 hours; voice cleanup waits until empty.", view=None)
+        await interaction.edit_original_response(content="Event cancelled. The final card remains for 24 hours; voice cleanup waits until empty.", view=None)
         self.stop()
 
     @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
@@ -1090,13 +1089,6 @@ class EventBuilderView(discord.ui.View):
     # Even a decorated button omitted by _rebuild is instantiated by View.__init__.
 
 
-def game_for_lfg_channel(guild: discord.Guild, channel_id: int):
-    for game in db.get_area_games(lfg_only=True):
-        cid = game.get("lfg_channel_id") or game.get("clips_channel_id")
-        if cid and int(cid) == int(channel_id):
-            return game
-    return None
-
 class LFGHubView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Create Event",emoji="➕",style=discord.ButtonStyle.primary,custom_id="gamerhq:lfg:create")
@@ -1120,7 +1112,7 @@ class LFGHubView(discord.ui.View):
 def build_lfg_hub_view(): return LFGHubView()
 
 class LFG(commands.Cog):
-    lfg = app_commands.Group(name="lfg", description="Looking for Group events and tools.")
+    lfg = app_commands.Group(name="lfg", description="GamerHQ events and scheduling tools.")
 
     def __init__(self,bot):
         self.bot=bot
