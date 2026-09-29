@@ -249,6 +249,25 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
                 await dashboard.sync_card(self.guild, db.get_lfg_event(self.eid), lfg.LFGEventView(self.eid))
             self.assertEqual(channel.send.await_count, 2)
 
+    def test_event_voice_privacy_follows_visibility(self):
+        voice_category = MagicMock(spec=discord.CategoryChannel)
+        voice_category.name = '🔊 VOICE CHANNELS'
+        self.guild.categories = [voice_category]
+        self.guild.default_role = MagicMock(spec=discord.Role)
+        self.guild.me = None
+
+        public = dict(self.event)
+        public['visibility'] = 'public'
+        public_overwrites = lfg.event_voice_overwrites(self.guild, public)
+        self.assertTrue(public_overwrites[self.guild.default_role].view_channel)
+        self.assertTrue(public_overwrites[self.guild.default_role].connect)
+
+        private = dict(self.event)
+        private['visibility'] = 'private'
+        private_overwrites = lfg.event_voice_overwrites(self.guild, private)
+        self.assertFalse(private_overwrites[self.guild.default_role].view_channel)
+        self.assertFalse(private_overwrites[self.guild.default_role].connect)
+
     async def test_voice_creation_claim_and_existing_room_reuse(self):
         voice = MagicMock(spec=discord.VoiceChannel)
         voice.id = 555; voice.delete = AsyncMock()
