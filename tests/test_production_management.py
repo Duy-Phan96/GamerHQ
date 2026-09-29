@@ -148,7 +148,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.games[0]['name'], 'Fixture Game')
         self.assertEqual(session.games[0]['role_id'], 100)
         self.assertEqual(session.role_ids[session.games[0]['id']], 100)
-        options = [option.label for child in session.children if isinstance(child, discord.ui.Select) for option in child.options]
+        options = [child.label for child in session.children if isinstance(child, discord.ui.Button)]
         self.assertIn('➕ Fixture Game', options)
 
     async def test_server_log_creation_and_repair_reuse_stored_channel(self):
