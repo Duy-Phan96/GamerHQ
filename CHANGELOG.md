@@ -1,5 +1,13 @@
 # GamerHQ Changelog
 
+## Game System V3 and event cleanup
+
+- Consolidate game infrastructure under one reviewed **🎮 GAMES** category with shared **gaming-chat** and central **looking-for-group**; dedicated game channels remain optional and role-gated.
+- Add Server Management → Games → **Migrate to GAMES**. It moves recorded legacy game chats in place, preserving channel IDs/history, while old per-game LFG/create-voice/categories remain cleanup candidates until separately confirmed.
+- Extend legacy Game Area cleanup to migrated hints; occupied voice, unknown children, dependencies or legacy LFG history block automatic cleanup.
+- Add creator-only **Dissolve Event** for private events. Private event chat/voice are removed as soon as the event is terminal and voice is empty; public final cards retain the existing 24-hour context window.
+- Automatic event expiry remains six hours after start and never disconnects active voice users.
+
 ## Game-independent event scheduling
 
 - Create Event no longer requires a selected game or game role; public events post to the central LFG board and private events keep their existing invite-only space.

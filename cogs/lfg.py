@@ -258,6 +258,53 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
     return channel
 
 
+class ConfirmDissolveEventView(discord.ui.View):
+    def __init__(self, event_id: int, requester_id: int):
+        super().__init__(timeout=120)
+        self.event_id = int(event_id)
+        self.requester_id = int(requester_id)
+        self.used = False
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message("This confirmation belongs to another user.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Dissolve Event", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.used:
+            return await interaction.response.send_message("This confirmation was already used.", ephemeral=True)
+        self.used = True
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
+        event = db.get_lfg_event(self.event_id)
+        if not event or event.get("status") != "scheduled":
+            return await interaction.response.edit_message(content="This event is already closed.", view=None)
+        if int(event["host_id"]) != interaction.user.id:
+            return await interaction.response.send_message("❌ Only the event creator can dissolve this event.", ephemeral=True)
+        try:
+            event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, "completed")
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        await refresh_event_posts(interaction.guild, self.event_id)
+        await cleanup_ended(interaction.guild)
+        fresh = db.get_lfg_event(self.event_id)
+        voice = interaction.guild.get_channel(int(fresh["voice_channel_id"])) if fresh and fresh.get("voice_channel_id") else None
+        if isinstance(voice, discord.VoiceChannel) and voice.members:
+            text = "✅ Event dissolved. The private chat and voice will be removed automatically when the voice is empty."
+        else:
+            text = "✅ Event dissolved and its private event space was cleaned up."
+        await interaction.edit_original_response(content=text, view=None)
+        self.stop()
+
+    @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="Nothing was changed.", view=None)
+        self.stop()
+
+
 class ConfirmCancelEventView(discord.ui.View):
     def __init__(self, event_id: int, requester_id: int):
         super().__init__(timeout=120)
@@ -370,6 +417,7 @@ async def create_private_event_channel(guild: discord.Guild, event: dict, game: 
 
 
 async def delete_private_event_channel(guild: discord.Guild, event: dict) -> bool:
+    channel_id = event.get("private_channel_id")
     channel = _event_private_channel(guild, event)
     if channel is not None:
         try:
@@ -378,6 +426,13 @@ async def delete_private_event_channel(guild: discord.Guild, event: dict) -> boo
             pass
         except discord.HTTPException:
             return False
+    if channel_id:
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE lfg_events SET private_channel_id=NULL, dashboard_channel_id=CASE WHEN dashboard_channel_id=? THEN NULL ELSE dashboard_channel_id END, dashboard_message_id=CASE WHEN dashboard_channel_id=? THEN NULL ELSE dashboard_message_id END WHERE id=?",
+                (int(channel_id), int(channel_id), int(event["id"])),
+            )
+            conn.execute("DELETE FROM lfg_event_messages WHERE event_id=? AND channel_id=?", (int(event["id"]), int(channel_id)))
     return True
 
 
@@ -521,6 +576,13 @@ class LFGEventView(discord.ui.View):
                 label="Google Calendar", emoji="📅", style=discord.ButtonStyle.link,
                 url=google_calendar_url(event),
             ))
+            if event.get("visibility") == "private":
+                dissolve = discord.ui.Button(
+                    label="Dissolve Event", emoji="🗑️", style=discord.ButtonStyle.danger,
+                    custom_id=f"gamerhq:lfg:dissolve:{self.event_id}",
+                )
+                dissolve.callback = self.dissolve_event
+                self.add_item(dissolve)
 
     async def join_event(self, interaction: discord.Interaction):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
@@ -546,6 +608,20 @@ class LFGEventView(discord.ui.View):
         if result == "full":
             return await interaction.followup.send("❌ This event is full.", ephemeral=True)
         await interaction.followup.send("✅ You've joined the event.", ephemeral=True)
+
+    async def dissolve_event(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
+        event = db.get_lfg_event(self.event_id)
+        if not event or event.get("status") != "scheduled":
+            return await interaction.response.send_message("❌ This event is no longer active.", ephemeral=True)
+        if int(event["host_id"]) != interaction.user.id:
+            return await interaction.response.send_message("❌ Only the event creator can dissolve this event.", ephemeral=True)
+        await interaction.response.send_message(
+            "Dissolve this event? If anyone is still in the event voice, the channels stay until the voice is empty.",
+            view=ConfirmDissolveEventView(self.event_id, interaction.user.id),
+            ephemeral=True,
+        )
 
     async def share_event(self, interaction: discord.Interaction):
         if not interaction.guild:

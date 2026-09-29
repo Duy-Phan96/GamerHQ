@@ -58,6 +58,39 @@ class CandidateView(SafeView):
             self.add_item(button)
 
 
+class ConfirmSystemMigration(Menu):
+    def __init__(self, guild, actor_id, plan):
+        super().__init__(guild, actor_id)
+        self.plan = plan
+        self.used = False
+        self.action('Confirm Migration', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        if self.used:
+            return await interaction.response.send_message('Already submitted. Reopen Games to review the result.', ephemeral=True)
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            result = await service.apply_system_migration(self.guild, interaction.user, self.plan)
+            text = (
+                f"✅ Game System V3 migration complete.\n"
+                f"Moved {len(result['migrated'])} game chat(s) into <#{result['category']}>.\n"
+                f"Legacy cleanup candidates retained: {len(result['cleanup'])}.\n"
+                "No legacy LFG/create-voice/category resource was deleted."
+            )
+            if result['review']:
+                text += f"\n⚠️ {len(result['review'])} item(s) still need manual review."
+        except (ValueError, discord.HTTPException) as exc:
+            text = str(exc) if isinstance(exc, ValueError) else 'Discord could not confirm the migration. Reopen the preview before retrying.'
+        await interaction.edit_original_response(content=text, view=None)
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(content='Cancelled. Nothing was changed.', view=None)
+
+
 class GamesMenu(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
@@ -68,6 +101,7 @@ class GamesMenu(Menu):
                 view = GamesList(self.guild, self.admin_id, mode)
                 await interaction.response.edit_message(content=view.text(), view=view)
             self.action(label, open_list)
+        self.action('Migrate to GAMES', self.migrate_system)
         self.action('Suggested Games', self.suggestions)
         self.action('Back', self.back)
 
@@ -77,7 +111,19 @@ class GamesMenu(Menu):
                 f'Selectable Games: {len(db.get_selectable_games())}\n'
                 f'Games with Channels: {sum(bool(g.get("channel_id")) for g in games)}\n'
                 f'Channel Candidates: {sum(c["status"] == "PENDING" for c in service.candidates(self.guild))}\n'
-                'Game roles work with or without a dedicated channel. Create channels deliberately; the member threshold never creates them automatically.')
+                'Game roles work with or without a dedicated channel. Use **Migrate to GAMES** for the reviewed shared-category migration; threshold candidates never create channels automatically.')
+
+    async def migrate_system(self, interaction):
+        if not await check_admin(interaction):
+            return
+        try:
+            plan = service.system_preview(self.guild, interaction.user)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.edit_message(
+            content=service.system_description(plan),
+            view=ConfirmSystemMigration(self.guild, self.admin_id, plan),
+        )
 
     async def suggestions(self, interaction):
         await interaction.response.send_message('Review game suggestions in the existing staff suggestion inbox. Approve a game using `/game-admin create`, or enable an existing game with `/game-admin set-visible`. Approval adds a selectable role; channels remain optional.', ephemeral=True)

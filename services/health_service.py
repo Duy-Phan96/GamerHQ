@@ -71,7 +71,7 @@ async def _scan(guild, bot=None, *, messages=True):
         required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:electricity'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
-        'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],
+        'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','guide','need-support'],
         'community': ['newbies','general','introductions','suggestions','bot-commands'],
         'events': ['community-events','tournaments','giveaways'],
     }
@@ -326,10 +326,17 @@ async def _scan(guild, bot=None, *, messages=True):
     game_parent = None
     try:
         game_parent = game_channels.category(guild)
-        add('Gaming category', 'PASS', 'Shared managed category found.')
+        add('GAMES category', 'PASS' if game_parent.name == game_channels.GAMES_CATEGORY_NAME else 'REPAIRABLE',
+                'Shared GAMES category found.' if game_parent.name == game_channels.GAMES_CATEGORY_NAME else 'Shared category is linked but still uses a legacy name; Game System migration can rename it.')
     except ValueError:
-        add('Gaming category', 'REPAIRABLE', 'Review/add the shared GAMING category in Server Structure.')
+        add('GAMES category', 'REPAIRABLE', 'Open Server Management → Games → Migrate to GAMES.')
     add('Games log', 'PASS' if game_channels.log_channel(guild) else 'REPAIRABLE', 'Private STAFF games-log must be linked and writable by GamerHQ.')
+    gaming_chat = game_channels._stored_channel(guild, 'gaming-chat')
+    lfg_channel = game_channels._stored_channel(guild, 'looking-for-group')
+    add('gaming-chat', 'PASS' if game_parent and gaming_chat and gaming_chat.category_id == game_parent.id else 'REPAIRABLE',
+        'Shared gaming chat is under GAMES.' if game_parent and gaming_chat and gaming_chat.category_id == game_parent.id else 'Game System V3 can create/link and move the shared gaming chat.')
+    add('looking-for-group', 'PASS' if game_parent and lfg_channel and lfg_channel.category_id == game_parent.id else 'REPAIRABLE',
+        'Central LFG is under GAMES.' if game_parent and lfg_channel and lfg_channel.category_id == game_parent.id else 'Game System V3 can move/link the central LFG channel while preserving its ID/history.')
     channel_ids = set()
     for game in games:
         if game.get('channel_id'):
@@ -342,7 +349,9 @@ async def _scan(guild, bot=None, *, messages=True):
             valid = valid and channel.overwrites == game_channels.overwrites(guild, role, channel)
             add('Game channel', 'PASS' if valid else 'MANUAL_REVIEW', f'Game {game["id"]}: shared category and role-gated access checked.')
         if game_channels.legacy_hints(game):
-            add('Legacy game resources', 'MANUAL_REVIEW', f'Game {game["id"]}: retained migration hints; preview migration in /server dev. No automatic deletion.')
+            hints = game_channels.legacy_hints(game)
+            state = 'REPAIRABLE' if hints.get('chat_channel_id') and not game.get('channel_id') else 'MANUAL_REVIEW'
+            add('Legacy game resources', state, f'Game {game["id"]}: legacy resources retained; use Server Management → Games → Migrate to GAMES. No automatic deletion.')
     for current, ordered in game_channels.order_plan(guild):
         add('Game channel order', 'PASS' if current == ordered else 'REPAIRABLE', 'Dedicated game channels use alphabetical order.')
     mapped=set()
@@ -359,7 +368,7 @@ async def _scan(guild, bot=None, *, messages=True):
                 if game.get(field) and (not ch or ch.category_id!=cid): add('Game Area mapping','MANUAL_REVIEW',f'Game {game["id"]}: {field} missing/moved.')
         elif game.get('area_enabled'): add('Game Area','MANUAL_REVIEW',f'Game {game["id"]}: enabled area lacks category ID.')
     if not any(f.name.startswith('Game') and f.state!='PASS' for f in findings): add('Game Areas','PASS',f'{len(mapped)} area mappings checked.')
-    known_categories={'gaming','start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits','marketplace'}
+    known_categories={'games','gaming','start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits','marketplace'}
     unknown=[c for c in guild.categories if c.id not in mapped and alias(c.name) not in known_categories]
     if unknown: add('Unknown categories','MANUAL_REVIEW',f'{len(unknown)} unmapped categories retained; may include legitimate custom/Streamer areas.')
     for row in temps:

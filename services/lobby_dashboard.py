@@ -111,10 +111,14 @@ async def cleanup_ended(guild, *, reconcile=False):
         if isinstance(voice, discord.VoiceChannel) and voice.members:
             continue
         voice_clean = await delete_event_voice(guild, event)
+        # Private event spaces disappear as soon as the event is terminal and
+        # its voice is empty. Public/final cards stay for 24 hours for context.
+        private_clean = True
+        if event.get("visibility") == "private":
+            private_clean = await delete_private_event_channel(guild, event)
         if int(time.time()) >= event['ended_at'] + 86400:
             posts_clean = await delete_event_posts(guild, event)
-            channel_clean = await delete_private_event_channel(guild, event)
-            if voice_clean and posts_clean and channel_clean:
+            if voice_clean and posts_clean and private_clean:
                 with db.connect() as conn:
                     conn.execute('UPDATE lfg_events SET ended_at=NULL, dashboard_channel_id=NULL, dashboard_message_id=NULL WHERE id=?', (event['id'],))
                     conn.execute('DELETE FROM lfg_event_messages WHERE event_id=?', (event['id'],))

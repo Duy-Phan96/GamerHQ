@@ -16,6 +16,10 @@ from services.role_service import game_role
 log = logging.getLogger(__name__)
 _guild_locks = {}
 LEGACY_FIELDS = ('category_id', 'chat_channel_id', 'lfg_channel_id', 'clips_channel_id', 'memes_channel_id', 'create_voice_channel_id')
+GAMES_CATEGORY_NAME = '🎮 GAMES'
+GAMING_CHAT_NAME = '💬・gaming-chat'
+LFG_CHANNEL_NAME = '🔎・looking-for-group'
+CATEGORY_SETTING = 'gaming'  # retained for production DB compatibility
 
 
 def slug(name):
@@ -24,11 +28,214 @@ def slug(name):
 
 
 def category(guild):
-    raw = db.get_setting(f'managed_category:{guild.id}:gaming')
-    result = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    raw = db.get_setting(f'managed_category:{guild.id}:{CATEGORY_SETTING}')
+    result = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if not isinstance(result, discord.CategoryChannel):
-        raise ValueError('Review the GAMING category in Server Structure before creating a channel.')
+        raise ValueError('Review the shared GAMES category in Server Management before creating a channel.')
     return result
+
+
+def _alias(value):
+    from services.onboarding_service import alias
+    return alias(value)
+
+
+def _stored_channel(guild, name):
+    raw = db.get_setting(f'managed_channel:{guild.id}:{name}')
+    channel = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+    return channel if isinstance(channel, discord.TextChannel) else None
+
+
+def _wire(resource):
+    from services.server_operations import wire
+    return wire(resource) if resource is not None else None
+
+
+def _shared_category_candidate(guild):
+    stored = None
+    raw = db.get_setting(f'managed_category:{guild.id}:{CATEGORY_SETTING}')
+    if raw and str(raw).isdigit():
+        candidate = guild.get_channel(int(raw))
+        if isinstance(candidate, discord.CategoryChannel):
+            stored = candidate
+    named = [c for c in guild.categories if _alias(c.name) in {'games', 'gaming'}]
+    if stored:
+        others = [c for c in named if c.id != stored.id]
+        if others:
+            raise ValueError('Multiple GAMES/GAMES category identities exist; owner review is required.')
+        return stored
+    if len(named) > 1:
+        raise ValueError('Multiple GAMES/GAMING categories exist; owner review is required.')
+    return named[0] if named else None
+
+
+def _shared_text_candidate(guild, logical_name, aliases, parent=None):
+    stored = _stored_channel(guild, logical_name)
+    if stored:
+        return stored
+    matches = [
+        c for c in guild.text_channels
+        if _alias(c.name) in aliases and (
+            parent is None or c.category_id == parent.id or
+            _alias(c.category.name) in {'start-here', 'games', 'gaming'}
+        )
+    ]
+    if len(matches) > 1:
+        raise ValueError(f'Multiple candidates exist for {logical_name}; owner review is required.')
+    return matches[0] if matches else None
+
+
+def system_preview(guild, actor):
+    if not authorized(guild, actor):
+        raise ValueError('Administrator access is required.')
+    parent = _shared_category_candidate(guild)
+    gaming_chat = _shared_text_candidate(guild, 'gaming-chat', {'gaming-chat'}, parent)
+    lfg = _shared_text_candidate(guild, 'looking-for-group', {'looking-for-group', 'lfg'}, parent)
+    migrations = []
+    review = []
+    cleanup = []
+    for game in db.get_all_games():
+        hints = legacy_hints(game)
+        current = guild.get_channel(int(game['channel_id'])) if game.get('channel_id') else None
+        source = current if isinstance(current, discord.TextChannel) else None
+        source_kind = 'channel'
+        if source is None and hints.get('chat_channel_id'):
+            candidate = guild.get_channel(int(hints['chat_channel_id']))
+            if isinstance(candidate, discord.TextChannel) and candidate.category_id == hints.get('category_id'):
+                source = candidate
+                source_kind = 'legacy-chat'
+            elif candidate is not None:
+                review.append(f'{game["name"]}: recorded legacy chat moved or changed; manual review required.')
+        if source is not None and (parent is None or source.category_id != parent.id or source.name != slug(game['name'])):
+            migrations.append({
+                'game_id': int(game['id']),
+                'name': game['name'],
+                'source_id': int(source.id),
+                'source_category_id': int(source.category_id) if source.category_id else None,
+                'source_signature': _wire(source),
+                'source_kind': source_kind,
+                'role_id': int(game['role_id']) if game.get('role_id') else None,
+            })
+        for kind, field in (('legacy-lfg', 'lfg_channel_id'), ('legacy-create-voice', 'create_voice_channel_id'), ('legacy-category', 'category_id')):
+            value = hints.get(field)
+            if value and not any(item['id'] == int(value) for item in cleanup):
+                cleanup.append({'kind': kind, 'id': int(value), 'game_id': int(game['id']), 'game': game['name']})
+    return {
+        'guild': int(guild.id),
+        'actor': int(actor.id),
+        'expires': time.time() + 300,
+        'category_id': int(parent.id) if parent else None,
+        'category_signature': _wire(parent),
+        'gaming_chat_id': int(gaming_chat.id) if gaming_chat else None,
+        'gaming_chat_signature': _wire(gaming_chat),
+        'lfg_id': int(lfg.id) if lfg else None,
+        'lfg_signature': _wire(lfg),
+        'migrations': migrations,
+        'review': review,
+        'cleanup': cleanup,
+    }
+
+
+def system_description(plan):
+    lines = [
+        '# 🎮 Game System V3 Migration',
+        '',
+        '**TARGET**',
+        '🎮 GAMES',
+        '• 💬・gaming-chat',
+        '• 🔎・looking-for-group',
+        '• dedicated game channels (alphabetical)',
+        '',
+        '**CREATE / LINK**',
+        ('• GAMES category: reuse/rename existing' if plan['category_id'] else '• GAMES category: create'),
+        ('• gaming-chat: reuse/move existing' if plan['gaming_chat_id'] else '• gaming-chat: create'),
+        ('• looking-for-group: reuse/move existing' if plan['lfg_id'] else '• looking-for-group: create'),
+        '',
+        f'**MIGRATE** · {len(plan["migrations"])} game chat(s)',
+    ]
+    for item in plan['migrations'][:12]:
+        lines.append(f'• {item["name"]}: move existing channel, preserve ID/history')
+    if len(plan['migrations']) > 12:
+        lines.append(f'• … and {len(plan["migrations"]) - 12} more')
+    lines += ['', f'**CLEANUP CANDIDATES ONLY** · {len(plan["cleanup"])}']
+    lines.append('Old per-game LFG/create-voice/category resources are NOT deleted by this migration.')
+    if plan['review']:
+        lines += ['', f'**REVIEW REQUIRED** · {len(plan["review"])}']
+        lines.extend(f'• {item}' for item in plan['review'][:8])
+    lines += ['', 'No destructive cleanup occurs here. Existing user roles, selections, messages and channel history are preserved.']
+    return '\n'.join(lines)
+
+
+async def apply_system_migration(guild, actor, plan):
+    if not authorized(guild, actor) or actor.id != plan['actor'] or guild.id != plan['guild'] or time.time() > plan['expires']:
+        raise ValueError('This migration preview expired or permissions changed. Open a new preview.')
+    async with _guild_locks.setdefault(guild.id, asyncio.Lock()):
+        fresh = system_preview(guild, actor)
+        for key in ('category_id', 'category_signature', 'gaming_chat_id', 'gaming_chat_signature', 'lfg_id', 'lfg_signature', 'migrations'):
+            if fresh[key] != plan[key]:
+                raise ValueError('The server changed since the preview. Open a new migration preview.')
+        parent = guild.get_channel(plan['category_id']) if plan['category_id'] else None
+        if parent is None:
+            parent = await guild.create_category(GAMES_CATEGORY_NAME, reason='GamerHQ confirmed Game System V3 migration')
+        elif not isinstance(parent, discord.CategoryChannel):
+            raise ValueError('The planned GAMES destination is no longer a category.')
+        elif parent.name != GAMES_CATEGORY_NAME:
+            parent = await parent.edit(name=GAMES_CATEGORY_NAME, reason='GamerHQ Game System V3 canonical category')
+        db.set_setting(f'managed_category:{guild.id}:{CATEGORY_SETTING}', parent.id)
+
+        from services.onboarding_service import set_read_only, set_writable
+        gaming_chat = guild.get_channel(plan['gaming_chat_id']) if plan['gaming_chat_id'] else None
+        if not isinstance(gaming_chat, discord.TextChannel):
+            gaming_chat = await guild.create_text_channel(GAMING_CHAT_NAME, category=parent, reason='GamerHQ Game System V3 shared gaming chat')
+        else:
+            gaming_chat = await gaming_chat.edit(name=GAMING_CHAT_NAME, category=parent, sync_permissions=False, reason='GamerHQ Game System V3 shared gaming chat')
+        await set_writable(gaming_chat)
+        db.set_setting(f'managed_channel:{guild.id}:gaming-chat', gaming_chat.id)
+
+        lfg = guild.get_channel(plan['lfg_id']) if plan['lfg_id'] else None
+        if not isinstance(lfg, discord.TextChannel):
+            lfg = await guild.create_text_channel(LFG_CHANNEL_NAME, category=parent, reason='GamerHQ Game System V3 central LFG')
+        else:
+            lfg = await lfg.edit(name=LFG_CHANNEL_NAME, category=parent, sync_permissions=False, reason='GamerHQ Game System V3 central LFG')
+        await set_read_only(lfg)
+        db.set_setting(f'managed_channel:{guild.id}:looking-for-group', lfg.id)
+
+        migrated = []
+        for item in plan['migrations']:
+            game = db.get_game_by_id(item['game_id'])
+            source = guild.get_channel(item['source_id'])
+            if not game or not isinstance(source, discord.TextChannel):
+                raise ValueError(f'{item["name"]}: source channel disappeared; migration stopped safely.')
+            if _wire(source) != item['source_signature']:
+                raise ValueError(f'{item["name"]}: source channel changed; migration stopped safely.')
+            role = game_role(guild, game['id'], item['role_id'])
+            hints = legacy_hints(game)
+            updated = await source.edit(
+                name=slug(game['name']),
+                category=parent,
+                sync_permissions=False,
+                overwrites=overwrites(guild, role, source),
+                reason='GamerHQ confirmed Game System V3 chat migration',
+            )
+            if updated is not None:
+                source = updated
+            with db.connect() as conn:
+                conn.execute('UPDATE games SET channel_id=? WHERE id=?', (source.id, game['id']))
+                conn.execute('INSERT OR REPLACE INTO game_legacy_hints VALUES(?,?)', (game['id'], json.dumps(hints)))
+                conn.execute('UPDATE games SET area_enabled=0, category_id=NULL, chat_channel_id=NULL, lfg_channel_id=NULL, clips_channel_id=NULL, memes_channel_id=NULL, create_voice_channel_id=NULL WHERE id=?', (game['id'],))
+            migrated.append(game['name'])
+
+        await sort_channels(guild)
+        try:
+            from cogs.server import refresh_lfg_guide_message
+            await refresh_lfg_guide_message(guild)
+        except Exception:
+            log.warning('LFG guide refresh deferred after Game System V3 migration')
+        await audit(guild, 'Game System V3 Migrated', f'{len(migrated)} game chats moved into {GAMES_CATEGORY_NAME}; legacy cleanup candidates retained.')
+        from services.server_log_service import emit
+        await emit(guild, f'game-system-v3:{parent.id}', 'Game System V3 Migrated',
+                   f'{len(migrated)} game chats migrated. Legacy LFG/create-voice/categories retained for explicit cleanup review.')
+        return {'category': parent.id, 'gaming_chat': gaming_chat.id, 'lfg': lfg.id, 'migrated': migrated, 'cleanup': plan['cleanup'], 'review': plan['review']}
 
 
 def log_channel(guild):
@@ -146,8 +353,8 @@ def description(plan):
     if plan['action'] == 'remove':
         return text + 'Delete this managed Discord channel and its message history? The game, role and stored game/event history remain. This cannot be undone.'
     if plan['action'] == 'migrate':
-        return text + 'Move and rename the recorded chat into 🎮 GAMING, preserving its ID and history. Old category, LFG and create-voice resources remain for separate manual review.'
-    return text + 'Create one role-gated text channel in 🎮 GAMING.\n' + (
+        return text + 'Move and rename the recorded chat into 🎮 GAMES, preserving its ID and history. Old category, LFG and create-voice resources remain for separate manual review.'
+    return text + 'Create one role-gated text channel in 🎮 GAMES.\n' + (
         'The configured soft limit has been reached. Create Anyway requires explicit approval.' if plan['count'] >= config.GAME_CHANNEL_SOFT_LIMIT else 'Members with this game role can see and chat here.')
 
 
@@ -236,17 +443,26 @@ async def apply(guild, actor, plan, *, override=False):
 
 async def sort_channels(guild, *, extra=None):
     parent = category(guild)
-    channels = []
+    shared = []
+    for name in ('gaming-chat', 'looking-for-group'):
+        channel = _stored_channel(guild, name)
+        if channel and channel.category_id == parent.id:
+            shared.append(channel)
+    dedicated = []
     for game in sorted(db.get_all_games(), key=lambda g: g['name'].casefold()):
         cid = game.get('channel_id')
         ch = extra if extra and cid == extra.id else guild.get_channel(cid) if cid else None
-        if ch and ch.category_id == parent.id:
-            channels.append(ch)
-    # Only managed channels move; unrelated category children retain relative order.
-    start = min((c.position for c in parent.channels), default=0)
-    for index, channel in enumerate(channels):
-        if channel.position != start+index:
-            await channel.edit(position=start+index, reason='GamerHQ alphabetical game channels')
+        if ch and ch.category_id == parent.id and ch not in shared:
+            dedicated.append(ch)
+    managed = shared + dedicated
+    current = sorted(parent.channels, key=lambda ch: (ch.position, ch.id))
+    others = [c for c in current if c not in managed]
+    desired = managed + others
+    start = min((channel.position for channel in current), default=0)
+    for index, channel in enumerate(desired):
+        target = start + index
+        if channel.position != target:
+            await channel.edit(position=target, reason='GamerHQ GAMES channel ordering')
 
 
 def order_plan(guild):
@@ -254,10 +470,17 @@ def order_plan(guild):
         parent = category(guild)
     except ValueError:
         return []
-    games = sorted(db.get_all_games(), key=lambda g: g['name'].casefold())
-    current = sorted([c for c in guild.channels if getattr(c, 'category_id', None) == parent.id], key=lambda c: c.position)
-    managed = [c for g in games if g.get('channel_id') for c in current if c.id == g['channel_id']]
-    return [(current, managed + [c for c in current if c not in managed])]
+    current = sorted([c for c in guild.channels if getattr(c, 'category_id', None) == parent.id], key=lambda c: (c.position, c.id))
+    shared = [c for name in ('gaming-chat', 'looking-for-group') if (c := _stored_channel(guild, name)) and c in current]
+    dedicated = []
+    for game in sorted(db.get_all_games(), key=lambda g: g['name'].casefold()):
+        if game.get('channel_id'):
+            channel = next((c for c in current if c.id == game['channel_id']), None)
+            if channel and channel not in shared:
+                dedicated.append(channel)
+    managed = shared + dedicated
+    desired = managed + [c for c in current if c not in managed]
+    return [(current, desired)]
 
 
 def ignore(guild, actor, game_id):

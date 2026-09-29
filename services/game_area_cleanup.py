@@ -1,6 +1,7 @@
 """Conservative preview and one-area-at-a-time confirmed deletion."""
 from services.operation_context import measured
 import logging
+import json
 
 import discord
 
@@ -13,6 +14,33 @@ log = logging.getLogger(__name__)
 
 def authorized(guild, actor):
     return actor.id == guild.owner_id or bool(actor.guild_permissions.administrator)
+
+
+def _legacy_snapshot(game):
+    from services.game_channel_service import legacy_hints
+    hints = legacy_hints(game)
+    if not hints.get('category_id'):
+        return None
+    snapshot = dict(game)
+    for field in ('category_id', 'chat_channel_id', 'lfg_channel_id', 'clips_channel_id', 'memes_channel_id', 'create_voice_channel_id'):
+        snapshot[field] = hints.get(field)
+    snapshot['area_enabled'] = 0
+    return snapshot
+
+
+def _prune_legacy_hints(game_id, deleted_ids):
+    with db.connect() as conn:
+        row = conn.execute('SELECT resources_json FROM game_legacy_hints WHERE game_id=?', (game_id,)).fetchone()
+        if not row:
+            return
+        hints = json.loads(row[0])
+        for field in ('category_id', 'chat_channel_id', 'lfg_channel_id', 'clips_channel_id', 'memes_channel_id', 'create_voice_channel_id'):
+            if hints.get(field) in deleted_ids:
+                hints[field] = None
+        if any(hints.get(field) for field in hints):
+            conn.execute('UPDATE game_legacy_hints SET resources_json=? WHERE game_id=?', (json.dumps(hints), game_id))
+        else:
+            conn.execute('DELETE FROM game_legacy_hints WHERE game_id=?', (game_id,))
 
 
 def inspect_area(guild, game, *, channels=None, manual=False):
@@ -33,6 +61,9 @@ def inspect_area(guild, game, *, channels=None, manual=False):
         reasons.append('A linked channel was moved outside this area')
     if any(isinstance(c, discord.VoiceChannel) and c.members for c in children):
         reasons.append('Voice is occupied')
+    legacy_lfg = objects.get(game.get('lfg_channel_id')) if manual and game.get('lfg_channel_id') else None
+    if isinstance(legacy_lfg, discord.TextChannel) and getattr(legacy_lfg, 'last_message_id', None):
+        reasons.append('Legacy LFG contains message history; archive or review it manually before cleanup')
     with db.connect() as conn:
         if conn.execute('SELECT 1 FROM games WHERE category_id=? AND id!=?', (game.get('category_id'), game['id'])).fetchone():
             reasons.append('Category is shared by multiple game records')
@@ -71,6 +102,15 @@ def inspect_area(guild, game, *, channels=None, manual=False):
 def scan_areas(guild):
     with db.read_only():
         areas = [inspect_area(guild, game) for game in db.get_all_games() if game.get('category_id')]
+        live_ids = {row['game']['id'] for row in areas}
+        for game in db.get_all_games():
+            if game['id'] in live_ids:
+                continue
+            legacy = _legacy_snapshot(game)
+            if legacy and guild.get_channel(int(legacy['category_id'])):
+                row = inspect_area(guild, legacy, manual=True)
+                row['legacy'] = True
+                areas.append(row)
     known = {row['game']['category_id'] for row in areas}
     unknown = [c for c in guild.categories if c.id not in known]
     return areas, unknown
@@ -90,8 +130,14 @@ async def delete_confirmed_area(guild, actor, preview):
             current = db.get_game_by_id(game_id)
             if not current:
                 return 'Skipped: game record changed.'
+            legacy = bool(preview.get('legacy'))
+            inspected_game = _legacy_snapshot(current) if legacy else current
+            if legacy and not inspected_game:
+                return 'Skipped: legacy migration hints changed.'
             fresh_channels = await guild.fetch_channels()
-            fresh = inspect_area(guild, current, channels=fresh_channels, manual=preview.get('manual', False))
+            fresh = inspect_area(guild, inspected_game, channels=fresh_channels, manual=True if legacy else preview.get('manual', False))
+            if legacy:
+                fresh['legacy'] = True
             if not fresh['safe'] or fresh['fingerprint'] != preview['fingerprint']:
                 return 'Skipped: conditions changed since preview. ' + '; '.join(fresh['reasons'])
             expected = fresh
@@ -102,8 +148,11 @@ async def delete_confirmed_area(guild, actor, preview):
                 current = db.get_game_by_id(game_id)
                 if current is None:
                     return 'Stopped: game record changed; manual review required.'
+                inspected_game = _legacy_snapshot(current) if legacy else current
+                if legacy and not inspected_game:
+                    return 'Stopped: legacy migration hints changed; manual review required.'
                 channels = await guild.fetch_channels()
-                checked = inspect_area(guild, current, channels=channels, manual=preview.get('manual', False))
+                checked = inspect_area(guild, inspected_game, channels=channels, manual=True if legacy else preview.get('manual', False))
                 if not checked['safe'] or checked['fingerprint'] != expected['fingerprint']:
                     return f'Stopped after {len(deleted)} resource(s): conditions changed; review a new preview.'
                 resource = next((c for c in channels if c.id == resource_id), None)
@@ -117,7 +166,11 @@ async def delete_confirmed_area(guild, actor, preview):
                         for field in GAME_CHANNEL_FIELDS:
                             conn.execute(f'UPDATE games SET {field}=NULL WHERE id=? AND {field}=?', (game_id, resource_id))
                     # Build expected next state from the just-validated topology, not a new unsafe snapshot.
-                    expected = inspect_area(guild, db.get_game_by_id(game_id), channels=[c for c in channels if c.id != resource_id], manual=preview.get('manual', False))
+                    next_game = _legacy_snapshot(db.get_game_by_id(game_id)) if legacy else db.get_game_by_id(game_id)
+                    expected = inspect_area(guild, next_game, channels=[c for c in channels if c.id != resource_id], manual=True if legacy else preview.get('manual', False))
+            if legacy:
+                _prune_legacy_hints(game_id, set(deleted))
+                return f"Removed legacy area for {current['name']} ({len(deleted)} resources). Game, role, selector state and dedicated GAMES channel were preserved."
             db.deactivate_game(game_id)
             return f"Removed area for {current['name']} ({len(deleted)} resources). Game record, role and visibility kept."
         except discord.HTTPException as exc:

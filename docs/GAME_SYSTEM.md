@@ -5,7 +5,7 @@ SQLite is authoritative. The public seed supplies starter metadata; it does not 
 ## Independent state
 
 - `active` + `selectable` + a nonzero `role_id` make a game available in the personal selector. Visibility means library visibility, not channel existence.
-- `channel_id` is nullable: one optional text channel under the shared **🎮 GAMING** category. The role works without a channel.
+- `channel_id` is nullable: one optional text channel under the shared **🎮 GAMES** category. The role works without a channel.
 - Notification roles remain separate opt-ins. Selecting a game never enables pings.
 - Legacy area/category/chat/LFG/create-voice columns are migration evidence only. New multi-channel area creation is disabled.
 
@@ -35,7 +35,7 @@ Removal only targets the persisted managed channel after dependency checks and e
 
 ## Legacy migration
 
-Owner Server Dev → Legacy Game Migration lists recorded legacy resources. Preview Migration prefers the existing stored chat ID, moves/renames that channel into GAMING, applies game-role access and persists `channel_id`. History and IDs survive. Old resource IDs are retained in `game_legacy_hints`; old categories, LFG and create-voice resources remain untouched for separate manual review. Never infer ownership of an arbitrary channel from its name. Empty old categories may be removed only through a separately reviewed owner cleanup.
+Owner Server Dev → Legacy Game Migration lists recorded legacy resources. Preview Migration prefers the existing stored chat ID, moves/renames that channel into GAMES, applies game-role access and persists `channel_id`. History and IDs survive. Old resource IDs are retained in `game_legacy_hints`; old categories, LFG and create-voice resources remain untouched for separate manual review. Never infer ownership of an arbitrary channel from its name. Empty old categories may be removed only through a separately reviewed owner cleanup.
 
 Legacy `/area manage` removal and dependency checks remain; its creation backend now refuses new multi-channel areas. Existing centralized LFG and temporary voice systems remain functional during migration.
 
