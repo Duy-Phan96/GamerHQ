@@ -63,7 +63,7 @@ class GamesMenu(Menu):
         super().__init__(guild, actor_id)
         for label, mode in [('Game Library', 'library'), ('Game Channels', 'channels'),
                             ('Channel Candidates', 'candidates'), ('Create Game Channel', 'create'),
-                            ('Remove Game Channel', 'remove')]:
+                            ('Migrate Legacy Game Chats', 'legacy'), ('Remove Game Channel', 'remove')]:
             async def open_list(interaction, mode=mode):
                 view = GamesList(self.guild, self.admin_id, mode)
                 await interaction.response.edit_message(content=view.text(), view=view)
