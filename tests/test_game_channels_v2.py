@@ -175,7 +175,7 @@ class ChannelTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [self.actor]
         self.guild.get_member = lambda mid: self.actor if mid == 42 else None
         self.guild.fetch_channel = AsyncMock(side_effect=self.guild.get_channel)
-        self.gaming = self.guild.add_category('🎮 GAMING')
+        self.gaming = self.guild.add_category('🎮 GAMES')
         self.gaming.overwrites = {self.guild.default_role: discord.PermissionOverwrite(view_channel=False)}
         db.set_setting('managed_category:1:gaming', self.gaming.id)
         db.set_setting('managed_category:1:staff', self.staff.id)
@@ -197,7 +197,7 @@ class ChannelTests(unittest.IsolatedAsyncioTestCase):
 
     async def create(self, name, **kwargs):
         channel = self.guild.add_channel(name, kwargs['category'])
-        channel.overwrites = kwargs['overwrites']
+        channel.overwrites = kwargs.get('overwrites', {})
         return channel
 
     async def test_threshold_once_ignore_persisted_and_only_affected_game(self):
@@ -259,6 +259,46 @@ class ChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channels.legacy_hints(game)['lfg_channel_id'],lfg.id)
         self.guild.create_text_channel.assert_not_awaited()
 
+    async def test_system_v3_moves_shared_lfg_and_legacy_chat_without_deleting_legacy_resources(self):
+        start = self.guild.add_category('👋 START HERE')
+        lfg = self.guild.add_channel('🎯・looking-for-group', start)
+        db.set_setting('managed_channel:1:looking-for-group', lfg.id)
+
+        old = self.guild.add_category('🎮 TERRARIA')
+        chat = self.guild.add_channel('💬・chat', old)
+        legacy_lfg = self.guild.add_channel('🎯・looking-for-group', old)
+        legacy_voice = self.guild.add_channel('➕・create-voice', old)
+        chat.messages[500] = SimpleNamespace(content='keep history')
+        with db.connect() as conn:
+            conn.execute(
+                'UPDATE games SET category_id=?,chat_channel_id=?,lfg_channel_id=?,create_voice_channel_id=?,area_enabled=1 WHERE id=?',
+                (old.id, chat.id, legacy_lfg.id, legacy_voice.id, self.game['id']),
+            )
+
+        plan = channels.system_preview(self.guild, self.actor)
+        self.assertEqual(plan['category_id'], self.gaming.id)
+        self.assertEqual(plan['lfg_id'], lfg.id)
+        self.assertTrue(any(item['source_id'] == chat.id for item in plan['migrations']))
+        result = await channels.apply_system_migration(self.guild, self.actor, plan)
+
+        self.assertEqual(self.gaming.name, '🎮 GAMES')
+        self.assertEqual(lfg.category_id, self.gaming.id)
+        self.assertEqual(lfg.name, '🔎・looking-for-group')
+        gaming_chat = self.guild.get_channel(result['gaming_chat'])
+        self.assertEqual(gaming_chat.name, '💬・gaming-chat')
+        game = db.get_game_by_id(self.game['id'])
+        self.assertEqual(game['channel_id'], chat.id)
+        self.assertEqual(chat.category_id, self.gaming.id)
+        self.assertEqual(chat.name, 'terraria')
+        self.assertEqual(chat.messages[500].content, 'keep history')
+        self.assertIn(legacy_lfg, self.guild.text_channels)
+        self.assertIn(legacy_voice, self.guild.text_channels)
+        self.assertIn(old, self.guild.categories)
+        self.assertTrue(result['cleanup'])
+        self.assertIsNone(game['category_id'])
+        self.assertIsNone(game['lfg_channel_id'])
+        self.assertIsNone(game['create_voice_channel_id'])
+
     async def test_removal_requires_unchanged_preview_and_preserves_catalog(self):
         channel = await channels.apply(self.guild,self.actor,channels.preview(self.guild,self.actor,self.game['id']))
         plan = channels.preview(self.guild,self.actor,self.game['id'],'remove')
@@ -278,7 +318,7 @@ class ChannelTests(unittest.IsolatedAsyncioTestCase):
         from services.health_service import scan
         with db.connect() as conn: before = list(conn.iterdump())
         findings = await scan(self.guild,self.bot,messages=False)
-        self.assertTrue(any(f.name=='Gaming category' for f in findings))
+        self.assertTrue(any(f.name=='GAMES category' for f in findings))
         self.assertTrue(any(f.name=='Games log' and f.state!='PASS' for f in findings))
         with db.connect() as conn: self.assertEqual(before,list(conn.iterdump()))
 
