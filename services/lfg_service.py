@@ -92,7 +92,6 @@ def render_event(guild: discord.Guild, event: dict) -> str:
         f"# 📅 {discord.utils.escape_mentions(event['title'])}",
         "",
         f"📅 {discord_timestamp(int(event['start_at']), 'F')} ({discord_timestamp(int(event['start_at']), 'R')})",
-        f"⏱️ **{int(event.get('duration_minutes') or 120)} minutes**",
         f"👥 **{len(joined)}/{event['max_players']} participants**",
         f"🔔 Voice invite: **{event['invite_lead_minutes']} min before**",
         f"👤 Hosted by {host_label}",
