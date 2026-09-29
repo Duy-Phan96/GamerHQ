@@ -27,6 +27,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
         "🎮 GAMES",
         (
             ChannelSpec("💬・gaming-chat"),
+            ChannelSpec("🎯・looking-for-group"),
         ),
     ),
     CategorySpec(
@@ -37,7 +38,6 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("📢・announcements"),
             ChannelSpec("🎮・choose-your-games"),
             ChannelSpec("👤・choose-your-roles"),
-            ChannelSpec("🎯・looking-for-group"),
             ChannelSpec("📘・guide"),
             ChannelSpec("🆘・need-support"),
             ChannelSpec("💜・support-gamerhq"),

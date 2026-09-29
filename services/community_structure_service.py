@@ -99,18 +99,15 @@ async def refresh_boards(guild):
 async def migrate_boards(guild, changed, failed):
     from cogs.suggestions import STAFF_ALIASES, private_overwrites
     start, community = core_category(guild, 'start-here'), core_category(guild, 'community')
+    if start is None or community is None:
+        raise ServerMessageError('START HERE and COMMUNITY must exist before board migration.')
     games = core_category(guild, 'games')
-    if not games:
-        legacy_games = core_category(guild, 'gaming')
-        if legacy_games:
-            games = await legacy_games.edit(name='🎮 GAMES', reason='GamerHQ shared game system migration')
-            changed.append('Renamed GAMING → GAMES (category ID preserved)')
-        else:
-            games = await guild.create_category('🎮 GAMES', reason='GamerHQ shared game channels')
-            changed.append('Created GAMES')
-    if games.overwrites_for(guild.default_role).view_channel is False:
+    legacy_games = core_category(guild, 'gaming')
+    if games and legacy_games and games.id != legacy_games.id:
+        raise ServerMessageError('MANUAL_REVIEW: GAMES and GAMING identify different categories.')
+    game_target = games or legacy_games
+    if game_target and game_target.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: GAMES category is private; public adoption refused.')
-    db.set_setting(f'managed_category:{guild.id}:games', games.id)
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
     channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'gaming-chat', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
     for name in ('guide', 'suggestions', 'community-events'):
@@ -133,11 +130,21 @@ async def migrate_boards(guild, changed, failed):
         raise ServerMessageError('Multiple STAFF categories found; review manually.')
     staff = staff_categories[0] if staff_categories else None
     staff_inbox = unique(guild.text_channels, 'staff-suggestions')
+    # All name/privacy checks above are read-only. Do not create or rename GAMES
+    # (or persist its mapping) before another core board has passed validation.
+    if events and events.overwrites_for(guild.default_role).view_channel is False:
+        raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
+    if not games:
+        if legacy_games:
+            games = await legacy_games.edit(name='🎮 GAMES', reason='GamerHQ shared game system migration')
+            changed.append('Renamed GAMING → GAMES (category ID preserved)')
+        else:
+            games = await guild.create_category('🎮 GAMES', reason='GamerHQ shared game channels')
+            changed.append('Created GAMES')
+    db.set_setting(f'managed_category:{guild.id}:games', games.id)
     if not events:
         events = await guild.create_category('🏆 EVENTS', reason='GamerHQ tournaments and giveaways')
         changed.append('Created EVENTS')
-    elif events.overwrites_for(guild.default_role).view_channel is False:
-        raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
     db.set_setting(f'managed_category:{guild.id}:events', events.id)
     for name, target in [('looking-for-group', games), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
