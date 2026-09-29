@@ -2,6 +2,7 @@ from services.response_service import check_admin
 from cogs.game_selector import GameSelectionSession
 from services.role_service import game_role, set_game_selection
 import asyncio
+import logging
 import json
 import sqlite3
 from pathlib import Path
@@ -864,7 +865,16 @@ class ChooseGamesButtons(discord.ui.View):
     async def select_games(self, interaction: discord.Interaction, button: discord.ui.Button):
         games = db.get_selector_games()
         if not games:
-            await interaction.response.send_message("No games are currently available for selection.", ephemeral=True); return
+            # Keep the selection rules unchanged, but distinguish a genuinely empty
+            # catalog from selectable rows whose stored role mappings need repair.
+            unavailable = [g for g in db.get_selectable_games() if g.get('active')]
+            if unavailable:
+                logging.getLogger(__name__).warning('Selectable games lack usable role mappings: guild=%s games=%s',
+                    interaction.guild.id, [g['id'] for g in unavailable])
+            text = ('Game selection is temporarily unavailable. Please try again later.' if unavailable else
+                    'No games are currently available for selection.')
+            await interaction.response.send_message(text, ephemeral=True)
+            return
         session = GameSelectionSession(interaction.user, games)
         await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
 
