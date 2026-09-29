@@ -15,7 +15,7 @@ def _event(conn, event_id, guild_id):
 
 def _host(event, actor_id):
     if event['host_id'] != actor_id:
-        raise ValueError('Only the host can do this.')
+        raise ValueError('Only the event creator can do this.')
 
 
 def _member(conn, event_id, actor_id):
