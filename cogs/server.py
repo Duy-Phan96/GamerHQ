@@ -33,14 +33,14 @@ def default_copy_for(channel: discord.TextChannel) -> str:
             "**Find Games. Find Mates. Play Together.**\n\n"
             "Plan public or private events with GamerHQ. An event does not need to be tied to a specific game.\n\n"
             "## 🚀 CREATE AN EVENT\n"
-            "Use **Create Event** below or `/lfg create`. Choose a title, date, time, duration, player limit and voice reminder.\n\n"
+            "Use **Create Event** below or `/lfg create`. Choose a title, date, time, player limit and voice reminder.\n\n"
             "🌐 **Public** — posted here so the community can discover and join it.\n"
             "🔒 **Private** — invite only. GamerHQ creates a private event channel for the host and invited/joined players.\n\n"
             "## 👥 INVITES & SHARING\n"
             "Invite specific players during creation or share the event afterwards.\n"
             "Public events can be shared with their Discord link. Private events use the host's private invite flow.\n\n"
             "## 📅 CALENDAR & EVENT SPACE\n"
-            "Event posts include **Google Calendar** so members can add the schedule in one click. Event voice is created automatically before the start.\n\n"
+            "Event posts include **Google Calendar** so members can add the schedule in one click. Event voice is created automatically before the start under **VOICE CHANNELS**.\n\n"
             "Only the event creator can manage or change the event through `/lfg manage`."
         )
     title = channel.name.replace("-", " ").title()
