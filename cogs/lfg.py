@@ -109,9 +109,23 @@ async def delete_event_voice(guild: discord.Guild, event: dict) -> bool:
     return True
 
 
+def _global_voice_category(guild: discord.Guild) -> discord.CategoryChannel | None:
+    return next(
+        (
+            category for category in guild.categories
+            if category.name.casefold() == "🔊 VOICE CHANNELS".casefold()
+        ),
+        None,
+    )
+
+
 def event_voice_overwrites(guild: discord.Guild, event: dict) -> dict:
+    private = event.get("visibility") == "private"
     overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False if private else True,
+            connect=False if private else True,
+        ),
     }
     bot_member = guild.me
     if bot_member:
@@ -132,9 +146,12 @@ def event_voice_overwrites(guild: discord.Guild, event: dict) -> dict:
             manage_channels=is_host, move_members=is_host,
         )
     from services.music_bot_service import with_music_access
-    game = db.get_game_by_id(event['game_id'])
-    parent = guild.get_channel(game['category_id']) if game and game.get('category_id') else None
-    return with_music_access(guild, overwrites, 'voice', parent=parent)
+    return with_music_access(
+        guild,
+        overwrites,
+        'voice',
+        parent=_global_voice_category(guild),
+    )
 
 
 async def send_voice_ready_dm(guild: discord.Guild, event: dict, member: discord.Member, channel: discord.VoiceChannel) -> bool:
@@ -188,11 +205,7 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
         if isinstance(existing, discord.VoiceChannel):
             return existing
 
-    game = db.get_game_by_id(int(fresh["game_id"])) if int(fresh.get("game_id") or 0) else None
-    category = guild.get_channel(int(game["category_id"])) if game and game.get("category_id") else None
-    if not isinstance(category, discord.CategoryChannel):
-        lfg_channel = find_lfg_channel(guild)
-        category = lfg_channel.category if isinstance(lfg_channel, discord.TextChannel) else None
+    category = _global_voice_category(guild)
     try:
         channel = await guild.create_voice_channel(
             name=f"📅・{fresh['title']}"[:100],
@@ -472,7 +485,7 @@ async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict
 
 def google_calendar_url(event: dict) -> str:
     start = datetime.fromtimestamp(int(event["start_at"]), SERVER_TZ)
-    end = start + timedelta(minutes=int(event.get("duration_minutes") or 120))
+    end = start + timedelta(hours=2)
     dates = f"{start.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}/{end.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     return "https://calendar.google.com/calendar/render?" + urlencode({
         "action": "TEMPLATE",
@@ -774,7 +787,7 @@ class EventDraftView(discord.ui.View):
             "# 📅 Event Preview\n\n"
             f"**Title:** {b.title}\n"
             f"**Start:** <t:{start_at}:F> (<t:{start_at}:R>)\n"
-            f"**Duration:** {b.duration_minutes} minutes\n"
+"
             f"**Players:** {b.max_players} total\n"
             f"**Voice invite:** {b.invite_lead} minutes before\n"
             f"**Visibility:** {'🔒 Private · Invite only' if b.visibility == 'private' else '🌐 Public'}\n\n"
@@ -824,7 +837,7 @@ class EventDraftView(discord.ui.View):
             event = db.create_lfg_event(
                 guild_id=interaction.guild.id, game_id=0, host_id=b.host.id,
                 title=b.title, start_at=start_at, max_players=b.max_players,
-                invite_lead_minutes=b.invite_lead, duration_minutes=b.duration_minutes, visibility=b.visibility,
+                invite_lead_minutes=b.invite_lead, visibility=b.visibility,
                 share_token=secrets.token_urlsafe(8), enforce_member_limits=True,
             )
         except ValueError as exc:
@@ -961,23 +974,6 @@ class BuilderPlayersSelect(discord.ui.Select):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
-class BuilderDurationSelect(discord.ui.Select):
-    def __init__(self, builder):
-        self.builder = builder
-        values = [(30, "30 minutes"), (60, "1 hour"), (90, "1.5 hours"), (120, "2 hours"), (180, "3 hours"), (240, "4 hours")]
-        options = [
-            discord.SelectOption(label=label, value=str(minutes), emoji="⏱️", default=builder.duration_minutes == minutes)
-            for minutes, label in values
-        ]
-        current = next(label for minutes, label in values if minutes == builder.duration_minutes)
-        super().__init__(placeholder=f"⏱️ Duration · {current}", options=options, row=3)
-
-    async def callback(self, interaction):
-        self.builder.duration_minutes = int(self.values[0])
-        self.builder._rebuild()
-        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
-
-
 class EventBuilderView(discord.ui.View):
     def __init__(self, *, host):
         super().__init__(timeout=600)
@@ -989,7 +985,6 @@ class EventBuilderView(discord.ui.View):
         self.hour = None
         self.minute = 0
         self.max_players = 5
-        self.duration_minutes = 120
         self.invite_lead = 15
         self.visibility = "public"
         self.invited_ids = set()
@@ -1004,7 +999,6 @@ class EventBuilderView(discord.ui.View):
         self.add_item(BuilderDateSelect(self))
         self.add_item(BuilderTimeSelect(self))
         self.add_item(BuilderPlayersSelect(self))
-        self.add_item(BuilderDurationSelect(self))
         for item in (self.edit_title, self.ampm_button, self.voice_lead, self.visibility_button, self.preview):
             self.add_item(item)
 
@@ -1035,7 +1029,7 @@ class EventBuilderView(discord.ui.View):
             f"**📅 Date:** {date}\n"
             f"**🕐 Time:** {self._display_time()} · Europe/Berlin\n"
             f"**👥 Players:** {self.max_players}\n"
-            f"**⏱️ Duration:** {self.duration_minutes} min\n"
+
             f"**🔔 Voice invite:** {self.invite_lead} min before\n"
             f"**👁️ Visibility:** {'🌐 Public' if self.visibility == 'public' else '🔒 Private · Invite only'}\n"
             "Discord will display the final event in each member's local time."
@@ -1144,10 +1138,10 @@ class LFG(commands.Cog):
                     if not event or event['status'] != 'scheduled':
                         continue
                     voice_id = event.get("voice_channel_id")
-                    # Retire events after their configured duration. Never kick an
-                    # active voice room; cleanup waits until it is empty.
-                    end_at = int(event["start_at"]) + int(event.get("duration_minutes") or 120) * 60
-                    if now >= end_at:
+                    # Event duration is intentionally not user-managed. Retire stale
+                    # events after a generous fixed window, but never kick an occupied voice room.
+                    stale_at = int(event["start_at"]) + 6 * 3600
+                    if now >= stale_at:
                         voice = guild.get_channel(int(voice_id)) if voice_id else None
                         if isinstance(voice, discord.VoiceChannel) and voice.members:
                             continue
@@ -1155,14 +1149,14 @@ class LFG(commands.Cog):
                         await refresh_event_posts(guild, event_id)
                         continue
                     invite_at = int(event["start_at"]) - int(event["invite_lead_minutes"]) * 60
-                    if not voice_id and now >= invite_at and now < end_at:
+                    if not voice_id and now >= invite_at and now < stale_at:
                         await create_event_voice(guild, event)
                         continue
                     if voice_id:
                         channel = guild.get_channel(int(voice_id))
                         if channel is None:
                             db.clear_lfg_event_voice(event_id)
-                        elif isinstance(channel, discord.VoiceChannel) and now >= end_at and not channel.members:
+                        elif isinstance(channel, discord.VoiceChannel) and not channel.members and now >= int(event["start_at"]):
                             try:
                                 await channel.delete(reason=f"GamerHQ LFG event #{event_id} finished and voice is empty")
                             except discord.NotFound:
