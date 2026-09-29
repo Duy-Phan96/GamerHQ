@@ -43,10 +43,10 @@ def core_channel(guild, name):
         if channel in guild.text_channels:
             return channel
     channel = unique([c for c in guild.text_channels if c.category
-                      and alias(c.category.name) in {'start-here', 'community', 'events'}], name)
+                      and alias(c.category.name) in {'start-here', 'community', 'events', 'games', 'gaming'}], name)
     if channel is None and name != 'looking-for-group' and any(alias(c.name) == name for c in guild.text_channels):
         raise ServerMessageError(f'MANUAL_REVIEW: #{name} exists outside the expected core categories. No duplicate created.')
-    if channel and (not channel.category or alias(channel.category.name) not in {'start-here', 'community', 'events'}
+    if channel and (not channel.category or alias(channel.category.name) not in {'start-here', 'community', 'events', 'games', 'gaming'}
                     or channel.overwrites_for(guild.default_role).view_channel is False
                     or channel.category.overwrites_for(guild.default_role).view_channel is False):
         raise ServerMessageError(f'MANUAL_REVIEW: unmapped #{name} has an unexpected category/privacy pattern. No duplicate created.')
@@ -99,8 +99,20 @@ async def refresh_boards(guild):
 async def migrate_boards(guild, changed, failed):
     from cogs.suggestions import STAFF_ALIASES, private_overwrites
     start, community = core_category(guild, 'start-here'), core_category(guild, 'community')
+    games = core_category(guild, 'games')
+    if not games:
+        legacy_games = core_category(guild, 'gaming')
+        if legacy_games:
+            games = await legacy_games.edit(name='🎮 GAMES', reason='GamerHQ shared game system migration')
+            changed.append('Renamed GAMING → GAMES (category ID preserved)')
+        else:
+            games = await guild.create_category('🎮 GAMES', reason='GamerHQ shared game channels')
+            changed.append('Created GAMES')
+    if games.overwrites_for(guild.default_role).view_channel is False:
+        raise ServerMessageError('MANUAL_REVIEW: GAMES category is private; public adoption refused.')
+    db.set_setting(f'managed_category:{guild.id}:games', games.id)
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
-    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
+    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'gaming-chat', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
     for name in ('guide', 'suggestions', 'community-events'):
         if not channels[name] and unique(guild.text_channels, name):
             raise ServerMessageError(f'#{name} exists outside the core categories; review its location before setup. No duplicate was created.')
@@ -127,13 +139,24 @@ async def migrate_boards(guild, changed, failed):
     elif events.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
     db.set_setting(f'managed_category:{guild.id}:events', events.id)
-    for name, target in [('looking-for-group', start), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
+    for name, target in [('looking-for-group', games), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
         if channel and channel.category_id != target.id:
             channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ core channel organization')
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
+    if not channels['gaming-chat']:
+        channels['gaming-chat'] = await games.create_text_channel('💬・gaming-chat', reason='GamerHQ shared gaming chat')
+        changed.append('Created GAMES/gaming-chat')
+    elif channels['gaming-chat'].category_id != games.id:
+        channels['gaming-chat'] = await channels['gaming-chat'].edit(
+            category=games, sync_permissions=False, reason='GamerHQ shared gaming chat location'
+        )
+        changed.append('Moved gaming-chat → GAMES')
+    await set_writable(channels['gaming-chat'])
+    db.set_setting(resource_key(guild, 'gaming-chat'), channels['gaming-chat'].id)
+
     for name, target in [('guide', start), ('suggestions', community), ('community-events', events)]:
         channel = channels[name]
         if not channel:
@@ -155,7 +178,7 @@ async def migrate_boards(guild, changed, failed):
     if channels['community-events'].name != '🎉・community-events':
         channels['community-events'] = await channels['community-events'].edit(name='🎉・community-events', reason='GamerHQ community events naming')
     if channels['looking-for-group']:
-        await channels['looking-for-group'].edit(name='🎯・looking-for-group', reason='GamerHQ LFG naming')
+        channels['looking-for-group'] = await channels['looking-for-group'].edit(name='🎯・looking-for-group', reason='GamerHQ LFG naming')
     for name in ('looking-for-group', 'guide', 'suggestions', 'community-events'):
         if channels[name]:
             await set_read_only(channels[name])
@@ -171,7 +194,7 @@ async def migrate_boards(guild, changed, failed):
             # Privacy and move in the same API operation, never temporarily public.
             await staff_inbox.edit(category=staff, sync_permissions=False, overwrites=private_overwrites(guild, staff_inbox), reason='GamerHQ private suggestion inbox')
         db.set_setting(f'staff_suggestions_channel:{guild.id}', staff_inbox.id)
-    for name in ('guide', 'suggestions', 'looking-for-group', *EVENT_BOARDS, 'bot-commands', 'choose-your-games', 'choose-your-roles'):
+    for name in ('guide', 'suggestions', 'gaming-chat', 'looking-for-group', *EVENT_BOARDS, 'bot-commands', 'choose-your-games', 'choose-your-roles'):
         channel = channels.get(name) or core_channel(guild, name)
         if channel:
             db.set_setting(resource_key(guild, name), channel.id)
