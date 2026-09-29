@@ -206,6 +206,13 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
             return existing
 
     category = _global_voice_category(guild)
+    if category is None:
+        logging.getLogger(__name__).warning(
+            "Event voice not created: global VOICE CHANNELS category missing guild=%s event=%s",
+            guild.id,
+            event_id,
+        )
+        return None
     try:
         channel = await guild.create_voice_channel(
             name=f"📅・{fresh['title']}"[:100],
