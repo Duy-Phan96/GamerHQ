@@ -333,9 +333,9 @@ async def _scan(guild, bot=None, *, messages=True):
     add('Games log', 'PASS' if game_channels.log_channel(guild) else 'REPAIRABLE', 'Private STAFF games-log must be linked and writable by GamerHQ.')
     gaming_chat = game_channels._stored_channel(guild, 'gaming-chat')
     lfg_channel = game_channels._stored_channel(guild, 'looking-for-group')
-    add('gaming-chat', 'PASS' if game_parent and gaming_chat and gaming_chat.category_id == game_parent.id else 'MIGRATION_AVAILABLE',
+    add('gaming-chat', 'PASS' if game_parent and gaming_chat and gaming_chat.category_id == game_parent.id else 'REPAIRABLE',
         'Shared gaming chat is under GAMES.' if game_parent and gaming_chat and gaming_chat.category_id == game_parent.id else 'Game System V3 can create/link and move the shared gaming chat.')
-    add('looking-for-group', 'PASS' if game_parent and lfg_channel and lfg_channel.category_id == game_parent.id else 'MIGRATION_AVAILABLE',
+    add('looking-for-group', 'PASS' if game_parent and lfg_channel and lfg_channel.category_id == game_parent.id else 'REPAIRABLE',
         'Central LFG is under GAMES.' if game_parent and lfg_channel and lfg_channel.category_id == game_parent.id else 'Game System V3 can move/link the central LFG channel while preserving its ID/history.')
     channel_ids = set()
     for game in games:
@@ -350,7 +350,7 @@ async def _scan(guild, bot=None, *, messages=True):
             add('Game channel', 'PASS' if valid else 'MANUAL_REVIEW', f'Game {game["id"]}: shared category and role-gated access checked.')
         if game_channels.legacy_hints(game):
             hints = game_channels.legacy_hints(game)
-            state = 'MIGRATION_AVAILABLE' if hints.get('chat_channel_id') and not game.get('channel_id') else 'CLEANUP_CANDIDATE'
+            state = 'REPAIRABLE' if hints.get('chat_channel_id') and not game.get('channel_id') else 'MANUAL_REVIEW'
             add('Legacy game resources', state, f'Game {game["id"]}: legacy resources retained; use Server Management → Games → Migrate to GAMES. No automatic deletion.')
     for current, ordered in game_channels.order_plan(guild):
         add('Game channel order', 'PASS' if current == ordered else 'REPAIRABLE', 'Dedicated game channels use alphabetical order.')
