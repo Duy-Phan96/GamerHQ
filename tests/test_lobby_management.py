@@ -154,6 +154,19 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(manager.next_page.disabled)
         manager.stop()
 
+    async def test_private_event_view_has_creator_only_dissolve_button(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE lfg_events SET visibility='private' WHERE id=?", (self.eid,))
+        view = lfg.LFGEventView(self.eid)
+        labels = [getattr(item, 'label', None) for item in view.children]
+        self.assertIn('Dissolve Event', labels)
+        button = next(item for item in view.children if getattr(item, 'label', None) == 'Dissolve Event')
+        request = self.request(20)
+        await button.callback(request)
+        request.response.send_message.assert_awaited_once()
+        self.assertIn('creator', request.response.send_message.call_args.args[0].lower())
+        view.stop()
+
     async def test_modal_rechecks_permissions(self):
         request = self.request(20)
         modal = ui.EditModal(self.event)
@@ -286,12 +299,18 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.guild.create_voice_channel.assert_awaited_once()
         voice.delete.assert_not_awaited()
 
-    async def test_end_cleanup_delays_and_retries_without_losing_history(self):
+    async def test_end_cleanup_removes_private_space_when_voice_empty_and_keeps_final_card_24h(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE lfg_events SET visibility='private', private_channel_id=333 WHERE id=?", (self.eid,))
         rules.end(self.eid, 1, 10, 'cancelled')
-        with patch.object(lfg, 'delete_event_posts', AsyncMock(return_value=True)) as posts, patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=True)), patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)):
+        with patch.object(lfg, 'delete_event_posts', AsyncMock(return_value=True)) as posts, patch.object(
+            lfg, 'delete_event_voice', AsyncMock(return_value=True)
+        ), patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)) as private:
             await dashboard.cleanup_ended(self.guild)
+            private.assert_awaited_once()
             posts.assert_not_awaited()
-            with db.connect() as conn: conn.execute('UPDATE lfg_events SET ended_at=? WHERE id=?', (int(time.time())-86401, self.eid))
+            with db.connect() as conn:
+                conn.execute('UPDATE lfg_events SET ended_at=? WHERE id=?', (int(time.time())-86401, self.eid))
             posts.return_value = False
             await dashboard.cleanup_ended(self.guild)
             self.assertIsNotNone(db.get_lfg_event(self.eid)['ended_at'])
