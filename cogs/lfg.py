@@ -909,26 +909,6 @@ class EventTitleModal(discord.ui.Modal, title="Event Title"):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
-class BuilderGameSelect(discord.ui.Select):
-    def __init__(self, builder):
-        self.builder = builder
-        options = []
-        for game in builder.games[:25]:
-            options.append(discord.SelectOption(
-                label=game["name"][:100], value=str(game["id"]), emoji=game.get("emoji") or "🎮",
-                default=builder.game is not None and int(game["id"]) == int(builder.game["id"]),
-            ))
-        placeholder = f"🎮 {builder.game['name']}" if builder.game else "🎮 Choose game"
-        super().__init__(placeholder=placeholder[:150], options=options, row=0, disabled=builder.game_locked)
-
-    async def callback(self, interaction):
-        self.builder.game = next(g for g in self.builder.games if str(g["id"]) == self.values[0])
-        # Invites belong to the selected game. Never carry them across a game change.
-        self.builder.invited_ids.clear()
-        self.builder._rebuild()
-        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
-
-
 class BuilderDateSelect(discord.ui.Select):
     def __init__(self, builder):
         self.builder = builder
@@ -942,7 +922,7 @@ class BuilderDateSelect(discord.ui.Select):
                 default=builder.date == d.isoformat(),
             ))
         label = datetime.fromisoformat(builder.date).strftime("%a, %d.%m.%Y") if builder.date else "Choose date"
-        super().__init__(placeholder=f"📅 {label}"[:150], options=options, row=1)
+        super().__init__(placeholder=f"📅 {label}"[:150], options=options, row=0)
 
     async def callback(self, interaction):
         self.builder.date = self.values[0]
@@ -965,7 +945,7 @@ class BuilderTimeSelect(discord.ui.Select):
                     default=selected == label,
                 ))
         placeholder = f"🕐 Time · {selected}" if selected else "🕐 Choose time"
-        super().__init__(placeholder=placeholder[:150], options=options, row=2)
+        super().__init__(placeholder=placeholder[:150], options=options, row=1)
 
     async def callback(self, interaction):
         self.builder.time_12h = self.values[0]
@@ -979,7 +959,7 @@ class BuilderPlayersSelect(discord.ui.Select):
         self.builder = builder
         options = [discord.SelectOption(label=f"{n} players", value=str(n), emoji="👥", default=builder.max_players == n) for n in range(2, 26)]
         placeholder = f"👥 {builder.max_players} players" if builder.max_players else "👥 Choose total players"
-        super().__init__(placeholder=placeholder[:150], options=options, row=3)
+        super().__init__(placeholder=placeholder[:150], options=options, row=2)
 
     async def callback(self, interaction):
         self.builder.max_players = int(self.values[0])
@@ -987,20 +967,35 @@ class BuilderPlayersSelect(discord.ui.Select):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
+class BuilderDurationSelect(discord.ui.Select):
+    def __init__(self, builder):
+        self.builder = builder
+        values = [(30, "30 minutes"), (60, "1 hour"), (90, "1.5 hours"), (120, "2 hours"), (180, "3 hours"), (240, "4 hours")]
+        options = [
+            discord.SelectOption(label=label, value=str(minutes), emoji="⏱️", default=builder.duration_minutes == minutes)
+            for minutes, label in values
+        ]
+        current = next(label for minutes, label in values if minutes == builder.duration_minutes)
+        super().__init__(placeholder=f"⏱️ Duration · {current}", options=options, row=3)
+
+    async def callback(self, interaction):
+        self.builder.duration_minutes = int(self.values[0])
+        self.builder._rebuild()
+        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+
+
 class EventBuilderView(discord.ui.View):
-    def __init__(self, *, host, games, game=None, game_locked=False):
+    def __init__(self, *, host):
         super().__init__(timeout=600)
         self.host = host
-        self.games = games
-        self.game = game
-        self.game_locked = game_locked
-        self.title = "Gaming Session"
+        self.title = "GamerHQ Event"
         self.date = None
         self.time_12h = None
         self.period = "PM"
         self.hour = None
         self.minute = 0
         self.max_players = 5
+        self.duration_minutes = 120
         self.invite_lead = 15
         self.visibility = "public"
         self.invited_ids = set()
@@ -1012,10 +1007,10 @@ class EventBuilderView(discord.ui.View):
         self.voice_lead.label = f"{self.invite_lead}m"
         self.visibility_button.label = "Public" if self.visibility == "public" else "Private"
         self.visibility_button.emoji = "🌐" if self.visibility == "public" else "🔒"
-        self.add_item(BuilderGameSelect(self))
         self.add_item(BuilderDateSelect(self))
         self.add_item(BuilderTimeSelect(self))
         self.add_item(BuilderPlayersSelect(self))
+        self.add_item(BuilderDurationSelect(self))
         for item in (self.edit_title, self.ampm_button, self.voice_lead, self.visibility_button, self.preview):
             self.add_item(item)
 
@@ -1038,16 +1033,15 @@ class EventBuilderView(discord.ui.View):
         return f"{self.time_12h} {self.period}"
 
     def content(self):
-        game = f"{self.game.get('emoji') or '🎮'} {self.game['name']}" if self.game else "Not selected"
         date = datetime.fromisoformat(self.date).strftime("%A, %d %B %Y") if self.date else "Not selected"
         return (
-            "# 🎮 Create GamerHQ Event\n\n"
-            "Configure your event below. Your selections stay visible while you edit.\n\n"
+            "# 📅 Create GamerHQ Event\n\n"
+            "Plan an event for the community. You can manage it after creation and add it to Google Calendar.\n\n"
             f"**📝 Title:** {self.title}\n"
-            f"**🎮 Game:** {game}{' 🔒' if self.game_locked else ''}\n"
             f"**📅 Date:** {date}\n"
             f"**🕐 Time:** {self._display_time()} · Europe/Berlin\n"
             f"**👥 Players:** {self.max_players}\n"
+            f"**⏱️ Duration:** {self.duration_minutes} min\n"
             f"**🔔 Voice invite:** {self.invite_lead} min before\n"
             f"**👁️ Visibility:** {'🌐 Public' if self.visibility == 'public' else '🔒 Private · Invite only'}\n"
             "Discord will display the final event in each member's local time."
@@ -1087,8 +1081,8 @@ class EventBuilderView(discord.ui.View):
 
     @discord.ui.button(label="Preview", emoji="👁️", style=discord.ButtonStyle.success, row=4)
     async def preview(self, interaction, button):
-        if not self.game or not self.date or self.hour is None:
-            return await interaction.response.send_message("❌ Choose a game, date and time first.", ephemeral=True)
+        if not self.date or self.hour is None:
+            return await interaction.response.send_message("❌ Choose a date and time first.", ephemeral=True)
         hour, minute = self.hour, self.minute
         dt = datetime.fromisoformat(self.date).replace(hour=hour, minute=minute, tzinfo=SERVER_TZ)
         if dt <= datetime.now(SERVER_TZ):
