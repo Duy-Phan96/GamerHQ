@@ -6,9 +6,9 @@ Generated from current discord.py command group objects, without bot login or co
 
 - `/game select` — Add or remove one of your game roles.
 - `/game suggest` — Suggest a game that GamerHQ should add.
-- `/lfg create` — Create a GamerHQ Looking for Group event.
+- `/lfg create` — Create a scheduled GamerHQ event; no game selection is required.
 - `/lfg join-code` — Join a private GamerHQ event using its invite code.
-- `/lfg manage` — Manage or cancel LFG events you created.
+- `/lfg manage` — Manage or cancel only events you created.
 - `/voice manage` — Manage your own Create Voice room; staff may select a room.
 
 ## Moderator / Staff actions
