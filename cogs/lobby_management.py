@@ -158,11 +158,18 @@ class PlayerSelect(discord.ui.UserSelect):
             from cogs.lfg import LFGInviteDMView, _grant_private_event_access
             if event['visibility'] == 'private':
                 await _grant_private_event_access(interaction.guild, event, member)
-            game = db.get_game_by_id(event['game_id'])
+            game = db.get_game_by_id(event['game_id']) if int(event.get('game_id') or 0) else None
+            game_suffix = f" · {game['name']}" if game else ""
             count = sum(r['status'] == 'joined' for r in db.get_lfg_event_members(event['id']))
             delivered = True
             try:
-                await member.send(f"🎮 **{event['title']}** · {game['name'] if game else 'Gaming'}\nHost: <@{event['host_id']}>\n<t:{event['start_at']}:F>\nOpen seats: {max(0, event['max_players'] - count)}\nJoin when a seat is available.", view=LFGInviteDMView(event['id'], interaction.guild.id), allowed_mentions=discord.AllowedMentions.none())
+                await member.send(
+                    f"📅 **{event['title']}**{game_suffix}\nHost: <@{event['host_id']}>\n"
+                    f"<t:{event['start_at']}:F>\nOpen seats: {max(0, event['max_players'] - count)}\n"
+                    "Join when a seat is available.",
+                    view=LFGInviteDMView(event['id'], interaction.guild.id),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
             except discord.HTTPException:
                 delivered = False
             warning = '\n⚠️ This player does not have the game role; Add Game & Join remains available.' if game and not member_has_game_role(member, game) else ''
