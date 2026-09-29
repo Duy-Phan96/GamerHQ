@@ -1,5 +1,13 @@
 # GamerHQ Changelog
 
+## Game-independent event scheduling
+
+- Create Event no longer requires a selected game or game role; public events post to the central LFG board and private events keep their existing invite-only space.
+- Event drafts now include duration, and event cards offer a one-click Google Calendar link using the configured start time and duration.
+- Only the event creator can edit, reschedule, invite/remove participants, open voice, close or cancel the event. Participants retain join/leave/share/calendar actions.
+- Existing legacy game-linked events remain readable and joinable for backwards compatibility.
+
+
 ## Personal games and shared game channels
 
 - Choose Your Games opens personal Popular Top 25 / A–Z browsing with immediate role choices, independent of channel existence.
