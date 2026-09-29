@@ -66,8 +66,8 @@ def guide_text(guild):
     return (
         '# 📘 GamerHQ Guide\n\nHere are GamerHQ’s main features and how to use them.\n\n'
         f'## 🎮 Games & Roles\nChoose games in **{mention(guild, "choose-your-games")}** and optional notifications, languages and profile settings in **{mention(guild, "choose-your-roles")}**. \n\n'
-        f'## 🎯 Looking for Group\nFind players and open sessions in **{mention(guild, "looking-for-group")}**.\n'
-        '`/lfg create` — create a session\n`/lfg manage` — view/manage your sessions\n`/lfg join-code` — join a private session\nHosts can invite players and change session details.\n\n'
+        f'## 🎯 Looking for Group\nPlan and join community events in **{mention(guild, "looking-for-group")}**.\n'
+        '`/lfg create` — create a scheduled event\n`/lfg manage` — manage events you created\n`/lfg join-code` — join a private event\nEvents do not require a game selection; event posts include a Google Calendar link.\n\n'
         f'## 🤖 Bot Commands\nUse **{mention(guild, "bot-commands")}** for bot commands.\n\n'
         '## 🎵 Music Bots\n**Jockie Music** — mainly Apple Music · `m!`\n**Pancake** — mainly Spotify · `p!`\nJoin a voice channel, then use a prefix with:\n'
         '`play <song/link>` — play a song/playlist\n`skip` — skip (Pancake may use a vote)\n`pause` / `resume` — pause/continue\n`queue` — show the queue\n'
