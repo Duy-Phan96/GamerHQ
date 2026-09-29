@@ -48,6 +48,7 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
         await self.load_extension("cogs.lfg")
+        await self.load_extension("cogs.lobby_admin")
         await self.load_extension("cogs.streamer")
 
         guild = discord.Object(id=GUILD_ID)

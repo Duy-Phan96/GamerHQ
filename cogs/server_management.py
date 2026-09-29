@@ -96,8 +96,13 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         for label, callback in [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
                                 ('Integrations', self.integrations), ('Managed Messages', self.messages),
-                                ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log)]:
+                                ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log),
+                                ('Lobby Admin', self.lobby_admin)]:
             self.action(label, callback)
+
+    async def lobby_admin(self, interaction):
+        from cogs.lobby_admin import open_management
+        await open_management(interaction)
 
     async def games(self, interaction):
         from cogs.game_channels import GamesMenu
@@ -307,7 +312,7 @@ class SetupWizard(Menu):
     @discord.ui.button(label='Back')
     async def back(self, interaction, button):
         self.page = max(0, self.page - 1)
-        self.section.label = 'Open Section'
+        self.section.label = 'Finish Setup' if self.page == 5 else 'Open Section'
         await interaction.response.edit_message(content=self.text(), view=self)
 
 
