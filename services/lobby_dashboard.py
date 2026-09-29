@@ -107,13 +107,16 @@ async def cleanup_ended(guild, *, reconcile=False):
     for event in rows:
         if reconcile:
             await refresh_event_posts(guild, event['id'])
-        voice = guild.get_channel(event['voice_channel_id']) if event.get('voice_channel_id') else None
-        if isinstance(voice, discord.VoiceChannel) and voice.members:
-            continue
+
+        # Private event chats close as soon as the event ends. Voice is handled
+        # independently and is never deleted while members are still connected.
+        channel_clean = await delete_private_event_channel(guild, event)
         voice_clean = await delete_event_voice(guild, event)
+
+        # Public/event cards remain for 24 hours as a short audit/history window.
+        # Full DB view cleanup waits until voice and private-channel cleanup are safe.
         if int(time.time()) >= event['ended_at'] + 86400:
             posts_clean = await delete_event_posts(guild, event)
-            channel_clean = await delete_private_event_channel(guild, event)
             if voice_clean and posts_clean and channel_clean:
                 with db.connect() as conn:
                     conn.execute('UPDATE lfg_events SET ended_at=NULL, dashboard_channel_id=NULL, dashboard_message_id=NULL WHERE id=?', (event['id'],))
