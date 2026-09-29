@@ -154,6 +154,27 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(manager.next_page.disabled)
         manager.stop()
 
+    async def test_private_event_dissolve_is_creator_only_and_keeps_occupied_voice(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE lfg_events SET visibility='private', private_channel_id=321 WHERE id=?", (self.eid,))
+        event = db.get_lfg_event(self.eid)
+        view = lfg.LFGEventView(self.eid)
+        dissolve = next(child for child in view.children if getattr(child, 'custom_id', '') == f'gamerhq:lfg:dissolve:{self.eid}')
+
+        denied = self.request(20)
+        await dissolve.callback(denied)
+        denied.response.send_message.assert_awaited_once()
+        self.assertEqual(db.get_lfg_event(self.eid)['status'], 'scheduled')
+
+        owner = self.request(10)
+        with patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)) as private, \
+             patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=False)) as voice:
+            await dissolve.callback(owner)
+        owner.response.send_message.assert_awaited_once()
+        private.assert_awaited_once()
+        voice.assert_awaited_once()
+        self.assertEqual(db.get_lfg_event(self.eid)['status'], 'completed')
+
     async def test_modal_rechecks_permissions(self):
         request = self.request(20)
         modal = ui.EditModal(self.event)
@@ -286,16 +307,23 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.guild.create_voice_channel.assert_awaited_once()
         voice.delete.assert_not_awaited()
 
-    async def test_end_cleanup_delays_and_retries_without_losing_history(self):
+    async def test_end_cleanup_closes_private_chat_immediately_and_waits_for_voice(self):
         rules.end(self.eid, 1, 10, 'cancelled')
-        with patch.object(lfg, 'delete_event_posts', AsyncMock(return_value=True)) as posts, patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=True)), patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)):
+        with patch.object(lfg, 'delete_event_posts', AsyncMock(return_value=True)) as posts, \
+             patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=False)) as voice, \
+             patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)) as private:
             await dashboard.cleanup_ended(self.guild)
+            private.assert_awaited_once()
+            voice.assert_awaited_once()
             posts.assert_not_awaited()
-            with db.connect() as conn: conn.execute('UPDATE lfg_events SET ended_at=? WHERE id=?', (int(time.time())-86401, self.eid))
-            posts.return_value = False
+
+            with db.connect() as conn:
+                conn.execute('UPDATE lfg_events SET ended_at=? WHERE id=?', (int(time.time())-86401, self.eid))
             await dashboard.cleanup_ended(self.guild)
+            posts.assert_awaited_once()
             self.assertIsNotNone(db.get_lfg_event(self.eid)['ended_at'])
-            posts.return_value = True
+
+            voice.return_value = True
             await dashboard.cleanup_ended(self.guild)
             self.assertIsNone(db.get_lfg_event(self.eid)['ended_at'])
             self.assertEqual(db.get_lfg_event(self.eid)['status'], 'cancelled')
