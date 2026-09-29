@@ -43,18 +43,38 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(user=user, guild=self.guild, response=response, edit_original_response=AsyncMock(), followup=SimpleNamespace(send=AsyncMock()))
 
     def test_host_edits_and_rejects_other_actors_and_guilds(self):
-        updated = rules.edit(self.eid, 1, 10, title='Changed', note='Hello', max_players=3, invite_lead_minutes=30)
-        self.assertEqual((updated['title'], updated['max_players']), ('Changed', 3))
+        updated = rules.edit(self.eid, 1, 10, title='Changed', note='Hello', max_players=3, duration_minutes=90, invite_lead_minutes=30)
+        self.assertEqual((updated['title'], updated['max_players'], updated['duration_minutes']), ('Changed', 3, 90))
         for user in (20, 99):
             with self.assertRaises(ValueError): rules.edit(self.eid, 1, user, title='No')
         with self.assertRaises(ValueError): rules.edit(self.eid, 2, 10, title='No')
-        for fields in ({'max_players': 1}, {'max_players': 100}, {'title': ''}, {'start_at': 0}, {'invite_lead_minutes': -1}, {'note': 'x' * 501}):
+        for fields in ({'max_players': 1}, {'max_players': 100}, {'title': ''}, {'start_at': 0}, {'invite_lead_minutes': -1}, {'duration_minutes': 29}, {'duration_minutes': 1441}, {'note': 'x' * 501}):
             with self.subTest(fields=fields), self.assertRaises(ValueError): rules.edit(self.eid, 1, 10, **fields)
 
     def test_datetime_validation(self):
         for date, clock in [('nonsense', '20:00'), ('2000-01-01', '20:00'), ('2030-01-01', '25:00'), ('2030-03-31', '02:30'), ('2030-10-27', '02:30')]:
             with self.subTest(date=date, clock=clock), self.assertRaises(ValueError): parse_server_datetime(date, clock)
         self.assertGreater(parse_server_datetime('2030-01-01', '20:00'), time.time())
+
+    def test_generic_event_needs_no_game_and_has_calendar_duration(self):
+        event = db.create_lfg_event(
+            guild_id=1, game_id=None, host_id=10, title='Community Meetup',
+            start_at=self.start, max_players=8, invite_lead_minutes=15, duration_minutes=90,
+        )
+        self.assertEqual(event['game_id'], 0)
+        self.assertEqual(event['duration_minutes'], 90)
+        rendered = render_event(self.guild, event)
+        self.assertNotIn('Unknown Game', rendered)
+        self.assertIn('90 minutes', rendered)
+        url = lfg.google_calendar_url(event)
+        self.assertIn('calendar.google.com/calendar/render?', url)
+        self.assertIn('Community+Meetup', url)
+
+        host = MagicMock(spec=discord.Member)
+        host.id = 10
+        builder = lfg.EventBuilderView(host=host)
+        self.assertNotIn('Game:', builder.content())
+        self.assertIn('Google Calendar', builder.content())
 
     def test_invites_duplicates_capacity_and_private_security(self):
         with db.connect() as conn:
@@ -90,10 +110,11 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         rules.decide(self.eid, 1, 20, third, 'WITHDRAWN')
         self.assertEqual(rules.proposals(self.eid), [])
 
-    def test_terminal_states_and_admin_override(self):
+    def test_terminal_states_remain_creator_owned(self):
         with self.assertRaises(ValueError): rules.end(self.eid, 1, 99, 'cancelled')
         with self.assertRaises(ValueError): rules.end(self.eid, 1, 99, 'completed', administrator=True)
-        rules.end(self.eid, 1, 99, 'cancelled', administrator=True)
+        with self.assertRaises(ValueError): rules.end(self.eid, 1, 99, 'cancelled', administrator=True)
+        rules.end(self.eid, 1, 10, 'cancelled')
         for operation in (lambda: rules.edit(self.eid, 1, 10, title='No'), lambda: rules.propose(self.eid, 1, 20, self.start+3600), lambda: rules.join(self.eid, 1, 30)):
             with self.assertRaises(ValueError): operation()
         self.assertIn('CANCELLED', render_event(self.guild, db.get_lfg_event(self.eid)))
@@ -114,15 +135,20 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rules.proposals(self.eid)[0]['id'], pid)
         self.assertEqual(db.get_lfg_event(self.eid)['title'], 'Test Lobby')
 
-    async def test_panels_limits_and_member_host_separation(self):
-        for user_id in (10, 20):
-            panel = ui.LobbyPanel(self.event, user_id)
-            panel.to_components()
-            labels = [o.label for c in panel.children if isinstance(c, discord.ui.Select) for o in c.options]
-            self.assertEqual('Cancel Lobby' in labels, user_id == 10)
-            self.assertEqual('Leave Lobby' in labels, user_id == 20)
-            self.assertIn('Suggest New Time', labels)
-            panel.stop()
+    async def test_event_management_is_creator_only(self):
+        panel = ui.LobbyPanel(self.event, 10)
+        panel.to_components()
+        labels = [o.label for child in panel.children if isinstance(child, discord.ui.Select) for o in child.options]
+        self.assertIn('Cancel Event', labels)
+        self.assertIn('Change Date / Time', labels)
+        self.assertNotIn('Leave Lobby', labels)
+        panel.stop()
+
+        request = self.request(20)
+        await ui.open_panel(request, self.eid)
+        request.response.send_message.assert_awaited_once()
+        self.assertIn('creator', request.response.send_message.call_args.args[0].lower())
+
         self.assertTrue(lfg.LFGEventView(self.eid).is_persistent())
         manager = lfg.LFGManageView(10, [self.event] * 26)
         self.assertFalse(manager.next_page.disabled)
