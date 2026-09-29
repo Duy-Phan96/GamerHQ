@@ -24,10 +24,15 @@ def slug(name):
 
 
 def category(guild):
-    raw = db.get_setting(f'managed_category:{guild.id}:gaming')
-    result = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    raw = db.get_setting(f'managed_category:{guild.id}:games') or db.get_setting(f'managed_category:{guild.id}:gaming')
+    result = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if not isinstance(result, discord.CategoryChannel):
-        raise ValueError('Review the GAMING category in Server Structure before creating a channel.')
+        result = next(
+            (c for c in guild.categories if c.name.casefold() in {"🎮 games", "🎮 gaming"}),
+            None,
+        )
+    if not isinstance(result, discord.CategoryChannel):
+        raise ValueError('Review the GAMES category in Server Structure before creating a channel.')
     return result
 
 
@@ -146,8 +151,8 @@ def description(plan):
     if plan['action'] == 'remove':
         return text + 'Delete this managed Discord channel and its message history? The game, role and stored game/event history remain. This cannot be undone.'
     if plan['action'] == 'migrate':
-        return text + 'Move and rename the recorded chat into 🎮 GAMING, preserving its ID and history. Old category, LFG and create-voice resources remain for separate manual review.'
-    return text + 'Create one role-gated text channel in 🎮 GAMING.\n' + (
+        return text + 'Move and rename the recorded chat into 🎮 GAMES, preserving its ID and history. Old category, LFG and create-voice resources remain for separate manual review.'
+    return text + 'Create one role-gated text channel in 🎮 GAMES.\n' + (
         'The configured soft limit has been reached. Create Anyway requires explicit approval.' if plan['count'] >= config.GAME_CHANNEL_SOFT_LIMIT else 'Members with this game role can see and chat here.')
 
 
@@ -236,17 +241,26 @@ async def apply(guild, actor, plan, *, override=False):
 
 async def sort_channels(guild, *, extra=None):
     parent = category(guild)
+    shared_ids = []
+    for key in ('gaming-chat', 'looking-for-group'):
+        raw = db.get_setting(f'managed_channel:{guild.id}:{key}')
+        if raw and str(raw).isdigit():
+            shared_ids.append(int(raw))
+    shared = [c for sid in shared_ids if (c := guild.get_channel(sid)) and c.category_id == parent.id]
+    for index, channel in enumerate(shared):
+        if channel.position != index:
+            await channel.edit(position=index, reason='GamerHQ shared GAMES channel order')
+
     channels = []
     for game in sorted(db.get_all_games(), key=lambda g: g['name'].casefold()):
         cid = game.get('channel_id')
         ch = extra if extra and cid == extra.id else guild.get_channel(cid) if cid else None
         if ch and ch.category_id == parent.id:
             channels.append(ch)
-    # Only managed channels move; unrelated category children retain relative order.
-    start = min((c.position for c in parent.channels), default=0)
+    start = len(shared)
     for index, channel in enumerate(channels):
-        if channel.position != start+index:
-            await channel.edit(position=start+index, reason='GamerHQ alphabetical game channels')
+        if channel.position != start + index:
+            await channel.edit(position=start + index, reason='GamerHQ alphabetical game channels')
 
 
 def order_plan(guild):
