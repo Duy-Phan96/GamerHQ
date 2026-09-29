@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from services.operation_context import measured
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 import re
 import secrets
 import sqlite3
@@ -15,8 +16,8 @@ from services import lobby_service as lobby_rules
 from services.lobby_dashboard import event_lock, sync_card, cleanup_ended
 import logging
 from services.lfg_service import (
-    SERVER_TZ, find_lfg_channel, find_game_lfg_channel, member_has_game_role,
-    render_event, user_games,
+    SERVER_TZ, find_lfg_channel, member_has_game_role,
+    render_event,
 )
 
 
@@ -464,6 +465,18 @@ async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict
     )
 
 
+def google_calendar_url(event: dict) -> str:
+    start = datetime.fromtimestamp(int(event["start_at"]), SERVER_TZ)
+    end = start + timedelta(minutes=int(event.get("duration_minutes") or 120))
+    dates = f"{start.astimezone().strftime('%Y%m%dT%H%M%SZ')}/{end.astimezone().strftime('%Y%m%dT%H%M%SZ')}"
+    return "https://calendar.google.com/calendar/render?" + urlencode({
+        "action": "TEMPLATE",
+        "text": str(event["title"]),
+        "dates": dates,
+        "details": "GamerHQ event",
+    })
+
+
 class LFGEventView(discord.ui.View):
     def __init__(self, event_id: int):
         super().__init__(timeout=None)
@@ -472,17 +485,19 @@ class LFGEventView(discord.ui.View):
                                  custom_id=f"gamerhq:lfg:join:{self.event_id}")
         leave = discord.ui.Button(label="Leave", emoji="↩️", style=discord.ButtonStyle.secondary,
                                   custom_id=f"gamerhq:lfg:leave:{self.event_id}")
-        # Public event posts only contain actions that are meant for everyone.
-        # Host-only management lives in the ephemeral /lfg manage panel, so other
-        # members never see a destructive Cancel Event button they cannot use.
         event = db.get_lfg_event(self.event_id)
         share_label = "Share Invite" if event and event.get("visibility") == "private" else "Share Event"
         share = discord.ui.Button(label=share_label, emoji="🔗", style=discord.ButtonStyle.secondary,
                                   custom_id=f"gamerhq:lfg:share:{self.event_id}")
         join.callback, leave.callback, share.callback = self.join_event, self.leave_event, self.share_event
         self.add_item(join); self.add_item(leave); self.add_item(share)
-        manage = discord.ui.Button(label='Lobby Actions', style=discord.ButtonStyle.primary,
-                                   custom_id=f'gamerhq:lfg:manage:{self.event_id}')
+        if event:
+            self.add_item(discord.ui.Button(
+                label="Google Calendar", emoji="📅", style=discord.ButtonStyle.link,
+                url=google_calendar_url(event),
+            ))
+        manage = discord.ui.Button(label="Manage Event", emoji="⚙️", style=discord.ButtonStyle.primary,
+                                   custom_id=f"gamerhq:lfg:manage:{self.event_id}")
         async def manage_callback(interaction):
             from cogs.lobby_management import open_panel
             await open_panel(interaction, self.event_id)
@@ -495,16 +510,14 @@ class LFGEventView(discord.ui.View):
         event = db.get_lfg_event(self.event_id)
         if not event or event["status"] != "scheduled":
             return await interaction.response.send_message("❌ This event is no longer available.", ephemeral=True)
-        game = db.get_game_by_id(int(event["game_id"]))
-        if not game:
-            return await interaction.response.send_message("❌ This event's game is unavailable.", ephemeral=True)
+        game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
         if event.get("visibility") == "private":
             states = {int(r["user_id"]): r["status"] for r in db.get_lfg_event_members(self.event_id)}
             if interaction.user.id != int(event["host_id"]) and states.get(interaction.user.id) not in {"invited", "joined"}:
                 return await interaction.response.send_message(
                     "🔒 This is a private event. Use its private invite code or ask the host for an invitation.", ephemeral=True
                 )
-        if not member_has_game_role(interaction.user, game):
+        if game and not member_has_game_role(interaction.user, game):
             return await prompt_add_game_and_join(interaction, event, game, interaction.guild)
         await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(interaction.guild, event, interaction.user)
