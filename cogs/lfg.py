@@ -1171,9 +1171,9 @@ class LFG(commands.Cog):
                     if not event or event['status'] != 'scheduled':
                         continue
                     voice_id = event.get("voice_channel_id")
-                    # Event duration is intentionally not user-managed. Retire stale
-                    # events after a generous fixed window, but never kick an occupied voice room.
-                    stale_at = int(event["start_at"]) + 6 * 3600
+                    # Event duration is intentionally not user-managed. A scheduled
+                    # event closes two hours after start; occupied voice is preserved separately.
+                    stale_at = int(event["start_at"]) + 2 * 3600
                     if now >= stale_at:
                         lobby_rules.end(event_id, guild.id, event['host_id'], 'completed')
                         await refresh_event_posts(guild, event_id)
