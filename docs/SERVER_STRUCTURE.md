@@ -14,7 +14,7 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 - SUPPORT TICKETS: private ticket channels created on demand.
 - EVENTS: 🎉・community-events → 🏆・tournaments → 🎁・giveaways. Reconciliation links existing Community Events; setup creates it only if genuinely missing; repair fixes known permissions/pins. Existing specialized layout sync retains its ordering policy. Full tournament/giveaway engines are not implemented.
 - VOICE CHANNELS: common voice rooms and a generator. STREAMERS has its separate feature lifecycle.
-- 🎮 GAMING: one shared category, optional role-gated text channels sorted alphabetically. No new per-game categories/LFG/create-voice channels.
+- 🎮 GAMES: one shared category with 💬・gaming-chat, 🔎・looking-for-group and optional role-gated game channels sorted alphabetically. No new per-game categories/LFG/create-voice channels.
 - STAFF also contains private 🎮・games-log for threshold candidates and game administration.
 
 Text channels commonly use emoji + ・ + kebab-case; category labels commonly use emoji + uppercase words. Voice names vary by feature. Reuse each service's normalizer/aliases instead of imposing a new global naming rule. Existing STAFF aliases are in cogs/suggestions.py.
@@ -27,7 +27,7 @@ Text channels commonly use emoji + ・ + kebab-case; category labels commonly us
 | External bot identities | bot_member:<guild>:<name> settings via Setup/Manage; legacy/environment fallback |
 | Core channels/categories | settings keys managed_channel:<guild>:<name> and managed_category:<guild>:<name>, plus existing onboarding/legacy keys |
 | Base profile roles | services/role_service.py; managed_roles stores kind/key/group and role ID |
-| Game roles and optional channels | games.role_id / games.channel_id; legacy fields are migration hints; [Game system](GAME_SYSTEM.md) |
+| Game roles and optional channels | games.role_id / games.channel_id; shared GAMES identity uses the existing managed `gaming` setting key for DB compatibility; legacy fields are migration hints; [Game system](GAME_SYSTEM.md) |
 | Temporary game/common voice | temp_voice_channels; cogs/voice.py and temp_voice_service.py |
 | LFG private text/voice/cards | lfg_events and related tables; [LFG](LFG_EVENTS.md) |
 | Streamer Hub (hidden beta), retained legacy areas | managed channel/role settings; twitch_connections/twitch_live_deliveries; legacy streamer_profiles/streamer_channels retained. [Beta policy](STREAMER_HUB.md). |
