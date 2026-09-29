@@ -455,11 +455,14 @@ async def sort_channels(guild, *, extra=None):
         if ch and ch.category_id == parent.id and ch not in shared:
             dedicated.append(ch)
     managed = shared + dedicated
-    others = [c for c in sorted(parent.channels, key=lambda ch: (ch.position, ch.id)) if c not in managed]
+    current = sorted(parent.channels, key=lambda ch: (ch.position, ch.id))
+    others = [c for c in current if c not in managed]
     desired = managed + others
+    start = min((channel.position for channel in current), default=0)
     for index, channel in enumerate(desired):
-        if channel.position != index:
-            await channel.edit(position=index, reason='GamerHQ GAMES channel ordering')
+        target = start + index
+        if channel.position != target:
+            await channel.edit(position=target, reason='GamerHQ GAMES channel ordering')
 
 
 def order_plan(guild):
