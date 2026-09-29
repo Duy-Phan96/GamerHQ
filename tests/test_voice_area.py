@@ -196,7 +196,7 @@ class AreaTests(unittest.IsolatedAsyncioTestCase):
             await game_service.create_game_structure_confirmed(self.guild,self.game,{},fresh=True)
         self.guild.create_category.assert_not_awaited()
 
-    async def test_bulk_factory_creates_template_reuses_role_and_applies_music(self):
+    async def test_legacy_bulk_factory_does_not_create_areas(self):
         self.guild.channels.clear(); self.guild.categories.clear()
         db.deactivate_game(self.game['id']); self.visible()
         self.game_role.name = 'Renamed existing game role'
@@ -209,14 +209,9 @@ class AreaTests(unittest.IsolatedAsyncioTestCase):
         self.guild.create_text_channel=AsyncMock(side_effect=text)
         self.guild.create_voice_channel=AsyncMock(side_effect=generator)
         result=await areas.create_many(self.guild,self.actor,{self.game['id']})
-        self.assertIn('Created',result[0])
-        current=db.get_game_by_id(self.game['id'])
-        self.assertEqual(current['role_id'],self.game_role.id)
-        self.assertEqual(current['category_id'],300)
-        self.assertTrue(self.guild.get_channel(302).overwrites_for(self.music).speak)
+        self.assertIn('DEPRECATED', result[0])
+        self.guild.create_category.assert_not_awaited()
         self.guild.create_role.assert_not_awaited()
-        await areas.create_many(self.guild,self.actor,{self.game['id']})
-        self.assertEqual(self.guild.create_category.await_count,1)
 
     async def test_removal_confirmation_is_one_use_and_cancel_never_deletes(self):
         rows=areas.preview(self.guild,self.actor,{self.game['id']})

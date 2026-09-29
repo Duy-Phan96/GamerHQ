@@ -63,3 +63,15 @@ Tournaments and Giveaways retain their existing permissions/content. Pure automa
 Discord has no separate channel permission for buttons/select menus. Allowing application commands does not bypass command-specific authorization. Standard Unicode/server emojis need no additional external-emoji grant here. `USE_EXTERNAL_EMOJIS` is the permission for other servers’ custom emojis and is left unchanged. `ADD_REACTIONS` denial prevents adding a new reaction, not joining an existing one. See the [official Discord permission reference](https://docs.discord.com/developers/topics/permissions).
 
 Health compares these managed permission bits without writing, reports Repair availability, and checks Community Events placement/order. Owner `/server reconcile`, then `/server repair` (preview and confirm) applies changes; offline checks do not replace live ordinary-member acceptance.
+
+## Optional dedicated game channels
+
+The shared GAMING category is private by default. Each managed game text channel
+denies @everyone visibility and grants its own allowlisted game role view/history
+and chat. Staff/admin and GamerHQ retain access; unrelated explicit viewing grants
+are removed on these channels only to enforce role-gated visibility. Notification
+roles do not grant access. Existing unrelated deny bits are preserved.
+
+STAFF games-log uses the private server-log policy: staff read/history, GamerHQ
+posting/embeds, no ordinary member visibility. Candidate buttons recheck owner/admin
+access; staff reading the log does not automatically authorize channel creation.

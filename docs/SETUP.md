@@ -105,3 +105,24 @@ After restarting the updated bot, run `/server health`, then owner `/server reco
 ## Existing live server / production cutover
 
 A fresh local or VPS database does not contain old Discord IDs, private runtime state or delivery claims. [Migrate the runtime snapshot or reconcile safely](DATABASE_MIGRATION.md). Use one active bot process per live guild. Health previews adoption and duplicate warnings; `/server message-duplicates` requires an explicit owner/admin choice before removal.
+
+## Games during first-time setup
+
+The reviewed core blueprint includes one **🎮 GAMING** category and private STAFF
+**🎮・games-log**. Reconcile existing resources before creating missing ones. In
+Setup → Features, open Games: select library entries and Show Game to create/reuse
+their role; this never creates channels. New suggestions can be approved with
+`/game-admin create`. The personal selector includes active/selectable games with
+roles, independent of channel existence.
+
+Use Games → Create Game Channel to choose initial channels deliberately, for
+example up to 20 relevant games. No Top 25 bulk creation happens automatically.
+Channels are alphabetically ordered and readable/writable by their game role,
+staff and GamerHQ only. Central LFG and dynamic voice remain available.
+
+Defaults are centralized in `config.py`: `GAME_CHANNEL_MEMBER_THRESHOLD=10`,
+`GAME_CHANNEL_SOFT_LIMIT=20`, `POPULAR_GAMES_COUNT=25`. These are application
+configuration constants, not required `.env` values. Popular reads the current
+member cache when the panel opens; a complete member cache requires the existing
+member intent. The soft limit is overridable by an explicit admin confirmation.
+See [game lifecycle and migration](GAME_SYSTEM.md).

@@ -11,7 +11,8 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 - **Choose Your Games** manages games. **Profile Settings / Choose Your Roles** offers Gender/Age corrections plus quick Gaming Setup and Interests & Notifications. Initial onboarding and Update Profile use Gender → Age → Review → Save. GamerHQ is English; language selection is not offered. See [profile settings](docs/ROLE_SETTINGS.md).
 - Create public or private Looking for Group sessions, invite players and join private sessions with access codes.
 - Manage active lobbies: hosts can edit details, manage participants, review proposed times and close or cancel sessions.
-- Maintain a game library with optional dedicated Game Areas. Game selection and a game's Discord area are separate: removing an area can preserve the game and its role.
+- Choose games in a personal panel with dynamic Popular Top 25 and complete A–Z browsing. Each choice immediately adds/removes your game role; it never enables notification pings.
+- Games may have one optional role-gated text channel under **🎮 GAMING**. Roles work without channels; LFG and temporary voice remain centralized. See [the game system](docs/GAME_SYSTEM.md).
 
 ### Voice
 
@@ -37,7 +38,7 @@ Marketplace messages are English. Electricity is a Germany-only electricity tari
 - Optional [Instant Gaming setup](docs/INSTANT_GAMING.md) is an external owner configuration.
 
 - Inspect read-only diagnostics through Server Dev when deeper investigation is needed.
-- Add or remove multiple Game Areas, with dependency checks and explicit removal confirmation.
+- Use Server Management → Games for the library, channels and candidates. At 10 role members, a private games-log candidate invites admin approval; the initial channel soft limit is 20 with an explicit override.
 - Manage game-library entries, managed roles, information messages and Music Bots role configuration.
 - Edit GamerHQ-managed pinned messages with `/server pinned-messages` (owner/admin): Markdown, configurable link/action buttons, Preview → Save, and independent selection of multiple messages in a channel. Customizations survive restart and repair; confirmed Reset to Default restores generated content. See the [editor guide](docs/MANAGED_MESSAGES.md).
 
@@ -100,17 +101,23 @@ SUPPORT TICKETS (private)
 ├─ 💸・purchases
 └─ 🏆・buyer-ranking
 
+🎮 GAMING (each optional channel requires its game role)
+├─ counter-strike-2
+├─ minecraft
+└─ valorant
+
 STAFF (private)
 ├─ staff-chat
 ├─ staff-suggestions
 ├─ ticket-logs
 ├─ mod-log
 ├─ server-log
+├─ 🎮・games-log
 ├─ bot-log
 └─ mod-commands
 ```
 
-Optional Game Areas, streamer areas, LFG resources and temporary voice rooms extend this layout. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
+Optional single game channels, streamer areas, LFG resources and temporary voice rooms extend this layout. Legacy multi-channel Game Areas are deprecated and retained only for reviewed migration. Existing server resources may differ; the diagram is a reference, not a promise that setup creates every item from an empty server.
 
 **Need Support** opens a help ticket visible to its creator and authorized Staff. **Marketplace** in support-gamerhq links directly to the six channels in **MARKETPLACE**, where offers and their actions live. Ordinary members cannot post in either public entry channel. Private ticket channels allow conversation until closure.
 
@@ -222,9 +229,10 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | `/server music-bots-role` | Configure the existing dedicated Music Bots role |
 | `/server roles` | Manage GamerHQ roles |
 | `/server pinned-messages` | Owner/admin: edit managed pinned Markdown messages and buttons with preview/confirmation |
-| `/area manage` | Add or safely remove multiple Game Areas |
+| `/area manage` | Legacy area inspection/removal; new area creation is disabled |
 | `/game-admin create`, `/game-admin rename`, `/game-admin delete` | Administer game-library entries |
-| `/game-admin add-area`, `/game-admin remove-area`, `/game-admin setup` | Manage optional game areas |
+| `/server manage` → Games | Library, optional single channels and threshold candidates |
+| `/server dev` → Legacy Game Migration | Preview moving an existing chat, preserving its ID/history |
 | `/game-admin recover-existing`, `/game-admin set-visible` | Recover existing mappings or change selection visibility |
 | `/game-admin overview`, `/game-admin status`, `/game-admin database` | Refresh the selector or inspect game/database state |
 

@@ -22,16 +22,16 @@ owner's first-time wizard (with advanced rerun after completion); `/server dev`
 contains owner-only technical tools. Legacy technical commands below remain for
 compatibility. See [operations](PRODUCTION_OPERATIONS.md).
 
-- `/server manage` — Owner/admin: structure, roles, integrations, managed messages, features and private Server Log.
-- `/server dev` — Owner only: Health, Reconcile, Repair, Duplicate Scan, Production Doctor CLI guidance, Resource Mappings and Raw Diagnostics.
+- `/server manage` — Owner/admin: structure, roles, integrations, managed messages, Games, features and private Server Log. Games offers the library, channels, candidates and suggestion guidance.
+- `/server dev` — Owner only: Health, Reconcile, Repair, Duplicate Scan, Production Doctor CLI guidance, Resource Mappings, Raw Diagnostics and Legacy Game Migration.
 - `/deals import-gocdkeys` — Owner/admin: choose promotion_type AUTO (default), DEAL or GIVEAWAY; paste 1–10 partner links into the modal, review paginated results, optionally Edit Titles/notes, then Post New Promotions or Cancel. URL duplicates and existing delivery claims are skipped. See [manual import](GOCDKEYS.md#manual-batch-import).
 
 - `/deals create` — Owner/admin: select Amazon, Instant Gaming, GoCDKeys or Other; enter prices and a verified product/affiliate URL; Preview → Post Deal / Edit / Cancel. Optional image URL; promotion_type DEAL (default) targets gaming-deals, GIVEAWAY targets giveaways and offers optional prize/end date/note instead of prices. See [curated deals](DEALS.md).
 
 - `/deals backfill` — Owner/admin: currently unavailable; automatic GoCDKeys access is unsupported (HTTP 403). No history processing or posts. Use verified manual links via `/deals create`.
 
-- `/area manage` — Add or safely remove multiple Game Areas.
-- `/game-admin add-area` — Admin: create or restore a dedicated Discord area for a library game.
+- `/area manage` — Legacy inspection and confirmed cleanup; new multi-channel creation is disabled.
+- `/game-admin add-area` — Deprecated; use Server Management → Games → Create Game Channel. Old confirmations cannot create an area.
 - `/game-admin create` — Admin: create a new Game Library entry and its game role.
 - `/game-admin database` — Admin: show the runtime GamerHQ database path and Game Library counts.
 - `/game-admin delete` — Admin: permanently delete a library game and role after its area is safely removed.
@@ -40,7 +40,7 @@ compatibility. See [operations](PRODUCTION_OPERATIONS.md).
 - `/game-admin remove-area` — Admin: remove only a game's dedicated Discord area.
 - `/game-admin rename` — Admin: safely rename an existing GamerHQ game.
 - `/game-admin set-visible` — Admin: show/hide a library game in Choose Your Games without changing its area.
-- `/game-admin setup` — Admin: inspect/reconcile Discord areas enabled in the Game Library.
+- `/game-admin setup` — Legacy area inspection; new area creation is disabled. Use Games for optional single channels.
 - `/game-admin status` — Admin: inspect one game's DB state and linked Discord resources.
 - `/server adopt channel:<managed channel> aspect:<name|category|position|all>` — Owner/admin: compare current Discord layout with desired state, then explicitly confirm selected properties. Initial scope: Support GamerHQ and the six public Marketplace channels. Permissions are not imported. See [desired state and adoption](SERVER_STRUCTURE.md#explicit-channel-adoption).
 - `/server cleanup-game-areas` — Owner/admin: preview unused managed game areas before confirming cleanup.
@@ -89,3 +89,20 @@ selection. Main controls survive restart; unfinished drafts do not. See
 For maintainers, [authorization and recovery boundaries](SECURITY_MODEL.md) classify all command groups and their component actions.
 
 `/server message-duplicates` — owner/admin-only global audit of registered canonical boards; optional `managed_key:<key>` restricts it to one board. Review candidates and the mapping/fingerprint recommendation, then explicitly Keep A / Remove B, Keep B / Remove A, Skip or Cancel. Every removal revalidates identity, authorization and runtime references. Keys and limitations: [database reconciliation](DATABASE_MIGRATION.md).
+
+## Personal games and channel decisions
+
+Choose Your Games → Select Games opens a private panel: Popular Top 25 (current
+cached role-member counts, alphabetical ties), all selectable games under A–Z,
+and immediate add/remove choices. There is no Save step and no LFG Notifications
+button on that board. `/game select` retains its quick single-game confirmation;
+`/game suggest` and separate notification preferences remain available.
+
+Server Management → Games → Create Game Channel works below the member threshold.
+Review the destination/access before confirmation; at the soft limit choose
+**Create Anyway** explicitly. Removal has its own preview and confirmation and
+preserves the game, role and selection. Games-log candidates offer Create Channel
+or Ignore. Ignored/created candidates are not posted repeatedly.
+
+Owner Server Dev → Legacy Game Migration previews reusing the recorded chat ID.
+Old LFG/create-voice channels and categories remain for separate reviewed cleanup.

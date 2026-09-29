@@ -69,10 +69,19 @@ def definitions(guild):
         if db.get_setting(stored_key):
             result.append(dict(key=stored_key, kind='text', name=name, label=label, aliases={name}, parent=None,
                                private=not (config.STREAMER_HUB_ENABLED and name == 'stream-updates'), existing_only=True))
+    from services.game_channel_service import slug
+    for game in sorted(db.get_all_games(), key=lambda g: g['name'].casefold()):
+        if game.get('channel_id'):
+            result.append(dict(key=f'game_channel:{game["id"]}', kind='text', name=slug(game['name']),
+                label=slug(game['name']), aliases=set(), parent=f'managed_category:{guild.id}:gaming',
+                private=True, existing_only=True, game_id=game['id']))
     return result
 
 
 def mapped(row):
+    if row.get('game_id'):
+        game = db.get_game_by_id(row['game_id'])
+        return str(game['channel_id']) if game and game.get('channel_id') else None
     if row['kind'] == 'role':
         stored = db.get_managed_role_by_key('base', row['name'])
         return str(stored['role_id']) if stored else None
@@ -128,8 +137,19 @@ def display_name(guild, row):
 
 
 def rights(guild, row, resource):
+    if row.get('game_id'):
+        from services.game_channel_service import overwrites
+        from services.role_service import game_role
+        game = db.get_game_by_id(row['game_id'])
+        try:
+            if any(g['id'] != game['id'] and g.get('channel_id') == resource.id for g in db.get_all_games()):
+                raise ValueError('Shared game channel mapping')
+            role = game_role(guild, game['id'], game.get('role_id'), selectable_only=False)
+        except ValueError as exc:
+            raise ServerMessageError('Game role/channel ownership needs review; no permissions changed.') from exc
+        return overwrites(guild, role, resource)
     from services.channel_change_service import safe_rights
-    if row['name'] == 'server-log':
+    if row['name'] in {'server-log', 'games-log'}:
         from services.server_log_service import overwrites
         return overwrites(guild, resource)
     if row.get('existing_only'):
@@ -274,7 +294,8 @@ async def _scan(guild, bot, *, message_keys=None):
     known_channels = {r['resource'].id for r in rows if r['kind'] == 'text' and r['resource']}
     known_categories = {r['resource'].id: r['resource'] for r in rows if r['kind'] == 'category' and r['resource']}
     try:
-        plans = order_plans(guild, guild.channels) + [event_order(guild, guild.channels)]
+        from services.game_channel_service import order_plan
+        plans = order_plans(guild, guild.channels) + [event_order(guild, guild.channels)] + order_plan(guild)
         for current, ordered in plans:
             if not current or current[0].category_id not in known_categories: continue
             category = known_categories[current[0].category_id]
@@ -339,7 +360,7 @@ def needs_repair(guild, row):
     if row['kind'] in ('text', 'voice'):
         parent = target(guild, row)
         return ((parent and resource.category_id != parent.id) or rights(guild, row, resource) != resource.overwrites
-                or (not row.get('existing_only') and resource.name != display_name(guild, row)))
+                or ((not row.get('existing_only') or row.get('game_id')) and resource.name != display_name(guild, row)))
     if row['kind'] == 'category':
         return rights(guild, row, resource) != resource.overwrites
     if row['kind'] == 'bot-role':
@@ -359,6 +380,11 @@ async def preview(guild, actor, mode, bot=None):
 
 
 def persist(guild, row, resource):
+    if row.get('game_id'):
+        # Only an already persisted ID can be repaired; name discovery cannot adopt.
+        if mapped(row) != str(resource.id):
+            raise ServerMessageError('Game channel ownership changed; review Games.')
+        return
     key = row['key']
     if row['kind'] == 'role':
         db.upsert_managed_role(role_id=resource.id, role_kind='base', role_key=row['name'], role_group=row['group'])
@@ -503,7 +529,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     if not row['private'] and private(resource):
                         skipped.append(row['label'] + ': private resource retained'); continue
                     changes = dict(overwrites=rights(guild, row, resource))
-                    if not row.get('existing_only'): changes['name'] = display_name(guild, row)
+                    if not row.get('existing_only') or row.get('game_id'): changes['name'] = display_name(guild, row)
                     if parent and resource.category_id != parent.id: changes.update(category=parent, sync_permissions=False)
                     from services.channel_change_service import edit
                     await edit(resource, **changes, reason='Confirmed GamerHQ repair')

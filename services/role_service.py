@@ -18,9 +18,10 @@ def assignable(role, guild):
                 and role < guild.me.top_role)
 
 
-def game_role(guild, game_id, expected_role_id):
+def game_role(guild, game_id, expected_role_id, *, selectable_only=True):
     """Resolve only the reviewed, currently selectable game-access mapping."""
-    game = next((g for g in db.get_selectable_games() if g['id'] == game_id), None)
+    games = db.get_selectable_games() if selectable_only else db.get_all_games()
+    game = next((g for g in games if g['id'] == game_id), None)
     role = guild.get_role(int(game['role_id'])) if game and game.get('role_id') else None
     if not assignable(role, guild) or role.id != expected_role_id:
         raise ValueError('This game role changed or is unavailable. Reopen the selector or contact staff.')
@@ -53,6 +54,14 @@ async def set_game_selection(member, changes):
             await member.add_roles(*add, reason='GamerHQ confirmed game selection')
         if remove:
             await member.remove_roles(*remove, reason='GamerHQ confirmed game selection')
+        for game_id, expected_id, enabled, notification in changes:
+            if enabled and not notification:
+                from services.game_channel_service import check_threshold
+                role = member.guild.get_role(expected_id)
+                count = len(role.members) if role else 0
+                if role and role in add and member.id not in {m.id for m in role.members}:
+                    count += 1  # gateway cache may not yet contain this successful grant
+                await check_threshold(member.guild, game_id, count=count)
 
 
 def preference_role(guild, kind, key):

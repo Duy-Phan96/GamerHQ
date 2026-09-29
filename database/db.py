@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS games (
     area_enabled INTEGER NOT NULL DEFAULT 0,
     area_has_lfg INTEGER NOT NULL DEFAULT 1,
     role_id INTEGER,
+    channel_id INTEGER,
     category_id INTEGER,
     chat_channel_id INTEGER,
     memes_channel_id INTEGER,
@@ -156,6 +157,19 @@ CREATE TABLE IF NOT EXISTS games (
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS game_channel_candidates (
+    guild_id INTEGER NOT NULL,
+    game_id INTEGER NOT NULL,
+    threshold_reached_at INTEGER NOT NULL,
+    log_message_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    PRIMARY KEY (guild_id, game_id)
+);
+CREATE TABLE IF NOT EXISTS game_legacy_hints (
+    game_id INTEGER PRIMARY KEY,
+    resources_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS deleted_games (
@@ -344,6 +358,8 @@ def init_db():
 
         # V1 game model: library, selectable role and Discord area are independent.
         game_cols = {row["name"] for row in conn.execute("PRAGMA table_info(games)").fetchall()}
+        if "channel_id" not in game_cols:
+            conn.execute("ALTER TABLE games ADD COLUMN channel_id INTEGER")
         if "selectable" not in game_cols:
             conn.execute("ALTER TABLE games ADD COLUMN selectable INTEGER NOT NULL DEFAULT 0")
         if "area_enabled" not in game_cols:
@@ -442,6 +458,7 @@ def upsert_custom_game(name, emoji, display_group):
 def get_game_delete_dependencies(game_id):
     """Return references that must be resolved before permanent deletion."""
     with connect() as conn:
+        game_channels = conn.execute('SELECT COUNT(*) AS c FROM games WHERE id=? AND channel_id IS NOT NULL', (game_id,)).fetchone()['c']
         lfg_events = conn.execute(
             "SELECT COUNT(*) AS c FROM lfg_events WHERE game_id=?", (game_id,)
         ).fetchone()["c"]
@@ -452,6 +469,7 @@ def get_game_delete_dependencies(game_id):
             "SELECT COUNT(*) AS c FROM streamer_profiles WHERE main_game_id=?", (game_id,)
         ).fetchone()["c"]
     return {
+        "game_channels": int(game_channels),
         "lfg_events": int(lfg_events),
         "streamer_applications": int(streamer_apps),
         "streamer_profiles": int(streamer_profiles),
@@ -481,9 +499,14 @@ def delete_game_permanently(game_id):
 def get_selectable_games():
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM games WHERE selectable=1 ORDER BY display_group, name"
+            "SELECT * FROM games WHERE selectable=1 ORDER BY name COLLATE NOCASE"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_selector_games():
+    with connect() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM games WHERE active=1 AND selectable=1 AND role_id IS NOT NULL AND role_id!=0 ORDER BY name COLLATE NOCASE")]
 
 
 def get_area_games(*, lfg_only=False):
@@ -498,7 +521,7 @@ def get_area_games(*, lfg_only=False):
 
 def set_game_selectable(game_id, selectable: bool):
     with connect() as conn:
-        conn.execute("UPDATE games SET selectable=? WHERE id=?", (int(selectable), game_id))
+        conn.execute("UPDATE games SET selectable=?, active=CASE WHEN ? THEN 1 ELSE active END WHERE id=?", (int(selectable), int(selectable), game_id))
 
 
 def set_game_role(game_id, role_id):

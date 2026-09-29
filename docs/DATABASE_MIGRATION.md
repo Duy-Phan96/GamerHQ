@@ -5,7 +5,62 @@ The Windows DB and VPS DB are separate stores. Starting against a fresh DB loses
 knowledge of existing resources; Discord messages do not disappear. Historically,
 Giveaways had no recovery predicate and a missing message ID caused another post.
 
-## What must migrate
+## Games-scope recovery on copies
+
+For the empty game selector after VPS migration, keep production authoritative.
+Run the **games** scope against two private, consistent backup copies first:
+
+```powershell
+$sourceCopy = Read-Host 'Full path to the LOCAL database backup copy'
+$productionCopy = Read-Host 'Full path to the PRODUCTION database backup copy'
+.\.venv\Scripts\python.exe -m tools.compare_databases "$sourceCopy" "$productionCopy"
+.\.venv\Scripts\python.exe -m tools.import_database --scope games --source "$sourceCopy" --target "$productionCopy" --dry-run
+```
+
+Linux equivalent:
+
+```bash
+read -r -p 'Local database backup copy: ' source_copy
+read -r -p 'Production database backup copy: ' production_copy
+.venv/bin/python -m tools.compare_databases "$source_copy" "$production_copy"
+.venv/bin/python -m tools.import_database --scope games --source "$source_copy" --target "$production_copy" --dry-run
+```
+
+The source/target remain unchanged. The rehearsal stages a production copy and
+merges known game metadata, active/selectable flags and role IDs by unambiguous
+case-insensitive name, retaining target primary keys. New games receive target
+IDs. Deleted-game tombstones win. Conflicting duplicate role/name ownership stops
+the merge. Existing production role mappings (and their selection state), nullable
+canonical channel IDs, extra fields/tables/schema, settings and runtime records
+remain authoritative. Unknown required fields that cannot accept a new row stop
+the merge rather than inventing values. Stale Popular rankings are never imported.
+
+**Recover game metadata and game-role mappings. Treat game-area mappings as legacy
+migration hints only.** Source category/chat/LFG/create-voice IDs are recorded in
+`game_legacy_hints`, not restored to canonical `channel_id` or area fields. Existing
+target legacy fields remain untouched until a separate reviewed Discord migration.
+See [game lifecycle](GAME_SYSTEM.md).
+
+The synthetic regression fixture reproduces source 65 games / 61 active / 48
+selectable / 64 roles / 12 legacy areas against target 60 hidden games without
+roles. It recovers 65 games and 48 selector entries while preserving production-only
+schema/settings. This is offline evidence, not a comparison of private live files.
+
+Review the counts and exact comparison token before an optional **copy-only** apply:
+
+```powershell
+$reviewToken = Read-Host 'Exact token from the reviewed dry-run'
+$backupCopy = Read-Host 'New backup filename for the production COPY'
+.\.venv\Scripts\python.exe -m tools.import_database --scope games --source "$sourceCopy" --target "$productionCopy" --apply --bots-stopped --backup "$backupCopy" --confirm-comparison "$reviewToken"
+```
+
+Apply requires the token even when differences appear small, stopped bots, a new
+verified backup and no SQLite sidecars. Changed snapshots invalidate the review.
+It replaces the target with the staged **production-based merged copy**, never the
+whole source DB. No Discord connection is made. Review this result before planning
+any live recovery or deployment; do not point the first trial at the runtime DB.
+
+## Whole-store transfer (separate operation)
 
 When the source has been reviewed as authoritative, transfer the **whole verified
 SQLite snapshot**, not isolated ID rows. Compare first; a richer catalog does not
@@ -17,7 +72,7 @@ The schema audit below describes tables only; no live database content was read.
 | `settings` | Channel/category/message/pin IDs, layout/adoption, desired-state approvals, migration journals, cooldowns and feature configuration |
 | `managed_roles` | Base/profile/LFG role IDs and stable keys |
 | `managed_message_content`, `managed_message_audit` | Customized text/buttons, identity, hashes, delivery state, versions and audit |
-| `games`, `deleted_games` | Catalog choices, roles, optional area/category/channel IDs and deletion tombstones |
+| `games`, `deleted_games` | Catalog choices, roles, nullable canonical channel ID, legacy hints and deletion tombstones |
 | `lfg_events`, `lfg_event_members`, `lfg_event_messages`, `lfg_voice_notifications`, `lfg_time_proposals` | Public/private sessions, invitations/share tokens, participants, cards, voice and proposals |
 | `support_tickets`, `ticket_audit` | Private ticket content, ownership, channels/messages, state and actions |
 | `suggestions` | Private submissions, review state and Staff-message IDs |
@@ -29,7 +84,7 @@ The schema audit below describes tables only; no live database content was read.
 Protect snapshots like credentials. Keep them out of Git, reports and public
 chat. Copy `.env` separately and privately as needed; the import never changes it.
 
-**Divergent databases are not merged.** If tickets, LFG sessions, deals or other
+**Whole-store imports do not merge divergent databases.** The games scope above is the narrowly scoped exception. If tickets, LFG sessions, deals or other
 state were created on the VPS after cutover, replacing its DB with the old local
 snapshot would discard that newer state. Retain both snapshots and choose the
 authoritative store before applying an import. Prefer reconciling the current
@@ -45,7 +100,7 @@ deleted by reconciliation. Rescan after linking channels, review duplicate messa
 then preview common fixes. Owners can separately preview missing resources. Advanced
 diagnostics remain under `/server dev`. See the [canonical operations guide](PRODUCTION_OPERATIONS.md).
 
-Optional game areas and their roles retain the existing `/game-admin recover-existing` workflow; arbitrary resources cannot be inferred from names alone.
+Game roles can be recovered independently. Owner `/server dev` → Legacy Game Migration previews moving the stored old chat into GAMING. Old area IDs are hints; arbitrary resources cannot be inferred from names alone.
 
 The legacy shared fixed-message helper checks at most 100 pins and 100 recent
 history messages in the expected channel, with an extra item to detect truncation.
@@ -176,7 +231,7 @@ unknown extra tables survive. Catalog seeding is not run by the import.
 
 Stop here unless whole-store replacement has been explicitly approved. If the
 comparison finds production-only/changed state or a schema difference, retain
-production and review scoped recovery on copies by default. A whole-store import
+production and review `--scope games` recovery on copies by default for missing game state. A whole-store import
 discards those differences; it is not a merge. Only after accepting that specific
 loss, copy the exact review token from the current comparison. Changed snapshots
 invalidate it. The importer also holds the cooperative local instance lock;

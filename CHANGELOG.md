@@ -1,5 +1,11 @@
 # GamerHQ Changelog
 
+## Personal games and shared game channels
+
+- Choose Your Games opens personal Popular Top 25 / A–Z browsing with immediate role choices, independent of channel existence.
+- One shared GAMING category holds optional role-gated text channels; staff approve durable threshold candidates in games-log.
+- Preview legacy chat migration and recover game metadata/roles on production copies without replacing newer runtime state or reviving old areas.
+
 ## Server administration and production recovery
 
 - Use Server Management for structure, integrations, managed messages and features; first-time setup guides owners through reviewed changes.

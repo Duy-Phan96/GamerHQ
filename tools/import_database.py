@@ -1,4 +1,4 @@
-"""Offline, whole-database import. Never merges divergent installations."""
+"""Offline recovery: whole-store replacement or production-preserving games scope."""
 import argparse
 from contextlib import closing, nullcontext
 import os
@@ -50,7 +50,12 @@ def migrate_copy(source, destination):
                     raise ValueError('Migrated schema has incompatible columns')
 
 
-def import_database(source, target, *, backup=None, apply=False, bots_stopped=False, confirm_comparison=None):
+def import_database(source, target, *, backup=None, apply=False, bots_stopped=False, confirm_comparison=None, scope='all'):
+    if scope == 'games':
+        from tools.recover_games import recover
+        return recover(source, target, backup=backup, apply=apply, bots_stopped=bots_stopped, confirm_comparison=confirm_comparison)
+    if scope != 'all':
+        raise ValueError('Unknown import scope')
     source, target = Path(source).absolute(), Path(target).absolute()
     if source.is_symlink() or target.is_symlink() or source.resolve() == target.resolve():
         raise ValueError('Source and target must be distinct regular paths without symlinks')
@@ -110,6 +115,7 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--target', type=Path, required=True)
     parser.add_argument('--backup', type=Path)
+    parser.add_argument('--scope', choices=('all', 'games'), default='all', help='Use games for field-level catalog recovery preserving production state')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--dry-run', '--check', action='store_true', help='Explicit non-destructive compatibility and comparison mode (default)')
     parser.add_argument('--confirm-comparison', help='Exact reviewed comparison token; required when replacing divergent state')
@@ -119,7 +125,7 @@ def main():
         parser.error('--apply cannot be combined with --dry-run/--check')
     try:
         print(import_database(args.source, args.target, backup=args.backup, apply=args.apply,
-                              bots_stopped=args.bots_stopped, confirm_comparison=args.confirm_comparison))
+                              bots_stopped=args.bots_stopped, confirm_comparison=args.confirm_comparison, scope=args.scope))
     except (OSError, ValueError, sqlite3.Error, RuntimeError):
         print('Import refused: check compatibility, integrity, shutdown, backup destination and --confirm-comparison for divergent state. Run --dry-run again. No private values printed.')
         return 1

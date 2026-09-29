@@ -10,7 +10,7 @@ import test_role_settings as role_fixtures
 import test_community_structure as suggestion_fixtures
 import test_voice_area as voice_fixtures
 import test_tickets as ticket_fixtures
-from cogs.games import ToggleGameView, GameRoleConfirmView, GameSelectionSession
+from cogs.games import ToggleGameView, GameRoleConfirmView, GameSelectionSession, NotificationSelectionSession
 from cogs import suggestions, server
 from services import role_service as roles, response_service as responses
 from services import server_setup_service as setup, temp_voice_service as voice, ticket_service as tickets
@@ -84,23 +84,17 @@ class GameRoleSecurityTests(unittest.IsolatedAsyncioTestCase):
             return self.member
         self.guild.fetch_member.side_effect = changed
         session = GameSelectionSession(self.member, [self.game])
-        session.pending_ids.add(self.game['id'])
-        await session.confirm_selection(self.interaction())
+        await session.toggle(self.interaction(), self.game['id'])
         self.member.add_roles.assert_not_awaited()
 
-    async def test_large_selection_confirmation_fits_discord_utf16_limit(self):
-        session = GameSelectionSession(self.member, [self.game])
-        session.games = [dict(id=i, name='🎮' * 100) for i in range(1, 21)]
-        session.pending_ids = set(range(1, 21))
-        interaction = self.interaction()
-        with patch('cogs.games.set_game_selection', new_callable=AsyncMock):
-            await session.confirm_selection(interaction)
-        content = interaction.edit_original_response.call_args.kwargs['content']
-        self.assertLessEqual(len(content.encode('utf-16-le')) // 2, 2000)
-        self.assertIn('20 game(s)', content)
+    async def test_personal_panel_fits_discord_utf16_limit(self):
+        games = [dict(self.game, id=i, name='🎮' * 100) for i in range(1, 121)]
+        session = GameSelectionSession(self.member, games)
+        self.assertLessEqual(len(session.status_text().encode('utf-16-le')) // 2, 2000)
+        self.assertLessEqual(max(len(c.options) for c in session.children if isinstance(c, discord.ui.Select)), 25)
 
     async def test_notification_mapping_changed_after_preview_denied(self):
-        session = GameSelectionSession(self.member, [self.game], notifications=True)
+        session = NotificationSelectionSession(self.member, [self.game], notifications=True)
         session.pending_ids.add(self.game['id'])
         role = await self.guild.create_role(name='Replacement notifications')
         db.upsert_managed_role(role_id=role.id, role_kind='lfg', role_key=str(self.game['id']))

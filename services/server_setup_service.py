@@ -23,6 +23,7 @@ class CategorySpec:
 
 
 SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
+    CategorySpec("🎮 GAMING", (), private=True),
     CategorySpec(
         "👋 START HERE",
         (
@@ -68,6 +69,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
             ChannelSpec("🎫・ticket-logs"),
             ChannelSpec("🚨・mod-log"),
             ChannelSpec("📜・server-log"),
+            ChannelSpec("🎮・games-log"),
             ChannelSpec("🤖・bot-log"),
             ChannelSpec("🛠️・mod-commands"),
         ),

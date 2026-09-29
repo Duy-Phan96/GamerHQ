@@ -73,7 +73,7 @@ is the external resource/rendering surface. Resource IDs live in settings and
 feature tables; name fallback policies differ by feature. See
 [identity/repair contracts](SERVER_STRUCTURE.md), including the legacy exceptions.
 
-A game record/role is independent of an optional Game Area. LFG cards render
+A game record/role is independent of its nullable `games.channel_id`. Dedicated text channels share one managed GAMING category; old category/chat/LFG/create-voice fields are deprecated migration evidence. LFG cards render
 transactional event/member state. Ticket storage holds metadata/state/private
 IDs; closure keeps Discord history and locks posting, with no implemented
 automatic transcript export. Suggestions and streamer resources have their own
@@ -204,3 +204,21 @@ Read-only board modes remain in `onboarding_service`; feature helpers retain the
 Discord health/Refresh use fast DB/config/gateway-cache checks; Details explicitly runs deeper message/recovery checks. Infrastructure checks remain in `tools.production_doctor`. Member interactions never invoke these global scans.
 
 The shared `server_service` delegates read-only candidate discovery and confirmed duplicate cleanup to `message_reconciliation`, retaining existing settings, managed-content locks and audit storage. Missing/stale IDs use exact canonical or feature-provided legacy fingerprints; ambiguity blocks writes, and incomplete history scans block new adoption/creation while validated stored IDs remain usable. Giveaways/Tournaments use their existing keys and shared default renderer. The import tool rehearses normal additive migrations on a snapshot, verifies schema version/columns and requires a verified backup and explicit stopped-bot attestation before replacement. [Runtime table inventory, limitations and procedures](DATABASE_MIGRATION.md).
+
+## Personal games and optional channels
+
+`cogs/game_selector.py` renders an actor-bound ephemeral panel. It reads the active,
+selectable, role-linked catalog once; `game_catalog_service` counts membership in
+one pass over the guild cache and builds Popular plus A–Z. `role_service` retains
+fresh single-member reads, serialized desired-state writes and mapping/hierarchy
+checks. Public messages never contain individual selection state.
+
+`game_channel_service` owns preview/confirmation, permissions, the shared category,
+alphabetical ordering and durable `game_channel_candidates`. `cogs/game_channels.py`
+exposes these through Server Management and persistent candidate controls. Creation
+reserves an operation before sending to Discord; uncertain delivery remains for
+owner review. Existing IDs are repaired through `server_operations`, with no name
+adoption or implicit recreation of missing game channels. Legacy chat migration
+moves the stored channel and retains other resource IDs in `game_legacy_hints`.
+`tools.import_database --scope games` starts from a production copy and merges only
+known game fields; it never promotes legacy areas to canonical channel mappings.
