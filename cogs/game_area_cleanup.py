@@ -24,7 +24,7 @@ class CleanupPreview(discord.ui.View):
                 await interaction.response.edit_message(
                     content=f"**Delete the area for {row['game']['name']}?**\nCategory: <#{row['game']['category_id']}>\n"
                             f"Channels: {len(row['children'])}\nHidden/inactive, no events or temporary resources.\n"
-                            "Channel message history is permanently deleted. Game record and role are kept.\n"
+                            "Channel message history is permanently deleted. Game record, role, selector state and any migrated GAMES channel are kept.\n"
                             "Conditions will be checked again immediately before each deletion.",
                     view=CleanupConfirm(self.guild, self.actor_id, row))
             select.callback = selected
@@ -35,7 +35,7 @@ class CleanupPreview(discord.ui.View):
     def content(self):
         lines = ['# GAME AREA CLEANUP PREVIEW', 'Select a safe candidate, then review and confirm. No deletion happens on this screen.', '']
         for row in self.rows[self.page * 10:(self.page + 1) * 10]:
-            label = 'Candidate' if row['safe'] else 'Keep'
+            label = ('Legacy Candidate' if row.get('legacy') else 'Candidate') if row['safe'] else 'Keep'
             lines.append(f"**{label}: {discord.utils.escape_markdown(row['game']['name'])[:80]}** — {'; '.join(row['reasons'])[:110]}")
         lines.append(f"\nKeep: {len(self.unknown)} unlinked categories — not confidently GamerHQ game areas.")
         lines.append(f'Page {self.page + 1}/{max(1, (len(self.rows) + 9) // 10)}')
