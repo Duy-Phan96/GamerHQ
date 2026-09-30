@@ -126,6 +126,22 @@ class StructureAdoptionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await upsert_fixed_message(channel, setting_key=key, content='Managed guide'))
         self.assertEqual(channel.sends, sends)
 
+    async def test_owner_log_can_restore_deleted_optional_channel_as_replacement(self):
+        channel = community.core_channel(self.guild, 'suggestions')
+        old_id = channel.id
+        self.guild.text_channels.remove(channel)
+        with patch('services.structure_adoption_service.asyncio.sleep', new=AsyncMock()):
+            self.assertTrue(await runtime.observe_channel_delete(channel, actor_id=self.owner.id))
+        change = runtime.recent_changes(self.guild, 1)[0]
+        self.assertEqual(change['action'], 'channel_delete')
+
+        from services import resource_restore_service as restore
+        draft = restore.preview(self.guild, self.owner, 'suggestions')
+        replacement = await restore.restore(self.guild, self.owner, draft)
+        self.assertNotEqual(replacement.id, old_id)
+        self.assertEqual(db.get_setting(f'managed_channel_removed:{self.guild.id}:suggestions'), '0')
+        self.assertEqual(db.get_setting(f'managed_channel:{self.guild.id}:suggestions'), str(replacement.id))
+
     def test_owner_change_log_permissions_deny_normal_staff(self):
         rights = owner_changelog.owner_rights(self.guild)
         self.assertFalse(rights[self.guild.default_role].view_channel)

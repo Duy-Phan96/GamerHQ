@@ -169,8 +169,9 @@ async def migrate_boards(guild, changed, failed):
             category=games, sync_permissions=False, reason='GamerHQ shared gaming chat location'
         )
         changed.append('Moved gaming-chat → GAMES')
-    await set_writable(channels['gaming-chat'])
-    db.set_setting(resource_key(guild, 'gaming-chat'), channels['gaming-chat'].id)
+    if channels['gaming-chat']:
+        await set_writable(channels['gaming-chat'])
+        db.set_setting(resource_key(guild, 'gaming-chat'), channels['gaming-chat'].id)
 
     for name, target in [('guide', start), ('suggestions', community), ('community-events', events)]:
         channel = channels[name]

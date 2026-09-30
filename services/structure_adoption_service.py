@@ -493,7 +493,10 @@ async def undo_change(guild, owner, change_id: int):
         before, after = change["before"], change["after"]
         if change["action"] == "channel_update":
             channel = guild.get_channel(int(change["resource_id"]))
-            if not isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
+            known_channels = list(getattr(guild, "text_channels", [])) + list(getattr(guild, "voice_channels", []))
+            if channel is None:
+                channel = next((item for item in known_channels if item.id == int(change["resource_id"])), None)
+            if channel is None or (known_channels and channel not in known_channels):
                 raise ValueError("The channel no longer exists; Undo cannot restore its history.")
             current = snapshot_channel(channel)
             for field in ("name", "category_id", "position"):

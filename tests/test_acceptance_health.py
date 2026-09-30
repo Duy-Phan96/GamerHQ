@@ -1,5 +1,6 @@
 """Failure/recovery acceptance tests with temporary SQLite and stateful Discord fakes."""
 import asyncio
+import copy
 import time
 import unittest
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ import test_community_structure as suggestions_fixture
 import test_lobby_management as lobby_fixture
 import test_music_cleanup as music_fixture
 from database import db
-from services import health_service as health, community_structure_service as structure, lobby_service as lobby
+from services import health_service as health, community_structure_service as structure, lobby_service as lobby, structure_adoption_service as runtime
 from services.server_setup_service import repair_server
 from cogs import suggestions
 from cogs.server import ServerAdmin
@@ -63,18 +64,21 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         await support.sync_support_messages(self.guild, order=True)
         self.assertEqual(sorted(partners.text_channels, key=lambda c: (c.position, c.id))[0], news)
 
-    async def test_renamed_guide_deleted_pin_repaired_without_duplicates(self):
+    async def test_adopted_guide_rename_survives_repair_while_unobserved_missing_pin_is_restored(self):
         guide=structure.core_channel(self.guild,'guide')
         old_id=guide.id
+        before=copy.copy(guide)
+        before.overwrites=dict(guide.overwrites)
         guide.name='my-renamed-guide'
+        await runtime.observe_channel_update(before, guide, actor_id=getattr(self.guild, 'owner_id', None))
         for message in list(guide.messages.values()): await message.delete()
         findings=await health.scan(self.guild)
-        self.assertTrue(any(f.name=='guide' and f.state=='REPAIRABLE' for f in findings))
+        self.assertTrue(any(f.name=='guide' and f.state=='PASS' for f in findings))
         self.assertTrue(any(f.name=='guide pin' and f.state=='REPAIRABLE' for f in findings))
         unknown=self.guild.add_channel('personal-notes',self.community)
         await repair_server(self.guild,self.bot)
         await repair_server(self.guild,self.bot)
-        self.assertEqual(guide.id,old_id); self.assertEqual(guide.name,'📘・guide')
+        self.assertEqual(guide.id,old_id); self.assertEqual(guide.name,'my-renamed-guide')
         self.assertEqual(len(guide.messages),1)
         self.assertEqual(unknown.edits,[])
 

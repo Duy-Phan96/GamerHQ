@@ -14,8 +14,13 @@ from services import structure_adoption_service as runtime
 
 class GameSystemMigrationTests(unittest.IsolatedAsyncioTestCase):
     setUp = game_fixtures.ChannelTests.setUp
-    asyncSetUp = game_fixtures.ChannelTests.asyncSetUp
     make_game = game_fixtures.ChannelTests.make_game
+
+    async def asyncSetUp(self):
+        await game_fixtures.ChannelTests.asyncSetUp(self)
+        runtime._expected_deletes.clear()
+        runtime._locks.clear()
+
     create = game_fixtures.ChannelTests.create
 
     async def legacy(self, game, *, unknown=False):

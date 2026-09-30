@@ -100,14 +100,21 @@ def render(guild):
     for row in rows:
         actor = f"<@{row['actor_id']}>" if row.get("actor_id") else "actor unknown"
         undo = " · Undo available" if row["reversible"] and row["status"] == "APPLIED" else ""
+        if row["action"] == "channel_delete" and row["status"] == "APPLIED":
+            try:
+                from services.resource_restore_service import removed_names
+                if row["logical_key"] in removed_names(guild):
+                    undo = " · Restore replacement available"
+            except Exception:
+                pass
         lines.append(
             f"**{label(row)}**\n"
             f"{row['resource_type']} · {row['logical_key']} · {row['status']}{undo}\n"
             f"{actor} · <t:{row['created_at']}:R>"
         )
     lines.append(
-        "\nUse Review / Undo for details. Deleted channels/categories cannot recover Discord history; "
-        "explicit restore is handled separately."
+        "\nUse Review / Undo for details. Safe renames/moves and managed-message deletions can be undone. "
+        "A deleted optional channel can create a replacement, but deleted Discord history cannot be recovered."
     )
     return "\n\n".join(lines)[:1950]
 
@@ -238,6 +245,40 @@ class Undo(OwnerSession):
 
         button.callback = callback
         self.add_item(button)
+
+        if change["action"] == "channel_delete" and change["status"] == "APPLIED":
+            restore_button = discord.ui.Button(
+                label="Restore Replacement", emoji="♻️", style=discord.ButtonStyle.secondary,
+            )
+
+            async def restore_callback(interaction):
+                if not await self.interaction_check(interaction):
+                    return
+                await interaction.response.defer(ephemeral=True)
+                try:
+                    from services import resource_restore_service as restore_service
+                    draft = restore_service.preview(interaction.guild, interaction.user, change["logical_key"])
+                    resource = await restore_service.restore(interaction.guild, interaction.user, draft)
+                    now = int(__import__("time").time())
+                    with db.connect() as conn:
+                        conn.execute(
+                            "UPDATE structure_change_log SET status='RESTORED',undone_at=?,undone_by=? "
+                            "WHERE guild_id=? AND id=? AND status='APPLIED'",
+                            (now, interaction.user.id, interaction.guild.id, self.change_id),
+                        )
+                    await refresh_board(interaction.guild)
+                    await interaction.edit_original_response(
+                        content=(
+                            f"✅ Replacement restored: {resource.mention}\n"
+                            "The deleted Discord channel's old message history cannot be recovered."
+                        ),
+                        view=None,
+                    )
+                except (ValueError, discord.HTTPException) as exc:
+                    await interaction.edit_original_response(content=str(exc), view=None)
+
+            restore_button.callback = restore_callback
+            self.add_item(restore_button)
 
 
 async def open_management(interaction):
