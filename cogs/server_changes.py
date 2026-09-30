@@ -121,13 +121,35 @@ class ServerChanges(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_channel_update(self, before, after):
-        if isinstance(after, discord.TextChannel):
-            await changes.detect(before, after, self.notify)
+        from services import structure_adoption_service as structure
+        actor_id = await structure.audit_actor(after.guild, after.id, discord.AuditLogAction.channel_update)
+        if isinstance(after, discord.CategoryChannel):
+            await structure.observe_category_update(before, after, actor_id=actor_id)
+            return
+        if isinstance(after, (discord.TextChannel, discord.VoiceChannel)):
+            outcome = await structure.observe_channel_update(before, after, actor_id=actor_id)
+            # Permission changes keep the stricter existing review/repair path.
+            if isinstance(after, discord.TextChannel) and outcome.get('permissions_changed') and changes.identify(after.guild, after.id):
+                await changes.detect(before, after, self.notify)
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel):
-        if isinstance(channel, discord.TextChannel):
-            await changes.detect(channel, None, self.notify, deleted=True)
+        from services import structure_adoption_service as structure
+        actor_id = await structure.audit_actor(channel.guild, channel.id, discord.AuditLogAction.channel_delete)
+        if isinstance(channel, discord.CategoryChannel):
+            await structure.observe_category_delete(channel, actor_id=actor_id)
+        elif isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
+            await structure.observe_channel_delete(channel, actor_id=actor_id)
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload):
+        if payload.guild_id is None:
+            return
+        guild = self.bot.get_guild(payload.guild_id)
+        if guild is None:
+            return
+        from services import structure_adoption_service as structure
+        await structure.observe_managed_message_delete(guild, payload.channel_id, payload.message_id)
 
     async def notify(self, guild, record):
         key = (guild.id, record['resource_id'])
