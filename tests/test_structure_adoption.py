@@ -145,7 +145,8 @@ class StructureAdoptionTests(unittest.IsolatedAsyncioTestCase):
     def test_owner_change_log_permissions_deny_normal_staff(self):
         rights = owner_changelog.owner_rights(self.guild)
         self.assertFalse(rights[self.guild.default_role].view_channel)
-        self.assertFalse(rights[self.guild.mod].view_channel)
+        self.assertNotIn(self.guild.mod, rights)  # @everyone deny; no per-role grant or redundant deny.
+        self.assertEqual(len(rights), 3)
         self.assertTrue(rights[self.owner].view_channel)
         self.assertTrue(rights[self.guild.me].view_channel)
 

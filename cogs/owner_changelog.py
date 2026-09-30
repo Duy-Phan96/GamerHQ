@@ -1,7 +1,8 @@
-"""Owner-only STAFF change history and Undo controls."""
+"""Owner-only change details and Undo, behind a non-sensitive STAFF launcher."""
 from __future__ import annotations
 
 import asyncio
+import time
 
 import discord
 from discord.ext import commands
@@ -9,12 +10,14 @@ from discord.ext import commands
 from database import db
 from services.onboarding_service import alias
 from services.response_service import SafeView
+from services.server_service import ServerMessageError
 from services import structure_adoption_service as structure
 
 NAME = "owner-changelog"
 LABEL = "🕘・owner-changelog"
 HEADER = "# 🕘 Owner Change Log"
 _locks = {}
+_setup_locks = {}
 
 
 def key(guild):
@@ -26,25 +29,31 @@ def board_key(guild):
 
 
 def owner_rights(guild, resource=None):
-    result = {target: discord.PermissionOverwrite.from_pair(*value.pair())
-              for target, value in getattr(resource, "overwrites", {}).items()}
-    for target in set(result) | set(guild.roles):
-        value = result.setdefault(target, discord.PermissionOverwrite())
-        value.view_channel = False
-        value.send_messages = False
-        value.read_message_history = False
-    result[guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+    """Replace this feature's ACL with at most three overwrites, not one per role.
+
+    Explicit child overwrites replace inherited STAFF grants. No unrelated
+    resource or guild role is changed. Administrator still bypasses Discord ACLs;
+    the channel therefore contains only a launcher, never the change history.
+    """
+    if guild.me is None:
+        raise ValueError("Bot membership is unavailable; retry after startup.")
+    result = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False, read_message_history=False, send_messages=False,
+            create_public_threads=False, create_private_threads=False,
+            send_messages_in_threads=False,
+        ),
+    }
     owner = guild.get_member(guild.owner_id)
     if owner:
         result[owner] = discord.PermissionOverwrite(
             view_channel=True, read_message_history=True, send_messages=False,
             use_application_commands=True,
         )
-    if guild.me:
-        result[guild.me] = discord.PermissionOverwrite(
-            view_channel=True, read_message_history=True, send_messages=True,
-            manage_messages=True, embed_links=True,
-        )
+    result[guild.me] = discord.PermissionOverwrite(
+        view_channel=True, read_message_history=True, send_messages=True,
+        manage_messages=True, embed_links=True,
+    )
     return result
 
 
@@ -64,7 +73,7 @@ def staff_category(guild):
 def destination(guild):
     raw = db.get_setting(key(guild))
     channel = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
-    if not isinstance(channel, discord.TextChannel):
+    if not isinstance(channel, discord.TextChannel) or guild.me is None:
         return None
     try:
         parent = staff_category(guild)
@@ -75,7 +84,14 @@ def destination(guild):
     owner = guild.get_member(guild.owner_id)
     if channel.overwrites_for(guild.default_role).view_channel is not False:
         return None
+    allowed_ids = {guild.owner_id, guild.me.id}
+    if any(value.view_channel is True and target.id not in allowed_ids
+           for target, value in channel.overwrites.items()):
+        return None
     if owner and not channel.permissions_for(owner).view_channel:
+        return None
+    permissions = channel.permissions_for(guild.me)
+    if not (permissions.view_channel and permissions.send_messages and permissions.read_message_history):
         return None
     return channel
 
@@ -93,30 +109,16 @@ def label(change):
 
 
 def render(guild):
-    rows = structure.recent_changes(guild, 12)
-    lines = [HEADER, "Only the server owner can read or undo changes here.", ""]
-    if not rows:
-        lines.append("✅ No tracked Discord structure changes yet.")
-    for row in rows:
-        actor = f"<@{row['actor_id']}>" if row.get("actor_id") else "actor unknown"
-        undo = " · Undo available" if row["reversible"] and row["status"] == "APPLIED" else ""
-        if row["action"] == "channel_delete" and row["status"] == "APPLIED":
-            try:
-                from services.resource_restore_service import removed_names
-                if row["logical_key"] in removed_names(guild):
-                    undo = " · Restore replacement available"
-            except Exception:
-                pass
-        lines.append(
-            f"**{label(row)}**\n"
-            f"{row['resource_type']} · {row['logical_key']} · {row['status']}{undo}\n"
-            f"{actor} · <t:{row['created_at']}:R>"
-        )
-    lines.append(
-        "\nUse Review / Undo for details. Safe renames/moves and managed-message deletions can be undone. "
-        "A deleted optional channel can create a replacement, but deleted Discord history cannot be recovered."
+    # A server Administrator can read any guild channel despite deny overwrites.
+    # Keep all history (including actors/resource names) in owner-only responses.
+    return (
+        HEADER + "\n\nOpen **Review / Undo** to view your private change history. "
+        "Details and Undo controls are shown only to the current server owner.\n\n"
+        "Discord Administrators can see this launcher because Administrator bypasses "
+        "channel restrictions; they cannot open the history or use these controls.\n\n"
+        "Safe changes can be undone after review. Restoring a deleted channel creates "
+        "a replacement; deleted Discord message history cannot be recovered."
     )
-    return "\n\n".join(lines)[:1950]
 
 
 async def refresh_board(guild, *, publish=False):
@@ -288,12 +290,19 @@ async def open_management(interaction):
         )
     try:
         parent = staff_category(interaction.guild)
+        if interaction.guild.me is None:
+            raise ValueError("Bot membership is unavailable; retry after startup.")
+        raw = db.get_setting(key(interaction.guild))
+        current = interaction.guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+        if raw and not isinstance(current, discord.TextChannel):
+            raise ValueError("The saved Owner Change Log channel is unavailable. Review its mapping; no duplicate was created.")
     except ValueError as exc:
         return await interaction.response.send_message(str(exc), ephemeral=True)
-    current = destination(interaction.guild)
     await interaction.response.send_message(
         f"{HEADER}\nCreate or repair **{LABEL}** under **{parent.name}**? "
-        "Only you and GamerHQ will be able to read it.",
+        "Normal members and staff cannot read the channel. Discord Administrators can see "
+        "the launcher, but change details and actions are only shown to you privately. "
+        "This replaces this channel's access entries with a compact owner/bot allowlist; server roles are unchanged.",
         view=Setup(interaction.guild.id, interaction.user.id, parent.id, current.id if current else None),
         ephemeral=True,
     )
@@ -303,46 +312,72 @@ class Setup(OwnerSession):
     def __init__(self, guild_id, owner_id, parent_id, current_id):
         super().__init__(guild_id, owner_id, timeout=120)
         self.parent_id, self.current_id = parent_id, current_id
+        self.used, self.expires = False, time.monotonic() + 120
 
     @discord.ui.button(label="Confirm Owner Log", style=discord.ButtonStyle.success)
     async def confirm(self, interaction, button):
         if not await self.interaction_check(interaction):
             return
+        if self.used or time.monotonic() > self.expires:
+            return await interaction.response.send_message("This setup review expired or was used. Open a new review.", ephemeral=True)
+        self.used = True
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         try:
-            parent = staff_category(guild)
-            if parent.id != self.parent_id:
-                raise ValueError("STAFF changed. Reopen this setup.")
-            current = guild.get_channel(self.current_id) if self.current_id else None
-            if current is not None and not isinstance(current, discord.TextChannel):
-                raise ValueError("Stored Owner Change Log mapping is invalid.")
-            if current is None:
-                matches = [c for c in guild.text_channels if alias(c.name) == NAME]
-                if matches:
-                    raise ValueError(
-                        "An unmapped owner-changelog channel already exists. Review it before creating another."
+            async with _setup_locks.setdefault(guild.id, asyncio.Lock()):
+                if interaction.user.id != guild.owner_id:
+                    raise ValueError("Server ownership changed. Reopen setup as the current owner.")
+                raw = db.get_setting(key(guild))
+                if str(raw or "") != str(self.current_id or ""):
+                    raise ValueError("The saved channel changed. Reopen setup; no duplicate was created.")
+                parent = staff_category(guild)
+                if parent.id != self.parent_id:
+                    raise ValueError("STAFF changed. Reopen this setup.")
+                current = guild.get_channel(self.current_id) if self.current_id else None
+                if self.current_id and not isinstance(current, discord.TextChannel):
+                    raise ValueError("The saved channel disappeared. Review its mapping; no replacement was created.")
+                if current is None:
+                    matches = [c for c in guild.text_channels if alias(c.name) == NAME]
+                    if matches:
+                        raise ValueError("An unmapped owner-changelog channel already exists. Review it before creating another.")
+                    rights = owner_rights(guild)
+                    reservation = f"owner_changelog_creation:{guild.id}"
+                    with db.connect() as conn:
+                        if not conn.execute('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)', (reservation, 'reserved')).rowcount:
+                            raise ValueError("A previous creation needs review. No duplicate was created.")
+                    try:
+                        current = await guild.create_text_channel(
+                            LABEL, category=parent, overwrites=rights,
+                            topic="Owner Change Log launcher. Change details and Undo are owner-only private responses.",
+                            reason="Confirmed GamerHQ owner change log setup",
+                        )
+                    except discord.HTTPException as exc:
+                        if exc.status in (400, 403):
+                            with db.connect() as conn:
+                                conn.execute('DELETE FROM settings WHERE key=?', (reservation,))
+                        raise
+                    db.set_setting(key(guild), current.id)
+                    with db.connect() as conn:
+                        conn.execute('DELETE FROM settings WHERE key=?', (reservation,))
+                else:
+                    updated = await current.edit(
+                        category=parent, sync_permissions=False,
+                        overwrites=owner_rights(guild, current),
+                        reason="Confirmed GamerHQ owner change log repair",
                     )
-                current = await guild.create_text_channel(
-                    LABEL, category=parent, overwrites=owner_rights(guild),
-                    topic="Owner-only GamerHQ structure history and safe Undo actions.",
-                    reason="Confirmed GamerHQ owner change log setup",
-                )
-            else:
-                updated = await current.edit(
-                    category=parent, sync_permissions=False,
-                    overwrites=owner_rights(guild, current),
-                    reason="Confirmed GamerHQ owner change log repair",
-                )
-                if updated is not None:
-                    current = updated
-            db.set_setting(key(guild), current.id)
-            await refresh_board(guild, publish=True)
-            await interaction.edit_original_response(
-                content=f"✅ Owner Change Log ready: {current.mention}", view=None
-            )
-        except (ValueError, discord.HTTPException) as exc:
-            await interaction.edit_original_response(content=str(exc), view=None)
+                    if updated is not None:
+                        current = updated
+                # create/edit can return before the gateway cache reflects it.
+                from services.server_operations import GuildSnapshot
+                snapshot = GuildSnapshot(guild, [c for c in guild.channels if c.id != current.id] + [current], guild.roles)
+                if not await refresh_board(snapshot, publish=True):
+                    raise ValueError("The channel was saved, but its private launcher needs review. Reopen Owner Change Log to retry the same channel.")
+            await interaction.edit_original_response(content=f"✅ Owner Change Log ready: {current.mention}", view=None)
+        except (ValueError, discord.HTTPException, ServerMessageError) as exc:
+            text = str(exc) if isinstance(exc, (ValueError, ServerMessageError)) else "Discord could not finish the Owner Change Log setup. Reopen the panel to review the saved state."
+            await interaction.edit_original_response(content=text, view=None)
+        finally:
+            self.stop()
 
 
 class OwnerChangeLog(commands.Cog):
