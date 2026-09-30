@@ -84,6 +84,8 @@ async def check_threshold(guild, game_id, *, count=None):
     game = db.get_game_by_id(game_id)
     if not game or not game['active'] or not game['selectable'] or game.get('channel_id'):
         return
+    if db.get_setting(f'game_channel_removed:{guild.id}:{game_id}') == '1':
+        return
     try:
         role = game_role(guild, game_id, game.get('role_id'))
     except ValueError:
@@ -214,7 +216,8 @@ async def apply(guild, actor, plan, *, override=False):
         role = game_role(guild, game_id, current['role'])
         if plan['action'] == 'migrate':
             dependencies(game_id, channel.id)
-            updated = await channel.edit(name=slug(plan['game']['name']), category=parent, overwrites=overwrites(guild, role, channel), reason='GamerHQ confirmed legacy chat migration')
+            from services.channel_change_service import edit as tracked_edit
+            updated = await tracked_edit(channel, name=slug(plan['game']['name']), category=parent, overwrites=overwrites(guild, role, channel), reason='GamerHQ confirmed legacy chat migration')
             if updated is not None:
                 channel = updated
         else:
@@ -232,6 +235,7 @@ async def apply(guild, actor, plan, *, override=False):
                 conn.execute('INSERT OR REPLACE INTO game_legacy_hints VALUES(?,?)', (game_id, json.dumps(plan['hints'])))
                 conn.execute('UPDATE games SET area_enabled=0, category_id=NULL, chat_channel_id=NULL, lfg_channel_id=NULL, clips_channel_id=NULL, memes_channel_id=NULL, create_voice_channel_id=NULL WHERE id=?', (game_id,))
             conn.execute("INSERT INTO game_channel_candidates(guild_id,game_id,threshold_reached_at,status) VALUES(?,?,?,'CREATED') ON CONFLICT(guild_id,game_id) DO UPDATE SET status='CREATED'", (guild.id, game_id, int(time.time())))
+            conn.execute('DELETE FROM settings WHERE key=?', (f'game_channel_removed:{guild.id}:{game_id}',))
         await sort_channels(guild, extra=channel)
         await audit(guild, 'Game Channel Created', plan['game']['name'])
         from services.server_log_service import emit
