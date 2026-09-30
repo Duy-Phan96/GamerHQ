@@ -172,6 +172,25 @@ CREATE TABLE IF NOT EXISTS game_legacy_hints (
     resources_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS structure_change_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    resource_type TEXT NOT NULL,
+    logical_key TEXT NOT NULL,
+    resource_id INTEGER,
+    actor_id INTEGER,
+    action TEXT NOT NULL,
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    reversible INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'APPLIED',
+    created_at INTEGER NOT NULL,
+    undone_at INTEGER,
+    undone_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS structure_change_log_guild_created
+ON structure_change_log(guild_id, created_at DESC, id DESC);
+
 CREATE TABLE IF NOT EXISTS deleted_games (
     name_key TEXT PRIMARY KEY,
     deleted_at INTEGER NOT NULL DEFAULT 0
