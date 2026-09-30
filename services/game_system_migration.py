@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import json
 
 import discord
 
@@ -195,14 +196,15 @@ async def cleanup(guild, actor, draft):
         raise ValueError("Cleanup preview expired.")
 
     fresh = cleanup_preview(guild, actor)
-    expected = {
-        (row["game_id"], row["category_id"], row["category_wire"], tuple(row["children"]))
-        for row in draft["candidates"]
-    }
-    actual = {
-        (row["game_id"], row["category_id"], row["category_wire"], tuple(row["children"]))
-        for row in fresh["candidates"]
-    }
+    def signature(row):
+        return json.dumps({
+            "game_id": row["game_id"],
+            "category_id": row["category_id"],
+            "category_wire": row["category_wire"],
+            "children": row["children"],
+        }, sort_keys=True, default=str)
+    expected = {signature(row) for row in draft["candidates"]}
+    actual = {signature(row) for row in fresh["candidates"]}
     if expected != actual:
         raise ValueError("Legacy game areas changed. Open a fresh cleanup preview.")
 
