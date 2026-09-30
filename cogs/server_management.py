@@ -94,14 +94,21 @@ class Menu(RoleAdminSession):
 class ManagementView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
-        for label, callback in [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
-                                ('Integrations', self.integrations), ('Managed Messages', self.messages),
-                                ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log),
-                                ('Lobby Admin', self.lobby_admin)]:
+        actions = [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
+                   ('Integrations', self.integrations), ('Managed Messages', self.messages),
+                   ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log),
+                   ('Lobby Admin', self.lobby_admin)]
+        if actor_id == guild.owner_id:
+            actions.append(('Owner Change Log', self.owner_changelog))
+        for label, callback in actions:
             self.action(label, callback)
 
     async def lobby_admin(self, interaction):
         from cogs.lobby_admin import open_management
+        await open_management(interaction)
+
+    async def owner_changelog(self, interaction):
+        from cogs.owner_changelog import open_management
         await open_management(interaction)
 
     async def games(self, interaction):
