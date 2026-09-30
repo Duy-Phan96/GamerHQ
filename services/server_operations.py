@@ -73,7 +73,7 @@ def definitions(guild):
     for game in sorted(db.get_all_games(), key=lambda g: g['name'].casefold()):
         if game.get('channel_id'):
             result.append(dict(key=f'game_channel:{game["id"]}', kind='text', name=slug(game['name']),
-                label=slug(game['name']), aliases=set(), parent=f'managed_category:{guild.id}:gaming',
+                label=slug(game['name']), aliases=set(), parent=f'managed_category:{guild.id}:games',
                 private=True, existing_only=True, game_id=game['id']))
     return result
 
@@ -119,8 +119,15 @@ def wire(resource):
 def target(guild, row):
     raw = db.get_setting(row['parent']) if row.get('parent') else None
     parent = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    from services import structure_adoption_service as runtime
+    logical = f"game:{row['game_id']}" if row.get('game_id') else row['name']
+    state = runtime.channel_state(guild, logical)
+    if state and not state.get('deleted') and state.get('category_id') is not None:
+        adopted = guild.get_channel(int(state['category_id']))
+        if isinstance(adopted, discord.CategoryChannel):
+            parent = adopted
     from services.channel_adoption_service import supported, placement
-    if row['name'] in supported():
+    if row['name'] in supported() and not state:
         _, parent = placement(guild, row['name'], row['label'], parent)
     if parent is not None and parent not in guild.categories:
         raise ServerMessageError('Recorded destination is not a category. Review /server reconcile.')
@@ -130,6 +137,11 @@ def target(guild, row):
 
 
 def display_name(guild, row):
+    from services import structure_adoption_service as runtime
+    logical = f"game:{row['game_id']}" if row.get('game_id') else row['name']
+    state = runtime.channel_state(guild, logical)
+    if state and not state.get('deleted') and state.get('name'):
+        return state['name']
     from services.channel_adoption_service import supported, placement
     if row['name'] in supported():
         return placement(guild, row['name'], row['label'], target(guild, row))[0]
