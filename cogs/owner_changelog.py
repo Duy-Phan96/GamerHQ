@@ -154,9 +154,10 @@ def details(change, guild=None, *, related=(), page=0):
 def private_panel(guild, owner_id, change):
     """Call only after the caller's current-owner check."""
     related = feed.related_changes(guild, change["id"])
-    if related:
-        return details(change, guild, related=related), GroupDetails(guild.id, owner_id, change, related)
-    return details(change, guild), Undo(guild.id, owner_id, change)
+    pages = display.detail_pages(change, guild, related=related)
+    if related or len(pages) > 1:
+        return pages[0], GroupDetails(guild.id, owner_id, change, related, guild=guild)
+    return pages[0], Undo(guild.id, owner_id, change)
 
 
 class OwnerSession(SafeView):
@@ -248,12 +249,11 @@ class ChangeList(OwnerSession):
 
 
 class GroupDetails(OwnerSession):
-    """Paged, read-only group details. Never turns a grouped deletion into Undo."""
-    def __init__(self, guild_id, owner_id, change, related, page=0):
+    """Owner-checked pages for a group or a long individual change."""
+    def __init__(self, guild_id, owner_id, change, related, page=0, *, guild=None):
         super().__init__(guild_id, owner_id, timeout=240)
         self.change_id = change["id"]
-        count = len({row["resource_id"] for row in related})
-        self.pages = max(1, (count + display.GROUP_PAGE_SIZE - 1) // display.GROUP_PAGE_SIZE)
+        self.pages = len(display.detail_pages(change, guild, related=related))
         self.page = min(max(0, page), self.pages - 1)
         if self.pages == 1:
             self.remove_item(self.previous)
@@ -261,6 +261,8 @@ class GroupDetails(OwnerSession):
         else:
             self.previous.disabled = self.page == 0
             self.next_page.disabled = self.page == self.pages - 1
+        if related or not feed.can_undo(change):
+            self.remove_item(self.review_undo)
 
     async def turn_page(self, interaction, offset):
         if not await self.interaction_check(interaction):
@@ -269,10 +271,11 @@ class GroupDetails(OwnerSession):
         if change is None:
             return await interaction.response.edit_message(content="This change is no longer available.", view=None)
         related = feed.related_changes(interaction.guild, self.change_id)
-        page = min(max(0, self.page + offset), self.pages - 1)
+        pages = display.detail_pages(change, interaction.guild, related=related)
+        page = min(max(0, self.page + offset), len(pages) - 1)
         await interaction.response.edit_message(
-            content=details(change, interaction.guild, related=related, page=page),
-            view=GroupDetails(self.guild_id, self.owner_id, change, related, page),
+            content=pages[page],
+            view=GroupDetails(self.guild_id, self.owner_id, change, related, page, guild=interaction.guild),
             allowed_mentions=discord.AllowedMentions.none())
         self.stop()
 
@@ -283,6 +286,19 @@ class GroupDetails(OwnerSession):
     @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
     async def next_page(self, interaction, button):
         await self.turn_page(interaction, 1)
+
+    @discord.ui.button(label="Review Undo", style=discord.ButtonStyle.primary)
+    async def review_undo(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        change = structure.get_change(interaction.guild, self.change_id)
+        if not change or not feed.can_undo(change) or feed.related_changes(interaction.guild, self.change_id):
+            return await interaction.response.edit_message(content="Undo is no longer available. Reopen this change.", view=None)
+        await interaction.response.edit_message(
+            content=details(change, interaction.guild),
+            view=Undo(self.guild_id, self.owner_id, change),
+            allowed_mentions=discord.AllowedMentions.none())
+        self.stop()
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary)
     async def close(self, interaction, button):
@@ -383,7 +399,7 @@ async def open_management(interaction):
         if interaction.guild.me is None:
             raise ValueError("Bot membership is unavailable; retry after startup.")
         raw = db.get_setting(key(interaction.guild))
-        current = interaction.guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+        current = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
         if raw and not isinstance(current, discord.TextChannel):
             raise ValueError("The saved Owner Change Log channel is unavailable. Review its mapping; no duplicate was created.")
     except ValueError as exc:
