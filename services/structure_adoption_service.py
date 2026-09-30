@@ -68,8 +68,9 @@ def category_mapping(guild, category_id: int):
             "SELECT key FROM settings WHERE key LIKE ? AND value=?",
             (f"managed_category:{guild.id}:%", str(category_id)),
         ).fetchall()
-    logical = [row["key"].split(":", 2)[2] for row in rows]
-    return logical[0] if len(logical) == 1 else None
+    aliases = {"gaming": "games", "marketplace": "partners-benefits"}
+    logical = {aliases.get(row["key"].split(":", 2)[2], row["key"].split(":", 2)[2]) for row in rows}
+    return next(iter(logical)) if len(logical) == 1 else None
 
 
 def channel_state(guild, logical_key: str, *, channel_id=None) -> dict:
@@ -306,7 +307,12 @@ async def observe_category_update(before, after, *, actor_id=None):
     if not logical:
         return False
     old_state, new_state = snapshot_category(before), snapshot_category(after)
-    if old_state == new_state:
+    changed = {key: new_state[key] for key in ("name", "position") if old_state.get(key) != new_state.get(key)}
+    if changed:
+        from services.channel_change_service import consume
+        changed = {key: value for key, value in changed.items()
+                   if key in consume(after.guild, after.id, changed)}
+    if not changed:
         return True
     save_runtime_state(after.guild, "category", logical, new_state)
     change = record_change(after.guild, "category", logical, after.id, actor_id, "category_update",
@@ -369,6 +375,92 @@ async def observe_managed_message_delete(guild, channel_id: int, message_id: int
         f"A registered GamerHQ message in <#{channel_id}> was deleted. It stays removed until explicitly restored.",
     )
     return True
+
+
+async def bootstrap(guild):
+    """Seed/adopt mapped runtime layout without name-based ownership discovery.
+
+    Existing IDs win. Missing IDs stay missing for health/review; this function
+    never creates, renames, moves or deletes Discord resources.
+    """
+    with db.connect() as conn:
+        channel_rows = conn.execute(
+            "SELECT key,value FROM settings WHERE key LIKE ? AND value GLOB '[0-9]*'",
+            (f"managed_channel:{guild.id}:%",),
+        ).fetchall()
+        category_rows = conn.execute(
+            "SELECT key,value FROM settings WHERE key LIKE ? AND value GLOB '[0-9]*'",
+            (f"managed_category:{guild.id}:%",),
+        ).fetchall()
+        game_rows = conn.execute("SELECT id,channel_id FROM games WHERE channel_id IS NOT NULL").fetchall()
+
+    channel_items = [(row["key"].split(":", 2)[2], int(row["value"])) for row in channel_rows]
+    channel_items += [(f"game:{row['id']}", int(row["channel_id"])) for row in game_rows]
+    seen = set()
+    for logical, cid in channel_items:
+        if (logical, cid) in seen:
+            continue
+        seen.add((logical, cid))
+        channel = guild.get_channel(cid)
+        if not isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
+            continue
+        current = snapshot_channel(channel)
+        state = channel_state(guild, logical, channel_id=cid)
+        if not state:
+            # Do not bless an already-exposed protected resource as a valid baseline.
+            if _protected_channel(guild, logical, channel):
+                target = channel.category
+                if not isinstance(target, discord.CategoryChannel) or not _category_private(target):
+                    continue
+            save_runtime_state(guild, "channel", logical, current)
+            continue
+        comparable = {key: state.get(key) for key in ("id", "name", "category_id", "position", "kind")}
+        if comparable == current:
+            continue
+        safe = True
+        if state.get("category_id") != current.get("category_id"):
+            target = guild.get_channel(current.get("category_id")) if current.get("category_id") else None
+            if logical in PROTECTED_CHANNELS or (
+                isinstance(guild.get_channel(state.get("category_id")), discord.CategoryChannel)
+                and _category_private(guild.get_channel(state.get("category_id")))
+            ):
+                safe = bool(isinstance(target, discord.CategoryChannel) and _category_private(target)
+                            and alias(target.name) in PROTECTED_CATEGORIES)
+            else:
+                safe = target is None or (isinstance(target, discord.CategoryChannel)
+                                          and not _category_private(target)
+                                          and alias(target.name) not in PROTECTED_CATEGORIES)
+        if safe:
+            save_runtime_state(guild, "channel", logical, current)
+            change = record_change(guild, "channel", logical, cid, None, "offline_reconcile",
+                                   state, current, reversible=True)
+            await _announce(guild, change, "Offline Discord Change Adopted",
+                            f"Mapped channel <#{cid}> changed while GamerHQ was offline; its current safe layout was stored.")
+        else:
+            change = record_change(guild, "channel", logical, cid, None, "security_review",
+                                   state, current, reversible=False, status="REVIEW_REQUIRED")
+            await _announce(guild, change, "Security Review Required",
+                            f"Mapped channel <#{cid}> changed while GamerHQ was offline and cannot be adopted safely.")
+
+    aliases = {"gaming": "games", "marketplace": "partners-benefits"}
+    category_items = {}
+    for row in category_rows:
+        logical = aliases.get(row["key"].split(":", 2)[2], row["key"].split(":", 2)[2])
+        category_items.setdefault((logical, int(row["value"])), None)
+    for logical, cid in category_items:
+        category = guild.get_channel(cid)
+        if not isinstance(category, discord.CategoryChannel):
+            continue
+        current = snapshot_category(category)
+        state = category_state(guild, logical, category_id=cid)
+        if not state:
+            save_runtime_state(guild, "category", logical, current)
+        elif {key: state.get(key) for key in ("id", "name", "position")} != current:
+            save_runtime_state(guild, "category", logical, current)
+            change = record_change(guild, "category", logical, cid, None, "offline_reconcile",
+                                   state, current, reversible=True)
+            await _announce(guild, change, "Offline Category Change Adopted",
+                            f"Mapped category ID {cid} changed while GamerHQ was offline; its current display state was stored.")
 
 
 def desired_channel_name(guild, logical_key: str, default: str) -> str:
