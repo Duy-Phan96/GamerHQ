@@ -286,7 +286,7 @@ class Undo(OwnerSession):
                 if observer.is_observation(self.snapshot):
                     await observer.undo(interaction.guild, interaction.user, self.change_id, interaction.client)
                 else:
-                    await structure.undo_change(interaction.guild, interaction.user, self.change_id)
+                    await observer.undo_legacy(interaction.guild, interaction.user, self.change_id)
                 await refresh_board(interaction.guild)
                 await interaction.edit_original_response(content=f"✅ Change #{self.change_id} was undone.", view=None)
             except (ValueError, discord.HTTPException, ServerMessageError) as exc:
