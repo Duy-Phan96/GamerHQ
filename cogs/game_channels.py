@@ -61,6 +61,7 @@ class CandidateView(SafeView):
 class GamesMenu(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
+        self.action('Game System Migration', self.migration)
         for label, mode in [('Game Library', 'library'), ('Game Channels', 'channels'),
                             ('Channel Candidates', 'candidates'), ('Create Game Channel', 'create'),
                             ('Migrate Legacy Game Chats', 'legacy'), ('Remove Game Channel', 'remove')]:
@@ -78,6 +79,18 @@ class GamesMenu(Menu):
                 f'Games with Channels: {sum(bool(g.get("channel_id")) for g in games)}\n'
                 f'Channel Candidates: {sum(c["status"] == "PENDING" for c in service.candidates(self.guild))}\n'
                 'Game roles work with or without a dedicated channel. Create channels deliberately; the member threshold never creates them automatically.')
+
+    async def migration(self, interaction):
+        from services import game_system_migration as migration
+        try:
+            draft = migration.preview(self.guild, interaction.user)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.send_message(
+            migration.render(draft),
+            view=GameMigrationConfirm(self.guild, self.admin_id, draft),
+            ephemeral=True,
+        )
 
     async def suggestions(self, interaction):
         await interaction.response.send_message('Review game suggestions in the existing staff suggestion inbox. Approve a game using `/game-admin create`, or enable an existing game with `/game-admin set-visible`. Approval adds a selectable role; channels remain optional.', ephemeral=True)
@@ -155,3 +168,68 @@ class LibraryGame(Menu):
                     await service.audit(self.guild, 'Game Available' if visible else 'Game Hidden', game['name'])
                 await interaction.edit_original_response(content='Game selection updated. Existing channels and member roles are preserved.', view=None)
             self.action(label, update)
+
+
+class GameMigrationConfirm(Menu):
+    def __init__(self, guild, actor_id, draft):
+        super().__init__(guild, actor_id)
+        self.draft = draft
+        self.action('Confirm Chat Migration', self.confirm)
+        self.action('Preview Legacy Cleanup', self.cleanup_preview)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        from services import game_system_migration as migration
+        try:
+            moved, skipped = await migration.apply(self.guild, interaction.user, self.draft)
+            text = f'✅ Migrated {len(moved)} game chat(s).'
+            if skipped:
+                text += '\n⚠️ ' + '\n⚠️ '.join(skipped[:8])
+            text += '\nReopen Game System Migration to preview safe cleanup of obsolete legacy areas.'
+            await interaction.edit_original_response(content=text, view=None)
+        except (ValueError, discord.HTTPException) as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+
+    async def cleanup_preview(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        from services import game_system_migration as migration
+        try:
+            draft = migration.cleanup_preview(self.guild, interaction.user)
+            await interaction.response.edit_message(
+                content=migration.cleanup_text(draft),
+                view=GameCleanupConfirm(self.guild, self.admin_id, draft),
+            )
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(content='Cancelled. Nothing changed.', view=None)
+
+
+class GameCleanupConfirm(Menu):
+    def __init__(self, guild, actor_id, draft):
+        super().__init__(guild, actor_id)
+        self.draft = draft
+        self.action('Confirm Legacy Cleanup', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        from services import game_system_migration as migration
+        try:
+            removed = await migration.cleanup(self.guild, interaction.user, self.draft)
+            await interaction.edit_original_response(
+                content=f'✅ Removed {len(removed)} obsolete legacy game area(s). Unknown or active resources were preserved.',
+                view=None,
+            )
+        except (ValueError, discord.HTTPException) as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(content='Cancelled. Nothing deleted.', view=None)
