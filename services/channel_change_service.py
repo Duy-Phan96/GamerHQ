@@ -132,9 +132,20 @@ def safe_rights(channel, name):
 
 def target(guild, name):
     if name in adoption.supported():
-        return adoption.desired(guild, name)
-    from services.instant_gaming_service import targets, CHANNELS
-    return dict(name=CHANNELS[name][0], category=targets(guild)[name].id, position=None)
+        result = adoption.desired(guild, name)
+    else:
+        from services.instant_gaming_service import targets, CHANNELS
+        result = dict(name=CHANNELS[name][0], category=targets(guild)[name].id, position=None)
+    from services import structure_adoption_service as runtime
+    state = runtime.channel_state(guild, name)
+    if state and not state.get('deleted'):
+        if 'name' in state:
+            result['name'] = state['name']
+        if 'category_id' in state:
+            result['category'] = state['category_id']
+        if 'position' in state:
+            result['position'] = state['position']
+    return result
 
 
 def snapshot(channel, name):
