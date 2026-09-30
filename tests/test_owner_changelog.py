@@ -48,6 +48,7 @@ class OwnerLogTests(unittest.IsolatedAsyncioTestCase):
         role = MagicMock(spec=discord.Role)
         role.id = rid
         role.permissions = discord.Permissions(view_channel=True, read_message_history=True, send_messages=True, **bits)
+        role._permissions = role.permissions.value  # discord.py uses the raw bitfield for member roles.
         return role
 
     def member(self, uid, role=None):
