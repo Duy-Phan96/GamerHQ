@@ -83,6 +83,9 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
                                recover_match=None, allowed_mentions=None):
     """Refresh canonical defaults while preserving explicitly customized boards."""
     from services import managed_message_service as managed
+    retired = managed.load(setting_key)
+    if retired and retired.get('retired'):
+        return None
     spec = managed.specs(channel.guild).get(setting_key)
     if not spec:
         async with managed.lock(setting_key):
