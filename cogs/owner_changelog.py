@@ -392,6 +392,7 @@ class Undo(OwnerSession):
 
 
 async def open_management(interaction):
+    guild = interaction.guild
     if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
         return await interaction.response.send_message("Only the server owner can configure the Owner Change Log.", ephemeral=True)
     try:
