@@ -157,6 +157,9 @@ async def refresh_board(guild, *, publish=False):
 
 
 def details(change):
+    if change.get("action", "").startswith("observed_"):
+        from services.server_change_observer import detail_text
+        return detail_text(change)
     def safe(value):
         return discord.utils.escape_markdown(discord.utils.escape_mentions(str(value)))[:240]
     def describe(state):
@@ -239,7 +242,7 @@ class Entry(SafeView):
             return await interaction.response.send_message("Only the server owner can use this panel.", ephemeral=True)
         rows = structure.recent_changes(interaction.guild, 25)
         text = ("Select a tracked change to review." if rows else
-                "No tracked changes yet. New managed-resource changes will appear automatically in this channel.")
+                "No tracked changes yet. Supported server configuration changes will appear automatically in this channel.")
         await interaction.response.send_message("# Owner Change History\n" + text,
             view=ChangeList(interaction.guild.id, interaction.user.id, rows), ephemeral=True)
 
@@ -279,7 +282,11 @@ class Undo(OwnerSession):
             await interaction.response.defer(ephemeral=True)
             try:
                 self.check_current(interaction.guild)
-                await structure.undo_change(interaction.guild, interaction.user, self.change_id)
+                from services import server_change_observer as observer
+                if observer.is_observation(self.snapshot):
+                    await observer.undo(interaction.guild, interaction.user, self.change_id, interaction.client)
+                else:
+                    await observer.undo_legacy(interaction.guild, interaction.user, self.change_id)
                 await refresh_board(interaction.guild)
                 await interaction.edit_original_response(content=f"✅ Change #{self.change_id} was undone.", view=None)
             except (ValueError, discord.HTTPException, ServerMessageError) as exc:

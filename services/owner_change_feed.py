@@ -60,6 +60,9 @@ def _store(guild_id, change_id, value):
 
 
 def can_undo(change):
+    if change and change.get("action", "").startswith("observed_"):
+        from services.server_change_observer import can_undo as observed_can_undo
+        return observed_can_undo(change)
     return bool(change and change.get("reversible") and change.get("status") == "APPLIED"
                 and change.get("action") in {"channel_update", "category_update", "message_delete"})
 
@@ -72,7 +75,11 @@ def render_notice(change):
         "message_delete": "Managed bot message removed", "channel_restore": "Replacement restored",
         "security_review": "Change requires security review", "offline_reconcile": "Offline change recorded",
     }.get(change.get("action"), "Server change recorded")
-    state = {"UNDONE": "✅ Undone", "RESTORED": "♻️ Replacement restored",
+    if change.get("action", "").startswith("observed_"):
+        _, resource, event = change["action"].split("_", 2)
+        subject = {"channel": "Channel", "category": "Category", "role": "Role", "guild": "Server settings"}.get(resource, "Resource")
+        kind = subject + {"update": " changed", "create": " created", "delete": " removed", "offline": " changed while offline"}.get(event, " changed")
+    state = {"UNDOING": "Undo in progress", "UNDONE": "✅ Undone", "RESTORED": "♻️ Replacement restored",
              "REVIEW_REQUIRED": "⚠️ Review required"}.get(change.get("status"), "Recorded")
     if can_undo(change):
         help_text = "Use **Undo** to review this change privately and confirm before reversing it."
@@ -188,7 +195,7 @@ async def flush(guild, *, include_latest=False):
         with db.connect() as conn:
             dirty = conn.execute(
                 "SELECT c.id FROM structure_change_log c JOIN settings s ON s.key=(? || c.id) "
-                "WHERE c.guild_id=? AND c.status IN ('UNDONE','RESTORED') "
+                "WHERE c.guild_id=? AND c.status IN ('UNDONE','RESTORED','REVIEW_REQUIRED','UNDOING') "
                 "AND CASE WHEN json_valid(s.value) THEN json_extract(s.value,'$.state') END='SENT' "
                 "AND CASE WHEN json_valid(s.value) THEN json_extract(s.value,'$.status') END!=c.status "
                 "AND CASE WHEN json_valid(s.value) THEN json_extract(s.value,'$.channel_id') END=? ORDER BY c.id LIMIT ?",
