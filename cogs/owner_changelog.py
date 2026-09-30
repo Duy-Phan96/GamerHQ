@@ -1,4 +1,4 @@
-"""Per-change STAFF notices with owner-only details and confirmed Undo."""
+"""Readable STAFF notices with owner-only details and confirmed Undo."""
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +15,7 @@ from services.response_service import SafeView
 from services.server_service import ServerMessageError
 from services import structure_adoption_service as structure
 from services import owner_change_feed as feed
+from services import owner_change_display as display
 
 NAME = "owner-changelog"
 LABEL = "🕘・owner-changelog"
@@ -33,11 +34,7 @@ def board_key(guild):
 
 
 def owner_rights(guild, resource=None):
-    """At most three explicit child overwrites; never enumerate all server roles.
-
-    Administrator bypasses Discord ACLs. Notices must therefore contain only
-    generic metadata; private details/actions are protected in the application.
-    """
+    """Compact ACL; Administrator bypass is handled by private owner-only review."""
     if guild.me is None:
         raise ValueError("Bot membership is unavailable; retry after startup.")
     result = {
@@ -100,23 +97,18 @@ def destination(guild):
 
 
 def label(change):
-    action = {
-        "channel_update": "Channel changed", "channel_delete": "Channel deleted",
-        "category_update": "Category changed", "category_delete": "Category deleted",
-        "message_delete": "Managed message deleted", "security_review": "Security review",
-    }.get(change["action"], change["action"].replace("_", " ").title())
-    return f"#{change['id']} · {action}"
+    # Only used inside owner-authorized private history.
+    return display.history_label(change)
 
 
 def render(guild):
-    # Administrator can read channel messages. Never put detailed history here.
     return (
-        HEADER + "\n\nNew tracked server changes appear below as **individual messages** with "
-        "**Undo** and **Details** buttons. Undo opens a private review before confirmation.\n\n"
+        HEADER + "\n\nServer changes appear below automatically. Related channel moves "
+        "can be grouped with a category deletion. Open **View details** to see names and what changed.\n\n"
         "Discord Administrators can see these generic notices and this launcher. "
-        "Resource names, actors, before/after details and actions are available only to the current owner.\n\n"
-        "Use **Review / Undo** for earlier history. Deleted channel history cannot be recovered; "
-        "some deleted resources offer a replacement instead."
+        "Names, detailed changes and actions remain private to the current owner.\n\n"
+        "Use **Review / Undo** for earlier history. **Undo** is shown only when available "
+        "and always requires confirmation. Deleted channel history cannot be recovered."
     )
 
 
@@ -125,9 +117,8 @@ async def refresh_board(guild, *, publish=False):
     if channel is None:
         return False
     if publish:
-        feed.enable(guild)  # Setup enables future notices, not a historical message dump.
+        feed.enable(guild)
     else:
-        # Existing structure._announce calls this immediately after recording a change.
         await feed.flush(guild, include_latest=True)
     async with _locks.setdefault(guild.id, asyncio.Lock()):
         channel = destination(guild)
@@ -156,29 +147,16 @@ async def refresh_board(guild, *, publish=False):
         return True
 
 
-def details(change):
-    if change.get("action", "").startswith("observed_"):
-        from services.server_change_observer import detail_text
-        return detail_text(change)
-    def safe(value):
-        return discord.utils.escape_markdown(discord.utils.escape_mentions(str(value)))[:240]
-    def describe(state):
-        if state.get("deleted"):
-            return "Deleted"
-        parts = [safe(state.get("name", state.get("message_id", "n/a")))]
-        if "category_id" in state:
-            parts.append("Category ID: " + safe(state["category_id"]))
-        if "position" in state:
-            parts.append("Position: " + safe(state["position"]))
-        return " · ".join(parts)
-    actor = str(change["actor_id"]) if change.get("actor_id") else "unknown"
-    return (
-        f"# {safe(label(change))}\nResource: {safe(change['logical_key'])}\n"
-        f"Status: **{safe(change['status'])}**\nActor ID: {safe(actor)}\n\n"
-        f"**Before:** {describe(change['before'])}\n**After:** {describe(change['after'])}\n\n"
-        "Review before confirming. Later conflicting edits block Undo. "
-        "A replacement does not recover deleted channel history."
-    )
+def details(change, guild=None, *, related=(), page=0):
+    return display.details(change, guild, related=related, page=page)
+
+
+def private_panel(guild, owner_id, change):
+    """Call only after the caller's current-owner check."""
+    related = feed.related_changes(guild, change["id"])
+    if related:
+        return details(change, guild, related=related), GroupDetails(guild.id, owner_id, change, related)
+    return details(change, guild), Undo(guild.id, owner_id, change)
 
 
 class OwnerSession(SafeView):
@@ -196,13 +174,13 @@ class OwnerSession(SafeView):
 
 
 class ChangeNotice(SafeView):
-    """Shared persistent handlers; message identity is resolved in SQLite, not RAM."""
+    """Persistent handlers resolve message identity in SQLite, not process memory."""
     def __init__(self, change=None):
         super().__init__(timeout=None)
         if change is not None:
             self.undo.disabled = not feed.can_undo(change)
-            if change.get("status") in {"UNDONE", "RESTORED"}:
-                self.undo.label = "Handled"
+            if self.undo.disabled:
+                self.remove_item(self.undo)
 
     async def open_change(self, interaction):
         guild = interaction.guild
@@ -217,15 +195,16 @@ class ChangeNotice(SafeView):
         change = feed.change_for_message(guild, channel.id, message.id)
         if change is None:
             return await interaction.edit_original_response(content="This notice is no longer linked. Open Review / Undo for the saved history.", view=None)
-        await interaction.edit_original_response(content=details(change),
-            view=Undo(guild.id, interaction.user.id, change), allowed_mentions=discord.AllowedMentions.none())
+        content, view = private_panel(guild, interaction.user.id, change)
+        await interaction.edit_original_response(content=content, view=view,
+                                                  allowed_mentions=discord.AllowedMentions.none())
 
     @discord.ui.button(label="Undo", emoji="↩️", custom_id="gamerhq:owner_changelog:notice:undo",
                        style=discord.ButtonStyle.primary)
     async def undo(self, interaction, button):
         await self.open_change(interaction)
 
-    @discord.ui.button(label="Details", custom_id="gamerhq:owner_changelog:notice:details",
+    @discord.ui.button(label="View details", custom_id="gamerhq:owner_changelog:notice:details",
                        style=discord.ButtonStyle.secondary)
     async def review(self, interaction, button):
         await self.open_change(interaction)
@@ -241,8 +220,8 @@ class Entry(SafeView):
         if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
             return await interaction.response.send_message("Only the server owner can use this panel.", ephemeral=True)
         rows = structure.recent_changes(interaction.guild, 25)
-        text = ("Select a tracked change to review." if rows else
-                "No tracked changes yet. Supported server configuration changes will appear automatically in this channel.")
+        text = ("Select a change to see what happened." if rows else
+                "No tracked changes yet. Supported server changes will appear automatically here.")
         await interaction.response.send_message("# Owner Change History\n" + text,
             view=ChangeList(interaction.guild.id, interaction.user.id, rows), ephemeral=True)
 
@@ -252,8 +231,8 @@ class ChangeList(OwnerSession):
         super().__init__(guild_id, owner_id, timeout=240)
         if rows:
             select = discord.ui.Select(placeholder="Select a change", options=[
-                discord.SelectOption(label=label(row)[:100], value=str(row["id"]),
-                    description=(row["logical_key"] + " · " + row["status"])[:100]) for row in rows[:25]])
+                discord.SelectOption(label=label(row), value=str(row["id"]),
+                    description=f"{display.status(row)} · Change #{row['id']}"[:100]) for row in rows[:25]])
 
             async def choose(interaction):
                 if not await self.interaction_check(interaction):
@@ -261,11 +240,56 @@ class ChangeList(OwnerSession):
                 change = structure.get_change(interaction.guild, int(select.values[0]))
                 if not change:
                     return await interaction.response.send_message("Change no longer available.", ephemeral=True)
-                await interaction.response.send_message(details(change),
-                    view=Undo(interaction.guild.id, interaction.user.id, change),
-                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+                content, view = private_panel(interaction.guild, interaction.user.id, change)
+                await interaction.response.send_message(content, view=view, ephemeral=True,
+                                                        allowed_mentions=discord.AllowedMentions.none())
             select.callback = choose
             self.add_item(select)
+
+
+class GroupDetails(OwnerSession):
+    """Paged, read-only group details. Never turns a grouped deletion into Undo."""
+    def __init__(self, guild_id, owner_id, change, related, page=0):
+        super().__init__(guild_id, owner_id, timeout=240)
+        self.change_id = change["id"]
+        count = len({row["resource_id"] for row in related})
+        self.pages = max(1, (count + display.GROUP_PAGE_SIZE - 1) // display.GROUP_PAGE_SIZE)
+        self.page = min(max(0, page), self.pages - 1)
+        if self.pages == 1:
+            self.remove_item(self.previous)
+            self.remove_item(self.next_page)
+        else:
+            self.previous.disabled = self.page == 0
+            self.next_page.disabled = self.page == self.pages - 1
+
+    async def turn_page(self, interaction, offset):
+        if not await self.interaction_check(interaction):
+            return
+        change = structure.get_change(interaction.guild, self.change_id)
+        if change is None:
+            return await interaction.response.edit_message(content="This change is no longer available.", view=None)
+        related = feed.related_changes(interaction.guild, self.change_id)
+        page = min(max(0, self.page + offset), self.pages - 1)
+        await interaction.response.edit_message(
+            content=details(change, interaction.guild, related=related, page=page),
+            view=GroupDetails(self.guild_id, self.owner_id, change, related, page),
+            allowed_mentions=discord.AllowedMentions.none())
+        self.stop()
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction, button):
+        await self.turn_page(interaction, -1)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction, button):
+        await self.turn_page(interaction, 1)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary)
+    async def close(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        await interaction.response.edit_message(content="Closed.", view=None)
+        self.stop()
 
 
 class Undo(OwnerSession):
@@ -273,8 +297,9 @@ class Undo(OwnerSession):
         super().__init__(guild_id, owner_id, timeout=120)
         self.change_id, self.snapshot = change["id"], copy.deepcopy(change)
         self.used, self.expires = False, time.monotonic() + 120
+        available = feed.can_undo(change)
         button = discord.ui.Button(label="Confirm Undo", emoji="↩️", style=discord.ButtonStyle.danger,
-                                   disabled=not feed.can_undo(change))
+                                   disabled=not available)
 
         async def callback(interaction):
             if not await self.claim(interaction):
@@ -294,7 +319,8 @@ class Undo(OwnerSession):
             finally:
                 self.stop()
         button.callback = callback
-        self.add_item(button)
+        if available:
+            self.add_item(button)
 
         if change["action"] == "channel_delete" and change["status"] == "APPLIED":
             restore_button = discord.ui.Button(label="Confirm Replacement", emoji="♻️", style=discord.ButtonStyle.secondary)
@@ -321,13 +347,13 @@ class Undo(OwnerSession):
                     self.stop()
             restore_button.callback = restore_callback
             self.add_item(restore_button)
-        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        cancel = discord.ui.Button(label="Cancel" if self.children else "Close", style=discord.ButtonStyle.secondary)
 
         async def cancel_callback(interaction):
             if not await self.interaction_check(interaction):
                 return
             self.used = True
-            await interaction.response.edit_message(content="Cancelled. No changes made.", view=None)
+            await interaction.response.edit_message(content="Closed. No changes made.", view=None)
             self.stop()
         cancel.callback = cancel_callback
         self.add_item(cancel)
@@ -364,7 +390,7 @@ async def open_management(interaction):
         return await interaction.response.send_message(str(exc), ephemeral=True)
     await interaction.response.send_message(
         f"{HEADER}\nCreate or repair **{LABEL}** under **{parent.name}**? "
-        "New tracked changes get individual notices with Undo/Details buttons. "
+        "New tracked changes get notices with View details and available Undo buttons. "
         "Administrators can see generic notices; details and actions are private to you. "
         "This replaces only this channel's access entries with a compact owner/bot allowlist.",
         view=Setup(interaction.guild.id, interaction.user.id, parent.id, current.id if current else None), ephemeral=True)
@@ -448,6 +474,7 @@ class OwnerChangeLog(commands.Cog):
 
     def cog_unload(self):
         self.feed_updates.cancel()
+        feed.cancel_pending_flushes()
 
     @tasks.loop(seconds=60)
     async def feed_updates(self):
