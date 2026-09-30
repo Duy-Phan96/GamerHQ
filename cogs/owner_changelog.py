@@ -1,23 +1,27 @@
-"""Owner-only change details and Undo, behind a non-sensitive STAFF launcher."""
+"""Per-change STAFF notices with owner-only details and confirmed Undo."""
 from __future__ import annotations
 
 import asyncio
+import copy
+import logging
 import time
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from database import db
 from services.onboarding_service import alias
 from services.response_service import SafeView
 from services.server_service import ServerMessageError
 from services import structure_adoption_service as structure
+from services import owner_change_feed as feed
 
 NAME = "owner-changelog"
 LABEL = "🕘・owner-changelog"
 HEADER = "# 🕘 Owner Change Log"
 _locks = {}
 _setup_locks = {}
+log = logging.getLogger(__name__)
 
 
 def key(guild):
@@ -29,11 +33,10 @@ def board_key(guild):
 
 
 def owner_rights(guild, resource=None):
-    """Replace this feature's ACL with at most three overwrites, not one per role.
+    """At most three explicit child overwrites; never enumerate all server roles.
 
-    Explicit child overwrites replace inherited STAFF grants. No unrelated
-    resource or guild role is changed. Administrator still bypasses Discord ACLs;
-    the channel therefore contains only a launcher, never the change history.
+    Administrator bypasses Discord ACLs. Notices must therefore contain only
+    generic metadata; private details/actions are protected in the application.
     """
     if guild.me is None:
         raise ValueError("Bot membership is unavailable; retry after startup.")
@@ -98,30 +101,34 @@ def destination(guild):
 
 def label(change):
     action = {
-        "channel_update": "Channel changed",
-        "channel_delete": "Channel deleted",
-        "category_update": "Category changed",
-        "category_delete": "Category deleted",
-        "message_delete": "Managed message deleted",
-        "security_review": "Security review",
+        "channel_update": "Channel changed", "channel_delete": "Channel deleted",
+        "category_update": "Category changed", "category_delete": "Category deleted",
+        "message_delete": "Managed message deleted", "security_review": "Security review",
     }.get(change["action"], change["action"].replace("_", " ").title())
     return f"#{change['id']} · {action}"
 
 
 def render(guild):
-    # A server Administrator can read any guild channel despite deny overwrites.
-    # Keep all history (including actors/resource names) in owner-only responses.
+    # Administrator can read channel messages. Never put detailed history here.
     return (
-        HEADER + "\n\nOpen **Review / Undo** to view your private change history. "
-        "Details and Undo controls are shown only to the current server owner.\n\n"
-        "Discord Administrators can see this launcher because Administrator bypasses "
-        "channel restrictions; they cannot open the history or use these controls.\n\n"
-        "Safe changes can be undone after review. Restoring a deleted channel creates "
-        "a replacement; deleted Discord message history cannot be recovered."
+        HEADER + "\n\nNew tracked server changes appear below as **individual messages** with "
+        "**Undo** and **Details** buttons. Undo opens a private review before confirmation.\n\n"
+        "Discord Administrators can see these generic notices and this launcher. "
+        "Resource names, actors, before/after details and actions are available only to the current owner.\n\n"
+        "Use **Review / Undo** for earlier history. Deleted channel history cannot be recovered; "
+        "some deleted resources offer a replacement instead."
     )
 
 
 async def refresh_board(guild, *, publish=False):
+    channel = destination(guild)
+    if channel is None:
+        return False
+    if publish:
+        feed.enable(guild)  # Setup enables future notices, not a historical message dump.
+    else:
+        # Existing structure._announce calls this immediately after recording a change.
+        await feed.flush(guild, include_latest=True)
     async with _locks.setdefault(guild.id, asyncio.Lock()):
         channel = destination(guild)
         if channel is None:
@@ -149,55 +156,101 @@ async def refresh_board(guild, *, publish=False):
         return True
 
 
+def details(change):
+    def safe(value):
+        return discord.utils.escape_markdown(discord.utils.escape_mentions(str(value)))[:240]
+    def describe(state):
+        if state.get("deleted"):
+            return "Deleted"
+        parts = [safe(state.get("name", state.get("message_id", "n/a")))]
+        if "category_id" in state:
+            parts.append("Category ID: " + safe(state["category_id"]))
+        if "position" in state:
+            parts.append("Position: " + safe(state["position"]))
+        return " · ".join(parts)
+    actor = str(change["actor_id"]) if change.get("actor_id") else "unknown"
+    return (
+        f"# {safe(label(change))}\nResource: {safe(change['logical_key'])}\n"
+        f"Status: **{safe(change['status'])}**\nActor ID: {safe(actor)}\n\n"
+        f"**Before:** {describe(change['before'])}\n**After:** {describe(change['after'])}\n\n"
+        "Review before confirming. Later conflicting edits block Undo. "
+        "A replacement does not recover deleted channel history."
+    )
+
+
 class OwnerSession(SafeView):
     def __init__(self, guild_id, owner_id, **kwargs):
         super().__init__(**kwargs)
         self.guild_id, self.owner_id = int(guild_id), int(owner_id)
 
     async def interaction_check(self, interaction):
-        ok = bool(
-            interaction.guild
-            and interaction.guild.id == self.guild_id
-            and interaction.user.id == self.owner_id
-            and interaction.guild.owner_id == interaction.user.id
-        )
+        ok = bool(interaction.guild and interaction.guild.id == self.guild_id
+                  and interaction.user.id == self.owner_id
+                  and interaction.guild.owner_id == interaction.user.id)
         if not ok:
             await interaction.response.send_message("Only the server owner can use this panel.", ephemeral=True)
         return ok
+
+
+class ChangeNotice(SafeView):
+    """Shared persistent handlers; message identity is resolved in SQLite, not RAM."""
+    def __init__(self, change=None):
+        super().__init__(timeout=None)
+        if change is not None:
+            self.undo.disabled = not feed.can_undo(change)
+            if change.get("status") in {"UNDONE", "RESTORED"}:
+                self.undo.label = "Handled"
+
+    async def open_change(self, interaction):
+        guild = interaction.guild
+        if guild is None or interaction.user.id != guild.owner_id:
+            return await interaction.response.send_message("Only the server owner can review or undo this change.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        channel = destination(guild)
+        message = interaction.message
+        if (interaction.user.id != guild.owner_id or channel is None or message is None
+                or interaction.channel_id != channel.id or message.author.id != guild.me.id):
+            return await interaction.edit_original_response(content="This notice is not available in the configured Owner Change Log.", view=None)
+        change = feed.change_for_message(guild, channel.id, message.id)
+        if change is None:
+            return await interaction.edit_original_response(content="This notice is no longer linked. Open Review / Undo for the saved history.", view=None)
+        await interaction.edit_original_response(content=details(change),
+            view=Undo(guild.id, interaction.user.id, change), allowed_mentions=discord.AllowedMentions.none())
+
+    @discord.ui.button(label="Undo", emoji="↩️", custom_id="gamerhq:owner_changelog:notice:undo",
+                       style=discord.ButtonStyle.primary)
+    async def undo(self, interaction, button):
+        await self.open_change(interaction)
+
+    @discord.ui.button(label="Details", custom_id="gamerhq:owner_changelog:notice:details",
+                       style=discord.ButtonStyle.secondary)
+    async def review(self, interaction, button):
+        await self.open_change(interaction)
 
 
 class Entry(SafeView):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Review / Undo", emoji="↩️", custom_id="gamerhq:owner_changelog:open",
-        style=discord.ButtonStyle.primary,
-    )
+    @discord.ui.button(label="Review / Undo", emoji="↩️", custom_id="gamerhq:owner_changelog:open",
+                       style=discord.ButtonStyle.primary)
     async def open(self, interaction, button):
         if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
             return await interaction.response.send_message("Only the server owner can use this panel.", ephemeral=True)
         rows = structure.recent_changes(interaction.guild, 25)
-        await interaction.response.send_message(
-            "# Owner Change History\nSelect a tracked change. Undo is shown only when the previous state can be restored safely.",
-            view=ChangeList(interaction.guild.id, interaction.user.id, rows), ephemeral=True,
-        )
+        text = ("Select a tracked change to review." if rows else
+                "No tracked changes yet. New managed-resource changes will appear automatically in this channel.")
+        await interaction.response.send_message("# Owner Change History\n" + text,
+            view=ChangeList(interaction.guild.id, interaction.user.id, rows), ephemeral=True)
 
 
 class ChangeList(OwnerSession):
     def __init__(self, guild_id, owner_id, rows):
         super().__init__(guild_id, owner_id, timeout=240)
         if rows:
-            select = discord.ui.Select(
-                placeholder="Select a change",
-                options=[
-                    discord.SelectOption(
-                        label=label(row)[:100], value=str(row["id"]),
-                        description=(row["logical_key"] + " · " + row["status"])[:100],
-                    )
-                    for row in rows[:25]
-                ],
-            )
+            select = discord.ui.Select(placeholder="Select a change", options=[
+                discord.SelectOption(label=label(row)[:100], value=str(row["id"]),
+                    description=(row["logical_key"] + " · " + row["status"])[:100]) for row in rows[:25]])
 
             async def choose(interaction):
                 if not await self.interaction_check(interaction):
@@ -205,20 +258,9 @@ class ChangeList(OwnerSession):
                 change = structure.get_change(interaction.guild, int(select.values[0]))
                 if not change:
                     return await interaction.response.send_message("Change no longer available.", ephemeral=True)
-                before, after = change["before"], change["after"]
-                text = (
-                    f"# {label(change)}\n"
-                    f"Resource: {change['logical_key']}\n"
-                    f"Status: **{change['status']}**\n"
-                    f"Actor: {'<@'+str(change['actor_id'])+'>' if change.get('actor_id') else 'unknown'}\n\n"
-                    f"Before: {before.get('name', before.get('message_id', 'n/a'))}\n"
-                    f"After: {after.get('name', 'deleted' if after.get('deleted') else after.get('message_id', 'n/a'))}"
-                )
-                await interaction.response.send_message(
-                    text, view=Undo(interaction.guild.id, interaction.user.id, change),
-                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none(),
-                )
-
+                await interaction.response.send_message(details(change),
+                    view=Undo(interaction.guild.id, interaction.user.id, change),
+                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
             select.callback = choose
             self.add_item(select)
 
@@ -226,68 +268,83 @@ class ChangeList(OwnerSession):
 class Undo(OwnerSession):
     def __init__(self, guild_id, owner_id, change):
         super().__init__(guild_id, owner_id, timeout=120)
-        self.change_id = change["id"]
-        button = discord.ui.Button(
-            label="Undo Change", emoji="↩️", style=discord.ButtonStyle.danger,
-            disabled=not (change["reversible"] and change["status"] == "APPLIED"),
-        )
+        self.change_id, self.snapshot = change["id"], copy.deepcopy(change)
+        self.used, self.expires = False, time.monotonic() + 120
+        button = discord.ui.Button(label="Confirm Undo", emoji="↩️", style=discord.ButtonStyle.danger,
+                                   disabled=not feed.can_undo(change))
 
         async def callback(interaction):
-            if not await self.interaction_check(interaction):
+            if not await self.claim(interaction):
                 return
             await interaction.response.defer(ephemeral=True)
             try:
+                self.check_current(interaction.guild)
                 await structure.undo_change(interaction.guild, interaction.user, self.change_id)
                 await refresh_board(interaction.guild)
-                await interaction.edit_original_response(
-                    content=f"✅ Change #{self.change_id} was undone.", view=None
-                )
-            except (ValueError, discord.HTTPException) as exc:
+                await interaction.edit_original_response(content=f"✅ Change #{self.change_id} was undone.", view=None)
+            except (ValueError, discord.HTTPException, ServerMessageError) as exc:
                 await interaction.edit_original_response(content=str(exc), view=None)
-
+            finally:
+                self.stop()
         button.callback = callback
         self.add_item(button)
 
         if change["action"] == "channel_delete" and change["status"] == "APPLIED":
-            restore_button = discord.ui.Button(
-                label="Restore Replacement", emoji="♻️", style=discord.ButtonStyle.secondary,
-            )
+            restore_button = discord.ui.Button(label="Confirm Replacement", emoji="♻️", style=discord.ButtonStyle.secondary)
 
             async def restore_callback(interaction):
-                if not await self.interaction_check(interaction):
+                if not await self.claim(interaction):
                     return
                 await interaction.response.defer(ephemeral=True)
                 try:
+                    self.check_current(interaction.guild)
                     from services import resource_restore_service as restore_service
                     draft = restore_service.preview(interaction.guild, interaction.user, change["logical_key"])
                     resource = await restore_service.restore(interaction.guild, interaction.user, draft)
-                    now = int(__import__("time").time())
                     with db.connect() as conn:
-                        conn.execute(
-                            "UPDATE structure_change_log SET status='RESTORED',undone_at=?,undone_by=? "
-                            "WHERE guild_id=? AND id=? AND status='APPLIED'",
-                            (now, interaction.user.id, interaction.guild.id, self.change_id),
-                        )
+                        conn.execute("UPDATE structure_change_log SET status='RESTORED',undone_at=?,undone_by=? "
+                                     "WHERE guild_id=? AND id=? AND status='APPLIED'",
+                                     (int(time.time()), interaction.user.id, interaction.guild.id, self.change_id))
                     await refresh_board(interaction.guild)
-                    await interaction.edit_original_response(
-                        content=(
-                            f"✅ Replacement restored: {resource.mention}\n"
-                            "The deleted Discord channel's old message history cannot be recovered."
-                        ),
-                        view=None,
-                    )
-                except (ValueError, discord.HTTPException) as exc:
+                    await interaction.edit_original_response(content=f"✅ Replacement restored: {resource.mention}\n"
+                        "The deleted Discord channel's old message history cannot be recovered.", view=None)
+                except (ValueError, discord.HTTPException, ServerMessageError) as exc:
                     await interaction.edit_original_response(content=str(exc), view=None)
-
+                finally:
+                    self.stop()
             restore_button.callback = restore_callback
             self.add_item(restore_button)
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+
+        async def cancel_callback(interaction):
+            if not await self.interaction_check(interaction):
+                return
+            self.used = True
+            await interaction.response.edit_message(content="Cancelled. No changes made.", view=None)
+            self.stop()
+        cancel.callback = cancel_callback
+        self.add_item(cancel)
+
+    async def claim(self, interaction):
+        if not await self.interaction_check(interaction):
+            return False
+        if self.used or time.monotonic() > self.expires:
+            await interaction.response.send_message("This confirmation expired or was used. Open the notice again.", ephemeral=True)
+            return False
+        self.used = True
+        return True
+
+    def check_current(self, guild):
+        if guild.owner_id != self.owner_id:
+            raise ValueError("Server ownership changed. Reopen the review.")
+        current = structure.get_change(guild, self.change_id)
+        if not current or current != self.snapshot:
+            raise ValueError("This change was already handled or changed. Open a fresh review.")
 
 
 async def open_management(interaction):
     if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
-        return await interaction.response.send_message(
-            "Only the server owner can configure the Owner Change Log.", ephemeral=True
-        )
+        return await interaction.response.send_message("Only the server owner can configure the Owner Change Log.", ephemeral=True)
     try:
         parent = staff_category(interaction.guild)
         if interaction.guild.me is None:
@@ -300,12 +357,10 @@ async def open_management(interaction):
         return await interaction.response.send_message(str(exc), ephemeral=True)
     await interaction.response.send_message(
         f"{HEADER}\nCreate or repair **{LABEL}** under **{parent.name}**? "
-        "Normal members and staff cannot read the channel. Discord Administrators can see "
-        "the launcher, but change details and actions are only shown to you privately. "
-        "This replaces this channel's access entries with a compact owner/bot allowlist; server roles are unchanged.",
-        view=Setup(interaction.guild.id, interaction.user.id, parent.id, current.id if current else None),
-        ephemeral=True,
-    )
+        "New tracked changes get individual notices with Undo/Details buttons. "
+        "Administrators can see generic notices; details and actions are private to you. "
+        "This replaces only this channel's access entries with a compact owner/bot allowlist.",
+        view=Setup(interaction.guild.id, interaction.user.id, parent.id, current.id if current else None), ephemeral=True)
 
 
 class Setup(OwnerSession):
@@ -348,9 +403,8 @@ class Setup(OwnerSession):
                     try:
                         current = await guild.create_text_channel(
                             LABEL, category=parent, overwrites=rights,
-                            topic="Owner Change Log launcher. Change details and Undo are owner-only private responses.",
-                            reason="Confirmed GamerHQ owner change log setup",
-                        )
+                            topic="Automatic change notices. Details and confirmed Undo are owner-only private responses.",
+                            reason="Confirmed GamerHQ owner change log setup")
                     except discord.HTTPException as exc:
                         if exc.status in (400, 403):
                             with db.connect() as conn:
@@ -360,14 +414,10 @@ class Setup(OwnerSession):
                     with db.connect() as conn:
                         conn.execute('DELETE FROM settings WHERE key=?', (reservation,))
                 else:
-                    updated = await current.edit(
-                        category=parent, sync_permissions=False,
-                        overwrites=owner_rights(guild, current),
-                        reason="Confirmed GamerHQ owner change log repair",
-                    )
+                    updated = await current.edit(category=parent, sync_permissions=False,
+                        overwrites=owner_rights(guild, current), reason="Confirmed GamerHQ owner change log repair")
                     if updated is not None:
                         current = updated
-                # create/edit can return before the gateway cache reflects it.
                 from services.server_operations import GuildSnapshot
                 snapshot = GuildSnapshot(guild, [c for c in guild.channels if c.id != current.id] + [current], guild.roles)
                 if not await refresh_board(snapshot, publish=True):
@@ -386,6 +436,30 @@ class OwnerChangeLog(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_view(Entry())
+        self.bot.add_view(ChangeNotice())
+        self.feed_updates.start()
+
+    def cog_unload(self):
+        self.feed_updates.cancel()
+
+    @tasks.loop(seconds=60)
+    async def feed_updates(self):
+        for guild in self.bot.guilds:
+            try:
+                await feed.flush(guild)
+            except Exception:
+                log.warning("Owner change feed recovery deferred guild=%s", guild.id)
+
+    @feed_updates.before_loop
+    async def before_feed_updates(self):
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            try:
+                if destination(guild) is not None:
+                    feed.enable(guild)
+                    await refresh_board(guild)
+            except Exception:
+                log.warning("Owner change feed initialization deferred guild=%s", guild.id)
 
 
 async def setup(bot):
