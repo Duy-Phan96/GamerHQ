@@ -7,6 +7,7 @@ from discord.ext import commands, tasks
 
 from database import db
 from services import channel_change_service as changes
+from services import server_change_observer as observer
 from services.onboarding_service import alias, is_staff
 from services.response_service import SafeView
 from services.server_service import ServerMessageError
@@ -117,7 +118,9 @@ class ServerChanges(commands.Cog):
         from services import structure_adoption_service as structure
         for guild in self.bot.guilds:
             try:
+                observer.feed.enable(guild)
                 await structure.bootstrap(guild)
+                await observer.reconcile(guild)
             except Exception:
                 log.exception('Runtime structure bootstrap failed guild=%s', guild.id)
 
@@ -129,36 +132,75 @@ class ServerChanges(commands.Cog):
         changes._dirty.clear()
 
     @commands.Cog.listener()
+    async def on_resumed(self):
+        for guild in self.bot.guilds:
+            try:
+                await observer.reconcile(guild)
+            except Exception:
+                log.exception('Owner change reconciliation failed guild=%s', guild.id)
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild):
+        await observer.reconcile(guild)
+
+    @commands.Cog.listener()
+    async def on_guild_channel_create(self, channel):
+        await observer.observe(channel.guild, observer.kind_of(channel), None, channel)
+
+    @commands.Cog.listener()
     async def on_guild_channel_update(self, before, after):
         from services import structure_adoption_service as structure
-        if isinstance(after, discord.CategoryChannel):
-            if not structure.category_mapping(after.guild, after.id):
-                return
-            actor_id = await structure.audit_actor(after.guild, after.id, discord.AuditLogAction.channel_update)
-            await structure.observe_category_update(before, after, actor_id=actor_id)
-            return
-        if isinstance(after, (discord.TextChannel, discord.VoiceChannel)):
-            if not structure.channel_mapping(after.guild, after.id):
-                return
-            actor_id = await structure.audit_actor(after.guild, after.id, discord.AuditLogAction.channel_update)
-            outcome = await structure.observe_channel_update(before, after, actor_id=actor_id)
-            # Permission changes keep the stricter existing review/repair path.
-            if isinstance(after, discord.TextChannel) and outcome.get('permissions_changed') and changes.identify(after.guild, after.id):
-                await changes.detect(before, after, self.notify)
+        guild, kind = after.guild, observer.kind_of(after)
+        observer.feed.enable(guild)
+        mark = observer.history_mark(guild)
+        try:
+            if isinstance(after, discord.CategoryChannel) and structure.category_mapping(guild, after.id):
+                actor_id = await structure.audit_actor(guild, after.id, discord.AuditLogAction.channel_update)
+                await structure.observe_category_update(before, after, actor_id=actor_id)
+            elif isinstance(after, (discord.TextChannel, discord.VoiceChannel)) and structure.channel_mapping(guild, after.id):
+                actor_id = await structure.audit_actor(guild, after.id, discord.AuditLogAction.channel_update)
+                outcome = await structure.observe_channel_update(before, after, actor_id=actor_id)
+                # Preserve the established security-review/repair contract.
+                if isinstance(after, discord.TextChannel) and outcome.get('permissions_changed') and changes.identify(guild, after.id):
+                    await changes.detect(before, after, self.notify)
+        finally:
+            # Unmapped resources and fields missing from the legacy log are no longer lost.
+            # Known bot writes suppressed by the legacy observer are recorded here too.
+            await observer.observe(guild, kind, before, after,
+                ignore=observer.covered_fields(guild, after, kind, mark))
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel):
         from services import structure_adoption_service as structure
-        if isinstance(channel, discord.CategoryChannel):
-            if not structure.category_mapping(channel.guild, channel.id):
-                return
-            actor_id = await structure.audit_actor(channel.guild, channel.id, discord.AuditLogAction.channel_delete)
-            await structure.observe_category_delete(channel, actor_id=actor_id)
-        elif isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
-            if not structure.channel_mapping(channel.guild, channel.id):
-                return
-            actor_id = await structure.audit_actor(channel.guild, channel.id, discord.AuditLogAction.channel_delete)
-            await structure.observe_channel_delete(channel, actor_id=actor_id)
+        guild, kind = channel.guild, observer.kind_of(channel)
+        observer.feed.enable(guild)
+        mark = observer.history_mark(guild)
+        try:
+            if isinstance(channel, discord.CategoryChannel) and structure.category_mapping(guild, channel.id):
+                actor_id = await structure.audit_actor(guild, channel.id, discord.AuditLogAction.channel_delete)
+                await structure.observe_category_delete(channel, actor_id=actor_id)
+            elif isinstance(channel, (discord.TextChannel, discord.VoiceChannel)) and structure.channel_mapping(guild, channel.id):
+                actor_id = await structure.audit_actor(guild, channel.id, discord.AuditLogAction.channel_delete)
+                await structure.observe_channel_delete(channel, actor_id=actor_id)
+        finally:
+            await observer.observe(guild, kind, channel, None,
+                record=not observer.covered_fields(guild, channel, kind, mark, deleted=True))
+
+    @commands.Cog.listener()
+    async def on_guild_role_create(self, role):
+        await observer.observe(role.guild, 'role', None, role)
+
+    @commands.Cog.listener()
+    async def on_guild_role_update(self, before, after):
+        await observer.observe(after.guild, 'role', before, after)
+
+    @commands.Cog.listener()
+    async def on_guild_role_delete(self, role):
+        await observer.observe(role.guild, 'role', role, None)
+
+    @commands.Cog.listener()
+    async def on_guild_update(self, before, after):
+        await observer.observe(after, 'guild', before, after)
 
     @commands.Cog.listener()
     async def on_raw_message_delete(self, payload):
