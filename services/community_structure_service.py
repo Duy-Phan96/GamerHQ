@@ -37,6 +37,9 @@ def resource_key(guild, name):
 
 
 def core_channel(guild, name):
+    from services.channel_change_service import removed
+    if removed(guild, name):
+        return None
     raw = db.get_setting(resource_key(guild, name))
     if raw and str(raw).isdigit():
         channel = guild.get_channel(int(raw))
@@ -146,15 +149,19 @@ async def migrate_boards(guild, changed, failed):
         events = await guild.create_category('🏆 EVENTS', reason='GamerHQ tournaments and giveaways')
         changed.append('Created EVENTS')
     db.set_setting(f'managed_category:{guild.id}:events', events.id)
-    for name, target in [('looking-for-group', games), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
+    from services.structure_adoption_service import desired_channel_parent, desired_channel_name
+    for name, default_target in [('looking-for-group', games), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
+        target = desired_channel_parent(guild, name, default_target)
         if channel and channel.category_id != target.id:
-            channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ core channel organization')
+            channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ persisted core channel organization')
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
     if not channels['gaming-chat']:
-        channels['gaming-chat'] = await games.create_text_channel('💬・gaming-chat', reason='GamerHQ shared gaming chat')
+        channels['gaming-chat'] = await games.create_text_channel(
+            desired_channel_name(guild, 'gaming-chat', '💬・gaming-chat'),
+            reason='GamerHQ shared gaming chat')
         changed.append('Created GAMES/gaming-chat')
     elif channels['gaming-chat'].category_id != games.id:
         channels['gaming-chat'] = await channels['gaming-chat'].edit(
@@ -180,12 +187,15 @@ async def migrate_boards(guild, changed, failed):
             changed.append(f'Created {name}')
         elif channel.category_id != target.id:
             channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ managed board location')
-    if channels['guide'].name != '📘・guide':
-        channels['guide'] = await channels['guide'].edit(name='📘・guide', reason='GamerHQ guide naming')
-    if channels['community-events'].name != '🎉・community-events':
-        channels['community-events'] = await channels['community-events'].edit(name='🎉・community-events', reason='GamerHQ community events naming')
-    if channels['looking-for-group']:
-        channels['looking-for-group'] = await channels['looking-for-group'].edit(name='🎯・looking-for-group', reason='GamerHQ LFG naming')
+    guide_name = desired_channel_name(guild, 'guide', '📘・guide')
+    events_name = desired_channel_name(guild, 'community-events', '🎉・community-events')
+    lfg_name = desired_channel_name(guild, 'looking-for-group', '🎯・looking-for-group')
+    if channels['guide'].name != guide_name:
+        channels['guide'] = await channels['guide'].edit(name=guide_name, reason='GamerHQ persisted guide naming')
+    if channels['community-events'].name != events_name:
+        channels['community-events'] = await channels['community-events'].edit(name=events_name, reason='GamerHQ persisted community events naming')
+    if channels['looking-for-group'] and channels['looking-for-group'].name != lfg_name:
+        channels['looking-for-group'] = await channels['looking-for-group'].edit(name=lfg_name, reason='GamerHQ persisted LFG naming')
     for name in ('looking-for-group', 'guide', 'suggestions', 'community-events'):
         if channels[name]:
             await set_read_only(channels[name])
