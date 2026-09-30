@@ -112,6 +112,15 @@ class ServerChanges(commands.Cog):
                 self.bot.add_view(ChangeView(record, self.notify), message_id=record['message_id'])
         self.maintenance.start()
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        from services import structure_adoption_service as structure
+        for guild in self.bot.guilds:
+            try:
+                await structure.bootstrap(guild)
+            except Exception:
+                log.exception('Runtime structure bootstrap failed guild=%s', guild.id)
+
     async def cog_unload(self):
         self.maintenance.cancel()
         for task in changes._timers.values():
