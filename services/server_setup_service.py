@@ -91,6 +91,12 @@ def normalize_name(name: str) -> str:
 
 def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.CategoryChannel | None:
     wanted = normalize_name(spec.name)
+    from database import db
+    logical = 'partners-benefits' if wanted == 'marketplace' else wanted
+    raw = db.get_setting(f'managed_category:{guild.id}:{logical}')
+    mapped = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+    if isinstance(mapped, discord.CategoryChannel):
+        return mapped
     if wanted == 'marketplace':
         from services.support_service import resource
         from services.server_service import ServerMessageError
@@ -109,6 +115,12 @@ def _find_category(guild: discord.Guild, spec: CategorySpec) -> discord.Category
 
 def _find_channel(category: discord.CategoryChannel, spec: ChannelSpec):
     wanted = normalize_name(spec.name)
+    from database import db
+    logical = {'purchases': 'ig-purchases', 'buyer-ranking': 'ig-buyer-ranking'}.get(wanted, wanted)
+    raw = db.get_setting(f'managed_channel:{category.guild.id}:{logical}')
+    mapped = category.guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
+    if isinstance(mapped, (discord.TextChannel, discord.VoiceChannel)):
+        return mapped
     from services.channel_adoption_service import supported
     if wanted in supported():
         from services.support_service import resource
