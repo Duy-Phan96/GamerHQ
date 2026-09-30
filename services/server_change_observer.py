@@ -16,6 +16,7 @@ from services import owner_change_feed as feed
 from services import structure_adoption_service as structure
 
 _locks = {}
+_legacy_undos = {}
 PREFIX = "owner_observation:"
 EDITABLE = {
     "channel": {"name", "topic", "nsfw", "slowmode_delay", "bitrate", "user_limit", "rtc_region"},
@@ -146,6 +147,45 @@ def _record(conn, guild, kind, resource_id, before, after, *, ignore=(), offline
     return True
 
 
+def _legacy_undo_fields(guild, kind, resource_id, old, new):
+    """Consume only an explicitly started legacy Undo's exact inverse fields."""
+    now = time.monotonic()
+    for token, pending in list(_legacy_undos.items()):
+        if pending["expires"] <= now:
+            _legacy_undos.pop(token, None)
+            continue
+        if token[:2] != (guild.id, resource_id) or pending["kind"] != kind:
+            continue
+        fields = pending["fields"]
+        if all(old.get(field) == pending["after"].get(field)
+               and new.get(field) == pending["before"].get(field) for field in fields):
+            _legacy_undos.pop(token, None)
+            return set(fields)
+    return set()
+
+
+async def undo_legacy(guild, owner, change_id):
+    """Preserve legacy Undo while avoiding a new inverse notice from its event."""
+    if owner.id != guild.owner_id:
+        raise ValueError("Only the current server owner can undo this change.")
+    change = structure.get_change(guild, change_id)
+    token = None
+    if change and change["status"] == "APPLIED" and change["action"] in {"channel_update", "category_update"}:
+        fields = [field for field in ("name", "position", "category_id")
+                  if change["before"].get(field) != change["after"].get(field)]
+        if fields:
+            token = (guild.id, change["resource_id"], change_id)
+            _legacy_undos[token] = {"kind": change["resource_type"], "fields": fields,
+                                   "before": change["before"], "after": change["after"],
+                                   "expires": time.monotonic() + 90}
+    try:
+        return await structure.undo_change(guild, owner, change_id)
+    except BaseException:
+        if token is not None:
+            _legacy_undos.pop(token, None)
+        raise
+
+
 async def observe(guild, kind, before, after, *, ignore=(), record=True):
     """Record promptly, without waiting for audit attribution or changing Discord."""
     resource = after if after is not None else before
@@ -155,6 +195,7 @@ async def observe(guild, kind, before, after, *, ignore=(), record=True):
         # Enable before recording, even when the destination is temporarily unavailable.
         # This prevents a later first successful delivery from skipping the backlog.
         feed.enable(guild)
+        ignore = set(ignore) | _legacy_undo_fields(guild, kind, resource.id, old, new)
         with db.connect() as conn:
             changed = _record(conn, guild, kind, resource.id, old, new, ignore=ignore, record=record)
     if changed:
@@ -225,14 +266,14 @@ def can_undo(change):
 def detail_text(change):
     def safe(value):
         text = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
-        return discord.utils.escape_mentions(discord.utils.escape_markdown(text))[:90]
+        return discord.utils.escape_mentions(discord.utils.escape_markdown(text))[:75]
     lines = [f"# Change #{change['id']} · Server configuration", f"Resource: {safe(change['logical_key'])}",
              f"Status: **{safe(change['status'])}**", "Actor: Unknown (no reliably correlated audit evidence).", ""]
     fields = change["after"].get("_fields", [])
-    for field in fields[:6]:
+    for field in fields[:7]:
         lines.append(f"**{safe(field)}:** {safe(change['before'].get(field))} → {safe(change['after'].get(field))}")
-    if len(fields) > 6:
-        lines.append(f"… {len(fields) - 6} further changed fields are saved in the private history.")
+    if len(fields) > 7:
+        lines.append(f"… {len(fields) - 7} further changed fields are saved in the private history.")
     if change["action"].endswith("_offline"):
         lines.append("Offline net difference only: an unavailable cached resource is not proof of deletion.")
     if can_undo(change):
