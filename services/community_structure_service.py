@@ -101,6 +101,7 @@ async def refresh_boards(guild):
 
 async def migrate_boards(guild, changed, failed):
     from cogs.suggestions import STAFF_ALIASES, private_overwrites
+    from services.channel_change_service import removed
     start, community = core_category(guild, 'start-here'), core_category(guild, 'community')
     if start is None or community is None:
         raise ServerMessageError('START HERE and COMMUNITY must exist before board migration.')
@@ -158,12 +159,12 @@ async def migrate_boards(guild, changed, failed):
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
-    if not channels['gaming-chat']:
+    if not channels['gaming-chat'] and not removed(guild, 'gaming-chat'):
         channels['gaming-chat'] = await games.create_text_channel(
             desired_channel_name(guild, 'gaming-chat', '💬・gaming-chat'),
             reason='GamerHQ shared gaming chat')
         changed.append('Created GAMES/gaming-chat')
-    elif channels['gaming-chat'].category_id != games.id:
+    elif channels['gaming-chat'] and channels['gaming-chat'].category_id != games.id:
         channels['gaming-chat'] = await channels['gaming-chat'].edit(
             category=games, sync_permissions=False, reason='GamerHQ shared gaming chat location'
         )
@@ -173,6 +174,8 @@ async def migrate_boards(guild, changed, failed):
 
     for name, target in [('guide', start), ('suggestions', community), ('community-events', events)]:
         channel = channels[name]
+        if removed(guild, name):
+            continue
         if not channel:
             # Visible but read-only from creation, including bot access.
             import discord
@@ -190,9 +193,9 @@ async def migrate_boards(guild, changed, failed):
     guide_name = desired_channel_name(guild, 'guide', '📘・guide')
     events_name = desired_channel_name(guild, 'community-events', '🎉・community-events')
     lfg_name = desired_channel_name(guild, 'looking-for-group', '🎯・looking-for-group')
-    if channels['guide'].name != guide_name:
+    if channels['guide'] and channels['guide'].name != guide_name:
         channels['guide'] = await channels['guide'].edit(name=guide_name, reason='GamerHQ persisted guide naming')
-    if channels['community-events'].name != events_name:
+    if channels['community-events'] and channels['community-events'].name != events_name:
         channels['community-events'] = await channels['community-events'].edit(name=events_name, reason='GamerHQ persisted community events naming')
     if channels['looking-for-group'] and channels['looking-for-group'].name != lfg_name:
         channels['looking-for-group'] = await channels['looking-for-group'].edit(name=lfg_name, reason='GamerHQ persisted LFG naming')
