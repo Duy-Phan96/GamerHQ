@@ -131,11 +131,16 @@ class ServerChanges(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_channel_update(self, before, after):
         from services import structure_adoption_service as structure
-        actor_id = await structure.audit_actor(after.guild, after.id, discord.AuditLogAction.channel_update)
         if isinstance(after, discord.CategoryChannel):
+            if not structure.category_mapping(after.guild, after.id):
+                return
+            actor_id = await structure.audit_actor(after.guild, after.id, discord.AuditLogAction.channel_update)
             await structure.observe_category_update(before, after, actor_id=actor_id)
             return
         if isinstance(after, (discord.TextChannel, discord.VoiceChannel)):
+            if not structure.channel_mapping(after.guild, after.id):
+                return
+            actor_id = await structure.audit_actor(after.guild, after.id, discord.AuditLogAction.channel_update)
             outcome = await structure.observe_channel_update(before, after, actor_id=actor_id)
             # Permission changes keep the stricter existing review/repair path.
             if isinstance(after, discord.TextChannel) and outcome.get('permissions_changed') and changes.identify(after.guild, after.id):
@@ -144,10 +149,15 @@ class ServerChanges(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel):
         from services import structure_adoption_service as structure
-        actor_id = await structure.audit_actor(channel.guild, channel.id, discord.AuditLogAction.channel_delete)
         if isinstance(channel, discord.CategoryChannel):
+            if not structure.category_mapping(channel.guild, channel.id):
+                return
+            actor_id = await structure.audit_actor(channel.guild, channel.id, discord.AuditLogAction.channel_delete)
             await structure.observe_category_delete(channel, actor_id=actor_id)
         elif isinstance(channel, (discord.TextChannel, discord.VoiceChannel)):
+            if not structure.channel_mapping(channel.guild, channel.id):
+                return
+            actor_id = await structure.audit_actor(channel.guild, channel.id, discord.AuditLogAction.channel_delete)
             await structure.observe_channel_delete(channel, actor_id=actor_id)
 
     @commands.Cog.listener()
