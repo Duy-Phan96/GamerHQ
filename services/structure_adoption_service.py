@@ -348,6 +348,11 @@ async def observe_category_delete(category, *, actor_id=None):
 
 async def observe_managed_message_delete(guild, channel_id: int, message_id: int, *, actor_id=None):
     from services import managed_message_service as managed
+    initial = [state for state in managed.records(guild)
+               if int(state.get("message_id") or 0) == int(message_id)
+               and int(state.get("channel_id") or 0) == int(channel_id)]
+    if len(initial) != 1:
+        return False
     await asyncio.sleep(0.8)
     matches = [state for state in managed.records(guild)
                if int(state.get("message_id") or 0) == int(message_id)
