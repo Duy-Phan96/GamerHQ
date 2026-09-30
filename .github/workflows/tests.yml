@@ -24,6 +24,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Validate source before isolated review
+        if: matrix.python == '3.12'
+        run: |
+          python -m tools.repository_audit --history
+          git diff --check HEAD^ HEAD
+          git archive --format=tar --output=/tmp/gamerhq-source.tar HEAD
+      - name: Short-lived source-only review artifact
+        if: matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamerhq-review-source
+          path: /tmp/gamerhq-source.tar
+          retention-days: 1
       - run: python -m pip install -r requirements.lock -r requirements-dev.txt
       - run: python -m pip check
       - run: python -m pytest
