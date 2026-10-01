@@ -10,6 +10,7 @@ from services.authorization_service import authorized
 from services.game_catalog_service import member_counts, sections
 from services.response_service import SafeView, check_admin
 from services import game_visibility_service as visibility
+from services import game_readiness_service as readiness
 from cogs.game_selector import LETTER_RANGES, POPULAR
 
 PAGE_SIZE = 15  # Three game rows, navigation row, then draft actions.
@@ -24,29 +25,43 @@ def text(value, limit=120):
 async def open_selector(interaction):
     if not await check_admin(interaction):
         return
-    view = AdminGameSelection(interaction.guild, interaction.user.id, db.get_all_games(active_only=True))
-    await interaction.response.send_message(view.content(), view=view, ephemeral=True,
-                                           allowed_mentions=discord.AllowedMentions.none())
+    await interaction.response.defer(ephemeral=True)
+    try:
+        report = await readiness.inventory(interaction.guild, interaction.user)
+    except ValueError as exc:
+        return await interaction.edit_original_response(content=text(exc, 600), view=None)
+    view = AdminGameSelection(interaction.guild, interaction.user.id, report['games'],
+                              states=report['states'], checked_at=report['checked_at'], error=report['error'])
+    await interaction.edit_original_response(content=view.content(), view=view,
+                                            allowed_mentions=discord.AllowedMentions.none())
 
 
 class AdminGameSelection(SafeView):
-    def __init__(self, guild, actor_id, games):
+    def __init__(self, guild, actor_id, games, *, states=None, checked_at=None, error=None):
         super().__init__(timeout=600)
         self.guild, self.actor_id = guild, actor_id
+        self.pending, self.draft_games = {}, {}
+        self.group, self.page, self.browsing = None, 0, False
+        self.phase, self.expires = 'select', time.monotonic() + 600
+        self.notice = ''
+        self.set_inventory(games, states or {}, checked_at, error)
+        self.rebuild()
+
+    def set_inventory(self, games, states, checked_at, error=None):
+        # A refresh updates displayed facts, never silently rebases an old draft.
         self.games = {g['id']: copy.deepcopy(g) for g in games if g['active']}
         self.visible = {gid for gid, g in self.games.items() if g['selectable']}
-        self.pending = {}
-        ranked = sections(list(self.games.values()), member_counts(guild, list(self.games.values())))
+        self.states, self.checked_at, self.read_error = copy.deepcopy(states), checked_at, error
+        ranked = sections(list(self.games.values()), member_counts(self.guild, list(self.games.values())))
         self.groups = {POPULAR: ranked[POPULAR]} if POPULAR in ranked else {}
         for label in (*LETTER_RANGES, '#'):
             rows = [g for letter, group in ranked.items() if letter != POPULAR
                     and (letter == '#' if label == '#' else label[0] <= letter <= label[-1]) for g in group]
             if rows:
                 self.groups[label] = sorted(rows, key=lambda g: (g['name'].casefold(), g['id']))
-        self.group = next(iter(self.groups), None)
-        self.page, self.browsing = 0, False
-        self.phase, self.expires = 'select', time.monotonic() + 600
-        self.rebuild()
+        if self.group not in self.groups:
+            self.group = next(iter(self.groups), None)
+        self.page = min(self.page, self.pages() - 1)
 
     async def allowed(self, interaction, *, phase=None):
         ok = (interaction.guild and interaction.guild.id == self.guild.id
@@ -69,16 +84,29 @@ class AdminGameSelection(SafeView):
         return self.groups.get(self.group, [])[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]
 
     def is_visible(self, gid):
+        """Requested library policy, not the button's verified-ready indicator."""
         return self.pending.get(gid, gid in self.visible)
+
+    def game_state(self, gid):
+        if self.checked_at is None or time.monotonic() - self.checked_at > readiness.MAX_AGE:
+            return readiness.unverified('This check is older than 90 seconds. Refresh before choosing another game.')
+        return self.states.get(gid, readiness.unverified())
 
     def content(self):
         shows = sum(self.pending.values())
         heading = 'Browse A–Z' if self.browsing else f'{"0–9 / Other" if self.group == "#" else self.group or "No active games"} · {self.page + 1}/{self.pages()}'
+        warning = ('\n⚠️ ' + text(self.read_error, 240)) if self.read_error else ''
+        if self.checked_at is None or time.monotonic() - self.checked_at > readiness.MAX_AGE:
+            warning = '\n⚠️ Refresh for a current check. Unverified games are never shown as ready.'
+        note = '\n' + self.notice if self.notice else ''
         return ('# 🎮 Manage Visible Games\n'
                 'Admin settings, not your personal game roles. Choose several games, then review and confirm.\n'
-                '✅ Visible after saving · ➕ Hidden after saving · • Unsaved choice\n'
-                'Green games may still need a chat. **Show page** also sets up missing chats.\n'
-                'Hidden chats keep their messages; staff retains access.\n\n'
+                '✅ Ready = visible + verified Games chat · ➕ Not set up = hidden, no chat\n'
+                '🙈 Hidden = chat/history kept · ⚠️ Setup needed / review · ❔ Unverified\n'
+                '⏳ Blue = unsaved Show/Hide choice, not a completed change.\n'
+                'Ready reflects the last check; **Refresh** rechecks without changing anything.\n'
+                'Show page includes visible games with missing chats. Hidden chats stay accessible to staff.'
+                f'{warning}{note}\n\n'
                 f'**Pending: {shows} show / set up · {len(self.pending) - shows} hide**\n'
                 f'## {heading}\nNothing changes until you confirm the review.')
 
@@ -90,6 +118,22 @@ class AdminGameSelection(SafeView):
         item.callback = callback
         self.add_item(item)
 
+    def game_button(self, game):
+        gid = game['id']
+        code = self.game_state(gid)['code']
+        prefixes = {readiness.READY: ('✅ ', 'Ready'), readiness.NOT_SET_UP: ('➕ ', 'Not set up'),
+                    readiness.HIDDEN: ('🙈 ', 'History kept'), readiness.SETUP_NEEDED: ('⚠️ ', 'Set up'),
+                    readiness.PENDING: ('⚠️ ', 'Unfinished'), readiness.REVIEW: ('⚠️ ', 'Review'),
+                    readiness.UNVERIFIED: ('❔ ', 'Refresh')}
+        prefix, suffix = prefixes.get(code, ('❔ ', 'Refresh'))
+        style = discord.ButtonStyle.success if code == readiness.READY else discord.ButtonStyle.secondary
+        if gid in self.pending:
+            prefix, suffix = '⏳ ', 'Show pending' if self.pending[gid] else 'Hide pending'
+            style = discord.ButtonStyle.primary
+        suffix = ' · ' + suffix
+        available = 80 - len((prefix + suffix).encode('utf-16-le')) // 2
+        return prefix + text(game['name'], available) + suffix, style
+
     def rebuild(self):
         self.clear_items()
         if self.browsing:
@@ -99,13 +143,11 @@ class AdminGameSelection(SafeView):
                 self.button('0–9 / Other' if group == '#' else group, choose, index // 5)
         else:
             for index, game in enumerate(self.page_games()):
-                gid, selected = game['id'], self.is_visible(game['id'])
-                prefix = '✅ ' if selected else '➕ '
-                label = (prefix + game['name'] + (' •' if gid in self.pending else '')).encode('utf-16-le')[:160].decode('utf-16-le', errors='ignore')
+                gid = game['id']
+                label, style = self.game_button(game)
                 async def toggle(i, gid=gid):
                     await self.toggle(i, gid)
-                self.button(label, toggle, index // 5,
-                            style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
+                self.button(label, toggle, index // 5, style=style,
                             custom_id=f'gamerhq:admin_visibility:game:{gid}')
         async def prev(i): await self.navigate(i, delta=-1)
         async def next_page(i): await self.navigate(i, delta=1)
@@ -115,6 +157,7 @@ class AdminGameSelection(SafeView):
         self.button('Next ▶', next_page, 3, disabled=self.browsing or self.page + 1 >= self.pages())
         self.button('Popular', popular, 3, disabled=POPULAR not in self.groups)
         self.button('Browse A–Z', browse, 3, disabled=not self.groups)
+        self.button('Refresh', self.refresh, 3)
         async def show(i): await self.set_page(i, True)
         async def hide(i): await self.set_page(i, False)
         self.button('Show page', show, 4, disabled=not self.page_games())
@@ -128,6 +171,25 @@ class AdminGameSelection(SafeView):
         await interaction.response.edit_message(content=self.content(), view=self,
                                                 allowed_mentions=discord.AllowedMentions.none())
 
+    async def refresh(self, interaction):
+        if not await self.allowed(interaction, phase='select'):
+            return
+        self.phase = 'loading'
+        await interaction.response.defer()
+        try:
+            report = await readiness.inventory(interaction.guild, interaction.user)
+            if time.monotonic() > self.expires:
+                raise ValueError('This selection expired. Reopen Manage Visible Games.')
+        except ValueError as exc:
+            self.phase = 'closed'
+            self.stop()
+            return await interaction.edit_original_response(content=text(exc, 600), view=None)
+        self.set_inventory(report['games'], report['states'], report['checked_at'], report['error'])
+        self.phase, self.notice = 'select', ''
+        self.rebuild()
+        await interaction.edit_original_response(content=self.content(), view=self,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
     async def navigate(self, interaction, *, group=None, delta=0, browse=False):
         if not await self.allowed(interaction, phase='select'):
             return
@@ -139,34 +201,51 @@ class AdminGameSelection(SafeView):
         self.page = min(max(0, self.page + delta), self.pages() - 1)
         await self.repaint(interaction)
 
+    def stage(self, gid, target):
+        if gid not in self.pending:
+            self.draft_games[gid] = copy.deepcopy(self.games[gid])
+        self.pending[gid] = target
+
     async def toggle(self, interaction, gid):
         if not await self.allowed(interaction, phase='select'):
             return
         if gid not in self.games:
             return await interaction.response.send_message('This game is no longer in this selection.', ephemeral=True)
-        target = not self.is_visible(gid)
-        if target == (gid in self.visible):
-            self.pending.pop(gid, None)
-        elif gid in self.pending or len(self.pending) < visibility.MAX_BATCH:
-            self.pending[gid] = target
+        if gid in self.pending:
+            self.pending.pop(gid)
+            self.draft_games.pop(gid, None)
+            self.notice = 'Choice cleared. No saved state was changed.'
         else:
-            return await interaction.response.send_message('Review these 50 choices before adding more.', ephemeral=True)
+            status = self.game_state(gid)
+            if status['target'] is None:
+                return await interaction.response.send_message(text(status['reason'], 700), ephemeral=True,
+                                                              allowed_mentions=discord.AllowedMentions.none())
+            if len(self.pending) >= visibility.MAX_BATCH:
+                return await interaction.response.send_message('Review these 50 choices before adding more.', ephemeral=True)
+            self.stage(gid, status['target'])
+            self.notice = f'**{text(self.games[gid]["name"], 65)}** — {text(status["reason"], 180)}'
         await self.repaint(interaction)
 
     async def set_page(self, interaction, visible):
         if not await self.allowed(interaction, phase='select'):
             return
         ids = {g['id'] for g in self.page_games()}
+        if any(self.game_state(gid)['code'] == readiness.UNVERIFIED for gid in ids):
+            return await interaction.response.send_message('Refresh to verify this page before staging changes.', ephemeral=True)
         if len(set(self.pending) | ids) > visibility.MAX_BATCH:
             return await interaction.response.send_message('This page would exceed 50 choices. Apply the current review first.', ephemeral=True)
-        # Explicit page actions include unchanged visible games needing channel setup.
-        self.pending.update({gid: visible for gid in sorted(ids)})
+        # Review gates stay visible in the batch preview; they are not bypassed.
+        for gid in sorted(ids):
+            self.stage(gid, visible)
+        self.notice = 'Page choices are pending. The review lists any blocked games; nothing has changed yet.'
         await self.repaint(interaction)
 
     async def clear(self, interaction):
         if not await self.allowed(interaction, phase='select'):
             return
         self.pending.clear()
+        self.draft_games.clear()
+        self.notice = ''
         await self.repaint(interaction)
 
     async def cancel(self, interaction):
@@ -184,7 +263,8 @@ class AdminGameSelection(SafeView):
         self.phase = 'loading'
         await interaction.response.defer()
         try:
-            draft = await visibility.preview_batch(self.guild, interaction.user, dict(self.pending), expected_games=self.games)
+            expected = {gid: self.draft_games.get(gid, self.games.get(gid)) for gid in self.pending}
+            draft = await visibility.preview_batch(self.guild, interaction.user, dict(self.pending), expected_games=expected)
             if not authorized(interaction.guild, interaction.user):
                 raise ValueError('Administrator access changed. Reopen the selector.')
             self.phase = 'review'
@@ -258,6 +338,8 @@ class BatchReview(SafeView):
             self.add('Confirm & exceed soft limit' if self.draft['override'] else 'Confirm changes', self.confirm,
                      disabled=not self.draft['plans'], style=discord.ButtonStyle.danger if self.draft['override'] else discord.ButtonStyle.success)
             self.add('Back to selection', self.back)
+        else:
+            self.add('Back to games', self.reopen)
         self.add('Close', self.close)
 
     async def turn(self, interaction, delta):
@@ -273,7 +355,17 @@ class BatchReview(SafeView):
         self.valid = False
         self.stop()
         self.session.phase = 'select'
-        await self.session.repaint(interaction)
+        await self.session.refresh(interaction)
+
+    async def reopen(self, interaction):
+        if self.results is None or not await self.interaction_check(interaction):
+            return
+        self.valid = False
+        self.stop()
+        self.session.pending.clear()
+        self.session.draft_games.clear()
+        self.session.phase = 'select'
+        await self.session.refresh(interaction)
 
     async def close(self, interaction):
         if not await self.interaction_check(interaction):
