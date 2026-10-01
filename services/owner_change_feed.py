@@ -1,21 +1,26 @@
-"""Per-change owner-log notices backed by existing SQLite history and settings.
+"""Owner notices backed by the existing SQLite history and delivery records.
 
-No Discord resources are discovered/created here. The history remains authoritative;
-notices contain only generic metadata and point to owner-authorized private review.
+Category deletions may group narrowly matching child moves. Grouping changes only
+presentation; the individual rows and their original before/after values remain.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import time
 
 import discord
 from database import db
 from services import structure_adoption_service as structure
+from services import owner_change_display as display
 
 log = logging.getLogger(__name__)
 BATCH_SIZE = 10
+GROUP_WINDOW = 3.0
+GROUP_SCAN_LIMIT = 100
 _locks = {}
+_deferred = {}
 
 
 def cursor_key(guild_id):
@@ -67,31 +72,142 @@ def can_undo(change):
                 and change.get("action") in {"channel_update", "category_update", "message_delete"})
 
 
-def render_notice(change):
-    """Never interpolate resource names/IDs, actors, content or tokens into the channel."""
-    kind = {
-        "channel_update": "Channel changed", "category_update": "Category changed",
-        "channel_delete": "Channel removed", "category_delete": "Category removed",
-        "message_delete": "Managed bot message removed", "channel_restore": "Replacement restored",
-        "security_review": "Change requires security review", "offline_reconcile": "Offline change recorded",
-    }.get(change.get("action"), "Server change recorded")
-    if change.get("action", "").startswith("observed_"):
-        _, resource, event = change["action"].split("_", 2)
-        subject = {"channel": "Channel", "category": "Category", "role": "Role", "guild": "Server settings"}.get(resource, "Resource")
-        kind = subject + {"update": " changed", "create": " created", "delete": " removed", "offline": " changed while offline"}.get(event, " changed")
-    state = {"UNDOING": "Undo in progress", "UNDONE": "✅ Undone", "RESTORED": "♻️ Replacement restored",
-             "REVIEW_REQUIRED": "⚠️ Review required"}.get(change.get("status"), "Recorded")
-    if can_undo(change):
-        help_text = "Use **Undo** to review this change privately and confirm before reversing it."
+def _category_deleted(change):
+    return bool(change and change.get("status") == "APPLIED"
+                and change.get("resource_type") == "category"
+                and change.get("action") in {"category_delete", "observed_category_delete"})
+
+
+def _detached(change):
+    """Never absorb rename, permission, topic or other concurrent edits."""
+    if (change.get("status") != "APPLIED" or change.get("resource_type") != "channel"
+            or change.get("action") not in {"channel_update", "observed_channel_update"}):
+        return False
+    before, after = change["before"], change["after"]
+    fields = {field for field in set(before) | set(after)
+              if not field.startswith("_") and field != "id" and before.get(field) != after.get(field)}
+    return bool(before.get("category_id") and "category_id" in after and after["category_id"] is None
+                and "category_id" in fields and fields <= {"category_id", "position"})
+
+
+def related_changes(guild, change_id):
+    """Only the root's persisted, same-guild members are exposed in private review."""
+    notice = load_notice(guild.id, change_id) or {}
+    ids = notice.get("members", [])
+    if not isinstance(ids, list):
+        return []
+    rows = []
+    for value in ids[:GROUP_SCAN_LIMIT]:
+        if not isinstance(value, int):
+            continue
+        row = structure.get_change(guild, value)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _prepare_group(guild, change, cursor):
+    """Return a short wait, or freeze an unsent group in one transaction.
+
+    Identity + a narrow time window + a pure category detach are all required.
+    Already sent/uncertain notices are never regrouped or deleted. Missing or
+    ambiguous parent events fall back to individual delivery, not suppression.
+    """
+    if load_notice(guild.id, change["id"]) is not None:
+        return 0.0
+    if not (_category_deleted(change) or _detached(change)):
+        return 0.0
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM structure_change_log WHERE guild_id=? AND id>? ORDER BY id LIMIT ?",
+            (guild.id, cursor, GROUP_SCAN_LIMIT),
+        ).fetchall()
+    candidates = [structure._change_row(row) for row in rows]
+    parent_id = change["resource_id"] if _category_deleted(change) else change["before"]["category_id"]
+    roots = [row for row in candidates if _category_deleted(row) and row["resource_id"] == parent_id
+             and abs(row["created_at"] - change["created_at"]) <= GROUP_WINDOW
+             and load_notice(guild.id, row["id"]) is None]
+    root = roots[0] if len(roots) == 1 else None
+    due = (root or change)["created_at"] + GROUP_WINDOW
+    delay = max(0.0, due - time.time())
+    if delay:
+        return delay
+    if root is None:
+        return 0.0
+    members = [row for row in candidates if _detached(row)
+               and row["before"]["category_id"] == root["resource_id"]
+               and abs(row["created_at"] - root["created_at"]) <= GROUP_WINDOW
+               and load_notice(guild.id, row["id"]) is None]
+    if not members:
+        return 0.0
+    ids = [root["id"], *(row["id"] for row in members)]
+    with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for change_id in ids:
+            if conn.execute("SELECT 1 FROM settings WHERE key=?", (notice_key(guild.id, change_id),)).fetchone():
+                return 0.0
+            current = conn.execute("SELECT status FROM structure_change_log WHERE guild_id=? AND id=?",
+                                   (guild.id, change_id)).fetchone()
+            if not current or current["status"] != "APPLIED":
+                return 0.0
+        root_value = {"state": "PENDING", "status": root["status"],
+                      "members": [row["id"] for row in members],
+                      "channel_count": len({row["resource_id"] for row in members})}
+        conn.execute("INSERT INTO settings(key,value) VALUES(?,?)",
+                     (notice_key(guild.id, root["id"]), json.dumps(root_value, sort_keys=True)))
+        for row in members:
+            conn.execute("INSERT INTO settings(key,value) VALUES(?,?)",
+                         (notice_key(guild.id, row["id"]), json.dumps(
+                             {"state": "GROUPED", "group_id": root["id"]}, sort_keys=True)))
+    return 0.0
+
+
+def _schedule_flush(guild, delay):
+    pending = _deferred.get(guild.id)
+    if pending is not None and not pending.done():
+        return
+
+    async def later():
+        try:
+            await asyncio.sleep(max(0.05, delay))
+            # Allow a new bounded wait if the parent event arrived after a child.
+            _deferred.pop(guild.id, None)
+            await flush(guild)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("Owner grouped delivery deferred guild=%s; periodic recovery remains active", guild.id)
+        finally:
+            if _deferred.get(guild.id) is asyncio.current_task():
+                _deferred.pop(guild.id, None)
+    _deferred[guild.id] = asyncio.create_task(later())
+
+
+def cancel_pending_flushes():
+    for pending in _deferred.values():
+        pending.cancel()
+    _deferred.clear()
+
+
+def render_notice(change, *, related_count=0):
+    """No names, resource IDs, actors, field values or tokens in channel messages."""
+    kind = display.generic_title(change)
+    state = display.status(change)
+    if change.get("status") == "UNDONE":
+        state = "✅ Undone"
+    if related_count and _category_deleted(change):
+        help_text = (f"A category was deleted. **{related_count} related channel moves** were recorded.\n"
+                     "Open the private details to see the affected channels.")
+    elif can_undo(change):
+        help_text = "Use **Undo** to review this change privately before confirming."
     elif change.get("status") in {"UNDONE", "RESTORED"}:
         help_text = "This change has already been handled. Its private review remains available."
-    elif change.get("action") in {"channel_delete", "category_delete"}:
-        help_text = "Deletion cannot be undone. Review any available replacement option; deleted history is not recoverable."
+    elif display.event(change) == "deleted":
+        help_text = "Deletion cannot be undone; deleted history is not recoverable. Open the private details for this record."
     else:
-        help_text = "Review this change privately. Automatic Undo is not available for this change."
-    return (f"## 🕘 Change #{int(change['id'])} · {kind}\n"
-            f"<t:{int(change['created_at'])}:f> · **{state}**\n\n{help_text}\n"
-            "Details and actions are available only to the current server owner.")
+        help_text = "Open the private details to see what changed. Automatic Undo is not available."
+    return (f"## 🕘 {kind}\n<t:{int(change['created_at'])}:f> · **{state}**\n\n{help_text}\n"
+            f"Details and actions are available only to the current server owner. · Change #{int(change['id'])}")
 
 
 def change_for_message(guild, channel_id, message_id):
@@ -108,13 +224,22 @@ def change_for_message(guild, channel_id, message_id):
 
 async def _send(guild, channel, change):
     old = load_notice(guild.id, change["id"])
+    if old and old.get("state") == "GROUPED":
+        root_id = old.get("group_id")
+        root = structure.get_change(guild, root_id) if isinstance(root_id, int) else None
+        root_notice = load_notice(guild.id, root_id) if root else None
+        if (not root_notice or root_notice.get("state") == "GROUPED"
+                or change["id"] not in root_notice.get("members", [])):
+            log.warning("Owner group binding needs review guild=%s change=%s", guild.id, change["id"])
+            return False
+        return await _send(guild, channel, root)
     if old and old.get("state") != "PENDING":
         if old.get("state") == "SENDING":
             _store(guild.id, change["id"], dict(old, state="UNCERTAIN"))
             log.warning("Owner notice delivery uncertain; retained history, no resend guild=%s change=%s", guild.id, change["id"])
         return True
-    value = {"state": "SENDING", "channel_id": channel.id, "status": change["status"]}
-    # Reserve before the HTTP call. A crash/uncertain response must not cause duplicate sends.
+    value = dict(old or {}, state="SENDING", channel_id=channel.id, status=change["status"])
+    # Reserve before HTTP. A crash/uncertain response must not duplicate sends.
     with db.connect() as conn:
         if old is None:
             claimed = conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",
@@ -127,8 +252,9 @@ async def _send(guild, channel, change):
         return True
     from cogs.owner_changelog import ChangeNotice
     try:
-        message = await channel.send(content=render_notice(change), view=ChangeNotice(change),
-                                     allowed_mentions=discord.AllowedMentions.none())
+        message = await channel.send(
+            content=render_notice(change, related_count=value.get("channel_count", 0)),
+            view=ChangeNotice(change), allowed_mentions=discord.AllowedMentions.none())
     except discord.HTTPException as exc:
         definite = exc.status in (400, 403, 404, 429)
         _store(guild.id, change["id"], dict(value, state="PENDING" if definite else "UNCERTAIN"))
@@ -160,18 +286,18 @@ async def _refresh(guild, channel, change_id):
         if guild.me is None or message.author.id != guild.me.id:
             _store(guild.id, change_id, dict(state, state="INVALID"))
             return
-        await message.edit(content=render_notice(change), view=ChangeNotice(change),
-                           allowed_mentions=discord.AllowedMentions.none())
+        await message.edit(content=render_notice(change, related_count=state.get("channel_count", 0)),
+                           view=ChangeNotice(change), allowed_mentions=discord.AllowedMentions.none())
     except discord.NotFound:
         _store(guild.id, change_id, dict(state, state="DELETED"))
-        return  # Respect deleted notices; history is still in the private review.
+        return
     except discord.HTTPException:
-        return  # An edit can be safely retried; no new message is sent.
+        return  # Retry the edit, not a new message.
     _store(guild.id, change_id, dict(state, status=change["status"]))
 
 
 async def flush(guild, *, include_latest=False):
-    """Bounded delivery/recovery, no guild inventory or message history scans."""
+    """Bounded delivery/recovery, no guild inventory or message-history scans."""
     from cogs.owner_changelog import destination
     if destination(guild) is None:
         return
@@ -183,15 +309,18 @@ async def flush(guild, *, include_latest=False):
                 (guild.id, cursor, BATCH_SIZE),
             ).fetchall()
         for row in rows:
-            channel = destination(guild)  # Recheck privacy after awaits, never cache an unsafe destination.
+            channel = destination(guild)
             if channel is None:
                 return
             change = structure.get_change(guild, row["id"])
+            delay = _prepare_group(guild, change, cursor)
+            if delay:
+                _schedule_flush(guild, delay)
+                break
             if not await _send(guild, channel, change):
                 break
             db.set_setting(cursor_key(guild.id), change["id"])
-        # Reconcile only terminal entries whose sent notice still has the previous status.
-        # SQLite settings keys are indexed; message reads are targeted by saved ID.
+            cursor = change["id"]
         with db.connect() as conn:
             dirty = conn.execute(
                 "SELECT c.id FROM structure_change_log c JOIN settings s ON s.key=(? || c.id) "
