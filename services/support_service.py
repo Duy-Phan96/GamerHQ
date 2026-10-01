@@ -534,7 +534,8 @@ def partner_overwrites(category):
             value = rights.setdefault(target, discord.PermissionOverwrite())
             value.view_channel = value.read_message_history = True
             value.send_messages = False  # Posting is granted only on selected feed children.
-    return rights
+    from services.amazon_integration_service import category_overwrites as amazon_category_overwrites
+    return amazon_category_overwrites(category, rights)
 
 
 async def repair_partner_permissions(guild, category, *, feed_ids=()):
