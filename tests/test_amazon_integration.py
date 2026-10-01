@@ -49,13 +49,14 @@ class AmazonIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         board.overwrites[publisher] = discord.PermissionOverwrite(
             view_channel=False, send_messages=False, embed_links=False, attach_files=False)
-        marketplace.overwrites[publisher] = discord.PermissionOverwrite(view_channel=False, send_messages=True)
+        marketplace.overwrites[publisher] = discord.PermissionOverwrite(view_channel=False, send_messages=True, manage_channels=True)
 
         await repair_server(self.guild, self.bot)
         self.assertTrue(all(getattr(board.overwrites_for(publisher), bit) is True
                             for bit in amazon.BOT_RIGHTS))
         self.assertTrue(marketplace.overwrites_for(publisher).view_channel)
         self.assertFalse(marketplace.overwrites_for(publisher).send_messages)
+        self.assertFalse(marketplace.overwrites_for(publisher).manage_channels)
 
         from services.channel_change_service import safe_rights
         desired = safe_rights(board, 'amazon')
