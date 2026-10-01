@@ -26,8 +26,8 @@ REVIEW = 'REVIEW'
 UNVERIFIED = 'UNVERIFIED'
 
 
-def state(code, reason, *, target=None, channel_id=None):
-    return dict(code=code, reason=reason, target=target, channel_id=channel_id)
+def state(code, reason, *, target=None, channel_id=None, repairable=False):
+    return dict(code=code, reason=reason, target=target, channel_id=channel_id, repairable=repairable)
 
 
 def unverified(reason='Refresh to check the current game and channel state.'):
@@ -109,7 +109,9 @@ def inspect_one(guild, actor, game):
     try:
         return _inspect_one(guild, actor, game)
     except ValueError as exc:
-        return state(REVIEW, str(exc))
+        reason = str(exc)
+        repairable = reason == 'The saved game chat is unavailable or is not a text channel. Review its mapping first.'
+        return state(REVIEW, reason, repairable=repairable)
     except (KeyError, TypeError, AttributeError):
         return state(REVIEW, 'Game mappings or saved setup data are invalid. Review this game first.')
 
