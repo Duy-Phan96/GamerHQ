@@ -42,6 +42,13 @@ REQUEST_COPY = {
 }
 REQUEST_COPY['FINANCE_REQUEST'] = ('💶 Finanzcheck & Planung',
     'Deine private Anfrage wurde erstellt.\n\nBeschreibe hier kurz, welche Themen oder Ziele du besprechen möchtest.')
+# The simple support entry has no required form. Details belong in the chat.
+SUPPORT_CHAT_SUBJECT = 'General Support'
+SUPPORT_CHAT_DESCRIPTION = (
+    'Welcome! Tell us what you need help with in this private chat. '
+    'A member of the GamerHQ team will reply here. '
+    'You can add a screenshot if it helps. '
+    'Please do not share passwords, payment details or other sensitive information.')
 FEATURES = {'Bot','LFG','Voice','Roles','Game Areas','Other'}
 _user_locks, _ticket_locks, _recovery_locks, _entry_locks = {}, {}, {}, {}
 
@@ -118,12 +125,21 @@ def opening_text(item):
     kind = item.get('ticket_type', 'GENERAL_SUPPORT')
     if kind == 'ELECTRICITY_REQUEST':
         intro = REQUEST_COPY[kind][1] if item['status'] != 'CLOSED' else 'This request is closed. Its history remains available to you and the GamerHQ team.'
-        return f'{ticket_title(item)}\n\n{intro}\n\nStatus: {item["status"]}'
+        return (f'{ticket_title(item)}\n\n{intro}\n\n'
+                f'Opened by: <@{item["creator_discord_id"]}>{unavailable}\n'
+                f'Assigned to: {assigned}\nStatus: {item["status"]}')
     if kind in REQUEST_COPY:
         intro = REQUEST_COPY[kind][1] if item['status'] != 'CLOSED' else 'Diese Anfrage ist geschlossen. Der Verlauf bleibt für dich und das GamerHQ-Team lesbar.'
         return (f'{ticket_title(item)}\n\n{intro}\n\nTicket: #{item["id"]:04d}\n'
                 f'Type: {TICKET_TYPES[kind]}\nErstellt von: <@{item["creator_discord_id"]}>{unavailable}\n'
                 f'Zugewiesen an: {assigned}\n\nStatus: {item["status"]}')
+    if (kind == 'GENERAL_SUPPORT' and item['subject'] == SUPPORT_CHAT_SUBJECT
+            and item['description'] == SUPPORT_CHAT_DESCRIPTION):
+        intro = ('This ticket is closed. Its history remains available to you and the team.'
+                 if item['status'] == 'CLOSED' else SUPPORT_CHAT_DESCRIPTION)
+        return (f'{ticket_title(item)}\n\n{intro}\n\n'
+                f'Opened by: <@{item["creator_discord_id"]}>{unavailable}\n'
+                f'Assigned to: {assigned}\nStatus: {item["status"]}')
     return (f'# 🎫 Support Ticket #{item["id"]:04d}\n\nOpened by: <@{item["creator_discord_id"]}>{unavailable}\n'
             f'Assigned to: {assigned}\nType: General Support\n\n**Subject:** {discord.utils.escape_mentions(item["subject"])}\n'
             f'**Feature:** {item["category"]}\n\n**Description:**\n{discord.utils.escape_mentions(item["description"])}\n\n'
@@ -141,7 +157,7 @@ async def publish(guild,item):
     await channel.edit(overwrites=private(guild,channel,creator,item['status']=='CLOSED'),reason='GamerHQ ticket access')
     title = ticket_title(item)
     message = await upsert_fixed_message(channel,setting_key=f'ticket_opening:{guild.id}:{item["id"]}',
-        content=opening_text(item),allowed_mentions=discord.AllowedMentions.none(),view=TicketActions(),pin=True,recover_match=lambda msg:(msg.content or '').startswith(title+'\n'))
+        content=opening_text(item),allowed_mentions=discord.AllowedMentions.none(),view=TicketActions(status=item['status']),pin=True,recover_match=lambda msg:(msg.content or '').startswith(title+'\n'))
     with db.connect() as conn:
         conn.execute('UPDATE support_tickets SET opening_message_id=? WHERE id=?',(message.id,item['id']))
     return channel
@@ -159,6 +175,12 @@ async def audit(guild,item,actor_id,action):
             await channel.send(content=f'🎫 Ticket #{item["id"]:04d} · {TICKET_TYPES[item["ticket_type"]]} · {action} · actor {actor_id} · {item["status"]}\nCreator {item["creator_discord_id"]} · assigned {item["assigned_staff_id"] or "—"}\nOpened <t:{item["created_at"]}:f>'+(f' · closed <t:{item["closed_at"]}:f>' if item['closed_at'] else '')+f' · <#{item["channel_id"]}>',allowed_mentions=discord.AllowedMentions.none())
     except (discord.HTTPException,ServerMessageError):
         log.exception('Ticket log delivery failed ticket=%s; DB audit retained.',item['id'])
+
+
+async def open_support_chat(guild, member):
+    """Reuse the same durable private-ticket writer and per-type open limit."""
+    return await open_ticket(guild, member, SUPPORT_CHAT_SUBJECT, SUPPORT_CHAT_DESCRIPTION,
+                             'Other', ticket_type='GENERAL_SUPPORT')
 
 
 @measured('ticket_service_open_ticket')

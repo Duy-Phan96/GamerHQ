@@ -211,7 +211,7 @@ class EntryComponentTests(unittest.IsolatedAsyncioTestCase):
             await entries.repair(self.guild, self.owner, draft, confirmed=True)
         self.assertEqual(before, self.snapshot())
 
-    async def test_repair_restart_click_form_submit_creates_one_private_ticket(self):
+    async def test_repair_restart_click_creates_one_private_ticket_without_form(self):
         _, channel, message = self.boards['support']
         self.erase_bindings('support')
         draft = await entries.preview(self.guild, self.owner, 'support', hint=(channel.id, message.id))
@@ -225,19 +225,14 @@ class EntryComponentTests(unittest.IsolatedAsyncioTestCase):
         request = self.request()
         entry = next(v for v in registered if isinstance(v, controls.TicketEntry))
         await entry.create.callback(request)
-        request.response.send_modal.assert_awaited_once()
-        modal = request.response.send_modal.call_args.args[0]
-        modal.subject._value = 'Synthetic issue'
-        modal.description._value = 'Test only: my game room is unavailable.'
-        modal.feature._value = 'Voice'
-        await modal.on_submit(request)
+        request.response.send_modal.assert_not_awaited()
         saved = tickets.list_tickets(self.guild.id)
         self.assertEqual(len(saved), 1)
         ticket = self.guild.get_channel(saved[0]['channel_id'])
         self.assertEqual(ticket.category_id, category.id)
         tickets.check_private(ticket, self.user.id)
         self.assertIsNot(ticket.overwrites_for(self.other).view_channel, True)
-        await modal.on_submit(request)
+        await entry.create.callback(request)
         self.assertEqual(len(tickets.list_tickets(self.guild.id)), 1)
         self.assertEqual(len(category.text_channels), 1)
         self.assertEqual((channel.sends, message.edits), (0, 0))

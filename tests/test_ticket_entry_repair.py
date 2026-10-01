@@ -68,11 +68,13 @@ class EntryRepairTests(unittest.IsolatedAsyncioTestCase):
         spec, _, _ = self.boards[kind]
         db.set_setting(spec['key'] if which == 'message' else spec['channel_key'], '')
 
-    async def test_healthy_support_opens_modal_without_ticket_or_write(self):
+    async def test_healthy_support_dispatches_to_chat_without_form(self):
         request = self.request(owner=False)
         before = self.snapshot()
-        await controls.TicketEntry().create.callback(request)
-        request.response.send_modal.assert_awaited_once()
+        with patch.object(tickets, 'open_support_chat', AsyncMock(return_value=(dict(channel_id=None), True))) as create:
+            await controls.TicketEntry().create.callback(request)
+        create.assert_awaited_once_with(self.guild, self.member)
+        request.response.send_modal.assert_not_awaited()
         self.assertEqual(before, self.snapshot())
 
     async def test_healthy_both_entries_are_read_only_and_ready(self):
@@ -311,6 +313,8 @@ class EntryRepairTests(unittest.IsolatedAsyncioTestCase):
         await controls.Tickets(SimpleNamespace(add_view=registered.append)).cog_load()
         request = self.request(owner=False)
         entry = next(v for v in registered if isinstance(v, controls.TicketEntry))
-        await entry.create.callback(request)
-        request.response.send_modal.assert_awaited_once()
+        with patch.object(tickets, 'open_support_chat', AsyncMock(return_value=(dict(channel_id=None), True))) as create:
+            await entry.create.callback(request)
+        create.assert_awaited_once_with(self.guild, self.member)
+        request.response.send_modal.assert_not_awaited()
         self.assertEqual(self.boards['support'][1].sends, 0)
