@@ -190,3 +190,32 @@ verify one shared category, expected role-gated channels, preserved IDs/history 
 Hide/Show, unchanged unselected games, and no duplicate channels on repeat.
 
 Focused readiness regressions: `python -m pytest tests/test_game_readiness.py tests/test_admin_game_visibility.py`. The full locked CI and owner-controlled live test remain separate release gates.
+
+
+## Game channel recovery
+
+A game shown as **🛠️ Repair** in **Manage Visible Games** opens a scoped,
+owner/admin recovery review instead of ending at a technical mapping error.
+Recovery uses only persisted channel IDs and legacy chat evidence; it never
+adopts a channel merely because its name looks similar.
+
+- If a saved game-chat ID is confirmed absent from a fresh Discord channel
+  inventory, the owner can review **Create new channel**. Confirmation clears
+  only the dead game-chat mapping/tombstone and a matching completed creation
+  reservation, then delegates to the normal Show lifecycle to create the new
+  role-gated chat under **🎮 Games**.
+- If one or more saved existing text chats are still present, the review lists
+  them explicitly. **Use #channel** requires a second confirmation, then links
+  that exact ID and lets normal Show move/rename it into Games while preserving
+  its ID and message history.
+- **Create new channel** remains an explicit alternative when a valid old chat
+  exists. The old channel is not deleted; only this game's association is
+  replaced after confirmation.
+- A saved ID that now points to a non-text resource, a chat referenced by
+  another game, unexpected positive access, unsafe role hierarchy, malformed
+  metadata, or an uncertain/PENDING creation remains blocked for manual review.
+  Unknown API results are never treated as proof of deletion.
+
+Recovery previews are read-only, actor-bound and short-lived. Confirmation
+rechecks the game and stored evidence before any mapping write. No LFG/voice
+channel, unrelated legacy resource, member role or message history is deleted.
