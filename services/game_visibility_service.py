@@ -314,12 +314,14 @@ async def sync_preview(guild, actor, *, limit=3):
         raise ValueError('Administrator access is required.')
     fresh = await _snapshot(guild)
     plans, blocked, ready = [], [], 0
-    for game in db.get_selector_games():
+    for game in db.get_all_games():
+        if not game['active'] or not game['selectable']:
+            continue
         try:
             plan = _plan(fresh, actor, game['id'], True)
             channel = fresh.get_channel(plan['channel_id']) if plan['channel_id'] else None
             role = fresh.get_role(game['role_id'])
-            correct = (channel is not None and plan['parent_id'] is not None
+            correct = (role is not None and plan['role_action'] == 'keep' and channel is not None and plan['parent_id'] is not None
                        and channel.category_id == plan['parent_id'] and channel.name == channels.slug(game['name'])
                        and channel.overwrites == channels.overwrites(fresh, role, channel, visible=True)
                        and db.get_setting(channels.hidden_key(guild, game['id'])) != '1'
