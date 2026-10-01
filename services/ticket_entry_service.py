@@ -88,21 +88,57 @@ def binding_problem(interaction, kind):
     return None
 
 
-def _payload_matches(guild, spec, state, channel, message):
+def _control_payload(components):
+    """Compare button meaning, not Discord-assigned component identifiers.
+
+    Discord assigns numeric `id` fields to rows/buttons when they are sent.
+    These are not the action's `custom_id`. Remove only those two component
+    fields; preserve emoji IDs, action IDs, links, enabled state, style, order
+    and every other field. Do not mutate received objects or saved metadata.
+    """
+    rows = copy.deepcopy(components)
+    if not isinstance(rows, list):
+        raise ValueError('Unsupported entry controls.')
+    for row in rows:
+        if not isinstance(row, dict) or row.get('type') != 1 or not isinstance(row.get('components'), list):
+            raise ValueError('Unsupported entry controls.')
+        for component in [row, *row['components']]:
+            if not isinstance(component, dict) or (component is not row and component.get('type') != 2):
+                raise ValueError('Unsupported entry controls.')
+            if 'id' in component:
+                identifier = component.pop('id')
+                if type(identifier) is not int or not 0 <= identifier < 2 ** 32:
+                    raise ValueError('Invalid component identifier.')
+    return rows
+
+
+def _payload_problem(guild, spec, state, channel, message):
     if not _source_ok(guild, message) or message.channel.id != channel.id:
-        return False
+        return 'The entry author or server/channel identity differs. No entry was changed.'
     if state:
+        if state.get('channel_id') != channel.id or state.get('message_id') != message.id:
+            return 'The entry identity differs from the saved managed record. No entry was changed.'
         if not managed.owns(state, channel, message):
-            return False
+            return 'The entry text differs from the saved managed record. Preserve it for content review.'
         buttons = state['buttons']
     else:
         if not reconciliation.canonical_equal(message.content, spec['content']):
-            return False
+            return 'The entry text differs from the known default, and its saved customization is missing. Preserve it for content review.'
         buttons = managed.serialize_view(spec['view'])
-    # Rebinding never silently changes customized controls or imports arbitrary ones.
-    return (not message.embeds and not getattr(message, 'attachments', ())
-            and [part.to_dict() for part in getattr(message, 'components', ())]
-            == managed.render(buttons).to_components())
+    if message.embeds or getattr(message, 'attachments', ()):
+        return 'The entry contains unexpected embeds or attachments. Preserve it for content review.'
+    try:
+        actual = _control_payload([part.to_dict() for part in getattr(message, 'components', ())])
+        expected = _control_payload(managed.render(buttons).to_components())
+    except ValueError:
+        return 'The entry controls have an unsupported structure. No buttons were changed.'
+    if actual != expected:
+        return 'The entry controls differ: button actions, labels, links, style or enabled state need review. No buttons were changed.'
+    return None
+
+
+def _payload_matches(guild, spec, state, channel, message):
+    return _payload_problem(guild, spec, state, channel, message) is None
 
 
 def _snapshot(guild, spec):
@@ -178,8 +214,9 @@ async def _diagnose(guild, kind, *, hint=None):
         if len(matches) != 1:
             raise ServerMessageError(f'Found {len(matches)} possible entries. Review missing or duplicate messages; nothing was created or deleted.')
         message = matches[0]
-        if not _payload_matches(guild, spec, state, channel, message):
-            raise ServerMessageError('The entry author, content or controls differ from the saved record / known default. Preserve it for manual review.')
+        problem = _payload_problem(guild, spec, state, channel, message)
+        if problem:
+            raise ServerMessageError(problem)
         if not message.pinned:
             raise ServerMessageError('The verified entry is not pinned. Review its pin in Managed Messages before binding repair.')
         reconciliation.references(message.id, spec['key'])
