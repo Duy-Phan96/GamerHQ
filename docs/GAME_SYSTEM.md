@@ -116,3 +116,51 @@ chats, role safety, preserved history, repeated/concurrent use, stale reviews,
 hide/show/repair persistence, REST versus cache state, uncertain writes, explicit
 limits, pilot selection and slash/library delegation. Full repository CI remains
 a separate release gate. Deployment and Discord acceptance remain owner-controlled.
+
+## Admin multi-game visibility selector
+
+`/server manage` → **Games** → **Manage Visible Games** opens a private,
+actor-bound administrative selector. It reuses the personal selector's catalog
+ranking and Popular/A–Z ranges, but never calls member-role selection actions.
+All active games, including hidden ones, are browsable. Fifteen game buttons per
+page leave room for navigation and draft controls. Green means requested library
+visibility, not verified channel readiness; it is independent of the admin's
+personal roles.
+
+Clicks stage changes only. Choices survive page/range changes. **Show page** or
+**Hide page** stages that page only; Show page also explicitly prepares already
+visible games whose chats are still missing. Unvisited games are never hidden by
+omission. **Clear choices** or **Cancel** performs no writes. Up to 50 explicit
+choices fit one review; larger libraries remain browsable in further batches.
+
+**Review changes** fetches one configuration inventory, rechecks the selected
+catalog records and existing visibility plans, and displays per-game show/setup,
+hide, and blocked outcomes with pagination. Projected category/server/role
+capacity and channel soft limits are checked across the batch. Hidden channels
+still occupy space. Soft-limit overrides require the explicitly labelled
+confirmation; blocked games remain unchanged and their reasons are retained.
+
+A single **Confirm changes** applies all ready items in the reviewed batch,
+including items on other review pages, through `game_visibility_service.apply`.
+Each item rechecks current authorization, game/role/channel signatures and limits.
+Only the batch's own completed shared-category creation/link/rename can advance
+later reviewed category plans; external changes still cause a conflict. Existing
+creation reservations, per-game operation states, locks and non-destructive
+Show/Hide behavior remain authoritative. Single-game commands are unchanged.
+
+Batches are intentionally not atomic: results list each success or failure and
+leave already completed games in place. No blind retries or rollback deletions.
+Repeated/concurrent confirmation is rejected. Unexpected errors stop remaining
+items rather than marking them successful. Drafts are not persistent across bot
+restarts: reopen the selector and review current state; already saved individual
+changes and pending/uncertain-operation protections remain persistent. Catalog
+changes by another administrator invalidate affected old choices. Additional
+access grants and stale mappings are still review gates, not bypassed by bulk UI.
+
+Offline coverage: `tests/test_admin_game_visibility.py` covers private access,
+preselection, 120-game browsing, staged page controls, cancellation, stale reviews,
+three-game creation with a missing category, mixed Show/Hide, old detached chats,
+capacity/soft limits, partial failures, uncertain creates, and duplicate confirms.
+Live acceptance: choose a few games on different pages, review and confirm once;
+verify one shared category, expected role-gated channels, preserved IDs/history on
+Hide/Show, unchanged unselected games, and no duplicate channels on repeat.
