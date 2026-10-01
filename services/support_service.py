@@ -349,8 +349,7 @@ async def finish_household_migration(guild):
             managed.store(state)
     with db.connect() as conn:
         for prefix in ('partner_reorder', 'partner_split'):
-            conn.execute('DELETE FROM settings WHERE key=? OR key LIKE ?',
-                         (f'{prefix}:{guild.id}', f'{prefix}:{guild.id}:%'))
+            conn.execute('DELETE FROM settings WHERE key=? OR key LIKE ?', (f'{prefix}:{guild.id}', f'{prefix}:{guild.id}:%'))
         conn.execute('DELETE FROM settings WHERE key=?', (key,))
         conn.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (f'household_migrated:{guild.id}', '1'))
 
@@ -464,21 +463,14 @@ async def sync_support_messages(guild, channel=None, *, order=False):
             from services.channel_adoption_service import apply_layout
             await apply_layout(guild)
             await order_partner_channels(guild)
-        if len(channels) != len(active):
-            # Never retain dangling navigation or adopt a name-only lookalike.
-            # Repair remains owner-controlled; sync reports the incomplete setup.
-            if 'support-gamerhq' in channels:
-                await upsert_fixed_message(
-                    channels['support-gamerhq'], setting_key=message_key(guild),
-                    content=support_text(channels), view=None,
-                    allowed_mentions=discord.AllowedMentions.none(),
-                    recover_match=lambda item: matches_section(item, INTRO_TEXT))
-            return None
+        complete = len(channels) == len(active)
         result = {'messages': [], 'pin_failures': [], 'retained_messages': []}
         for section, content, affiliate in support_sections():
             if removed(guild, section_channel(section)):
                 continue
-            target = channels[section_channel(section)]
+            target = channels.get(section_channel(section))
+            if target is None:
+                continue
             if section == 'intro':
                 content = support_text(channels)
             previous = db.get_setting(message_key(guild, section))
@@ -495,6 +487,8 @@ async def sync_support_messages(guild, channel=None, *, order=False):
             except discord.HTTPException:
                 result['pin_failures'].append(section)
                 log.exception('Partner pin failed section=%s', section)
+        if not complete:
+            return None  # Refresh independent boards, but never retire incomplete migrations.
         if not result['pin_failures']:
             await finish_household_migration(guild)
             retire_partner_mappings(guild)
@@ -503,6 +497,22 @@ async def sync_support_messages(guild, channel=None, *, order=False):
         result['retained_categories'] = await remove_empty_legacy_category(guild)
         result['manual_review_channels'] = [c.id for c in legacy_review_channels(guild)]
         return result
+
+
+async def refresh_electricity_entry(guild):
+    """Refresh only the verified mapped Electricity board, never partner cleanup."""
+    raw = db.get_setting(channel_key(guild, 'electricity'))
+    channel = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    if channel is None:
+        return
+    from services.channel_change_service import removed
+    if removed(guild, 'electricity'):
+        return
+    # household is deliberately the stable legacy key; do not rename it.
+    await upsert_fixed_message(channel, setting_key=message_key(guild, 'household'),
+        content=ELECTRICITY_TEXT, pin=True, view=section_view('household', None),
+        recover_match=lambda item: matches_section(item, ELECTRICITY_TEXT),
+        allowed_mentions=discord.AllowedMentions.none(), create_missing=False)
 
 
 async def refresh_support(guild, channel=None):

@@ -41,10 +41,11 @@ class TicketEntry(SafeView):
 
     @discord.ui.button(label='Create Support Ticket', style=discord.ButtonStyle.primary, custom_id='gamerhq:tickets:create')
     async def create(self, interaction, button):
-        raw = db.get_setting(f'ticket_entry:{interaction.guild_id}')
-        channel = db.get_setting(f'managed_channel:{interaction.guild_id}:need-support')
-        if not interaction.guild or str(interaction.message.id)!=raw or str(interaction.channel_id)!=channel:
-            await interaction.response.send_message('⚠️ Open the current Need Support entry.',ephemeral=True)
+        from services.ticket_entry_service import binding_problem
+        from cogs.ticket_entry_repair import reject
+        problem = binding_problem(interaction, 'support')
+        if problem:
+            await reject(interaction, 'support', problem)
             return
         await interaction.response.send_modal(TicketModal())
 
@@ -125,9 +126,12 @@ class SupportOffers(SafeView):
             section = {'ELECTRICITY_REQUEST': 'household'}.get(kind)
             if section is None:
                 raise ValueError('Please use the current Electricity request button.')
-            if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild, support.section_channel(section)))
-                    or str(interaction.message.id)!=db.get_setting(support.message_key(guild, section))):
-                raise ValueError('Please use the current message in the Electricity channel.')
+            from services.ticket_entry_service import binding_problem
+            from cogs.ticket_entry_repair import reject
+            problem = binding_problem(interaction, 'electricity')
+            if problem:
+                await reject(interaction, 'electricity', problem, deferred=True)
+                return
             title,description=tickets.REQUEST_COPY[kind]
             item,created=await tickets.open_ticket(guild,interaction.user,title,description,ticket_type=kind)
             channel=guild.get_channel(item['channel_id']) if item['channel_id'] else None
@@ -156,9 +160,17 @@ class Tickets(commands.Cog):
     async def reconcile(self,guild,member_id=None):
         try:
             await tickets.recover(guild,member_id)
-            if member_id is None: await tickets.refresh_entry(guild)
         except Exception:
             log.exception('Ticket recovery needs review guild=%s',guild.id)
+        if member_id is None:
+            # A private ticket failure must not prevent healthy public entries
+            # from refreshing. Each phase has independent errors and no setup.
+            from services.support_service import refresh_electricity_entry
+            for kind, refresh in [('support', tickets.refresh_entry), ('electricity', refresh_electricity_entry)]:
+                try:
+                    await refresh(guild)
+                except Exception:
+                    log.exception('Ticket entry refresh needs review guild=%s kind=%s',guild.id,kind)
 
     @commands.Cog.listener()
     async def on_ready(self):

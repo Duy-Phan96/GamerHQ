@@ -138,6 +138,12 @@ class FakeGuild:
     async def fetch_channels(self):
         return list(self.channels)
 
+    async def fetch_channel(self, channel_id):
+        channel = self.get_channel(channel_id)
+        if channel is None:
+            raise missing()
+        return channel
+
     def __init__(self):
         self.id, self.sequence = 1, 1000
         self.categories, self.text_channels = [], []

@@ -289,12 +289,14 @@ async def refresh_entry(guild,channel=None):
 
 async def _refresh_entry(guild,channel=None):
     from cogs.tickets import TicketEntry
+    allow_create = channel is not None  # Only the explicit setup/repair caller supplies it.
     if channel is None:
         raw=db.get_setting(resource_key(guild,'need-support'))
         channel=guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if channel:
         await upsert_fixed_message(channel,setting_key=f'ticket_entry:{guild.id}',content=ENTRY_TEXT,pin=True,
-            view=TicketEntry(),recover_match=lambda msg:(msg.content or '').startswith('# 🆘 Need Support?'))
+            view=TicketEntry(),recover_match=lambda msg:(msg.content or '').startswith('# 🆘 Need Support?'),
+            create_missing=allow_create)
 
 
 async def repair(guild,changed,failed):
