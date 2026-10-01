@@ -529,7 +529,7 @@ def partner_overwrites(category):
             rights[target] = discord.PermissionOverwrite.from_pair(*value.pair())
     role = resolve(category.guild, 'gaming')
     for target in (role if role and safe(role) and role.permissions.value == 0 else None, member(category.guild, 'dealgecko'),
-                   member(category.guild, 'instant-gaming')):
+                   member(category.guild, 'instant-gaming'), member(category.guild, 'amazon')):
         if target:
             value = rights.setdefault(target, discord.PermissionOverwrite())
             value.view_channel = value.read_message_history = True
@@ -638,6 +638,9 @@ async def repair_support(guild, changed):
                 await tracked_edit(channel, overwrites=rights, reason='GamerHQ public feed permissions')
         elif name == 'free-games':
             await repair_free_games(channel)
+        elif name == 'amazon':
+            from services.amazon_integration_service import repair as repair_amazon
+            await repair_amazon(channel)
         else:
             await set_read_only(channel)
     result = await sync_support_messages(guild, order=True)
