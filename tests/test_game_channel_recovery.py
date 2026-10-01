@@ -19,6 +19,7 @@ class GameChannelRecoveryTests(unittest.IsolatedAsyncioTestCase):
     setUp = fixtures.VisibilityTests.setUp
     asyncSetUp = fixtures.VisibilityTests.asyncSetUp
     make_game = fixtures.VisibilityTests.make_game
+    create = fixtures.VisibilityTests.create
     legacy = fixtures.VisibilityTests.legacy
     set_visible = fixtures.VisibilityTests.set_visible
 
