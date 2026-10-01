@@ -11,6 +11,7 @@ from cogs import game_visibility_selector as ui
 from database import db
 from services import game_visibility_service as service
 from services import game_channel_service as channels
+from services import game_readiness_service as readiness
 
 
 class AdminVisibilityTests(unittest.IsolatedAsyncioTestCase):
@@ -28,26 +29,34 @@ class AdminVisibilityTests(unittest.IsolatedAsyncioTestCase):
             edit_original_response=AsyncMock(), followup=SimpleNamespace(send=AsyncMock()))
 
     def selector(self, games=None):
-        return ui.AdminGameSelection(self.guild, self.actor.id, games or db.get_all_games(active_only=True))
+        games = games or db.get_all_games(active_only=True)
+        # Unit-level browsing fixtures have no provisioned channels. Integration
+        # tests in test_game_readiness obtain states from a real inventory.
+        states = {g['id']: readiness.state(readiness.SETUP_NEEDED if g['selectable'] else readiness.NOT_SET_UP,
+                  'Synthetic game needs setup.', target=True) for g in games}
+        return ui.AdminGameSelection(self.guild, self.actor.id, games,
+                                    states=states, checked_at=time.monotonic())
 
-    async def test_open_admin_selector_is_private_and_preselects_visibility_not_member_roles(self):
+    async def test_open_admin_selector_is_private_and_checks_readiness_not_member_roles(self):
         self.actor.roles = []
         request = self.request()
         await ui.open_selector(request)
-        args = request.response.send_message.call_args.kwargs
-        self.assertTrue(args['ephemeral'])
+        request.response.defer.assert_awaited_once_with(ephemeral=True)
+        args = request.edit_original_response.call_args.kwargs
         self.assertFalse(args['allowed_mentions'].everyone)
         view = args['view']
         game_button = next(b for b in view.children if b.custom_id == f'gamerhq:admin_visibility:game:{self.game["id"]}')
-        self.assertEqual(game_button.style, discord.ButtonStyle.success)
-        self.guild.fetch_channels.assert_not_awaited()
+        self.assertNotEqual(game_button.style, discord.ButtonStyle.success)
+        self.assertEqual(view.game_state(self.game["id"])["code"], readiness.SETUP_NEEDED)
+        self.guild.fetch_channels.assert_awaited_once()
+        self.guild.fetch_roles.assert_awaited_once()
         self.guild.create_text_channel.assert_not_awaited()
 
     async def test_toggle_drafts_and_cancel_leave_database_roles_and_channels_unchanged(self):
         original = db.get_game_by_id(self.game['id'])
         view = self.selector()
         await view.toggle(self.request(), self.game['id'])
-        self.assertEqual(view.pending, {self.game['id']: False})
+        self.assertEqual(view.pending, {self.game['id']: True})
         self.assertEqual(db.get_game_by_id(self.game['id']), original)
         await view.cancel(self.request())
         self.assertEqual(view.phase, 'closed')
