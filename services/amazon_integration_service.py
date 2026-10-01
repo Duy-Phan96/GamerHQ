@@ -59,8 +59,12 @@ async def repair(channel):
 def diagnostics(guild):
     from services.support_service import resource
     from services.bot_group_service import member
+    from services.server_service import ServerMessageError
     bot = member(guild, 'amazon')
-    channel = resource(guild, 'amazon')
+    try:
+        channel = resource(guild, 'amazon')
+    except ServerMessageError as exc:
+        return ('Amazon bot #amazon access', 'MANUAL_REVIEW', str(exc))
     if not bot:
         return ('Amazon bot #amazon access', 'WARN',
                 'Select the installed Amazon bot in /server manage → Integrations, then run Fix Common Issues.')
