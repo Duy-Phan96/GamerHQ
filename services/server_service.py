@@ -80,7 +80,7 @@ async def pin_managed_message(
 
 
 async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view=None,
-                               recover_match=None, allowed_mentions=None):
+                               recover_match=None, allowed_mentions=None, create_missing=True):
     """Refresh canonical defaults while preserving explicitly customized boards."""
     from services import managed_message_service as managed
     retired = managed.load(setting_key)
@@ -91,9 +91,11 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
         async with managed.lock(setting_key):
             return await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
                                               pin=pin, view=view, recover_match=recover_match,
-                                              allowed_mentions=allowed_mentions)
+                                              allowed_mentions=allowed_mentions, create_missing=create_missing)
     async with managed.lock(setting_key):
         state = managed.load(setting_key)
+        if not create_missing and (not state or state.get('pending') or not managed.mapped(channel.guild, state)):
+            raise ServerMessageError('Entry bindings need an owner check. Open Server Management → Support & Requests; no new message was created.')
         defaults = managed.serialize_view(view)
         managed.validate(channel.guild, setting_key, content, defaults)
         default_content = content
@@ -134,7 +136,7 @@ async def upsert_fixed_message(channel, *, setting_key, content, pin=False, view
         message = await _upsert_fixed_message(channel, setting_key=setting_key, content=content,
                                              pin=pin, view=view, recover_match=match,
                                              allowed_mentions=discord.AllowedMentions.none(),
-                                             prefetched=current, lookup_done=lookup_done)
+                                             prefetched=current, lookup_done=lookup_done, create_missing=create_missing)
         buttons = state['buttons'] if state and state['customized'] else defaults
         version = state['version'] if state else 0
         if state and any((state['content'] != content, state['buttons'] != buttons,
@@ -160,6 +162,7 @@ async def _upsert_fixed_message(
     allowed_mentions=None,
     prefetched=None,
     lookup_done=False,
+    create_missing=True,
 ):
     """Create or edit one bot-managed fixed message and persist its message ID.
 
@@ -192,6 +195,9 @@ async def _upsert_fixed_message(
         if message is not None and recover_match is not None and not recover_match(message):
             # A stale mapping must not overwrite an unrelated bot/admin notice.
             message = None
+
+        if message is None and not create_missing:
+            raise ServerMessageError('The existing entry could not be verified. Open Support & Requests; no replacement was created.')
 
         matches = await candidates(channel, content=content, recover_match=recover_match,
                                    require_complete=message is None)

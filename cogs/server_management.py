@@ -100,8 +100,13 @@ class ManagementView(Menu):
                    ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
             actions.append(('Owner Change Log', self.owner_changelog))
+            actions.append(('Support & Requests', self.support_entries))
         for label, callback in actions:
             self.action(label, callback)
+
+    async def support_entries(self, interaction):
+        from cogs.ticket_entry_repair import open_management
+        await open_management(interaction)
 
     async def lobby_admin(self, interaction):
         from cogs.lobby_admin import open_management
