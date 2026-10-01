@@ -61,6 +61,7 @@ class CandidateView(SafeView):
 class GamesMenu(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
+        self.action('Manage Visible Games', self.visible_selector)
         self.action('Set up Games Channels', self.visible_setup)
         self.action('Game System Migration', self.migration)
         for label, mode in [('Game Library', 'library'), ('Game Channels', 'channels'),
@@ -79,7 +80,11 @@ class GamesMenu(Menu):
                 f'Selectable Games: {len(db.get_selectable_games())}\n'
                 f'Games with Channels: {sum(bool(g.get("channel_id")) for g in games)}\n'
                 f'Channel Candidates: {sum(c["status"] == "PENDING" for c in service.candidates(self.guild))}\n'
-                'Show/Hide Game also shows or hides its Games text channel after review. Set up Games Channels handles already-visible games in small batches. No member threshold is required.')
+                'Manage Visible Games selects several games to show or hide together after review. Set up Games Channels also handles missing chats for already-visible games. Nothing is deleted.')
+
+    async def visible_selector(self, interaction):
+        from cogs.game_visibility_selector import open_selector
+        await open_selector(interaction)
 
     async def visible_setup(self, interaction):
         await open_visible_setup(interaction)

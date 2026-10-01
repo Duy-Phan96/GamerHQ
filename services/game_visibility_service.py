@@ -7,6 +7,8 @@ hide operation. Member game selection does not call this service.
 from __future__ import annotations
 
 import asyncio
+import copy
+import logging
 import json
 import time
 from types import SimpleNamespace
@@ -232,7 +234,7 @@ async def _ensure_parent(guild, plan):
     return parent
 
 
-async def apply(guild, actor, plan, *, override=False):
+async def apply(guild, actor, plan, *, override=False, _batch_parent=None):
     if (not authorized(guild, actor) or guild.id != plan['guild_id'] or actor.id != plan['actor_id']
             or time.time() - plan['created'] > 240):
         raise ValueError('This review expired or access changed. Open a fresh preview.')
@@ -251,6 +253,13 @@ async def apply(guild, actor, plan, *, override=False):
         parent = None
         if visible:
             parent = await _ensure_parent(fresh, plan)
+            if _batch_parent is not None:
+                # Only our own completed category step can advance later reviews.
+                # Save the returned object, not a potentially stale Gateway cache.
+                _batch_parent.update(parent_id=parent.id, parent_signature=_signature(parent),
+                    parent_name=parent.name, category_action='keep',
+                    mappings=tuple(db.get_setting(f'managed_category:{guild.id}:{k}')
+                                   for k in ('games', 'gaming')))
             fresh = _replace(fresh, parent)
             if role is None:
                 game = plan['game']
@@ -334,3 +343,103 @@ async def sync_preview(guild, actor, *, limit=3):
         except ValueError as exc:
             blocked.append(f"{game['name']}: {exc}")
     return dict(plans=plans, blocked=blocked, ready=ready)
+
+
+MAX_BATCH = 50
+
+
+async def preview_batch(guild, actor, requested, *, expected_games=None):
+    """Review explicit game IDs only, never replace the whole visible catalog.
+
+    One fresh inventory for the review; the single-item writer still revalidates
+    each item. Project capacity/soft limits across the batch before confirmation.
+    """
+    if not authorized(guild, actor):
+        raise ValueError('Administrator access is required.')
+    if not requested or len(requested) > MAX_BATCH:
+        raise ValueError(f'Choose between 1 and {MAX_BATCH} games per review.')
+    if any(type(gid) is not int or type(value) is not bool for gid, value in requested.items()):
+        raise ValueError('Invalid game selection. Reopen the selector.')
+    fresh = await _snapshot(guild)
+    plans, blocked = [], []
+    count = sum(bool(g.get('channel_id')) for g in db.get_all_games())
+    new_channels = new_roles = entering = 0
+    names = set()
+    for gid, visible in requested.items():
+        game = db.get_game_by_id(gid)
+        name = game['name'] if game else 'Game no longer available'
+        try:
+            if not game or not game['active']:
+                raise ValueError('This game is no longer active. Refresh the selector.')
+            if expected_games is not None and game != expected_games.get(gid):
+                raise ValueError('This game changed since you opened the selector. Refresh before changing it.')
+            plan = _plan(fresh, actor, gid, visible)
+            parent = fresh.get_channel(plan['parent_id']) if plan['parent_id'] else None
+            channel = fresh.get_channel(plan['channel_id']) if plan['channel_id'] else None
+            adds = int(visible and channel is None)
+            enters = int(visible and (channel is None or parent is None or channel.category_id != parent.id))
+            role_adds = int(visible and plan['role_action'] == 'create')
+            if visible and (len(parent.channels) if parent else 0) + entering + enters > CATEGORY_LIMIT:
+                raise ValueError('This batch would exceed the 50-channel Games category limit, including hidden chats.')
+            if visible and len(fresh.channels) + new_channels + adds + int(plan['category_action'] == 'create') > SERVER_CHANNEL_LIMIT:
+                raise ValueError('This batch would exceed the server channel limit.')
+            if len(fresh.roles) + new_roles + role_adds > ROLE_LIMIT:
+                raise ValueError('This batch would exceed the server role limit.')
+            slug = channels.slug(name)
+            if visible and slug in names:
+                raise ValueError('Another selected game has the same channel name. Review names first.')
+            if visible:
+                names.add(slug)
+            plan['override'] = bool(plan['override'] or (adds and count + new_channels >= config.GAME_CHANNEL_SOFT_LIMIT))
+            new_channels += adds
+            new_roles += role_adds
+            entering += enters
+            plans.append(plan)
+        except ValueError as exc:
+            blocked.append(dict(game_id=gid, name=name, visible=visible, reason=str(exc)))
+    return dict(guild_id=guild.id, actor_id=actor.id, created=time.time(), used=False,
+                plans=plans, blocked=blocked, override=any(p['override'] for p in plans))
+
+
+async def apply_batch(guild, actor, draft, *, override=False, progress=None):
+    """Run only the reviewed ready items through the existing safe writer.
+
+    Non-atomic by design: per-game persisted operations retain partial outcomes.
+    Never retry an uncertain creation automatically or silently accept a newer
+    game/channel/role configuration. Other games are never hidden by omission.
+    """
+    if (not authorized(guild, actor) or guild.id != draft['guild_id']
+            or actor.id != draft['actor_id'] or draft['used']
+            or time.time() - draft['created'] > 240):
+        raise ValueError('This batch review expired, was used, or access changed. Open a fresh review.')
+    if draft['override'] and not override:
+        raise ValueError('This batch exceeds the channel soft limit. Confirm the explicit override first.')
+    draft['used'] = True  # Claim before the first await; repeated clicks cannot run twice.
+    parent_context, results = {}, []
+    for index, original in enumerate(draft['plans']):
+        plan = copy.deepcopy(original)
+        if plan['visible'] and parent_context:
+            plan.update(copy.deepcopy(parent_context))
+        result = dict(game_id=plan['game']['id'], name=plan['game']['name'], visible=plan['visible'])
+        try:
+            channel = await apply(guild, actor, plan, override=override, _batch_parent=parent_context)
+            result.update(ok=True, channel_id=channel.id if channel else None,
+                          reason='Shown / channel ready' if plan['visible'] else 'Hidden; messages preserved')
+        except (ValueError, discord.HTTPException) as exc:
+            result.update(ok=False, reason=str(exc) if isinstance(exc, ValueError) else
+                          'Discord could not verify this change. Review the game; some steps may have completed.')
+        except Exception as exc:
+            logging.getLogger(__name__).warning('Game visibility batch stopped guild=%s error=%s', guild.id, type(exc).__name__)
+            result.update(ok=False, reason='Unexpected error. Review this game before retrying; some steps may have completed.')
+            results.append(result)
+            for remaining in draft['plans'][index + 1:]:
+                results.append(dict(game_id=remaining['game']['id'], name=remaining['game']['name'],
+                    visible=remaining['visible'], ok=False, reason='Not attempted after an unexpected error.'))
+            break
+        results.append(result)
+        if progress:
+            try:
+                await progress(index + 1, len(draft['plans']))
+            except discord.HTTPException:
+                pass  # A progress edit failure does not change the operation result.
+    return results
