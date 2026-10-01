@@ -540,10 +540,6 @@ def partner_overwrites(category):
 
 async def repair_partner_permissions(guild, category, *, feed_ids=()):
     """Repair the category and mapped information boards, never unknown interactions."""
-    # Resolve the optional Amazon publisher once so this same repair can grant
-    # category visibility and child posting access before gateway cache convergence.
-    from services.bot_group_service import fetch_member
-    await fetch_member(guild, 'amazon')
     known_ids = set(feed_ids)
     for name in (*PARTNER_CHANNELS, 'gaming-news'):
         raw = db.get_setting(channel_key(guild, name))
@@ -566,6 +562,8 @@ async def repair_partner_permissions(guild, category, *, feed_ids=()):
         raw = db.get_setting(channel_key(guild, name))
         channel = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
         if channel in guild.text_channels and channel.category_id == category.id:
+            if name == 'amazon':
+                continue  # Amazon publisher policy is owned by amazon_integration_service.
             await set_read_only(channel)
 
 
@@ -616,6 +614,10 @@ async def repair_support(guild, changed):
             raise ServerMessageError('A partner/support channel is in a protected/private area; review before making it public.')
     migrate_electricity_mapping(guild, channels.get('electricity'))
     await prepare_household_migration(guild, legacy)
+    # Resolve optional Amazon identity only in Marketplace repair. Other feed
+    # syncs must not trigger unrelated member lookups or rewrite #amazon.
+    from services.bot_group_service import fetch_member
+    await fetch_member(guild, 'amazon')
     empty = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda target:discord.PermissionOverwrite())
     overwrites = guide_overwrites(empty)
     if partners is None:
