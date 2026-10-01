@@ -124,9 +124,11 @@ class AdminGameSelection(SafeView):
         code = self.game_state(gid)['code']
         prefixes = {readiness.READY: ('✅ ', 'Ready'), readiness.NOT_SET_UP: ('➕ ', 'Not set up'),
                     readiness.HIDDEN: ('🙈 ', 'History kept'), readiness.SETUP_NEEDED: ('⚠️ ', 'Set up'),
-                    readiness.PENDING: ('⚠️ ', 'Unfinished'), readiness.REVIEW: ('🛠️ ', 'Repair'),
+                    readiness.PENDING: ('⚠️ ', 'Unfinished'), readiness.REVIEW: ('⚠️ ', 'Review'),
                     readiness.UNVERIFIED: ('❔ ', 'Refresh')}
         prefix, suffix = prefixes.get(code, ('❔ ', 'Refresh'))
+        if code == readiness.REVIEW and self.game_state(gid).get('repairable'):
+            prefix, suffix = '🛠️ ', 'Repair'
         style = discord.ButtonStyle.success if code == readiness.READY else discord.ButtonStyle.secondary
         if gid in self.pending:
             prefix, suffix = '⏳ ', 'Show pending' if self.pending[gid] else 'Hide pending'
@@ -219,6 +221,9 @@ class AdminGameSelection(SafeView):
         else:
             status = self.game_state(gid)
             if status['target'] is None:
+                if not status.get('repairable'):
+                    return await interaction.response.send_message(text(status['reason'], 700), ephemeral=True,
+                                                                  allowed_mentions=discord.AllowedMentions.none())
                 self.phase = 'loading'
                 await interaction.response.defer()
                 try:
