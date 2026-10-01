@@ -539,6 +539,10 @@ def partner_overwrites(category):
 
 async def repair_partner_permissions(guild, category, *, feed_ids=()):
     """Repair the category and mapped information boards, never unknown interactions."""
+    # Resolve the optional Amazon publisher once so this same repair can grant
+    # category visibility and child posting access before gateway cache convergence.
+    from services.bot_group_service import fetch_member
+    await fetch_member(guild, 'amazon')
     known_ids = set(feed_ids)
     for name in (*PARTNER_CHANNELS, 'gaming-news'):
         raw = db.get_setting(channel_key(guild, name))
