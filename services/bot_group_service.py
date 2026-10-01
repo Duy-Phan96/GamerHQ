@@ -10,9 +10,11 @@ from services.music_bot_service import role_key as music_key, DENIED_RIGHTS
 GROUPS = {'music': ('🎵 Music Bots', ('jockie', 'pancake')),
           'gaming': ('🤖 Gaming Bots', ('instant-gaming', 'dealgecko'))}
 CONFIG = {'jockie': 'JOCKIE_MUSIC_BOT_ID', 'pancake': 'PANCAKE_BOT_ID',
-          'instant-gaming': 'INSTANT_GAMING_BOT_ID', 'dealgecko': 'DEALGECKO_BOT_ID'}
+          'instant-gaming': 'INSTANT_GAMING_BOT_ID', 'dealgecko': 'DEALGECKO_BOT_ID',
+          'amazon': 'AMAZON_BOT_ID'}
 _locks = {}
-LABELS = {'jockie': 'Jockie Music', 'pancake': 'Pancake', 'instant-gaming': 'Instant Gaming', 'dealgecko': 'DealGecko'}
+LABELS = {'jockie': 'Jockie Music', 'pancake': 'Pancake', 'instant-gaming': 'Instant Gaming',
+          'dealgecko': 'DealGecko', 'amazon': 'Amazon Affiliate'}
 _members = {}
 _assigned = {}
 
@@ -188,6 +190,10 @@ def diagnostics(guild):
                             break
         except ServerMessageError as exc:
             rows.append((display, 'WARN', str(exc)))
+    amazon = member(guild, 'amazon')
+    rows.append(('Amazon Affiliate → Marketplace', 'PASS' if amazon else 'WARN',
+                 'Exact user-ID assignment checked; posting rights are scoped to #amazon.'
+                 if amazon else 'Optional bot absent or unconfigured; select it in /server manage → Integrations.'))
     # A display-name match is only a recommendation, never identity/permission authority.
     if any(getattr(m, 'bot', False) and alias(m.name) in {'carl-bot', 'carlbot'} for m in getattr(guild, 'members', [])):
         rows.append(('Carl-bot', 'WARN', 'Carl-bot still installed; no code dependency found. Review live use, then remove manually.'))
