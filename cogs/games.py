@@ -856,6 +856,24 @@ class NotificationSelectionSession(discord.ui.View):
         await interaction.response.edit_message(content="✖️ Game selection cancelled. Nothing was changed.", view=None); self.stop()
 
 
+async def open_game_selector(interaction: discord.Interaction):
+    """Open the canonical member game selector from any trusted entry point."""
+    games = db.get_selector_games()
+    if not games:
+        # Keep the selection rules unchanged, but distinguish a genuinely empty
+        # catalog from selectable rows whose stored role mappings need repair.
+        unavailable = [g for g in db.get_selectable_games() if g.get('active')]
+        if unavailable:
+            logging.getLogger(__name__).warning('Selectable games lack usable role mappings: guild=%s games=%s',
+                interaction.guild.id, [g['id'] for g in unavailable])
+        text = ('Game selection is temporarily unavailable. Please try again later.' if unavailable else
+                'No games are currently available for selection.')
+        await interaction.response.send_message(text, ephemeral=True)
+        return
+    session = GameSelectionSession(interaction.user, games)
+    await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
+
+
 class ChooseGamesButtons(discord.ui.View):
     def __init__(self, cog=None):
         super().__init__(timeout=None)
@@ -863,20 +881,7 @@ class ChooseGamesButtons(discord.ui.View):
 
     @discord.ui.button(label="Select Games", emoji="🎮", style=discord.ButtonStyle.primary, custom_id="gamerhq:select_games_categories")
     async def select_games(self, interaction: discord.Interaction, button: discord.ui.Button):
-        games = db.get_selector_games()
-        if not games:
-            # Keep the selection rules unchanged, but distinguish a genuinely empty
-            # catalog from selectable rows whose stored role mappings need repair.
-            unavailable = [g for g in db.get_selectable_games() if g.get('active')]
-            if unavailable:
-                logging.getLogger(__name__).warning('Selectable games lack usable role mappings: guild=%s games=%s',
-                    interaction.guild.id, [g['id'] for g in unavailable])
-            text = ('Game selection is temporarily unavailable. Please try again later.' if unavailable else
-                    'No games are currently available for selection.')
-            await interaction.response.send_message(text, ephemeral=True)
-            return
-        session = GameSelectionSession(interaction.user, games)
-        await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
+        await open_game_selector(interaction)
 
     @discord.ui.button(label="Suggest Game", emoji="💡", style=discord.ButtonStyle.secondary, custom_id="gamerhq:suggest_game")
     async def suggest_game(self, interaction: discord.Interaction, button: discord.ui.Button):
