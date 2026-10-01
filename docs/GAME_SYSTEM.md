@@ -123,9 +123,33 @@ a separate release gate. Deployment and Discord acceptance remain owner-controll
 actor-bound administrative selector. It reuses the personal selector's catalog
 ranking and Popular/A–Z ranges, but never calls member-role selection actions.
 All active games, including hidden ones, are browsable. Fifteen game buttons per
-page leave room for navigation and draft controls. Green means requested library
-visibility, not verified channel readiness; it is independent of the admin's
-personal roles.
+page leave room for navigation and draft controls. Green means a visible game
+with its verified canonical, role-gated text channel under the shared Games
+category, not just a selectable flag or the administrator's personal roles.
+
+Opening or **Refresh** reads one shared channel/role configuration inventory,
+using the existing visibility planner, identity checks and overwrite policy.
+No chat history is fetched and no Discord or database writes occur. Extra access,
+stale mappings, uncertain reservations and unfinished operations cannot appear
+ready. Failed or denied reads show **Unverified**, not a missing channel.
+
+- **Ready** (green): the visible game and its chat are verified; click stages Hide.
+- **Not set up**: hidden game with no associated chat; click stages Show / setup.
+- **Set up**: the visible game still needs its chat, placement, role or access
+  policy completed; click stages setup directly, not an unwanted Hide first.
+- **History kept**: hidden retained channel, distinct from having no channel.
+- **Review / Unfinished / Refresh**: the saved or observed state needs attention.
+  A review-only game explains its blocker when clicked.
+- **Show pending / Hide pending** (blue): an unsaved choice, never green success.
+  Clicking again clears the choice without changing the saved state.
+
+Readiness is a snapshot, not a live subscription. After 90 seconds, subsequent
+renders/clicks require Refresh for unverified choices; no background message
+editing or automatic repair is started. Refresh preserves pending choices and
+their original catalog versions. A catalog edit cannot be silently accepted
+under an older choice. **Back to games** after applying a batch clears its old
+drafts and rechecks actual outcomes, including partial failures; it does not
+retry them automatically. See [readiness acceptance](GAME_READINESS_ACCEPTANCE.md).
 
 Clicks stage changes only. Choices survive page/range changes. **Show page** or
 **Hide page** stages that page only; Show page also explicitly prepares already
@@ -158,9 +182,11 @@ changes by another administrator invalidate affected old choices. Additional
 access grants and stale mappings are still review gates, not bypassed by bulk UI.
 
 Offline coverage: `tests/test_admin_game_visibility.py` covers private access,
-preselection, 120-game browsing, staged page controls, cancellation, stale reviews,
+readiness-based display, 120-game browsing, staged page controls, cancellation, stale reviews,
 three-game creation with a missing category, mixed Show/Hide, old detached chats,
 capacity/soft limits, partial failures, uncertain creates, and duplicate confirms.
 Live acceptance: choose a few games on different pages, review and confirm once;
 verify one shared category, expected role-gated channels, preserved IDs/history on
 Hide/Show, unchanged unselected games, and no duplicate channels on repeat.
+
+Focused readiness regressions: `python -m pytest tests/test_game_readiness.py tests/test_admin_game_visibility.py`. The full locked CI and owner-controlled live test remain separate release gates.
