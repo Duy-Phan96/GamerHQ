@@ -231,6 +231,8 @@ async def _scan(guild, bot=None, *, messages=True):
     from services.bot_group_service import diagnostics as bot_groups_health, member as bot_member
     for row in bot_groups_health(guild):
         add(*row)
+    from services.amazon_integration_service import diagnostics as amazon_diagnostics
+    add(*amazon_diagnostics(guild))
     from services.instant_gaming_service import affiliate_category, overwrites as ig_overwrites, BOT_RIGHTS
     try:
         stats = affiliate_category(guild)
