@@ -11,6 +11,7 @@ from services.game_catalog_service import member_counts, sections
 from services.response_service import SafeView, check_admin
 from services import game_visibility_service as visibility
 from services import game_readiness_service as readiness
+from services import game_channel_recovery_service as recovery
 from cogs.game_selector import LETTER_RANGES, POPULAR
 
 PAGE_SIZE = 15  # Three game rows, navigation row, then draft actions.
@@ -123,7 +124,7 @@ class AdminGameSelection(SafeView):
         code = self.game_state(gid)['code']
         prefixes = {readiness.READY: ('✅ ', 'Ready'), readiness.NOT_SET_UP: ('➕ ', 'Not set up'),
                     readiness.HIDDEN: ('🙈 ', 'History kept'), readiness.SETUP_NEEDED: ('⚠️ ', 'Set up'),
-                    readiness.PENDING: ('⚠️ ', 'Unfinished'), readiness.REVIEW: ('⚠️ ', 'Review'),
+                    readiness.PENDING: ('⚠️ ', 'Unfinished'), readiness.REVIEW: ('🛠️ ', 'Repair'),
                     readiness.UNVERIFIED: ('❔ ', 'Refresh')}
         prefix, suffix = prefixes.get(code, ('❔ ', 'Refresh'))
         style = discord.ButtonStyle.success if code == readiness.READY else discord.ButtonStyle.secondary
@@ -218,8 +219,27 @@ class AdminGameSelection(SafeView):
         else:
             status = self.game_state(gid)
             if status['target'] is None:
-                return await interaction.response.send_message(text(status['reason'], 700), ephemeral=True,
-                                                              allowed_mentions=discord.AllowedMentions.none())
+                self.phase = 'loading'
+                await interaction.response.defer()
+                try:
+                    draft = await recovery.preview(self.guild, interaction.user, gid)
+                except ValueError as exc:
+                    self.phase = 'select'
+                    self.rebuild()
+                    return await interaction.edit_original_response(
+                        content=text(exc, 700), view=self,
+                        allowed_mentions=discord.AllowedMentions.none())
+                if not draft['candidates'] and not draft['allow_new']:
+                    self.phase = 'select'
+                    self.rebuild()
+                    return await interaction.edit_original_response(
+                        content=text(draft['reason'], 700), view=self,
+                        allowed_mentions=discord.AllowedMentions.none())
+                self.phase = 'recovery'
+                panel = RecoveryReview(self, draft)
+                return await interaction.edit_original_response(
+                    content=panel.content(), view=panel,
+                    allowed_mentions=discord.AllowedMentions.none())
             if len(self.pending) >= visibility.MAX_BATCH:
                 return await interaction.response.send_message('Review these 50 choices before adding more.', ephemeral=True)
             self.stage(gid, status['target'])
@@ -276,6 +296,136 @@ class AdminGameSelection(SafeView):
             self.rebuild()
             reason = str(exc) if isinstance(exc, ValueError) else 'Discord could not load the review. Try again later.'
             await interaction.edit_original_response(content=text(reason, 600), view=self,
+                                                     allowed_mentions=discord.AllowedMentions.none())
+
+
+class RecoveryReview(SafeView):
+    """One-game recovery; choosing an action still requires confirmation."""
+
+    def __init__(self, session, draft):
+        super().__init__(timeout=240)
+        self.session, self.draft = session, draft
+        self.choice = None
+        self.rebuild()
+
+    async def interaction_check(self, interaction):
+        return await self.session.allowed(interaction, phase='recovery')
+
+    def content(self):
+        name = text(self.draft['name'], 80)
+        if self.choice is None:
+            lines = [f'# 🛠️ Repair {name}', text(self.draft['reason'], 500)]
+            if self.draft['candidates']:
+                lines.append('\n**Existing saved chats found:**')
+                for candidate in self.draft['candidates']:
+                    lines.append(f'• **#{text(candidate["name"], 70)}** — can be moved/reused under 🎮 Games.')
+            if self.draft['stale_ids']:
+                lines.append('\nThe previous saved chat reference no longer exists on Discord.')
+            lines.append('\nNothing changes until you choose an option and confirm.')
+            return '\n'.join(lines)
+        if self.choice == 'new':
+            return (f'# 🛠️ Repair {name}\n'
+                    'Create a new game chat under 🎮 Games and replace the outdated game-chat mapping.\n\n'
+                    'Any existing recovery candidate is **not deleted**; it is only disconnected from this game. '
+                    'The game role and member roles are preserved.\n\n'
+                    '**Confirm Create New** to continue.')
+        candidate = next(c for c in self.draft['candidates'] if c['id'] == self.choice)
+        return (f'# 🛠️ Repair {name}\n'
+                f'Move/reuse **#{text(candidate["name"], 70)}** as the canonical game chat under 🎮 Games.\n\n'
+                'Its channel ID and message history are preserved. Other legacy LFG/voice channels are untouched.\n\n'
+                '**Confirm Move Existing** to continue.')
+
+    def add(self, label, callback, *, style=discord.ButtonStyle.secondary):
+        item = discord.ui.Button(label=label, style=style)
+        item.callback = callback
+        self.add_item(item)
+
+    def rebuild(self):
+        self.clear_items()
+        if self.choice is None:
+            for candidate in self.draft['candidates'][:3]:
+                async def choose(i, cid=candidate['id']):
+                    if not await self.interaction_check(i):
+                        return
+                    self.choice = cid
+                    self.rebuild()
+                    await i.response.edit_message(content=self.content(), view=self,
+                                                  allowed_mentions=discord.AllowedMentions.none())
+                self.add('Use #' + text(candidate['name'], 55), choose, style=discord.ButtonStyle.primary)
+            if self.draft['allow_new']:
+                async def choose_new(i):
+                    if not await self.interaction_check(i):
+                        return
+                    self.choice = 'new'
+                    self.rebuild()
+                    await i.response.edit_message(content=self.content(), view=self,
+                                                  allowed_mentions=discord.AllowedMentions.none())
+                self.add('Create new channel', choose_new, style=discord.ButtonStyle.primary)
+            self.add('Back', self.back)
+        else:
+            self.add('Confirm Create New' if self.choice == 'new' else 'Confirm Move Existing',
+                     self.confirm, style=discord.ButtonStyle.success)
+            self.add('Choose another option', self.reset)
+            self.add('Cancel', self.back)
+
+    async def reset(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        self.choice = None
+        self.rebuild()
+        await interaction.response.edit_message(content=self.content(), view=self,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    async def back(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        self.session.phase = 'loading'
+        await interaction.response.defer()
+        try:
+            report = await readiness.inventory(self.session.guild, interaction.user)
+        except ValueError as exc:
+            self.session.phase = 'closed'
+            self.stop()
+            return await interaction.edit_original_response(content=text(exc, 700), view=None)
+        self.session.set_inventory(report['games'], report['states'], report['checked_at'], report['error'])
+        self.session.phase = 'select'
+        self.session.notice = 'Recovery cancelled. No game or channel was changed.'
+        self.session.rebuild()
+        self.stop()
+        await interaction.edit_original_response(content=self.session.content(), view=self.session,
+                                                 allowed_mentions=discord.AllowedMentions.none())
+
+    async def confirm(self, interaction):
+        if self.choice is None or not await self.interaction_check(interaction):
+            return
+        self.session.phase = 'applying'
+        await interaction.response.defer()
+        await interaction.edit_original_response(content='Applying the reviewed game-channel recovery…', view=None)
+        try:
+            channel = await recovery.apply(self.session.guild, interaction.user, self.draft, self.choice)
+            report = await readiness.inventory(self.session.guild, interaction.user)
+            self.session.set_inventory(report['games'], report['states'], report['checked_at'], report['error'])
+            self.session.phase = 'select'
+            self.session.notice = (
+                f'✅ **{text(self.draft["name"], 65)}** recovered as **#{text(channel.name, 65)}**. '
+                'The current state was rechecked.'
+            )
+            self.session.rebuild()
+            self.stop()
+            await interaction.edit_original_response(content=self.session.content(), view=self.session,
+                                                     allowed_mentions=discord.AllowedMentions.none())
+        except (ValueError, discord.HTTPException) as exc:
+            self.session.phase = 'select'
+            try:
+                report = await readiness.inventory(self.session.guild, interaction.user)
+                self.session.set_inventory(report['games'], report['states'], report['checked_at'], report['error'])
+            except ValueError:
+                pass
+            self.session.notice = '⚠️ ' + text(exc if isinstance(exc, ValueError) else
+                'Discord could not verify the recovery. Refresh before retrying.', 500)
+            self.session.rebuild()
+            self.stop()
+            await interaction.edit_original_response(content=self.session.content(), view=self.session,
                                                      allowed_mentions=discord.AllowedMentions.none())
 
 
