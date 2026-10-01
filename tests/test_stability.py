@@ -168,7 +168,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Rename failed safely", request.edit_original_response.call_args.kwargs["content"])
         view.stop()
 
-    async def test_create_acknowledges_before_db_and_does_not_create_area(self):
+    async def test_create_acknowledges_then_reviews_visibility_without_creating_area(self):
         request = interaction()
         request.guild.roles = []
         request.guild.create_role = AsyncMock(return_value=SimpleNamespace(id=10))
@@ -179,14 +179,19 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(db, "get_game_by_name", side_effect=lookup), patch.object(
             db, "upsert_custom_game", return_value=GAME
-        ), patch.object(db, "set_game_role"), patch.object(db, "set_game_selectable"), patch.object(
+        ), patch.object(db, "set_game_role"), patch.object(db, "set_game_selectable") as selectable, patch.object(
             db, "get_game_by_id", return_value=GAME
-        ), patch.object(games_cog, "refresh_choose_games_message", new_callable=AsyncMock) as refresh:
+        ), patch.object(games_cog, "refresh_choose_games_message", new_callable=AsyncMock) as refresh, patch(
+            "cogs.game_channels.open_visibility", new_callable=AsyncMock
+        ) as review:
             await games_cog.Games.create_game.callback(SimpleNamespace(bot=None), request,
                                                       "Test Game", GAME["display_group"])
-            refresh.assert_awaited_once()
+            selectable.assert_called_once_with(GAME["id"], False)
+            review.assert_awaited_once_with(request, GAME["id"], True)
+            refresh.assert_not_awaited()
         request.guild.create_role.assert_awaited_once()
         request.guild.create_category.assert_not_called()
+        request.guild.create_text_channel.assert_not_called()
 
     async def test_add_area_acknowledges_before_lookup(self):
         request = interaction()
