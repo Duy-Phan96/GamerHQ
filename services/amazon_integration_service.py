@@ -26,7 +26,11 @@ def channel_overwrites(channel, *, bot=None):
     bot = bot or configured_bot(channel.guild)
     if bot:
         rights[bot] = publisher_overwrite(rights.get(bot))
-    return rights
+    # Preserve an explicitly adopted public-board exception (for example the
+    # owner's reviewed @everyone send_messages choice) just like other managed
+    # Marketplace boards. Amazon publisher access remains independently scoped.
+    from services.channel_change_service import public_policy
+    return public_policy(channel.guild, 'amazon', rights)
 
 
 def category_overwrites(category, rights, *, bot=None):
