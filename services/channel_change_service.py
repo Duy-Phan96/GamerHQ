@@ -123,6 +123,9 @@ def safe_rights(channel, name):
     if name == 'free-games':
         from services.support_service import free_games_overwrites
         result = free_games_overwrites(channel)
+    elif name == 'amazon':
+        from services.amazon_integration_service import channel_overwrites
+        result = channel_overwrites(channel)
     elif name in CHANNELS:
         result = overwrites(channel.guild, name, channel.overwrites, channel.category)
     else:
