@@ -9,7 +9,7 @@ from services.server_service import ServerMessageError, upsert_fixed_message
 
 WELCOME_COPY = (
     "# 👋 Welcome to GamerHQ!\n\n"
-    "New here? Press **Get Started** below for a quick tour of the server. GamerHQ is an English-language server.\n"
+    "Press **Get Started** below for a quick tour of the server. GamerHQ is an English-language server.\n"
     "🎮 Choose the games you play in {choose-your-games} anytime.\n"
     "👤 Optional profile, platform and interest settings: {choose-your-roles}\n"
     "📅 Find or create gaming sessions in {looking-for-group}\n"
