@@ -529,12 +529,13 @@ def partner_overwrites(category):
             rights[target] = discord.PermissionOverwrite.from_pair(*value.pair())
     role = resolve(category.guild, 'gaming')
     for target in (role if role and safe(role) and role.permissions.value == 0 else None, member(category.guild, 'dealgecko'),
-                   member(category.guild, 'instant-gaming')):
+                   member(category.guild, 'instant-gaming'), member(category.guild, 'amazon')):
         if target:
             value = rights.setdefault(target, discord.PermissionOverwrite())
             value.view_channel = value.read_message_history = True
             value.send_messages = False  # Posting is granted only on selected feed children.
-    return rights
+    from services.amazon_integration_service import category_overwrites as amazon_category_overwrites
+    return amazon_category_overwrites(category, rights)
 
 
 async def repair_partner_permissions(guild, category, *, feed_ids=()):
@@ -561,6 +562,8 @@ async def repair_partner_permissions(guild, category, *, feed_ids=()):
         raw = db.get_setting(channel_key(guild, name))
         channel = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
         if channel in guild.text_channels and channel.category_id == category.id:
+            if name == 'amazon':
+                continue  # Amazon publisher policy is owned by amazon_integration_service.
             await set_read_only(channel)
 
 
@@ -611,6 +614,10 @@ async def repair_support(guild, changed):
             raise ServerMessageError('A partner/support channel is in a protected/private area; review before making it public.')
     migrate_electricity_mapping(guild, channels.get('electricity'))
     await prepare_household_migration(guild, legacy)
+    # Resolve optional Amazon identity only in Marketplace repair. Other feed
+    # syncs must not trigger unrelated member lookups or rewrite #amazon.
+    from services.bot_group_service import fetch_member
+    await fetch_member(guild, 'amazon')
     empty = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda target:discord.PermissionOverwrite())
     overwrites = guide_overwrites(empty)
     if partners is None:
@@ -638,6 +645,9 @@ async def repair_support(guild, changed):
                 await tracked_edit(channel, overwrites=rights, reason='GamerHQ public feed permissions')
         elif name == 'free-games':
             await repair_free_games(channel)
+        elif name == 'amazon':
+            from services.amazon_integration_service import repair as repair_amazon
+            await repair_amazon(channel)
         else:
             await set_read_only(channel)
     result = await sync_support_messages(guild, order=True)
