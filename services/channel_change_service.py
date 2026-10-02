@@ -42,7 +42,15 @@ def permissions(overwrites):
 
 
 def wire(channel):
-    return dict(name=channel.name, category=channel.category_id, position=channel.position,
+    # Real Discord channels expose category_id=None when detached. Using the
+    # category object directly also keeps offline/synthetic snapshots tolerant.
+    category_id = getattr(getattr(channel, 'category', None), 'id', None)
+    if category_id is None:
+        try:
+            category_id = channel.category_id
+        except (AttributeError, TypeError):
+            category_id = None
+    return dict(name=channel.name, category=category_id, position=channel.position,
                 permissions=permissions(channel.overwrites))
 
 

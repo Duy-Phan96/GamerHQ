@@ -60,6 +60,48 @@ class StructureAdoptionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channel.name, original)
         self.assertEqual(runtime.get_change(self.guild, change['id'])['status'], 'UNDONE')
 
+    async def test_incidental_channel_position_shift_updates_state_without_owner_notice(self):
+        channel = community.core_channel(self.guild, 'looking-for-group')
+        before = clone_channel(channel)
+        channel.position += 8
+        count = len(runtime.recent_changes(self.guild))
+        await runtime.observe_channel_update(before, channel, actor_id=None)
+        self.assertEqual(len(runtime.recent_changes(self.guild)), count)
+        self.assertEqual(runtime.channel_state(self.guild, 'looking-for-group')['position'], channel.position)
+
+    async def test_category_position_shift_updates_state_without_owner_notice(self):
+        games = community.core_category(self.guild, 'games')
+        before = copy.copy(games)
+        before.overwrites = dict(games.overwrites)
+        games.position = getattr(games, 'position', 0) + 4
+        count = len(runtime.recent_changes(self.guild))
+        await runtime.observe_category_update(before, games, actor_id=None)
+        self.assertEqual(len(runtime.recent_changes(self.guild)), count)
+        self.assertEqual(runtime.category_state(self.guild, 'games', category_id=games.id)['position'], games.position)
+
+    async def test_audit_backed_manual_position_change_stays_visible(self):
+        channel = community.core_channel(self.guild, 'looking-for-group')
+        before = clone_channel(channel)
+        channel.position += 3
+        count = len(runtime.recent_changes(self.guild))
+        await runtime.observe_channel_update(before, channel, actor_id=self.owner.id)
+        self.assertEqual(len(runtime.recent_changes(self.guild)), count + 1)
+        self.assertEqual(runtime.recent_changes(self.guild, 1)[0]['action'], 'channel_update')
+
+    async def test_child_detach_from_deleted_parent_is_not_separate_owner_change(self):
+        channel = community.core_channel(self.guild, 'looking-for-group')
+        before = clone_channel(channel)
+        old_parent = channel.category
+        if old_parent in self.guild.categories:
+            self.guild.categories.remove(old_parent)
+        if old_parent in self.guild.channels:
+            self.guild.channels.remove(old_parent)
+        channel.category = None
+        count = len(runtime.recent_changes(self.guild))
+        await runtime.observe_channel_update(before, channel, actor_id=self.owner.id)
+        self.assertEqual(len(runtime.recent_changes(self.guild)), count)
+        self.assertIsNone(runtime.channel_state(self.guild, 'looking-for-group')['category_id'])
+
     async def test_public_move_is_adopted_and_restart_bootstrap_does_not_restore_old_parent(self):
         channel = community.core_channel(self.guild, 'looking-for-group')
         before = clone_channel(channel)

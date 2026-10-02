@@ -128,6 +128,14 @@ def _record(conn, guild, kind, resource_id, before, after, *, ignore=(), offline
     fields = sorted(field for field in set(before) | set(after)
                     if field != "id" and field not in ignore and before.get(field) != after.get(field))
     _store(conn, setting_key, after)
+    # Discord reindexes sibling resources during unrelated moves. Keep the
+    # snapshot accurate but do not publish pure ordering noise as a server change.
+    if set(fields) == {"position"}:
+        return False
+    # When a channel changes parent, position commonly changes as a side effect.
+    # The parent move is the meaningful field shown to the owner.
+    if kind == "channel" and "category_id" in fields and "position" in fields:
+        fields.remove("position")
     if not record or not fields:
         return False
     suffix = "offline" if offline else "delete" if after.get("deleted") else "create" if before.get("deleted") else "update"
@@ -264,24 +272,76 @@ def can_undo(change):
 
 
 def detail_text(change):
-    def safe(value):
+    """Human-readable private review; important safety guidance is never truncated."""
+    def safe(value, limit=90):
         text = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
-        return discord.utils.escape_mentions(discord.utils.escape_markdown(text))[:75]
-    lines = [f"# Change #{change['id']} · Server configuration", f"Resource: {safe(change['logical_key'])}",
-             f"Status: **{safe(change['status'])}**", "Actor: Unknown (no reliably correlated audit evidence).", ""]
+        return discord.utils.escape_mentions(discord.utils.escape_markdown(text))[:limit]
+
+    kind = change["resource_type"]
+    before, after = change["before"], change["after"]
+    name = after.get("name") or before.get("name") or {
+        "guild": "Server settings", "channel": "Channel", "category": "Category", "role": "Role"
+    }.get(kind, "Resource")
+    subject = {
+        "channel": f"#{safe(name, 70)}",
+        "category": f"Category **{safe(name, 70)}**",
+        "role": f"Role **{safe(name, 70)}**",
+        "guild": f"Server **{safe(name, 70)}**",
+    }.get(kind, safe(name, 70))
+
+    status = {
+        "APPLIED": "Recorded",
+        "UNDOING": "Undo in progress",
+        "UNDONE": "Undone",
+        "RESTORED": "Replacement restored",
+        "REVIEW_REQUIRED": "Needs review",
+    }.get(change.get("status"), safe(change.get("status", "Recorded"), 40))
+
+    labels = {
+        "name": "Name", "topic": "Topic", "nsfw": "Age-restricted channel",
+        "slowmode_delay": "Slowmode", "bitrate": "Voice bitrate",
+        "user_limit": "Voice user limit", "rtc_region": "Voice region",
+        "colour": "Role colour", "hoist": "Show role separately",
+        "mentionable": "Role can be mentioned", "description": "Server description",
+        "afk_timeout": "AFK timeout", "permissions": "Permissions",
+        "overwrites": "Channel permissions", "category_id": "Category",
+    }
+
+    header = f"# 🕘 Change #{change['id']} · {subject}\nStatus: **{status}**\n\n"
     fields = change["after"].get("_fields", [])
-    for field in fields[:7]:
-        lines.append(f"**{safe(field)}:** {safe(change['before'].get(field))} → {safe(change['after'].get(field))}")
-    if len(fields) > 7:
-        lines.append(f"… {len(fields) - 7} further changed fields are saved in the private history.")
-    if change["action"].endswith("_offline"):
-        lines.append("Offline net difference only: an unavailable cached resource is not proof of deletion.")
-    if can_undo(change):
-        lines.append("\nConfirm Undo restores only the listed changed fields, after a fresh conflict check.")
-    else:
-        lines.append("\nAutomatic Undo is not available for this change. Permissions, ordering, creation/deletion "
-                     "and offline differences require manual review. Deleted history cannot be recovered.")
-    return "\n".join(lines)[:1950]
+    body = []
+    for field in fields[:6]:
+        old, new = before.get(field), after.get(field)
+        label = labels.get(field, field.replace("_", " ").title())
+        if field == "category_id":
+            body.append("**Category:** moved to a different category.")
+        elif field in {"permissions", "overwrites"}:
+            body.append(f"**{label}:** changed.")
+        elif field == "topic":
+            body.append(f"**Topic:** {safe(old or 'No topic', 70)} → {safe(new or 'No topic', 70)}")
+        else:
+            body.append(f"**{label}:** {safe(old, 70)} → {safe(new, 70)}")
+    if len(fields) > 6:
+        body.append(f"… {len(fields) - 6} additional details are saved in the private history.")
+
+    context = (
+        "\nThis is the net difference detected after GamerHQ came back online; the exact moment or actor is unknown."
+        if change["action"].endswith("_offline")
+        else "\nActor information was recorded by Discord audit evidence."
+        if change.get("actor_id")
+        else "\nWho made this change could not be verified reliably."
+    )
+    guidance = (
+        "\n\n**Undo available:** this restores only the listed editable fields after checking that nothing changed again."
+        if can_undo(change)
+        else "\n\n**Undo unavailable:** ordering, permissions, creation/deletion and uncertain offline changes need manual review. Deleted message/channel history cannot be recovered."
+    )
+    footer = context + guidance
+    body_text = "\n".join(body)
+    budget = max(0, 1950 - len(header) - len(footer))
+    if len(body_text) > budget:
+        body_text = body_text[:max(0, budget - 2)].rstrip() + "…"
+    return header + body_text + footer
 
 
 async def _fetch(guild, kind, resource_id, client):

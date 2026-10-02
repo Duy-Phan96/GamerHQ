@@ -126,6 +126,19 @@ class OwnerLogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Administrators', text)
         self.assertNotIn('<@', text)
 
+    def test_private_details_use_names_not_internal_ids_or_positions(self):
+        change = structure.record_change(
+            self.guild, 'channel', 'internal-secret-key', 456, None, 'channel_update',
+            {'name': 'warcraft-iii', 'category_id': 111, 'position': 62},
+            {'name': 'warcraft-iii', 'category_id': 222, 'position': 54},
+            reversible=True,
+        )
+        rendered = log.details(change)
+        self.assertIn('#warcraft-iii', rendered)
+        self.assertIn('moved to a different category', rendered)
+        for technical in ('internal-secret-key', 'Category ID', 'Position:', 'Actor ID', '111', '222', '62', '54'):
+            self.assertNotIn(technical, rendered)
+
     async def test_nonowner_admin_cannot_open_history_or_undo(self):
         request = self.request(self.admin)
         with patch.object(structure, 'recent_changes') as history:

@@ -238,15 +238,39 @@ async def observe_channel_update(before, after, *, actor_id=None):
     old_state = snapshot_channel(before)
     new_state = snapshot_channel(after)
     async with _locks.setdefault((after.guild.id, "channel", logical), asyncio.Lock()):
+        # Discord can shift many sibling positions when one resource moves. Keep
+        # the runtime snapshot current, but do not turn those side effects into
+        # separate owner-change notices.
+        if fields == ["position"] and not permissions_changed and actor_id is None:
+            save_runtime_state(after.guild, "channel", logical, new_state)
+            return {"handled": True, "permissions_changed": False}
+
+        # Deleting a category automatically detaches its child channels. If the
+        # old parent is already gone and the child only became uncategorized
+        # (plus an incidental position shift), the category deletion is the
+        # meaningful owner event. Preserve the child mapping silently.
+        implicit_parent_delete = (
+            "category" in fields
+            and new_state.get("category_id") is None
+            and old_state.get("category_id") is not None
+            and after.guild.get_channel(old_state["category_id"]) is None
+            and set(fields) <= {"category", "position"}
+            and not permissions_changed
+        )
+        if implicit_parent_delete:
+            save_runtime_state(after.guild, "channel", logical, new_state)
+            return {"handled": True, "permissions_changed": False}
+
         if fields and ("category" not in fields or _safe_parent(after.guild, logical, before, old_state, new_state)):
             save_runtime_state(after.guild, "channel", logical, new_state)
             if not logical.startswith("game:"):
                 db.set_setting(f"managed_channel_removed:{after.guild.id}:{logical}", "0")
             change = record_change(after.guild, "channel", logical, after.id, actor_id, "channel_update",
                                    old_state, new_state, reversible=True)
+            semantic = [field for field in fields if field != "position"] or fields
             await _announce(
                 after.guild, change, "Discord Structure Adopted",
-                f"<#{after.id}> changed in Discord; its mapped ID was preserved. Fields adopted: {', '.join(fields)}.",
+                f"<#{after.id}> changed in Discord; its mapped ID was preserved. Fields adopted: {', '.join(semantic)}.",
             )
         elif fields:
             change = record_change(after.guild, "channel", logical, after.id, actor_id, "security_review",
@@ -307,7 +331,18 @@ async def observe_category_update(before, after, *, actor_id=None):
     if not logical:
         return False
     old_state, new_state = snapshot_category(before), snapshot_category(after)
-    changed = {key: new_state[key] for key in ("name", "position") if old_state.get(key) != new_state.get(key)}
+    raw_changed = {key: new_state[key] for key in ("name", "position") if old_state.get(key) != new_state.get(key)}
+
+    # Discord may renumber sibling categories as a side effect of another move.
+    # Keep our runtime snapshot current even if an old expected-position marker
+    # is still present from setup, but never create an owner-change record.
+    if set(raw_changed) == {"position"} and actor_id is None:
+        from services.channel_change_service import consume
+        consume(after.guild, after.id, raw_changed)
+        save_runtime_state(after.guild, "category", logical, new_state)
+        return True
+
+    changed = raw_changed
     if changed:
         from services.channel_change_service import consume
         changed = {key: value for key, value in changed.items()
