@@ -241,7 +241,7 @@ async def observe_channel_update(before, after, *, actor_id=None):
         # Discord can shift many sibling positions when one resource moves. Keep
         # the runtime snapshot current, but do not turn those side effects into
         # separate owner-change notices.
-        if fields == ["position"] and not permissions_changed:
+        if fields == ["position"] and not permissions_changed and actor_id is None:
             save_runtime_state(after.guild, "channel", logical, new_state)
             return {"handled": True, "permissions_changed": False}
 
@@ -336,7 +336,7 @@ async def observe_category_update(before, after, *, actor_id=None):
     # Discord may renumber sibling categories as a side effect of another move.
     # Keep our runtime snapshot current even if an old expected-position marker
     # is still present from setup, but never create an owner-change record.
-    if set(raw_changed) == {"position"}:
+    if set(raw_changed) == {"position"} and actor_id is None:
         from services.channel_change_service import consume
         consume(after.guild, after.id, raw_changed)
         save_runtime_state(after.guild, "category", logical, new_state)
