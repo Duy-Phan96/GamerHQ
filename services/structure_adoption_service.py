@@ -331,17 +331,23 @@ async def observe_category_update(before, after, *, actor_id=None):
     if not logical:
         return False
     old_state, new_state = snapshot_category(before), snapshot_category(after)
-    changed = {key: new_state[key] for key in ("name", "position") if old_state.get(key) != new_state.get(key)}
+    raw_changed = {key: new_state[key] for key in ("name", "position") if old_state.get(key) != new_state.get(key)}
+
+    # Discord may renumber sibling categories as a side effect of another move.
+    # Keep our runtime snapshot current even if an old expected-position marker
+    # is still present from setup, but never create an owner-change record.
+    if set(raw_changed) == {"position"}:
+        from services.channel_change_service import consume
+        consume(after.guild, after.id, raw_changed)
+        save_runtime_state(after.guild, "category", logical, new_state)
+        return True
+
+    changed = raw_changed
     if changed:
         from services.channel_change_service import consume
         changed = {key: value for key, value in changed.items()
                    if key in consume(after.guild, after.id, changed)}
     if not changed:
-        return True
-    # A sibling edit can renumber category positions without the owner touching
-    # this category. Track the new order silently instead of producing noise.
-    if set(changed) == {"position"}:
-        save_runtime_state(after.guild, "category", logical, new_state)
         return True
     save_runtime_state(after.guild, "category", logical, new_state)
     change = record_change(after.guild, "category", logical, after.id, actor_id, "category_update",
