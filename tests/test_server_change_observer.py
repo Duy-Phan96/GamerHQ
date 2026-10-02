@@ -109,14 +109,26 @@ class ObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(feed.can_undo(self.latest()))
         self.assertIn('overwrites', self.latest()['after']['_fields'])
 
-    async def test_create_delete_and_ordering_are_logged_but_not_reversible(self):
+    async def test_create_delete_are_logged_but_pure_ordering_noise_is_quiet(self):
         resource = self.channel()
         await observer.observe(self.guild, 'channel', None, resource)
         self.assertFalse(feed.can_undo(self.latest()))
         await observer.observe(self.guild, 'channel', resource, None)
         self.assertFalse(feed.can_undo(self.latest()))
+        count = len(structure.recent_changes(self.guild))
         await observer.observe(self.guild, 'channel', self.channel(), self.channel(position=3))
-        self.assertFalse(feed.can_undo(self.latest()))
+        self.assertEqual(len(structure.recent_changes(self.guild)), count)
+        self.assertEqual(json.loads(db.get_setting(observer.key(101, 'channel', 801)))['position'], 3)
+
+    async def test_parent_move_records_category_without_incidental_position(self):
+        before = self.channel(position=1, category_id=10)
+        after = self.channel(position=22, category_id=11)
+        await observer.observe(self.guild, 'channel', before, after)
+        change = self.latest()
+        self.assertEqual(change['after']['_fields'], ['category_id'])
+        detail = observer.detail_text(change)
+        self.assertIn('moved to a different category', detail)
+        self.assertNotIn('22', detail)
 
     async def test_private_values_do_not_leak_into_channel_notice(self):
         change = await self.rename()
@@ -311,4 +323,4 @@ class ObserverTests(unittest.IsolatedAsyncioTestCase):
             change['before'][field], change['after'][field] = 'a' * 500, 'b' * 500
         rendered = observer.detail_text(change)
         self.assertLessEqual(len(rendered), 1950)
-        self.assertIn('Automatic Undo is not available', rendered)
+        self.assertIn('Undo unavailable', rendered)
