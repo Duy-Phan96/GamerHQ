@@ -40,11 +40,11 @@ class SkillManagementTests(unittest.IsolatedAsyncioTestCase):
             id=43,
             guild_permissions=discord.Permissions(administrator=True),
         )
-        members={42:self.owner,43:self.admin}
+        self.members={42:self.owner,43:self.admin}
         self.guild=SimpleNamespace(
             id=1,
             owner_id=42,
-            get_member=members.get,
+            get_member=self.members.get,
         )
         self.registry=SkillRegistry()
         self.registry.register(FakeSkill())
@@ -142,6 +142,22 @@ class SkillManagementTests(unittest.IsolatedAsyncioTestCase):
         self.runtime.start.assert_not_awaited()
         interaction.response.send_message.assert_awaited()
         self.assertIn("Only the server owner",interaction.response.send_message.await_args.args[0])
+
+    async def test_owner_revoked_after_defer_cannot_mutate_skill_state(self):
+        view=ConfirmSkillStateView(
+            self.guild,self.owner.id,self.runtime,"fixture-skill",enable=True
+        )
+        interaction=self.interaction()
+        async def revoke(**kwargs):
+            self.members.pop(self.owner.id,None)
+            interaction.response.is_done=lambda:True
+        interaction.response.defer.side_effect=revoke
+
+        await view.confirm.callback(interaction)
+
+        self.runtime.enable.assert_not_awaited()
+        self.runtime.start.assert_not_awaited()
+        interaction.followup.send.assert_awaited()
 
     async def test_cancel_changes_nothing(self):
         view=ConfirmSkillStateView(
