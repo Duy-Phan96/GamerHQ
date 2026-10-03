@@ -118,7 +118,7 @@ class EventBus:
 
         if self.availability is not None and subscriptions:
             checks = await asyncio.gather(*(
-                self.availability(event.guild_id, item.consumer_skill_id)
+                self.availability(guild_id=event.guild_id, skill_id=item.consumer_skill_id)
                 for item in subscriptions
             ))
             subscriptions = tuple(
