@@ -1,0 +1,82 @@
+# Creating a Skill
+
+This document describes the future-facing SDK contract. Recurring Posts will become the first reference implementation.
+
+## 1. Create a Skill package
+
+A future Skill should contain a manifest, implementation, tests, and documentation. Internal files are private unless a contract explicitly exposes them.
+
+## 2. Choose a stable Skill ID
+
+Use lowercase kebab-case, for example `recurring-posts`. The display name may change; the ID should not.
+
+## 3. Declare capabilities
+
+Request only what the Skill needs. A Skill that does not declare `discord.roles.manage` must not receive that capability from its host context.
+
+## 4. Define events
+
+Events are versioned notifications. Document producer, consumers, payload fields, emission guarantees, privacy considerations, and failure semantics.
+
+Example:
+
+- ID: `recurring-post.sent.v1`
+- Producer: Recurring Posts
+- Meaning: Discord confirmed the scheduled send
+- Payload: `guildId`, `postId`, `channelId`, `discordMessageId`, `timestamp`
+- Content body: not included by default
+
+## 5. Define Public Skill APIs only when needed
+
+Do not create an API for every Skill by default. Prefer Events for loose coupling. Add a Public Skill API only when another Skill needs direct request/response behavior.
+
+Every public contract must have a versioned ID such as `events.get-event.v1` and be declared in the manifest.
+
+## 6. Use SkillContext
+
+Use host capabilities such as:
+
+```python
+await ctx.discord.send_message(...)
+await ctx.scheduler.upsert_job(...)
+await ctx.storage.set(...)
+await ctx.events.emit(...)
+await ctx.audit.write(...)
+```
+
+Do not use the Discord token, raw GamerHQ DB access, another Skill's private tables, or another Skill's internal Python modules.
+
+## 7. Keep storage private
+
+The host gives each Skill a namespaced storage view. Shared information crosses boundaries through documented Events or Public Skill APIs.
+
+## 8. Test contracts without production
+
+SDK tests should validate manifests, capabilities, event schemas, API IDs, lifecycle compatibility, storage isolation, and later scheduler behavior using fakes. A third-party developer must not need a live Discord token to run contract tests.
+
+## 9. Document every dependency surface
+
+Each Skill README should list:
+
+- Skill ID and version
+- Runtime API version
+- capabilities required
+- events emitted
+- events consumed
+- Public APIs exposed
+- Public APIs consumed
+- storage namespace
+- scheduler jobs
+- configuration
+- health checks
+- failure behavior
+- security notes
+- examples
+
+## 10. Forbidden coupling
+
+A Skill must not import another Skill's private implementation. Allowed collaboration mechanisms are:
+
+1. Core/host capabilities
+2. documented Events
+3. explicit versioned Public Skill APIs
