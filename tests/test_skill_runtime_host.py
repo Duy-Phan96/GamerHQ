@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from hosts.gamerhq.skill_discord import DenyAllDiscordPolicy
 from hosts.gamerhq.skill_runtime_host import GamerHQSkillRuntimeHost
@@ -64,6 +65,19 @@ class SkillRuntimeHostTests(unittest.IsolatedAsyncioTestCase):
         await host.register()
         await host.register()
         self.assertEqual(self.skill.registered,1)
+
+    async def test_stop_and_disable_cleanup_guild_event_subscriptions(self):
+        host=GamerHQSkillRuntimeHost(self.bot,self.registry)
+        host.event_bus.unsubscribe_skill=AsyncMock(return_value=0)
+        host.manager.stop=AsyncMock(return_value=False)
+        host.manager.disable=AsyncMock(return_value=False)
+
+        await host.stop(guild_id=123,skill_id="fixture-skill")
+        await host.disable(guild_id=123,skill_id="fixture-skill")
+
+        self.assertEqual(host.event_bus.unsubscribe_skill.await_count,2)
+        for call in host.event_bus.unsubscribe_skill.await_args_list:
+            self.assertEqual(call.kwargs,{"guild_id":123,"skill_id":"fixture-skill"})
 
     async def test_policy_factory_is_bound_per_guild_and_skill(self):
         calls=[]
