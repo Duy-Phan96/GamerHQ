@@ -266,6 +266,10 @@ class ConfirmSkillStateView(SafeView):
         if not await self.interaction_check(interaction):
             return
         await interaction.response.defer(ephemeral=True)
+        # Recheck current membership/ownership after acknowledgement and
+        # immediately before persistent mutation.
+        if not await self.interaction_check(interaction):
+            return
         skill = self.runtime.registry.get(self.skill_id)
         current = await self.runtime.state.is_enabled(guild_id=self.guild.id, skill_id=self.skill_id)
         try:
@@ -279,7 +283,7 @@ class ConfirmSkillStateView(SafeView):
                 result = "disabled"
         except Exception:
             await interaction.edit_original_response(
-                content="The Skill state could not be changed safely. Review Skill health/logs before retrying.",
+                content="The Skill operation stopped safely. It may be enabled but not running; review Skill health/logs before retrying.",
                 view=None,
             )
             self.finished = True
