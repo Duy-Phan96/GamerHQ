@@ -80,3 +80,19 @@ A Skill must not import another Skill's private implementation. Allowed collabor
 1. Core/host capabilities
 2. documented Events
 3. explicit versioned Public Skill APIs
+
+
+## Scheduler jobs
+
+If a Skill needs future execution, declare `scheduler.jobs` and use the shared scheduler through `SkillContext`.
+
+Do not start a private recurring loop for ordinary persisted schedules.
+
+Each job should use:
+
+- a stable job key inside the Skill namespace;
+- a stable versioned handler ID;
+- one of the supported schedule contracts;
+- a small JSON payload containing only the data needed to find the Skill-owned record.
+
+See [Skill Scheduler](scheduler.md).
