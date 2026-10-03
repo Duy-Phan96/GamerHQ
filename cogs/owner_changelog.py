@@ -201,7 +201,7 @@ def details(change):
         if before.get("name") != after.get("name"):
             changes.append(f"Renamed **{safe(before.get('name'))}** → **{safe(after.get('name'))}**")
         if before.get("category_id") != after.get("category_id"):
-            changes.append("Moved to another category")
+            changes.append("moved to a different category")
         if action == "security_review":
             changes.append("The change needs a security review before GamerHQ adopts it")
         if action == "offline_reconcile":
