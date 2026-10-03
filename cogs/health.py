@@ -304,6 +304,9 @@ class HealthView(SafeView):
                 content=integration_text(self.guild),
                 view=IntegrationsView(self.guild, self.actor_id),
             )
+        if self.selected == "Skills":
+            from cogs.skills import open_management
+            return await open_management(interaction, replace=True)
         if self.selected in {"Core", "Security & Privacy"}:
             return await interaction.response.edit_message(
                 content="# 🧱 Server Structure\nReview existing resources before applying any changes.",
