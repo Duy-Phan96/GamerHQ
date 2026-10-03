@@ -373,6 +373,15 @@ def init_db():
         if version not in (0, SCHEMA_VERSION):
             raise ValueError('Unsupported GamerHQ database schema version; use the matching application release.')
         conn.executescript(SCHEMA)
+
+        # Additive Skill Scheduler migrations for development/forward-compatible
+        # databases created by earlier Runtime slices. Existing jobs/state stay intact.
+        skill_job_cols = {row["name"] for row in conn.execute("PRAGMA table_info(skill_jobs)").fetchall()}
+        if "revision" not in skill_job_cols:
+            conn.execute("ALTER TABLE skill_jobs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        if "lease_token" not in skill_job_cols:
+            conn.execute("ALTER TABLE skill_jobs ADD COLUMN lease_token TEXT")
+
         affiliate_cols = {row['name'] for row in conn.execute('PRAGMA table_info(processed_affiliate_deals)')}
         for name in ('normalized_game', 'source_key'):
             if name not in affiliate_cols:
