@@ -92,7 +92,9 @@ Stored state includes:
 - last successful run
 - failure count
 - bounded last error code
+- job revision
 - temporary execution lease
+- unique claim token
 
 ## Restart behavior
 
@@ -100,17 +102,26 @@ Jobs are persisted before execution.
 
 After a process restart, due jobs remain available from the host store. The scheduler does not reconstruct jobs from Discord messages or in-memory state.
 
-## Duplicate execution protection
+## Duplicate execution and stale-worker protection
 
-The GamerHQ store atomically claims due jobs with a short lease.
+The GamerHQ store atomically claims due jobs using:
+
+- a short lease;
+- a unique claim token;
+- the current job revision.
+
+Only a worker that still owns the matching **claim token + revision** may finalize success, failure or defer the job.
 
 This protects against:
 
 - overlapping scheduler ticks;
 - crash/restart windows;
-- accidental concurrent scheduler work.
+- an expired worker finishing after a newer worker has claimed the same job;
+- a job being edited while an older execution is still running.
 
-GamerHQ still retains the existing production invariant of one active bot process per live guild.
+Editing/upserting an existing job increments its revision. An older worker therefore cannot overwrite the newly saved schedule or payload when it finishes.
+
+GamerHQ still retains the existing production invariant of one active bot process per live guild today, but the persistence contract does not assume that this will always be the deployment topology.
 
 ## Disabled Skills
 
