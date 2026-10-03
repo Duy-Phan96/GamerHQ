@@ -9,6 +9,7 @@ from ..contracts.events import EventDeliveryReport, EventEnvelope
 from .registry import SkillRegistry
 
 EventHandler = Callable[[EventEnvelope], Awaitable[None]]
+AvailabilityCheck = Callable[[int, str], Awaitable[bool]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +27,9 @@ class EventBus:
     without changing producer/consumer Skill contracts.
     """
 
-    def __init__(self, registry: SkillRegistry):
+    def __init__(self, registry: SkillRegistry, *, availability: AvailabilityCheck | None = None):
         self.registry = registry
+        self.availability = availability
         self._subscriptions: dict[tuple[int, str], list[_Subscription]] = {}
         self._lock = asyncio.Lock()
 
@@ -113,6 +115,15 @@ class EventBus:
             )
         async with self._lock:
             subscriptions = tuple(self._subscriptions.get((event.guild_id, event.event_id), ()))
+
+        if self.availability is not None and subscriptions:
+            checks = await asyncio.gather(*(
+                self.availability(event.guild_id, item.consumer_skill_id)
+                for item in subscriptions
+            ))
+            subscriptions = tuple(
+                item for item, enabled in zip(subscriptions, checks) if enabled
+            )
 
         if not subscriptions:
             return EventDeliveryReport(delivered=0, failed_consumers=())
