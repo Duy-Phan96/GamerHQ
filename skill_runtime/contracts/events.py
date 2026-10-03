@@ -40,3 +40,15 @@ class EventEnvelope:
         if self.occurred_at < 0:
             raise ValueError("occurred_at must be non-negative.")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+
+@dataclass(frozen=True, slots=True)
+class EventDeliveryReport:
+    """Non-throwing subscriber delivery summary returned to the producer."""
+
+    delivered: int
+    failed_consumers: tuple[str, ...] = ()
+
+    @property
+    def failed(self) -> int:
+        return len(self.failed_consumers)
