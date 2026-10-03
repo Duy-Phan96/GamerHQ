@@ -612,17 +612,10 @@ class ServerAdmin(commands.Cog):
         default_permissions=discord.Permissions(administrator=True),
     )
 
-    @server.command(name='health', description='Owner/admin: read-only diagnostics and acceptance-test details.')
+    @server.command(name='health', description='Owner/admin: open the read-only GamerHQ Server Check.')
     async def health(self, interaction: discord.Interaction):
-        from services.game_area_cleanup import authorized
-        from services.health_service import scan, summary
-        from cogs.health import HealthView
-        if not interaction.guild or not authorized(interaction.guild, interaction.user):
-            return await interaction.response.send_message('❌ Owner or administrator access required.', ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
-        await interaction.edit_original_response(content='🔄 Checking GamerHQ…\nChecking configuration, stored mappings and current server access.')
-        findings = await scan(interaction.guild, interaction.client, messages=False)
-        await interaction.edit_original_response(content=summary(findings), view=HealthView(interaction.guild, interaction.user.id, findings))
+        from cogs.health import open_server_check
+        await open_server_check(interaction)
 
     @server.command(name='adopt', description='Owner/admin: preview and adopt selected public managed channel properties.')
     @app_commands.guild_only()
