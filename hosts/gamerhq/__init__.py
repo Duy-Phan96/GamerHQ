@@ -7,6 +7,7 @@ from .skill_host import (
     GamerHQSkillAudit,
     GamerHQSkillStateStore,
     GamerHQSkillStorage,
+    GamerHQSchedulerStore,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "GamerHQSkillAudit",
     "GamerHQSkillStateStore",
     "GamerHQSkillStorage",
+    "GamerHQSchedulerStore",
 ]
