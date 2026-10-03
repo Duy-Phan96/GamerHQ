@@ -125,6 +125,31 @@ class SkillApiRouterTests(unittest.IsolatedAsyncioTestCase):
                 contract_id="events.get-event.v1", payload={}
             )
 
+    async def test_disabled_target_or_consumer_cannot_use_public_api(self):
+        enabled = {"consumer": True, "events": False}
+        async def availability(guild_id, skill_id):
+            return enabled.get(skill_id, False)
+        router = SkillApiRouter(self.registry, availability=availability)
+        async def handler(guild_id, payload):
+            return {"ok": True}
+        router.register_handler(
+            skill_id="events",
+            contract_id="events.get-event.v1",
+            handler=handler,
+        )
+        with self.assertRaisesRegex(SkillApiError, "Target Skill is disabled"):
+            await router.call(
+                guild_id=1, consumer_skill_id="consumer", skill_id="events",
+                contract_id="events.get-event.v1", payload={}
+            )
+        enabled["events"] = True
+        enabled["consumer"] = False
+        with self.assertRaisesRegex(SkillApiError, "Calling Skill is disabled"):
+            await router.call(
+                guild_id=1, consumer_skill_id="consumer", skill_id="events",
+                contract_id="events.get-event.v1", payload={}
+            )
+
     async def test_scoped_api_cannot_spoof_consumer_identity(self):
         async def handler(guild_id, payload):
             return {"guild": guild_id}
