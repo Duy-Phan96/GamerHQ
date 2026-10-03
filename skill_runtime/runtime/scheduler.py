@@ -27,6 +27,7 @@ class ScheduledJob:
     next_run_at: int
     last_run_at: int | None = None
     failure_count: int = 0
+    revision: int = 1
     claim_token: str | None = None
 
 
