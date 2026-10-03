@@ -50,6 +50,24 @@ class SkillApiPort(Protocol):
     async def call(self, *, skill_id: str, contract_id: str, payload: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
 
+
+
+class SchedulerRegistrationPort(Protocol):
+    def register_handler(
+        self,
+        handler_id: str,
+        handler: Callable[["SkillContext", Any], Awaitable[None]],
+    ) -> None: ...
+
+
+class SkillApiRegistrationPort(Protocol):
+    def expose(
+        self,
+        contract_id: str,
+        handler: Callable[["SkillContext", Mapping[str, Any]], Awaitable[Mapping[str, Any]]],
+    ) -> None: ...
+
+
 class SkillLogger(Protocol):
     def info(self, message: str, *args: object) -> None: ...
     def warning(self, message: str, *args: object) -> None: ...
@@ -74,5 +92,19 @@ class SkillContext:
     def __post_init__(self) -> None:
         if self.guild_id <= 0:
             raise ValueError("guild_id must be positive.")
+        if not self.skill_id:
+            raise ValueError("skill_id is required.")
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRegistrationContext:
+    """Process-level binding surface used only during Skill registration."""
+
+    skill_id: str
+    scheduler: SchedulerRegistrationPort
+    skills: SkillApiRegistrationPort
+    logger: SkillLogger
+
+    def __post_init__(self) -> None:
         if not self.skill_id:
             raise ValueError("skill_id is required.")
