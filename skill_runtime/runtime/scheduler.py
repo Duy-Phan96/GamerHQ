@@ -27,6 +27,7 @@ class ScheduledJob:
     next_run_at: int
     last_run_at: int | None = None
     failure_count: int = 0
+    claim_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +163,7 @@ class SchedulerEngine:
                 await self.store.finish_failure(
                     job,
                     error_code="handler_unavailable",
-                    next_run_at=next_run,
+                    next_run_at=next_run if next_run is not None else now + 60,
                 )
                 unavailable += 1
                 failed += 1
@@ -178,7 +179,7 @@ class SchedulerEngine:
                 await self.store.finish_failure(
                     job,
                     error_code=type(exc).__name__[:80] or "job_failed",
-                    next_run_at=next_run,
+                    next_run_at=next_run if next_run is not None else now + 60,
                 )
                 failed += 1
                 continue
