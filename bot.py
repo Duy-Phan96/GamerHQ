@@ -87,6 +87,15 @@ class GamerHQBot(commands.Bot):
                     with suppress(asyncio.CancelledError):
                         await self.health_task
             finally:
+                runtime = getattr(self, 'skill_runtime', None)
+                if runtime is not None:
+                    for guild in tuple(getattr(self, 'guilds', ())):
+                        try:
+                            await runtime.stop_guild(guild.id)
+                        except Exception:
+                            logging.getLogger(__name__).exception(
+                                "Skill Runtime shutdown cleanup failed guild=%s", guild.id
+                            )
                 if getattr(self, 'twitch_hub', None):
                     await self.twitch_hub.close()
         finally:
