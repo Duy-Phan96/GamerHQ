@@ -83,8 +83,8 @@ class SkillApiRouter:
             raise SkillApiError("Target Skill does not expose the requested contract.")
         if self.availability is not None:
             consumer_enabled, target_enabled = await asyncio.gather(
-                self.availability(guild_id, consumer_skill_id),
-                self.availability(guild_id, skill_id),
+                self.availability(guild_id=guild_id, skill_id=consumer_skill_id),
+                self.availability(guild_id=guild_id, skill_id=skill_id),
             )
             if not consumer_enabled:
                 raise SkillApiError("Calling Skill is disabled for this guild.")
