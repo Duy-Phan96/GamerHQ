@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS skill_jobs (
     failure_count INTEGER NOT NULL DEFAULT 0,
     last_error_code TEXT,
     lease_until INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (guild_id, skill_id, job_key)
 );
