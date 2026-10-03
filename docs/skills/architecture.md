@@ -125,5 +125,8 @@ First GamerHQ host adapters: persistent enablement, namespaced JSON storage, cap
 ### Slice D
 Typed Event Bus and Public Skill API router. Both validate manifest declarations. Optional host availability checks prevent disabled Skills from receiving events or serving/calling Public APIs.
 
+### Slice E
+Shared persistent scheduler with portable schedule contracts, host-owned persistence, execution leases, restart recovery and disabled-Skill execution gates.
+
 ### Later
-Shared scheduler, Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
+Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
