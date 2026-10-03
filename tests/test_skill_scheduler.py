@@ -107,6 +107,13 @@ class ScheduleContractTests(unittest.TestCase):
             expected,
         )
 
+    def test_malformed_schedule_does_not_echo_supplied_value(self):
+        marker = "private-schedule-value"
+        with self.assertRaises(ValueError) as caught:
+            schedule_from_dict({"type": "interval", "seconds": marker})
+        self.assertNotIn(marker, str(caught.exception))
+        self.assertIn("Malformed schedule configuration", str(caught.exception))
+
     def test_nonexistent_dst_time_is_skipped(self):
         zone = ZoneInfo("Europe/Berlin")
         # 2026-03-29 02:30 does not exist. The next valid 02:30 is March 30.
