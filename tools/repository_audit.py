@@ -39,7 +39,13 @@ def secret_findings(text):
 
 def private_path(name):
     path=Path(name);low=path.name.lower()
-    return (bool(set(path.parts)&PRIVATE_PARTS) or
+    # skill_runtime/runtime is intentional portable source code. Keep the
+    # generic runtime/ private-data guard everywhere else.
+    parts=path.parts
+    portable_runtime=len(parts)>=2 and parts[0]=='skill_runtime' and parts[1]=='runtime'
+    private_parts=set(parts)&PRIVATE_PARTS
+    if portable_runtime: private_parts.discard('runtime')
+    return (bool(private_parts) or
             (low.startswith('.env') and low!='.env.example') or
             bool(re.search(r'\.(?:db|sqlite3?)(?:-(?:wal|shm|journal))?$',low)) or
             low.endswith(('.log','.pem','.key','.pyc','.bak','.zip')) or

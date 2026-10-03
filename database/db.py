@@ -159,6 +159,26 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS skill_guild_state (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+    version TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS skill_guild_state_enabled
+ON skill_guild_state(guild_id, enabled, skill_id);
+
+CREATE TABLE IF NOT EXISTS skill_storage (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id, storage_key)
+);
+
 CREATE TABLE IF NOT EXISTS game_channel_candidates (
     guild_id INTEGER NOT NULL,
     game_id INTEGER NOT NULL,

@@ -4,6 +4,10 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 
 > GamerHQ is an actively developed personal/community project. Features and server structure may continue to evolve.
 
+## Engineering direction
+
+GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with GamerHQ as its first host. The long-term direction includes third-party Skill development and an AI-ready capability layer while keeping today's Discord server stable and maintainable. See the [Engineering Vision](docs/VISION.md) and [Skill Runtime documentation](docs/skills/README.md).
+
 ## Features
 
 ### Gaming & LFG
