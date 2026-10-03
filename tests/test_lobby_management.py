@@ -43,18 +43,38 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(user=user, guild=self.guild, response=response, edit_original_response=AsyncMock(), followup=SimpleNamespace(send=AsyncMock()))
 
     def test_host_edits_and_rejects_other_actors_and_guilds(self):
-        updated = rules.edit(self.eid, 1, 10, title='Changed', note='Hello', max_players=3, invite_lead_minutes=30)
-        self.assertEqual((updated['title'], updated['max_players']), ('Changed', 3))
+        updated = rules.edit(self.eid, 1, 10, title='Changed', note='Hello', max_players=3, duration_minutes=90, invite_lead_minutes=30)
+        self.assertEqual((updated['title'], updated['max_players'], updated['duration_minutes']), ('Changed', 3, 90))
         for user in (20, 99):
             with self.assertRaises(ValueError): rules.edit(self.eid, 1, user, title='No')
         with self.assertRaises(ValueError): rules.edit(self.eid, 2, 10, title='No')
-        for fields in ({'max_players': 1}, {'max_players': 100}, {'title': ''}, {'start_at': 0}, {'invite_lead_minutes': -1}, {'note': 'x' * 501}):
+        for fields in ({'max_players': 1}, {'max_players': 100}, {'title': ''}, {'start_at': 0}, {'invite_lead_minutes': -1}, {'duration_minutes': 29}, {'duration_minutes': 1441}, {'note': 'x' * 501}):
             with self.subTest(fields=fields), self.assertRaises(ValueError): rules.edit(self.eid, 1, 10, **fields)
 
     def test_datetime_validation(self):
         for date, clock in [('nonsense', '20:00'), ('2000-01-01', '20:00'), ('2030-01-01', '25:00'), ('2030-03-31', '02:30'), ('2030-10-27', '02:30')]:
             with self.subTest(date=date, clock=clock), self.assertRaises(ValueError): parse_server_datetime(date, clock)
         self.assertGreater(parse_server_datetime('2030-01-01', '20:00'), time.time())
+
+    def test_generic_event_needs_no_game_and_hides_duration(self):
+        event = db.create_lfg_event(
+            guild_id=1, game_id=None, host_id=10, title='Community Meetup',
+            start_at=self.start, max_players=8, invite_lead_minutes=15,
+        )
+        self.assertEqual(event['game_id'], 0)
+        rendered = render_event(self.guild, event)
+        self.assertNotIn('Unknown Game', rendered)
+        self.assertNotIn('Duration', rendered)
+        url = lfg.google_calendar_url(event)
+        self.assertIn('calendar.google.com/calendar/render?', url)
+        self.assertIn('Community+Meetup', url)
+
+        host = MagicMock(spec=discord.Member)
+        host.id = 10
+        builder = lfg.EventBuilderView(host=host)
+        self.assertNotIn('Game:', builder.content())
+        self.assertNotIn('Duration', builder.content())
+        self.assertIn('Google Calendar', builder.content())
 
     def test_invites_duplicates_capacity_and_private_security(self):
         with db.connect() as conn:
@@ -90,10 +110,11 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         rules.decide(self.eid, 1, 20, third, 'WITHDRAWN')
         self.assertEqual(rules.proposals(self.eid), [])
 
-    def test_terminal_states_and_admin_override(self):
+    def test_terminal_states_remain_creator_owned(self):
         with self.assertRaises(ValueError): rules.end(self.eid, 1, 99, 'cancelled')
         with self.assertRaises(ValueError): rules.end(self.eid, 1, 99, 'completed', administrator=True)
-        rules.end(self.eid, 1, 99, 'cancelled', administrator=True)
+        with self.assertRaises(ValueError): rules.end(self.eid, 1, 99, 'cancelled', administrator=True)
+        rules.end(self.eid, 1, 10, 'cancelled')
         for operation in (lambda: rules.edit(self.eid, 1, 10, title='No'), lambda: rules.propose(self.eid, 1, 20, self.start+3600), lambda: rules.join(self.eid, 1, 30)):
             with self.assertRaises(ValueError): operation()
         self.assertIn('CANCELLED', render_event(self.guild, db.get_lfg_event(self.eid)))
@@ -114,19 +135,45 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rules.proposals(self.eid)[0]['id'], pid)
         self.assertEqual(db.get_lfg_event(self.eid)['title'], 'Test Lobby')
 
-    async def test_panels_limits_and_member_host_separation(self):
-        for user_id in (10, 20):
-            panel = ui.LobbyPanel(self.event, user_id)
-            panel.to_components()
-            labels = [o.label for c in panel.children if isinstance(c, discord.ui.Select) for o in c.options]
-            self.assertEqual('Cancel Lobby' in labels, user_id == 10)
-            self.assertEqual('Leave Lobby' in labels, user_id == 20)
-            self.assertIn('Suggest New Time', labels)
-            panel.stop()
+    async def test_event_management_is_creator_only(self):
+        panel = ui.LobbyPanel(self.event, 10)
+        panel.to_components()
+        labels = [o.label for child in panel.children if isinstance(child, discord.ui.Select) for o in child.options]
+        self.assertIn('Cancel Event', labels)
+        self.assertIn('Change Date / Time', labels)
+        self.assertNotIn('Leave Lobby', labels)
+        panel.stop()
+
+        request = self.request(20)
+        await ui.open_panel(request, self.eid)
+        request.response.send_message.assert_awaited_once()
+        self.assertIn('creator', request.response.send_message.call_args.args[0].lower())
+
         self.assertTrue(lfg.LFGEventView(self.eid).is_persistent())
         manager = lfg.LFGManageView(10, [self.event] * 26)
         self.assertFalse(manager.next_page.disabled)
         manager.stop()
+
+    async def test_private_event_dissolve_is_creator_only_and_keeps_occupied_voice(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE lfg_events SET visibility='private', private_channel_id=321 WHERE id=?", (self.eid,))
+        event = db.get_lfg_event(self.eid)
+        view = lfg.LFGEventView(self.eid)
+        dissolve = next(child for child in view.children if getattr(child, 'custom_id', '') == f'gamerhq:lfg:dissolve:{self.eid}')
+
+        denied = self.request(20)
+        await dissolve.callback(denied)
+        denied.response.send_message.assert_awaited_once()
+        self.assertEqual(db.get_lfg_event(self.eid)['status'], 'scheduled')
+
+        owner = self.request(10)
+        with patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)) as private, \
+             patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=False)) as voice:
+            await dissolve.callback(owner)
+        owner.response.send_message.assert_awaited_once()
+        private.assert_awaited_once()
+        voice.assert_awaited_once()
+        self.assertEqual(db.get_lfg_event(self.eid)['status'], 'completed')
 
     async def test_modal_rechecks_permissions(self):
         request = self.request(20)
@@ -223,30 +270,60 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
                 await dashboard.sync_card(self.guild, db.get_lfg_event(self.eid), lfg.LFGEventView(self.eid))
             self.assertEqual(channel.send.await_count, 2)
 
+    def test_event_voice_privacy_follows_visibility(self):
+        voice_category = MagicMock(spec=discord.CategoryChannel)
+        voice_category.name = '🔊 VOICE CHANNELS'
+        self.guild.categories = [voice_category]
+        self.guild.default_role = MagicMock(spec=discord.Role)
+        self.guild.me = None
+
+        public = dict(self.event)
+        public['visibility'] = 'public'
+        public_overwrites = lfg.event_voice_overwrites(self.guild, public)
+        self.assertTrue(public_overwrites[self.guild.default_role].view_channel)
+        self.assertTrue(public_overwrites[self.guild.default_role].connect)
+
+        private = dict(self.event)
+        private['visibility'] = 'private'
+        private_overwrites = lfg.event_voice_overwrites(self.guild, private)
+        self.assertFalse(private_overwrites[self.guild.default_role].view_channel)
+        self.assertFalse(private_overwrites[self.guild.default_role].connect)
+
     async def test_voice_creation_claim_and_existing_room_reuse(self):
         voice = MagicMock(spec=discord.VoiceChannel)
         voice.id = 555; voice.delete = AsyncMock()
+        voice_category = MagicMock(spec=discord.CategoryChannel)
+        voice_category.name = '🔊 VOICE CHANNELS'
+        self.guild.categories = [voice_category]
         self.guild.create_voice_channel = AsyncMock(return_value=voice)
         self.guild.me = None
         with patch.object(lfg, 'refresh_event_posts', AsyncMock()):
             result = await lfg.create_event_voice(self.guild, self.event)
             self.assertIs(result, voice)
             self.assertEqual(db.get_lfg_event(self.eid)['voice_channel_id'], 555)
+            self.assertIs(self.guild.create_voice_channel.call_args.kwargs['category'], voice_category)
             self.guild.get_channel.return_value = voice
             self.assertIs(await lfg.create_event_voice(self.guild, db.get_lfg_event(self.eid)), voice)
         self.guild.create_voice_channel.assert_awaited_once()
         voice.delete.assert_not_awaited()
 
-    async def test_end_cleanup_delays_and_retries_without_losing_history(self):
+    async def test_end_cleanup_closes_private_chat_immediately_and_waits_for_voice(self):
         rules.end(self.eid, 1, 10, 'cancelled')
-        with patch.object(lfg, 'delete_event_posts', AsyncMock(return_value=True)) as posts, patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=True)), patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)):
+        with patch.object(lfg, 'delete_event_posts', AsyncMock(return_value=True)) as posts, \
+             patch.object(lfg, 'delete_event_voice', AsyncMock(return_value=False)) as voice, \
+             patch.object(lfg, 'delete_private_event_channel', AsyncMock(return_value=True)) as private:
             await dashboard.cleanup_ended(self.guild)
+            private.assert_awaited_once()
+            voice.assert_awaited_once()
             posts.assert_not_awaited()
-            with db.connect() as conn: conn.execute('UPDATE lfg_events SET ended_at=? WHERE id=?', (int(time.time())-86401, self.eid))
-            posts.return_value = False
+
+            with db.connect() as conn:
+                conn.execute('UPDATE lfg_events SET ended_at=? WHERE id=?', (int(time.time())-86401, self.eid))
             await dashboard.cleanup_ended(self.guild)
+            posts.assert_awaited_once()
             self.assertIsNotNone(db.get_lfg_event(self.eid)['ended_at'])
-            posts.return_value = True
+
+            voice.return_value = True
             await dashboard.cleanup_ended(self.guild)
             self.assertIsNone(db.get_lfg_event(self.eid)['ended_at'])
             self.assertEqual(db.get_lfg_event(self.eid)['status'], 'cancelled')

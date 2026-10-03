@@ -216,7 +216,8 @@ class ProfileWizardTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_visible_copy_and_optional_playstyle(self):
         from services.onboarding_service import WELCOME_COPY
-        self.assertIn('optional Gender and Age', WELCOME_COPY)
+        self.assertIn('quick tour of the server', WELCOME_COPY)
+        self.assertIn('Optional profile', WELCOME_COPY)
         self.assertIn('English-language server', WELCOME_COPY)
         self.assertNotIn('languages', WELCOME_COPY)
         copy = '\n'.join(m.content for m in self.board.messages.values())

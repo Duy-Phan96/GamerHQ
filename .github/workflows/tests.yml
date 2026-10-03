@@ -1,11 +1,20 @@
 name: Offline tests
-on: [push, pull_request]
+on:
+  # Feature branches are checked through their PR, avoiding duplicate push/PR runs.
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python: ['3.12', '3.14']
     steps:

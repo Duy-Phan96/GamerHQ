@@ -23,6 +23,7 @@ def discord_id(name):
 
 
 INSTANT_GAMING_BOT_ID = discord_id("INSTANT_GAMING_BOT_ID")
+AMAZON_BOT_ID = discord_id("AMAZON_BOT_ID")
 # Public user IDs, centrally defined; explicit positive environment IDs override.
 THIRD_PARTY_BOTS = {
     "dealgecko": 1550051214035517450,

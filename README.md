@@ -209,7 +209,7 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | Commands | Purpose |
 | --- | --- |
 | `/game select`, `/game suggest` | Choose game roles or suggest a game |
-| `/lfg create`, `/lfg manage`, `/lfg join-code` | Create/manage sessions and join private sessions |
+| `/lfg create`, `/lfg manage`, `/lfg join-code` | Create/manage scheduled events and join private events |
 | `/voice manage` | Manage your own temporary room; Staff may select a managed room |
 | `/streamer setup`, `/streamer profile` | Legacy staff entry points to the enabled Twitch beta; profiles/following are inactive |
 | `/streamer area`, `/streamer channels`, `/streamer voice` | Retained legacy staff-only area tools |
@@ -236,7 +236,7 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | `/game-admin recover-existing`, `/game-admin set-visible` | Recover existing mappings or change selection visibility |
 | `/game-admin overview`, `/game-admin status`, `/game-admin database` | Refresh the selector or inspect game/database state |
 
-Staff review suggestions and take/mark waiting/close tickets through private buttons. Ticket creation and role-selection hubs also use components; they are not additional slash commands. Lobby controls remain subject to host/member authorization.
+Staff review suggestions and take/mark waiting/close tickets through private buttons. Ticket creation and role-selection hubs also use components; they are not additional slash commands. Event management remains creator-only; participants can join, leave and use shared event links.
 
 ## Server operations
 

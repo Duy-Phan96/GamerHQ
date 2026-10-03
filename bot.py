@@ -43,11 +43,13 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.area")
         await self.load_extension("cogs.server")
         await self.load_extension("cogs.server_changes")
+        await self.load_extension("cogs.owner_changelog")
         await self.load_extension("cogs.gocdkeys")
         await self.load_extension("cogs.roles")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
         await self.load_extension("cogs.lfg")
+        await self.load_extension("cogs.lobby_admin")
         await self.load_extension("cogs.streamer")
 
         guild = discord.Object(id=GUILD_ID)

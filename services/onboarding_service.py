@@ -9,9 +9,9 @@ from services.server_service import ServerMessageError, upsert_fixed_message
 
 WELCOME_COPY = (
     "# 👋 Welcome to GamerHQ!\n\n"
-    "Start below with optional Gender and Age. GamerHQ is an English-language server.\n"
+    "Press **Get Started** below for a quick tour of the server. GamerHQ is an English-language server.\n"
     "🎮 Choose the games you play in {choose-your-games} anytime.\n"
-    "👤 Profile corrections, platforms and interests: {choose-your-roles}\n"
+    "👤 Optional profile, platform and interest settings: {choose-your-roles}\n"
     "📅 Find or create gaming sessions in {looking-for-group}\n"
     "🤖 Use bot commands in {bot-commands}\n\n"
     "Have fun & see you in game! 🚀"
@@ -37,7 +37,7 @@ def unique(channels, name):
 
 def welcome_text(guild):
     # Prefer core channels over similarly named per-game LFG channels.
-    core = [c for c in guild.text_channels if c.category and alias(c.category.name) in {'start-here', 'community'}]
+    core = [c for c in guild.text_channels if c.category and alias(c.category.name) in {'start-here', 'community', 'games', 'gaming'}]
     def replace(match):
         found = [c for c in core if alias(c.name) == match[1]]
         return found[0].mention if len(found) == 1 else '#' + match[1]

@@ -34,7 +34,10 @@ class StructureTests(unittest.IsolatedAsyncioTestCase):
         _, failed = await setup.repair_server(self.guild, self.bot)
         self.assertFalse(failed)
         self.assertEqual(ids, [lfg.id, tournament.id, giveaway.id])
-        self.assertIs(lfg.category, self.start)
+        games = structure.core_category(self.guild, 'games')
+        self.assertIsNotNone(games)
+        self.assertIs(lfg.category, games)
+        self.assertIs(structure.core_channel(self.guild, 'gaming-chat').category, games)
         self.assertEqual(onboarding.alias(tournament.category.name), 'events')
         self.assertIs(tournament.category, giveaway.category)
         self.assertEqual(tournament.overwrites[self.guild.custom], custom)
@@ -48,6 +51,44 @@ class StructureTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(find_lfg_channel(self.guild), lfg)
         self.assertIn(lfg.mention, structure.guide_text(self.guild))
         self.assertNotIn(per_game.mention, structure.guide_text(self.guild))
+
+    def test_blueprint_places_central_lfg_only_in_games(self):
+        parents = [onboarding.alias(category.name) for category in setup.SERVER_BLUEPRINT
+                   for channel in category.channels
+                   if onboarding.alias(channel.name) == 'looking-for-group']
+        self.assertEqual(parents, ['games'])
+
+    async def test_private_legacy_games_refused_before_rename_or_mapping(self):
+        legacy = self.guild.add_category('🎮 GAMING')
+        legacy.overwrites[self.guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+        ids = [c.id for c in self.guild.channels]
+        with self.assertRaises(ServerMessageError):
+            await structure.migrate_boards(self.guild, [], [])
+        self.assertEqual(legacy.name, '🎮 GAMING')
+        self.assertEqual(ids, [c.id for c in self.guild.channels])
+        self.assertIsNone(db.get_setting(f'managed_category:{self.guild.id}:games'))
+
+    async def test_event_collision_does_not_rename_legacy_games(self):
+        legacy = self.guild.add_category('🎮 GAMING')
+        event = self.guild.add_channel('renamed-event-board', self.start)
+        db.set_setting(structure.resource_key(self.guild, 'community-events'), event.id)
+        self.guild.add_channel('community-events', self.community)
+        ids = [c.id for c in self.guild.channels]
+        changed = []
+        with self.assertRaises(ServerMessageError):
+            await structure.migrate_boards(self.guild, changed, [])
+        self.assertEqual(ids, [c.id for c in self.guild.channels])
+        self.assertEqual(legacy.name, '🎮 GAMING')
+        self.assertEqual(changed, [])
+        self.assertIsNone(db.get_setting(f'managed_category:{self.guild.id}:games'))
+
+    async def test_different_games_categories_require_review(self):
+        self.guild.add_category('🎮 GAMES')
+        self.guild.add_category('🎮 GAMING')
+        ids = [c.id for c in self.guild.channels]
+        with self.assertRaises(ServerMessageError):
+            await structure.migrate_boards(self.guild, [], [])
+        self.assertEqual(ids, [c.id for c in self.guild.channels])
 
     async def test_setup_twice_and_lost_mappings_keep_single_canonical_pins(self):
         await setup.repair_server(self.guild, self.bot)

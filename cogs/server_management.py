@@ -94,10 +94,31 @@ class Menu(RoleAdminSession):
 class ManagementView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
-        for label, callback in [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
-                                ('Integrations', self.integrations), ('Managed Messages', self.messages),
-                                ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log)]:
+        actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
+                   ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Features', self.features),
+                   ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
+        if actor_id == guild.owner_id:
+            actions.append(('Owner Change Log', self.owner_changelog))
+            actions.append(('Support & Requests', self.support_entries))
+        for label, callback in actions:
             self.action(label, callback)
+
+    async def server_check(self, interaction):
+        from cogs.health import open_server_check
+        await open_server_check(interaction)
+
+    async def support_entries(self, interaction):
+        from cogs.ticket_entry_repair import open_management
+        await open_management(interaction)
+
+    async def lobby_admin(self, interaction):
+        from cogs.lobby_admin import open_management
+        await open_management(interaction)
+
+    async def owner_changelog(self, interaction):
+        from cogs.owner_changelog import open_management
+        await open_management(interaction)
 
     async def games(self, interaction):
         from cogs.game_channels import GamesMenu
@@ -153,8 +174,19 @@ class StructureView(Menu):
                 from cogs.server import open_operation
                 await open_operation(interaction, 'setup', friendly=True)
             self.action('Preview Missing Resources', missing)
+            self.action('Removed Resources', self.removed_resources)
         self.action('Review Duplicate Messages', self.duplicates)
         self.action('Back to Management', self.back)
+
+    async def removed_resources(self, interaction):
+        from services import resource_restore_service as restore
+        names = restore.removed_names(self.guild)
+        if not names:
+            return await interaction.response.send_message(
+                'No intentionally removed managed channels are waiting for restore.', ephemeral=True)
+        await interaction.response.send_message(
+            '# Removed Resources\nSelect a resource to preview an explicit restore. Nothing is recreated automatically.',
+            view=RemovedResourcesView(self.guild, self.admin_id, names), ephemeral=True)
 
     async def duplicates(self, interaction):
         from services.message_reconciliation import audit
@@ -307,7 +339,7 @@ class SetupWizard(Menu):
     @discord.ui.button(label='Back')
     async def back(self, interaction, button):
         self.page = max(0, self.page - 1)
-        self.section.label = 'Open Section'
+        self.section.label = 'Finish Setup' if self.page == 5 else 'Open Section'
         await interaction.response.edit_message(content=self.text(), view=self)
 
 
@@ -352,3 +384,53 @@ class DeveloperView(Menu):
         await interaction.response.send_message('Production Doctor runs on the VPS without Discord changes:\n'
             '```sh\npython -m tools.production_doctor --help\n```\n'
             'Follow docs/PRODUCTION_OPERATIONS.md. Never paste `.env` contents into Discord.', ephemeral=True)
+
+
+class RemovedResourcesView(Menu):
+    def __init__(self, guild, actor_id, names):
+        super().__init__(guild, actor_id)
+        options = [discord.SelectOption(label=name[:100], value=name) for name in names[:25]]
+        picker = discord.ui.Select(placeholder='Choose removed resource', options=options)
+
+        async def choose(interaction):
+            if interaction.user.id != self.guild.owner_id:
+                return await interaction.response.send_message('Only the server owner can restore resources.', ephemeral=True)
+            from services import resource_restore_service as restore
+            try:
+                draft = restore.preview(self.guild, interaction.user, picker.values[0])
+            except ServerMessageError as exc:
+                return await interaction.response.send_message(str(exc), ephemeral=True)
+            row = draft['row']
+            parent = self.guild.get_channel(draft['parent_id'])
+            await interaction.response.send_message(
+                f"# Restore {row['label']}\nCreate a new managed channel under **{parent.name}**? "
+                "The previous Discord channel history cannot be recovered.",
+                view=RestoreRemovedConfirm(self.guild, interaction.user.id, draft),
+                ephemeral=True,
+            )
+
+        picker.callback = choose
+        self.add_item(picker)
+
+
+class RestoreRemovedConfirm(Menu):
+    def __init__(self, guild, actor_id, draft):
+        super().__init__(guild, actor_id)
+        self.draft = draft
+        self.action('Confirm Restore', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message('Only the server owner can restore resources.', ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        from services import resource_restore_service as restore
+        try:
+            resource = await restore.restore(self.guild, interaction.user, self.draft)
+            await interaction.edit_original_response(
+                content=f'✅ Restored {resource.mention}. Existing application data was preserved.', view=None)
+        except (ServerMessageError, discord.HTTPException) as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(content='Cancelled. Nothing restored.', view=None)
