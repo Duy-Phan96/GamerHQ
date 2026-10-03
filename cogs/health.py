@@ -193,7 +193,11 @@ class HealthView(SafeView):
 
     def rebuild(self):
         self.clear_items()
-        self.add_item(AreaSelect(self))
+        available = grouped(self.findings)
+        if self.selected and not available.get(self.selected):
+            self.selected = None
+        if any(available.values()):
+            self.add_item(AreaSelect(self))
 
         back = discord.ui.Button(label="Overview", style=discord.ButtonStyle.secondary, row=1,
                                  disabled=self.selected is None)
