@@ -169,7 +169,7 @@ def render_notice(change):
     elif change.get("status") in {"UNDONE", "RESTORED"}:
         help_text = "This change has already been handled."
     elif change.get("action") in {"channel_delete", "category_delete"} or change.get("action", "").endswith("_delete"):
-        help_text = "Deleted history cannot be recovered automatically."
+        help_text = "Deleted history is not recoverable automatically."
     else:
         help_text = "Automatic Undo is not available for this change."
 
