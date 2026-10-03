@@ -136,6 +136,23 @@ class EventBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.failed_consumers, ("consumer",))
         self.assertEqual(seen, ["demo.sent.v1"])
 
+    async def test_disabled_consumer_is_not_called_when_host_provides_availability(self):
+        async def availability(guild_id, skill_id):
+            return skill_id != "consumer"
+        bus = EventBus(self.registry, availability=availability)
+        seen = []
+        async def handler(event):
+            seen.append(event.event_id)
+        await bus.subscribe(
+            guild_id=1,
+            consumer_skill_id="consumer",
+            event_id="demo.sent.v1",
+            handler=handler,
+        )
+        report = await bus.emit(self.event())
+        self.assertEqual(report.delivered, 0)
+        self.assertEqual(seen, [])
+
     async def test_subscription_is_idempotent_and_removable_by_skill_lifecycle(self):
         async def handler(event): pass
         self.assertTrue(await self.bus.subscribe(
