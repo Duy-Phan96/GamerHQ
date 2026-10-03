@@ -94,15 +94,19 @@ class Menu(RoleAdminSession):
 class ManagementView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
-        actions = [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
-                   ('Integrations', self.integrations), ('Managed Messages', self.messages),
-                   ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log),
-                   ('Lobby Admin', self.lobby_admin)]
+        actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
+                   ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Features', self.features),
+                   ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
             actions.append(('Owner Change Log', self.owner_changelog))
             actions.append(('Support & Requests', self.support_entries))
         for label, callback in actions:
             self.action(label, callback)
+
+    async def server_check(self, interaction):
+        from cogs.health import open_server_check
+        await open_server_check(interaction)
 
     async def support_entries(self, interaction):
         from cogs.ticket_entry_repair import open_management
