@@ -101,7 +101,7 @@ class OwnerFeedTests(unittest.IsolatedAsyncioTestCase):
         notice = self.message(change).content
         self.assertIn('#🎯・looking-for-group', notice)
         self.assertIn('was deleted', notice)
-        self.assertIn('Deleted history cannot be recovered automatically', notice)
+        self.assertIn('Deleted history is not recoverable automatically', notice)
         self.assertNotIn('Category ID', notice)
         self.assertNotIn('Position', notice)
 
