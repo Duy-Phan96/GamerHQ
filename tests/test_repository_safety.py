@@ -50,6 +50,8 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertFalse(secret_findings('https://www.instant-gaming.com/?igr=gamer-0a9671a'))
         self.assertTrue(private_path('transcripts/private.txt'))
         self.assertFalse(private_path('.env.example'))
+        self.assertFalse(private_path('skill_runtime/runtime/manager.py'))
+        self.assertTrue(private_path('runtime/private.txt'))
 
     def test_staged_secret_is_detected_even_when_working_file_is_clean(self):
         import contextlib
