@@ -61,9 +61,27 @@ class GamerHQSkillRuntimeHost:
     async def register(self) -> None:
         await self.manager.register_all()
 
+    async def enable(self, *, guild_id: int, skill_id: str) -> bool:
+        return await self.manager.enable(guild_id=guild_id, skill_id=skill_id)
+
+    async def start(self, *, guild_id: int, skill_id: str) -> bool:
+        return await self.manager.start(guild_id=guild_id, skill_id=skill_id)
+
+    async def stop(self, *, guild_id: int, skill_id: str) -> bool:
+        stopped = await self.manager.stop(guild_id=guild_id, skill_id=skill_id)
+        await self.event_bus.unsubscribe_skill(guild_id=guild_id, skill_id=skill_id)
+        return stopped
+
+    async def disable(self, *, guild_id: int, skill_id: str) -> bool:
+        changed = await self.manager.disable(guild_id=guild_id, skill_id=skill_id)
+        await self.event_bus.unsubscribe_skill(guild_id=guild_id, skill_id=skill_id)
+        return changed
+
     async def restore_guild(self, guild_id: int) -> tuple[str, ...]:
         return await self.manager.restore_guild(guild_id=guild_id)
 
     async def stop_guild(self, guild_id: int) -> tuple[str, ...]:
-        self.event_bus  # retain shared transports; Skill lifecycle unregisters owned handlers explicitly.
-        return await self.manager.stop_guild(guild_id=guild_id)
+        stopped = await self.manager.stop_guild(guild_id=guild_id)
+        for skill_id in stopped:
+            await self.event_bus.unsubscribe_skill(guild_id=guild_id, skill_id=skill_id)
+        return stopped
