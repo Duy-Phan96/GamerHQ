@@ -171,3 +171,5 @@ The project should evolve in small, reviewable slices:
 9. add AI capabilities when there is a concrete product need and appropriate security model.
 
 The guiding principle is to keep today's implementation useful while preserving tomorrow's architectural options.
+
+See [Existing GamerHQ features → Skill migration map](skills/migration-map.md) for a living classification of what should remain Core/Host infrastructure and which current features are candidates for later Skill migration.
