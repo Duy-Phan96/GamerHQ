@@ -142,26 +142,35 @@ def schedule_from_dict(value: Mapping[str, Any]) -> ScheduleSpec:
     if not isinstance(value, Mapping):
         raise ValueError("Schedule must be an object.")
     kind = value.get("type")
-    try:
-        if kind == "once":
-            return OnceSchedule(run_at=int(value["runAt"]))
-        if kind == "interval":
-            return IntervalSchedule(seconds=int(value["seconds"]))
-        if kind == "daily":
-            return DailySchedule(
-                hour=int(value["hour"]),
-                minute=int(value["minute"]),
-                timezone=str(value["timezone"]),
-            )
-        if kind == "weekly":
-            return WeeklySchedule(
-                weekday=int(value["weekday"]),
-                hour=int(value["hour"]),
-                minute=int(value["minute"]),
-                timezone=str(value["timezone"]),
-            )
-    except (KeyError, TypeError, ValueError) as exc:
-        if isinstance(exc, ValueError) and str(exc) not in {"invalid literal for int() with base 10"}:
-            raise
-        raise ValueError("Malformed schedule configuration.") from exc
+
+    def integer(name: str) -> int:
+        try:
+            raw = value[name]
+            if isinstance(raw, bool):
+                raise TypeError
+            return int(raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Malformed schedule configuration.") from exc
+
+    if kind == "once":
+        return OnceSchedule(run_at=integer("runAt"))
+    if kind == "interval":
+        return IntervalSchedule(seconds=integer("seconds"))
+    if kind == "daily":
+        if "timezone" not in value:
+            raise ValueError("Malformed schedule configuration.")
+        return DailySchedule(
+            hour=integer("hour"),
+            minute=integer("minute"),
+            timezone=str(value["timezone"]),
+        )
+    if kind == "weekly":
+        if "timezone" not in value:
+            raise ValueError("Malformed schedule configuration.")
+        return WeeklySchedule(
+            weekday=integer("weekday"),
+            hour=integer("hour"),
+            minute=integer("minute"),
+            timezone=str(value["timezone"]),
+        )
     raise ValueError("Unknown schedule type.")
