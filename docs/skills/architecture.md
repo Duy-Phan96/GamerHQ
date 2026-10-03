@@ -32,6 +32,9 @@ The portable layer owns:
 - SkillContext port definitions
 - SkillRegistry
 - SkillManager
+- typed Event Bus
+- Public Skill API router
+- scoped Skill-facing Event/API adapters
 
 It deliberately does not decide which database, Discord library, scheduler implementation, or audit UI a host uses.
 
@@ -119,5 +122,8 @@ Portable SkillRegistry and per-guild SkillManager lifecycle.
 ### Slice C
 First GamerHQ host adapters: persistent enablement, namespaced JSON storage, capability enforcement and Server Log audit adapter.
 
+### Slice D
+Typed Event Bus and Public Skill API router. Both validate manifest declarations. Optional host availability checks prevent disabled Skills from receiving events or serving/calling Public APIs.
+
 ### Later
-Event bus, Public Skill API router, shared scheduler, Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
+Shared scheduler, Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
