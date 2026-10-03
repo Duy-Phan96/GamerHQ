@@ -314,7 +314,7 @@ def detail_text(change):
         if "name" in fields and before.get("name") != after.get("name"):
             changes.append(f"Renamed **{safe(before.get('name'), 70)}** → **{safe(after.get('name'), 70)}**")
         if "category_id" in fields:
-            changes.append("Moved to another category")
+            changes.append("moved to a different category")
         if "topic" in fields:
             changes.append("Topic changed")
         if "slowmode_delay" in fields:
