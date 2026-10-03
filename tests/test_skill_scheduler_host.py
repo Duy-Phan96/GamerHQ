@@ -104,6 +104,20 @@ class GamerHQSchedulerStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row["last_run_at"])
         self.assertIsNone(row["lease_token"])
 
+    async def test_expired_old_claim_cannot_finish_after_new_worker_reclaims_job(self):
+        await self.store.upsert_job(self.job(next_run=100))
+        first = (await self.store.claim_due(now=100, lease_seconds=30, limit=1))[0]
+        second = (await self.store.claim_due(now=131, lease_seconds=30, limit=1))[0]
+        self.assertNotEqual(first.claim_token, second.claim_token)
+
+        with self.assertRaisesRegex(RuntimeError, "stale"):
+            await self.store.finish_success(first, ran_at=132, next_run_at=200)
+
+        await self.store.finish_success(second, ran_at=132, next_run_at=200)
+        row = self.rows()[0]
+        self.assertEqual(row["next_run_at"], 200)
+        self.assertEqual(row["last_run_at"], 132)
+
     async def test_edit_while_claimed_invalidates_stale_worker_completion(self):
         await self.store.upsert_job(self.job(payload={"version": 1}))
         claimed = (await self.store.claim_due(now=100, lease_seconds=60, limit=1))[0]
