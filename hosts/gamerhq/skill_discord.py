@@ -83,8 +83,7 @@ class GamerHQDiscordPort:
             colour=discord.Colour(colour) if colour is not None else None,
         )
 
-    @staticmethod
-    def _mentions(value: Mapping[str, Any] | None) -> discord.AllowedMentions:
+    def _mentions(self, value: Mapping[str, Any] | None, *, channel_id: int) -> discord.AllowedMentions:
         if value is None:
             return discord.AllowedMentions.none()
         if not isinstance(value, Mapping) or set(value) - {"users", "roles", "everyone"}:
@@ -92,6 +91,18 @@ class GamerHQDiscordPort:
         users = bool(value.get("users", False))
         roles = bool(value.get("roles", False))
         everyone = bool(value.get("everyone", False))
+        if users:
+            self.permissions.require(SkillCapability.DISCORD_MENTIONS_USERS.value)
+            if not self.policy.allows(guild_id=self.guild.id, skill_id=self.skill_id, channel_id=channel_id, operation="mentions.users"):
+                raise PermissionError("Skill is not allowed to mention users in this Discord resource.")
+        if roles:
+            self.permissions.require(SkillCapability.DISCORD_MENTIONS_ROLES.value)
+            if not self.policy.allows(guild_id=self.guild.id, skill_id=self.skill_id, channel_id=channel_id, operation="mentions.roles"):
+                raise PermissionError("Skill is not allowed to mention roles in this Discord resource.")
+        if everyone:
+            self.permissions.require(SkillCapability.DISCORD_MENTIONS_EVERYONE.value)
+            if not self.policy.allows(guild_id=self.guild.id, skill_id=self.skill_id, channel_id=channel_id, operation="mentions.everyone"):
+                raise PermissionError("Skill is not allowed to mention everyone in this Discord resource.")
         return discord.AllowedMentions(users=users, roles=roles, everyone=everyone, replied_user=False)
 
     async def send_message(self, *, channel_id: int, content: str | None = None,
@@ -108,7 +119,7 @@ class GamerHQDiscordPort:
         message = await channel.send(
             content=content,
             embed=self._embed(embed),
-            allowed_mentions=self._mentions(allowed_mentions),
+            allowed_mentions=self._mentions(allowed_mentions, channel_id=channel_id),
         )
         return int(message.id)
 
