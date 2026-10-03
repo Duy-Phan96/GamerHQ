@@ -123,6 +123,21 @@ Editing/upserting an existing job increments its revision. An older worker there
 
 GamerHQ still retains the existing production invariant of one active bot process per live guild today, but the persistence contract does not assume that this will always be the deployment topology.
 
+## Delivery guarantee
+
+The scheduler prevents normal duplicate **claims**, but it does not promise exactly-once external side effects.
+
+For example:
+
+1. a handler sends a Discord message;
+2. the process crashes before marking the job successful;
+3. the lease expires;
+4. the job may be retried.
+
+Skills that perform externally visible actions must therefore use an idempotent/deduplicated execution design where duplicates would be harmful.
+
+Recurring Posts will apply this rule using its persisted Discord-message/delivery state rather than assuming the Scheduler alone provides exactly-once posting.
+
 ## Disabled Skills
 
 A disabled Skill never executes scheduled work.
