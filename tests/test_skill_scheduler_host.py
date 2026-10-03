@@ -92,6 +92,26 @@ class GamerHQSkillSchedulerStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["failure_count"], 0)
         self.assertIsNone(row["last_run_at"])
 
+    async def test_malformed_persisted_job_is_disabled_and_not_returned(self):
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO skill_jobs(
+                    guild_id,skill_id,job_key,handler_id,schedule_json,payload_json,
+                    enabled,next_run_at,last_run_at,failure_count,last_error_code,
+                    lease_until,updated_at
+                ) VALUES(1,'recurring-posts','bad','post.execute.v1','{"type":"interval","seconds":"not-a-number"}',
+                         '{}',1,100,NULL,0,NULL,0,100)
+                """
+            )
+        claimed = await self.store.claim_due(now=100, lease_seconds=60, limit=10)
+        self.assertEqual(claimed, ())
+        with db.connect() as conn:
+            row = conn.execute("SELECT * FROM skill_jobs WHERE job_key='bad'").fetchone()
+        self.assertEqual(row["enabled"], 0)
+        self.assertIsNone(row["next_run_at"])
+        self.assertEqual(row["last_error_code"], "invalid_configuration")
+
     async def test_remove_is_scoped_by_guild_skill_key(self):
         await self.store.upsert_job(self.job())
         other = ScheduledJob(
