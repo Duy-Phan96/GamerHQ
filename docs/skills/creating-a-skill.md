@@ -96,3 +96,14 @@ Each job should use:
 - a small JSON payload containing only the data needed to find the Skill-owned record.
 
 See [Skill Scheduler](scheduler.md).
+
+
+## Discord message ownership
+
+Skills use `ctx.discord` rather than a raw Discord client.
+
+Messages sent through the host adapter are registered to the current guild + Skill. Edit/delete capabilities apply only to those owned messages.
+
+Mentions are disabled by default. Explicit `@everyone/@here` support requires the `discord.mentions.everyone` capability.
+
+See [Discord message capabilities](discord-capabilities.md).
