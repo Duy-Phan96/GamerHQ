@@ -1,3 +1,4 @@
+from .registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration
 from .scheduler import ScheduledJob, SchedulerEngine, SchedulerRunReport, SchedulerStorePort, ScopedScheduler
 from .api_router import SkillApiError, SkillApiRouter
 from .event_bus import EventBus
@@ -19,4 +20,6 @@ __all__ = [
     "SchedulerRunReport",
     "SchedulerStorePort",
     "ScopedScheduler",
+    "ScopedSchedulerRegistration",
+    "ScopedSkillApiRegistration",
 ]
