@@ -35,8 +35,9 @@ The portable layer owns:
 - typed Event Bus
 - Public Skill API router
 - scoped Skill-facing Event/API adapters
+- shared scheduler contracts and execution engine
 
-It deliberately does not decide which database, Discord library, scheduler implementation, or audit UI a host uses.
+It deliberately does not decide which database, Discord library, scheduler persistence implementation, or audit UI a host uses.
 
 ## GamerHQ host
 
@@ -48,7 +49,7 @@ It may use existing GamerHQ infrastructure, including:
 - current authorization rules
 - the private Server Log
 - Discord.py adapters
-- future shared scheduler infrastructure
+- the persistent Skill scheduler store
 
 Host-specific behavior must stay outside the portable runtime.
 
@@ -72,6 +73,18 @@ guild_id + skill_id + storage_key
 
 A Skill never receives a raw database connection. It receives a storage port already scoped to its own namespace.
 
+### `skill_jobs`
+
+Stores host-owned persistent scheduler jobs. Portable Skill code never queries this table directly.
+
+Jobs are keyed by:
+
+```text
+guild_id + skill_id + job_key
+```
+
+The GamerHQ adapter provides atomic claim leases, claim tokens and revision checks so overlapping scheduler workers cannot silently duplicate or overwrite edited jobs.
+
 ## Capability enforcement
 
 Manifest permissions are not just installation text. Host adapters must enforce them at the capability boundary.
@@ -86,7 +99,7 @@ storage.skill
 
 must receive a permission error when attempting storage access even if its Python code obtains a storage-port reference.
 
-The same rule will apply to Discord messaging, scheduler jobs, external HTTP access, and future privileged capabilities.
+The same rule applies to scheduler jobs, Discord messaging, external HTTP access, Events and Public Skill APIs.
 
 ## Extraction path
 
@@ -125,5 +138,10 @@ First GamerHQ host adapters: persistent enablement, namespaced JSON storage, cap
 ### Slice D
 Typed Event Bus and Public Skill API router. Both validate manifest declarations. Optional host availability checks prevent disabled Skills from receiving events or serving/calling Public APIs.
 
+### Slice E
+Shared persistent Scheduler contracts/engine plus the GamerHQ SQLite host adapter. V1 supports one-shot, interval, daily and weekly schedules with explicit timezone behavior, persistent restart recovery, atomic leases and revision-safe completion.
+
+See [Skill Scheduler](scheduler.md) for the scheduler contract and execution guarantees.
+
 ### Later
-Shared scheduler, Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
+Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.

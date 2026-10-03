@@ -179,6 +179,27 @@ CREATE TABLE IF NOT EXISTS skill_storage (
     PRIMARY KEY (guild_id, skill_id, storage_key)
 );
 
+CREATE TABLE IF NOT EXISTS skill_jobs (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    job_key TEXT NOT NULL,
+    handler_id TEXT NOT NULL,
+    schedule_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    next_run_at INTEGER,
+    last_run_at INTEGER,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1,
+    last_error_code TEXT,
+    lease_until INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id, job_key)
+);
+CREATE INDEX IF NOT EXISTS skill_jobs_due
+ON skill_jobs(enabled, next_run_at, lease_until);
+
 CREATE TABLE IF NOT EXISTS game_channel_candidates (
     guild_id INTEGER NOT NULL,
     game_id INTEGER NOT NULL,
@@ -352,6 +373,15 @@ def init_db():
         if version not in (0, SCHEMA_VERSION):
             raise ValueError('Unsupported GamerHQ database schema version; use the matching application release.')
         conn.executescript(SCHEMA)
+
+        # Additive Skill Scheduler migrations for development/forward-compatible
+        # databases created by earlier Runtime slices. Existing jobs/state stay intact.
+        skill_job_cols = {row["name"] for row in conn.execute("PRAGMA table_info(skill_jobs)").fetchall()}
+        if "revision" not in skill_job_cols:
+            conn.execute("ALTER TABLE skill_jobs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        if "lease_token" not in skill_job_cols:
+            conn.execute("ALTER TABLE skill_jobs ADD COLUMN lease_token TEXT")
+
         affiliate_cols = {row['name'] for row in conn.execute('PRAGMA table_info(processed_affiliate_deals)')}
         for name in ('normalized_game', 'source_key'):
             if name not in affiliate_cols:

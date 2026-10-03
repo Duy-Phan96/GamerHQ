@@ -20,7 +20,14 @@ class EventBusPort(Protocol):
 
 
 class SchedulerPort(Protocol):
-    async def upsert_job(self, *, key: str, schedule: Mapping[str, Any], payload: Mapping[str, Any]) -> None: ...
+    async def upsert_job(
+        self,
+        *,
+        key: str,
+        handler_id: str,
+        schedule: Mapping[str, Any],
+        payload: Mapping[str, Any],
+    ) -> None: ...
     async def remove_job(self, *, key: str) -> None: ...
 
 
