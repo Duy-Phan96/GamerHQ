@@ -9,6 +9,7 @@ from ..contracts.capabilities import SkillCapability
 from .registry import SkillRegistry
 
 ApiHandler = Callable[[int, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
+AvailabilityCheck = Callable[[int, str], Awaitable[bool]]
 
 
 class SkillApiError(RuntimeError):
@@ -18,11 +19,18 @@ class SkillApiError(RuntimeError):
 class SkillApiRouter:
     """Routes versioned public Skill contracts without direct Skill imports."""
 
-    def __init__(self, registry: SkillRegistry, *, timeout_seconds: float = 30.0):
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        *,
+        timeout_seconds: float = 30.0,
+        availability: AvailabilityCheck | None = None,
+    ):
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive.")
         self.registry = registry
         self.timeout_seconds = timeout_seconds
+        self.availability = availability
         self._handlers: dict[tuple[str, str], ApiHandler] = {}
 
     def _exposed(self, skill_id: str, contract_id: str) -> bool:
@@ -73,6 +81,15 @@ class SkillApiRouter:
             )
         if not self._exposed(skill_id, contract_id):
             raise SkillApiError("Target Skill does not expose the requested contract.")
+        if self.availability is not None:
+            consumer_enabled, target_enabled = await asyncio.gather(
+                self.availability(guild_id, consumer_skill_id),
+                self.availability(guild_id, skill_id),
+            )
+            if not consumer_enabled:
+                raise SkillApiError("Calling Skill is disabled for this guild.")
+            if not target_enabled:
+                raise SkillApiError("Target Skill is disabled for this guild.")
         handler = self._handlers.get((skill_id, contract_id))
         if handler is None:
             raise SkillApiError("Target Skill API is currently unavailable.")
