@@ -141,8 +141,23 @@ class GamerHQSkillJobStore:
                     """,
                     (row["guild_id"], row["skill_id"], row["job_key"], lease_until),
                 ).fetchone()
-                if current is not None:
+                if current is None:
+                    continue
+                try:
                     claimed.append(_row_to_job(current))
+                except ValueError:
+                    # A malformed persisted job must not crash the scheduler
+                    # loop or leak its stored values. Disable it for owner
+                    # diagnostics; explicit reconfiguration can re-enable it.
+                    conn.execute(
+                        """
+                        UPDATE skill_jobs
+                        SET enabled=0,next_run_at=NULL,last_error_code='invalid_configuration',
+                            lease_until=0,updated_at=?
+                        WHERE guild_id=? AND skill_id=? AND job_key=?
+                        """,
+                        (now, row["guild_id"], row["skill_id"], row["job_key"]),
+                    )
         return tuple(claimed)
 
     async def finish_success(
