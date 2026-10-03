@@ -57,6 +57,7 @@ class ServerCheckDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rows["Integrations"]), 1)
         self.assertEqual(len(rows["Security & Privacy"]), 1)
         self.assertEqual(group_for(Finding("Runtime / commands", "PASS", "ok")), "Core")
+        self.assertEqual(group_for(Finding("Skill Runtime", "WARN", "review")), "Skills")
 
     def test_dashboard_shows_area_status_not_long_flat_finding_list(self):
         text = dashboard(self.findings())
