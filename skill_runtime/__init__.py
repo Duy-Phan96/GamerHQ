@@ -5,7 +5,7 @@ be extracted into an independent SDK/runtime package.
 """
 
 from .contracts.capabilities import SkillCapability
-from .contracts.context import SkillContext
+from .contracts.context import SkillContext, SkillRegistrationContext
 from .contracts.events import EventContract, EventDeliveryReport, EventEnvelope
 from .contracts.lifecycle import Skill, SkillHealth
 from .contracts.manifest import SkillEvents, SkillManifest, SkillPublicApis, validate_manifest
@@ -25,6 +25,8 @@ from .runtime import (
     SchedulerRunReport,
     SchedulerStorePort,
     ScopedScheduler,
+    ScopedSchedulerRegistration,
+    ScopedSkillApiRegistration,
 )
 
 __all__ = [
@@ -46,6 +48,7 @@ __all__ = [
     "SkillApiRouter",
     "SkillCapability",
     "SkillContext",
+    "SkillRegistrationContext",
     "SkillEvents",
     "SkillHealth",
     "SkillManager",
@@ -58,5 +61,7 @@ __all__ = [
     "SchedulerRunReport",
     "SchedulerStorePort",
     "ScopedScheduler",
+    "ScopedSchedulerRegistration",
+    "ScopedSkillApiRegistration",
     "validate_manifest",
 ]
