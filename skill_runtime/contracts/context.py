@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
-from .events import EventEnvelope
+from .events import EventDeliveryReport, EventEnvelope
 
 
 class DiscordPort(Protocol):
@@ -15,7 +15,7 @@ class DiscordPort(Protocol):
 
 
 class EventBusPort(Protocol):
-    async def emit(self, event: EventEnvelope) -> None: ...
+    async def emit(self, event: EventEnvelope) -> EventDeliveryReport: ...
     async def subscribe(self, event_id: str, handler: Callable[[EventEnvelope], Awaitable[None]]) -> None: ...
 
 
