@@ -24,6 +24,7 @@ class GamerHQBot(commands.Bot):
         from services.response_service import tree_error
         self.tree.on_error = tree_error
         self.health_task = None
+        self.skill_runtime = None
         self.operational_log_started = set()
 
     async def setup_hook(self):
@@ -36,6 +37,10 @@ class GamerHQBot(commands.Bot):
         print(f"[GamerHQ] Runtime database: {DB_PATH.resolve()}")
         db.init_db()
         db.seed_catalog()
+
+        from hosts.gamerhq.runtime import GamerHQSkillRuntime
+        self.skill_runtime = GamerHQSkillRuntime(self)
+        await self.skill_runtime.setup()
 
         await self.load_extension("cogs.games")
         await self.load_extension("cogs.voice")
@@ -76,8 +81,12 @@ class GamerHQBot(commands.Bot):
                     with suppress(asyncio.CancelledError):
                         await self.health_task
             finally:
-                if getattr(self, 'twitch_hub', None):
-                    await self.twitch_hub.close()
+                try:
+                    if getattr(self, 'twitch_hub', None):
+                        await self.twitch_hub.close()
+                finally:
+                    if getattr(self, 'skill_runtime', None):
+                        await self.skill_runtime.close()
         finally:
             await super().close()
 
@@ -89,6 +98,14 @@ bot = GamerHQBot()
 async def on_ready():
     print(f"GamerHQ Bot is online as {bot.user}!")
     for guild in bot.guilds:
+        if bot.skill_runtime:
+            try:
+                await bot.skill_runtime.restore_guild(guild.id)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Skill Runtime restore failed for guild=%s; Skills remain fail-closed.",
+                    guild.id,
+                )
         if guild.id not in bot.operational_log_started:
             bot.operational_log_started.add(guild.id)
             from services.server_log_service import startup

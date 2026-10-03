@@ -128,5 +128,8 @@ Typed Event Bus and Public Skill API router. Both validate manifest declarations
 ### Slice E
 Shared persistent scheduler with portable schedule contracts, host-owned persistence, execution leases, restart recovery and disabled-Skill execution gates.
 
+### Slice F
+GamerHQ Runtime Host and controlled Discord adapter. The host builds scoped SkillContext instances, owns the single scheduler task, restores enabled Skills after reconnect/restart, and keeps Discord.py behind capability checks.
+
 ### Later
-Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
+Skills management UI, then Recurring Posts as the first reference Skill.

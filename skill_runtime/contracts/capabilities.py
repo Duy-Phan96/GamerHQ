@@ -14,6 +14,7 @@ class SkillCapability(StrEnum):
     DISCORD_MESSAGES_EDIT_OWN = "discord.messages.edit_own"
     DISCORD_MESSAGES_DELETE_OWN = "discord.messages.delete_own"
     DISCORD_EMBEDS_SEND = "discord.embeds.send"
+    DISCORD_MENTIONS_EVERYONE = "discord.mentions.everyone"
     DISCORD_ROLES_MANAGE = "discord.roles.manage"
     DISCORD_VOICE_MANAGE = "discord.voice.manage"
     SCHEDULER_JOBS = "scheduler.jobs"

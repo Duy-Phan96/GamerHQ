@@ -46,7 +46,7 @@ async def _scan(guild, bot=None, *, messages=True):
     try:
         with db.connect() as conn:
             conn.execute('SELECT ticket_type FROM support_tickets LIMIT 1').fetchone()
-            for table in ('games','settings','lfg_events','lfg_event_members','temp_voice_channels','suggestions','lfg_time_proposals','support_tickets','ticket_audit','managed_message_content','managed_message_audit'):
+            for table in ('games','settings','lfg_events','lfg_event_members','temp_voice_channels','suggestions','lfg_time_proposals','support_tickets','ticket_audit','managed_message_content','managed_message_audit','skill_guild_state','skill_storage','skill_jobs'):
                 conn.execute(f'SELECT 1 FROM {table} LIMIT 1').fetchone()
             events = [dict(r) for r in conn.execute('SELECT * FROM lfg_events WHERE guild_id=?',(guild.id,))]
             temps = [dict(r) for r in conn.execute('SELECT * FROM temp_voice_channels')]
@@ -70,6 +70,19 @@ async def _scan(guild, bot=None, *, messages=True):
         ids = {getattr(child,'custom_id',None) for view in views for child in view.children}
         required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:electricity'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
+        runtime = getattr(bot, 'skill_runtime', None)
+        if runtime is None:
+            add('Skill Runtime', 'WARN', 'Portable Skill Runtime host is unavailable.')
+        else:
+            enabled = await runtime.state.enabled_skill_ids(guild_id=guild.id)
+            registered = set(runtime.registry.ids())
+            unknown = sorted(set(enabled) - registered)
+            state = 'MANUAL_REVIEW' if unknown else 'PASS'
+            detail = (f'{len(registered)} Skill(s) registered; {len(enabled)} enabled; '
+                      f'scheduler {"running" if runtime.scheduler_running else "stopped"}.')
+            if unknown:
+                detail += f' {len(unknown)} persisted Skill ID(s) are not registered.'
+            add('Skill Runtime', state, detail)
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','guide','need-support'],
         'games': ['gaming-chat','looking-for-group'],
