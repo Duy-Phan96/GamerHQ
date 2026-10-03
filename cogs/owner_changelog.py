@@ -35,8 +35,9 @@ def board_key(guild):
 def owner_rights(guild, resource=None):
     """At most three explicit child overwrites; never enumerate all server roles.
 
-    Administrator bypasses Discord ACLs. Notices must therefore contain only
-    generic metadata; private details/actions are protected in the application.
+    Administrator bypasses Discord ACLs. The channel may therefore expose the
+    short resource/action summary to Administrators; detailed before/after
+    context and all actions remain protected by owner-only application checks.
     """
     if guild.me is None:
         raise ValueError("Bot membership is unavailable; retry after startup.")
@@ -113,8 +114,8 @@ def render(guild):
     return (
         HEADER + "\n\nNew tracked server changes appear below as **individual messages** with "
         "**Undo** and **Details** buttons. Undo opens a private review before confirmation.\n\n"
-        "Discord Administrators can see these generic notices and this launcher. "
-        "Resource names, actors, before/after details and actions are available only to the current owner.\n\n"
+        "Discord Administrators can see the short resource/action summaries because Administrator bypasses channel ACLs. "
+        "Detailed before/after context and actions are available only to the current owner.\n\n"
         "Use **Review / Undo** for earlier history. Deleted channel history cannot be recovered; "
         "some deleted resources offer a replacement instead."
     )
@@ -161,60 +162,64 @@ def details(change):
         from services.server_change_observer import detail_text
         return detail_text(change)
 
-    def safe(value, limit=120):
+    def safe(value, limit=100):
         return discord.utils.escape_markdown(discord.utils.escape_mentions(str(value)))[:limit]
 
     before, after = change["before"], change["after"]
     resource_type = change.get("resource_type", "resource")
-    name = after.get("name") or before.get("name")
-    if resource_type == "channel" and name:
+    name = after.get("name") or before.get("name") or "Unknown resource"
+    if resource_type == "channel":
         resource = f"#{safe(name, 80)}"
-    elif resource_type == "category" and name:
+    elif resource_type == "category":
         resource = f"Category **{safe(name, 80)}**"
-    elif name:
-        resource = f"{resource_type.title()} **{safe(name, 80)}**"
+    elif resource_type == "message":
+        resource = "**Managed bot message**"
     else:
-        resource = {
-            "message": "Managed bot message",
-            "guild": "Server settings",
-        }.get(resource_type, resource_type.replace("_", " ").title())
+        resource = f"{resource_type.title()} **{safe(name, 80)}**"
 
     status = {
-        "APPLIED": "Recorded",
-        "UNDOING": "Undo in progress",
-        "UNDONE": "Undone",
-        "RESTORED": "Replacement restored",
-        "REVIEW_REQUIRED": "Needs review",
+        "APPLIED": "Recorded", "UNDOING": "Undo in progress", "UNDONE": "Undone",
+        "RESTORED": "Replacement restored", "REVIEW_REQUIRED": "Needs review",
     }.get(change.get("status"), safe(change.get("status", "Recorded"), 40))
 
-    lines = [f"# {safe(label(change))}", resource, f"Status: **{status}**", ""]
     action = change.get("action")
+    lines = [f"# {safe(label(change))}", resource, f"Status: **{status}**", ""]
 
-    if action in {"channel_update", "category_update", "security_review", "offline_reconcile"}:
-        if before.get("name") != after.get("name"):
-            lines.append(f"**Name:** {safe(before.get('name'))} → {safe(after.get('name'))}")
-        if before.get("category_id") != after.get("category_id"):
-            lines.append("**Category:** moved to a different category.")
-        if not lines[-1].startswith("**"):
-            lines.append("The resource layout changed.")
-    elif action in {"channel_delete", "category_delete"}:
-        lines.append("**Removed from Discord.** Existing deleted channel/message history cannot be recovered automatically.")
+    if action in {"channel_delete", "category_delete"}:
+        lines.append("**What happened:** This resource was deleted from Discord.")
+        lines.append("Its old message/channel history cannot be recreated automatically.")
+        if action == "channel_delete":
+            lines.append("A replacement channel may be available through the recovery action, but it would be a new channel.")
     elif action == "message_delete":
-        lines.append("**Managed message removed.** A replacement can be recreated only after review.")
+        lines.append("**What happened:** A managed GamerHQ message was deleted.")
+        lines.append("The bot can recreate a replacement only after review.")
     elif action == "channel_restore":
-        lines.append("**Replacement created.** The old deleted history is not part of the replacement.")
+        lines.append("**What happened:** A replacement channel was created.")
+        lines.append("The original deleted history is not part of the replacement.")
     else:
-        lines.append("A server configuration change was recorded.")
+        changes = []
+        if before.get("name") != after.get("name"):
+            changes.append(f"Renamed **{safe(before.get('name'))}** → **{safe(after.get('name'))}**")
+        if before.get("category_id") != after.get("category_id"):
+            changes.append("Moved to another category")
+        if action == "security_review":
+            changes.append("The change needs a security review before GamerHQ adopts it")
+        if action == "offline_reconcile":
+            changes.append("This difference was detected after GamerHQ came back online")
+        if not changes:
+            changes.append("The managed Discord resource changed")
+        lines.append("**What happened:** " + ". ".join(changes) + ".")
 
-    lines.append(
-        "\nDiscord audit evidence was recorded for this change."
-        if change.get("actor_id")
-        else "\nWho made this change could not be verified reliably."
-    )
-    if feed.can_undo(change):
-        lines.append("\n**Undo available:** review and confirm to restore the previous editable state. A later conflicting edit blocks Undo.")
+    if change.get("actor_id"):
+        lines.append("\nDiscord audit evidence identified an actor for this change.")
     else:
-        lines.append("\n**Undo unavailable:** this change requires manual review or an explicit replacement flow.")
+        lines.append("\nDiscord did not provide enough reliable audit evidence to identify who made it.")
+
+    if feed.can_undo(change):
+        lines.append("\n**Undo available:** restores the previous editable state after checking that the resource has not changed again.")
+    else:
+        lines.append("\n**Undo unavailable:** this change needs manual review or an explicit replacement flow.")
+
     return "\n".join(lines)[:1950]
 
 
