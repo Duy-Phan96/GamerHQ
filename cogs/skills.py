@@ -307,7 +307,7 @@ class ConfirmSkillStateView(SafeView):
         await interaction.response.edit_message(content=view.text(), view=view)
 
 
-async def open_management(interaction):
+async def open_management(interaction, *, replace=False):
     if not await check_admin(interaction, interaction.guild):
         return
     runtime = _runtime(interaction)
@@ -317,8 +317,8 @@ async def open_management(interaction):
             ephemeral=True,
         )
     view = SkillsView(interaction.guild, interaction.user.id, runtime)
-    await interaction.response.send_message(
-        await dashboard_text(interaction.guild, runtime),
-        view=view,
-        ephemeral=True,
-    )
+    content = await dashboard_text(interaction.guild, runtime)
+    if replace:
+        await interaction.response.edit_message(content=content, view=view)
+    else:
+        await interaction.response.send_message(content, view=view, ephemeral=True)
