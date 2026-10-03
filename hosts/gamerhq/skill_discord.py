@@ -207,10 +207,6 @@ class GamerHQDiscordPort:
                 INSERT INTO skill_discord_messages(
                     guild_id,skill_id,channel_id,message_id,created_at,updated_at
                 ) VALUES(?,?,?,?,?,?)
-                ON CONFLICT(guild_id,message_id) DO UPDATE SET
-                    skill_id=excluded.skill_id,
-                    channel_id=excluded.channel_id,
-                    updated_at=excluded.updated_at
                 """,
                 (self.guild.id, self.skill_id, channel_id, message_id, now, now),
             )
