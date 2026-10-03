@@ -37,7 +37,7 @@ class FakeSkill:
         self.calls = []
         self.fail_enable = False
 
-    async def register(self): self.calls.append(("register", None))
+    async def register(self, ctx): self.calls.append(("register", ctx.skill_id))
     async def enable(self, ctx):
         self.calls.append(("enable", ctx.guild_id))
         if self.fail_enable: raise RuntimeError("synthetic")
@@ -49,6 +49,10 @@ class FakeSkill:
 
 async def context_factory(guild_id, skill_id):
     return SimpleNamespace(guild_id=guild_id, skill_id=skill_id)
+
+
+async def registration_context_factory(skill_id):
+    return SimpleNamespace(skill_id=skill_id)
 
 
 class RegistryTests(unittest.TestCase):
@@ -73,12 +77,17 @@ class SkillManagerTests(unittest.IsolatedAsyncioTestCase):
         self.registry = SkillRegistry()
         self.registry.register(self.skill)
         self.state = FakeState()
-        self.manager = SkillManager(self.registry, self.state, context_factory)
+        self.manager = SkillManager(
+            self.registry,
+            self.state,
+            context_factory,
+            registration_context_factory,
+        )
 
     async def test_registration_runs_once(self):
         await self.manager.register_all()
         await self.manager.register_all()
-        self.assertEqual(self.skill.calls, [("register", None)])
+        self.assertEqual(self.skill.calls, [("register", "alpha")])
 
     async def test_enable_is_per_guild_and_idempotent(self):
         self.assertTrue(await self.manager.enable(guild_id=1, skill_id="alpha"))

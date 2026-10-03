@@ -148,5 +148,8 @@ Scoped Discord message capability adapter with per-Skill message ownership, safe
 
 See [Discord message capabilities](discord-capabilities.md) for the host contract and ownership guarantees.
 
+### Slice G
+GamerHQ host composition root plus portable Skill registration context. Scheduler/Public API handlers bind once per process while execution receives a fresh guild-scoped SkillContext.
+
 ### Later
 Skills management UI, then Recurring Posts as the first reference Skill.

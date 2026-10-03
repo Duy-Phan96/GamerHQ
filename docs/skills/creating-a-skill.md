@@ -107,3 +107,46 @@ Messages sent through the host adapter are registered to the current guild + Ski
 Mentions are disabled by default. Explicit `@everyone/@here` support requires the `discord.mentions.everyone` capability.
 
 See [Discord message capabilities](discord-capabilities.md).
+
+
+## Registration vs guild lifecycle
+
+`register(ctx)` runs once per Runtime process for each registered Skill.
+
+Use it for process-wide bindings:
+
+```python
+async def register(self, ctx):
+    ctx.scheduler.register_handler(
+        "my-skill.run-job.v1",
+        self.run_job,
+    )
+    ctx.skills.expose(
+        "my-skill.get-status.v1",
+        self.get_status,
+    )
+```
+
+The Runtime injects the correct guild-specific `SkillContext` when those handlers are later invoked:
+
+```python
+async def run_job(self, ctx, job):
+    await ctx.storage.set("last-run", job.next_run_at)
+```
+
+Do **not** register global scheduler/API handlers from `start(ctx)`, because `start` runs independently for every enabled guild.
+
+Use `start(ctx)` for guild-scoped behavior such as Event subscriptions:
+
+```python
+async def start(self, ctx):
+    async def on_event(event):
+        await self.handle_event(ctx, event)
+
+    await ctx.events.subscribe(
+        "event.created.v1",
+        on_event,
+    )
+```
+
+The GamerHQ host removes guild-scoped Event subscriptions when the Skill is disabled/stopped.
