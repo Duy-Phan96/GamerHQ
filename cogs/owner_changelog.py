@@ -112,7 +112,7 @@ def label(change):
 def render(guild):
     # Administrator can read channel messages. Never put detailed history here.
     return (
-        HEADER + "\n\nNew tracked server changes appear below as **individual messages** with "
+        HEADER + "\n\nThis launcher stays pinned above new tracked server changes. Changes appear as **individual messages** with "
         "**Undo** and **Details** buttons. Undo opens a private review before confirmation.\n\n"
         "Discord Administrators can see the short resource/action summaries because Administrator bypasses channel ACLs. "
         "Detailed before/after context and actions are available only to the current owner.\n\n"
