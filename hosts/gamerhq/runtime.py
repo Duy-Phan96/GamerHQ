@@ -9,10 +9,13 @@ from skill_runtime import (
     EventBus,
     ScopedEventBus,
     ScopedScheduler,
+    ScopedSchedulerRegistration,
     ScopedSkillApi,
+    ScopedSkillApiRegistration,
     SkillApiRouter,
     SkillContext,
     SkillManager,
+    SkillRegistrationContext,
     SkillRegistry,
 )
 from skill_runtime.runtime.scheduler import SchedulerEngine
@@ -45,7 +48,12 @@ class GamerHQSkillRuntime:
             self.job_store,
             availability=self.state.is_enabled,
         )
-        self.manager = SkillManager(self.registry, self.state, self.context)
+        self.manager = SkillManager(
+            self.registry,
+            self.state,
+            self.context,
+            self.registration_context,
+        )
         self._stop = asyncio.Event()
         self._scheduler_task = None
         self._setup_complete = False
@@ -91,6 +99,22 @@ class GamerHQSkillRuntime:
             permissions=permissions,
             skills=ScopedSkillApi(self.apis, guild_id=guild_id, skill_id=skill_id),
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
+        )
+
+    async def registration_context(self, skill_id: str) -> SkillRegistrationContext:
+        self.registry.get(skill_id)
+        return SkillRegistrationContext(
+            skill_id=skill_id,
+            scheduler=ScopedSchedulerRegistration(
+                self.scheduler,
+                skill_id=skill_id,
+                context_factory=self.context,
+            ),
+            skills=ScopedSkillApiRegistration(
+                self.apis,
+                skill_id=skill_id,
+                context_factory=self.context,
+            ),
         )
 
     async def restore_guild(self, guild_id: int) -> tuple[str, ...]:

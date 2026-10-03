@@ -6,15 +6,24 @@ be extracted into an independent SDK/runtime package.
 
 from .contracts.capabilities import SkillCapability
 from .contracts.context import SkillContext
+from .contracts.discord import (
+    SkillDiscordError,
+    SkillDiscordNotFound,
+    SkillDiscordOperationFailed,
+    SkillDiscordPermissionDenied,
+)
 from .contracts.events import EventContract, EventDeliveryReport, EventEnvelope
 from .contracts.lifecycle import Skill, SkillHealth
 from .contracts.manifest import SkillEvents, SkillManifest, SkillPublicApis, validate_manifest
 from .contracts.public_api import PublicApiContract
+from .contracts.registration import SkillRegistrationContext
 from .contracts.schedule import DailySchedule, IntervalSchedule, OnceSchedule, ScheduleSpec, WeeklySchedule, next_run_at
 from .runtime import (
     EventBus,
     ScopedEventBus,
+    ScopedSchedulerRegistration,
     ScopedSkillApi,
+    ScopedSkillApiRegistration,
     SkillApiError,
     SkillApiRouter,
     SkillManager,
@@ -40,8 +49,14 @@ __all__ = [
     "EventEnvelope",
     "PublicApiContract",
     "ScopedEventBus",
+    "ScopedSchedulerRegistration",
     "ScopedSkillApi",
+    "ScopedSkillApiRegistration",
     "Skill",
+    "SkillDiscordError",
+    "SkillDiscordNotFound",
+    "SkillDiscordOperationFailed",
+    "SkillDiscordPermissionDenied",
     "SkillApiError",
     "SkillApiRouter",
     "SkillCapability",
@@ -50,6 +65,7 @@ __all__ = [
     "SkillHealth",
     "SkillManager",
     "SkillManifest",
+    "SkillRegistrationContext",
     "SkillPublicApis",
     "SkillRegistry",
     "SkillStateStorePort",

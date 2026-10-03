@@ -6,6 +6,7 @@ from typing import Any
 from ..contracts.events import EventDeliveryReport, EventEnvelope
 from .api_router import SkillApiRouter
 from .event_bus import EventBus
+from .scheduler import SchedulerEngine, ScheduledJob
 
 
 class ScopedEventBus:
@@ -55,4 +56,45 @@ class ScopedSkillApi:
             skill_id=skill_id,
             contract_id=contract_id,
             payload=payload,
+        )
+
+
+
+class ScopedSchedulerRegistration:
+    """Process-level scheduler registration bound to exactly one Skill."""
+
+    def __init__(self, engine: SchedulerEngine, *, skill_id: str, context_factory):
+        self.engine = engine
+        self.skill_id = skill_id
+        self.context_factory = context_factory
+
+    def register_handler(self, handler_id: str, handler) -> None:
+        async def run(job: ScheduledJob):
+            ctx = await self.context_factory(job.guild_id, self.skill_id)
+            await handler(ctx, job.payload)
+
+        self.engine.register_handler(
+            skill_id=self.skill_id,
+            handler_id=handler_id,
+            handler=run,
+        )
+
+
+class ScopedSkillApiRegistration:
+    """Process-level Public Skill API registration bound to one provider Skill."""
+
+    def __init__(self, router: SkillApiRouter, *, skill_id: str, context_factory):
+        self.router = router
+        self.skill_id = skill_id
+        self.context_factory = context_factory
+
+    def expose(self, contract_id: str, handler) -> None:
+        async def run(guild_id, payload):
+            ctx = await self.context_factory(guild_id, self.skill_id)
+            return await handler(ctx, payload)
+
+        self.router.register_handler(
+            skill_id=self.skill_id,
+            contract_id=contract_id,
+            handler=run,
         )

@@ -6,6 +6,7 @@ from typing import Protocol
 
 from ..contracts.context import SkillContext
 from ..contracts.lifecycle import SkillHealth
+from ..contracts.registration import SkillRegistrationContext
 from .registry import SkillRegistry
 
 
@@ -22,15 +23,23 @@ class SkillStateStorePort(Protocol):
 
 
 ContextFactory = Callable[[int, str], Awaitable[SkillContext]]
+RegistrationContextFactory = Callable[[str], Awaitable[SkillRegistrationContext]]
 
 
 class SkillManager:
     """Coordinates validated Skills while keeping guild state in a host port."""
 
-    def __init__(self, registry: SkillRegistry, state: SkillStateStorePort, context_factory: ContextFactory):
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        state: SkillStateStorePort,
+        context_factory: ContextFactory,
+        registration_context_factory: RegistrationContextFactory,
+    ):
         self.registry = registry
         self.state = state
         self.context_factory = context_factory
+        self.registration_context_factory = registration_context_factory
         self._registered = False
         self._running: set[tuple[int, str]] = set()
         self._locks: dict[tuple[int, str], asyncio.Lock] = {}
@@ -43,7 +52,8 @@ class SkillManager:
         if self._registered:
             return
         for skill in self.registry.all():
-            await skill.register()
+            registration = await self.registration_context_factory(skill.manifest.id)
+            await skill.register(registration)
         self._registered = True
 
     async def enabled(self, *, guild_id: int, skill_id: str) -> bool:

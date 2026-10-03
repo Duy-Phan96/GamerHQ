@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .context import SkillContext
+from .registration import SkillRegistrationContext
 from .manifest import SkillManifest
 
 
@@ -18,7 +19,7 @@ class Skill(Protocol):
 
     manifest: SkillManifest
 
-    async def register(self) -> None: ...
+    async def register(self, ctx: SkillRegistrationContext) -> None: ...
     async def enable(self, ctx: SkillContext) -> None: ...
     async def disable(self, ctx: SkillContext) -> None: ...
     async def start(self, ctx: SkillContext) -> None: ...

@@ -7,11 +7,13 @@ from typing import Any
 import discord
 
 from skill_runtime.contracts.capabilities import SkillCapability
+from skill_runtime.contracts.discord import (
+    SkillDiscordError,
+    SkillDiscordNotFound,
+    SkillDiscordOperationFailed,
+    SkillDiscordPermissionDenied,
+)
 from .skill_host import CapabilityPermissions
-
-
-class SkillDiscordError(RuntimeError):
-    """Safe host-boundary error without private Discord payload details."""
 
 
 def _discord_length(value: str) -> int:
@@ -34,7 +36,7 @@ class GamerHQDiscordAdapter:
         getter = getattr(self.guild, "get_channel_or_thread", None)
         channel = getter(int(channel_id)) if getter else self.guild.get_channel(int(channel_id))
         if not isinstance(channel, (discord.TextChannel, discord.Thread)):
-            raise SkillDiscordError("Target text channel is unavailable.")
+            raise SkillDiscordNotFound("Target text channel is unavailable.")
         if channel.guild.id != self.guild.id:
             raise SkillDiscordError("Target channel belongs to another guild.")
         return channel
@@ -45,10 +47,10 @@ class GamerHQDiscordAdapter:
             raise SkillDiscordError("Bot membership is unavailable.")
         rights = channel.permissions_for(member)
         if not rights.view_channel:
-            raise SkillDiscordError("GamerHQ cannot view the target channel.")
+            raise SkillDiscordPermissionDenied("GamerHQ cannot view the target channel.")
         send = rights.send_messages_in_threads if isinstance(channel, discord.Thread) else rights.send_messages
         if not send:
-            raise SkillDiscordError("GamerHQ cannot send messages in the target channel.")
+            raise SkillDiscordPermissionDenied("GamerHQ cannot send messages in the target channel.")
         return rights
 
     def _content(self, content: str | None) -> str | None:
@@ -84,7 +86,7 @@ class GamerHQDiscordAdapter:
         if everyone:
             self.permissions.require(SkillCapability.DISCORD_MENTIONS_EVERYONE.value)
             if not getattr(rights, "mention_everyone", False):
-                raise SkillDiscordError("GamerHQ cannot mention everyone in the target channel.")
+                raise SkillDiscordPermissionDenied("GamerHQ cannot mention everyone in the target channel.")
 
         def ids(name):
             raw = value.get(name, ())
@@ -131,7 +133,7 @@ class GamerHQDiscordAdapter:
         channel = self._channel(channel_id)
         rights = self._effective(channel)
         if embed_value is not None and not rights.embed_links:
-            raise SkillDiscordError("GamerHQ cannot send embeds in the target channel.")
+            raise SkillDiscordPermissionDenied("GamerHQ cannot send embeds in the target channel.")
         mentions = self._mentions(allowed_mentions, rights)
         try:
             message = await channel.send(
@@ -139,8 +141,12 @@ class GamerHQDiscordAdapter:
                 embed=embed_value,
                 allowed_mentions=mentions,
             )
+        except discord.Forbidden as exc:
+            raise SkillDiscordPermissionDenied("Discord message delivery was denied.") from exc
+        except discord.NotFound as exc:
+            raise SkillDiscordNotFound("Target channel is unavailable.") from exc
         except discord.HTTPException as exc:
-            raise SkillDiscordError("Discord message delivery failed.") from exc
+            raise SkillDiscordOperationFailed("Discord message delivery failed.") from exc
         return int(message.id)
 
     async def _owned_message(self, *, channel_id: int, message_id: int):
@@ -148,8 +154,12 @@ class GamerHQDiscordAdapter:
         self._effective(channel)
         try:
             message = await channel.fetch_message(int(message_id))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
-            raise SkillDiscordError("Managed Skill message is unavailable.") from exc
+        except discord.NotFound as exc:
+            raise SkillDiscordNotFound("Managed Skill message is unavailable.") from exc
+        except discord.Forbidden as exc:
+            raise SkillDiscordPermissionDenied("Managed Skill message access was denied.") from exc
+        except discord.HTTPException as exc:
+            raise SkillDiscordOperationFailed("Managed Skill message lookup failed.") from exc
         if self.guild.me is None or message.author.id != self.guild.me.id:
             raise SkillDiscordError("Skills may edit or delete only GamerHQ-authored messages.")
         return channel, message
@@ -175,13 +185,21 @@ class GamerHQDiscordAdapter:
         mentions = self._mentions(allowed_mentions, rights)
         try:
             await message.edit(content=content, embed=embed_value, allowed_mentions=mentions)
+        except discord.Forbidden as exc:
+            raise SkillDiscordPermissionDenied("Discord message update was denied.") from exc
+        except discord.NotFound as exc:
+            raise SkillDiscordNotFound("Managed Skill message is unavailable.") from exc
         except discord.HTTPException as exc:
-            raise SkillDiscordError("Discord message update failed.") from exc
+            raise SkillDiscordOperationFailed("Discord message update failed.") from exc
 
     async def delete_own_message(self, *, channel_id: int, message_id: int) -> None:
         self.permissions.require(SkillCapability.DISCORD_MESSAGES_DELETE_OWN.value)
         _, message = await self._owned_message(channel_id=channel_id, message_id=message_id)
         try:
             await message.delete()
+        except discord.Forbidden as exc:
+            raise SkillDiscordPermissionDenied("Discord message deletion was denied.") from exc
+        except discord.NotFound as exc:
+            raise SkillDiscordNotFound("Managed Skill message is unavailable.") from exc
         except discord.HTTPException as exc:
-            raise SkillDiscordError("Discord message deletion failed.") from exc
+            raise SkillDiscordOperationFailed("Discord message deletion failed.") from exc

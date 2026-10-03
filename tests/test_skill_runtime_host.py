@@ -28,7 +28,7 @@ class FakeSkill:
         )
         self.calls = []
 
-    async def register(self): self.calls.append(("register", None))
+    async def register(self, ctx): self.calls.append(("register", ctx.skill_id))
     async def enable(self, ctx): self.calls.append(("enable", ctx.guild_id))
     async def disable(self, ctx): self.calls.append(("disable", ctx.guild_id))
     async def start(self, ctx): self.calls.append(("start", ctx.guild_id))
@@ -60,7 +60,7 @@ class GamerHQSkillRuntimeTests(unittest.IsolatedAsyncioTestCase):
         await runtime.setup()
         self.assertIs(first, runtime._scheduler_task)
         self.assertTrue(runtime.scheduler_running)
-        self.assertEqual(self.skill.calls, [("register", None)])
+        self.assertEqual(self.skill.calls, [("register", "demo-skill")])
         await runtime.close()
         self.assertFalse(runtime.scheduler_running)
 
