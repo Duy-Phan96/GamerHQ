@@ -110,18 +110,18 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
             skill_id="recurring-posts",
             permissions=self.permissions(cap),
         )
-        secret = "private-value-must-not-appear"
+        private_value = "private-value-must-not-appear"
         with patch("services.server_log_service.emit", new_callable=AsyncMock, return_value=True) as emit:
             await audit.write(
                 action="post.created",
                 target="post-123",
-                metadata={"schedule": secret, "channel": secret},
+                metadata={"schedule": private_value, "channel": private_value},
             )
         args = emit.await_args.args
         self.assertIs(args[0], guild)
         self.assertIn("Skill Activity", args[2])
         self.assertIn("Metadata fields: channel, schedule", args[3])
-        self.assertNotIn(secret, args[3])
+        self.assertNotIn(private_value, args[3])
 
     async def test_audit_requires_capability(self):
         guild = SimpleNamespace(id=123)
