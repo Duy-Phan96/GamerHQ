@@ -43,13 +43,15 @@ def group_for(finding):
         "music bot", "partner", "marketplace", "gaming-deals",
     )):
         return "Integrations"
+    # Security/privacy wins over functional keywords such as "suggestions".
+    # Example: "Staff suggestions privacy" is a privacy finding, not a Community feature finding.
+    if any(word in name for word in ("privacy", "permission", "unknown categor", "staff")):
+        return "Security & Privacy"
     if any(word in name for word in (
         "suggestion", "community", "role settings", "newbies", "general",
         "introductions", "tournament", "giveaway",
     )):
         return "Community"
-    if any(word in name for word in ("privacy", "permission", "unknown categor", "staff")):
-        return "Security & Privacy"
     if any(word in name for word in (
         "database", "runtime", "server log", "persistent controls", "managed message",
         "start-here", "events order", "welcome", "rules", "announcement",
