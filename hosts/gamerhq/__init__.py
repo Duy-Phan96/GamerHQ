@@ -7,6 +7,7 @@ from .skill_host import (
     GamerHQSkillStorage,
 )
 from .skill_scheduler import GamerHQSchedulerStore
+from .skill_discord import GamerHQDiscordPort, SkillDiscordError
 
 __all__ = [
     "CapabilityPermissions",
@@ -14,4 +15,6 @@ __all__ = [
     "GamerHQSkillAudit",
     "GamerHQSkillStateStore",
     "GamerHQSkillStorage",
+    "GamerHQDiscordPort",
+    "SkillDiscordError",
 ]
