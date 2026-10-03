@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS skill_jobs (
     next_run_at INTEGER,
     last_run_at INTEGER,
     failure_count INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1,
     last_error_code TEXT,
     lease_until INTEGER NOT NULL DEFAULT 0,
     lease_token TEXT,
