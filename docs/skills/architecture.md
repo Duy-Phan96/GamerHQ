@@ -143,5 +143,10 @@ Shared persistent Scheduler contracts/engine plus the GamerHQ SQLite host adapte
 
 See [Skill Scheduler](scheduler.md) for the scheduler contract and execution guarantees.
 
+### Slice F
+Scoped Discord message capability adapter with per-Skill message ownership, safe mention defaults and explicit embed/everyone capabilities.
+
+See [Discord message capabilities](discord-capabilities.md) for the host contract and ownership guarantees.
+
 ### Later
-Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
+Skills management UI, then Recurring Posts as the first reference Skill.

@@ -200,6 +200,18 @@ CREATE TABLE IF NOT EXISTS skill_jobs (
 CREATE INDEX IF NOT EXISTS skill_jobs_due
 ON skill_jobs(enabled, next_run_at, lease_until);
 
+CREATE TABLE IF NOT EXISTS skill_discord_messages (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS skill_discord_messages_owner
+ON skill_discord_messages(guild_id, skill_id, channel_id);
+
 CREATE TABLE IF NOT EXISTS game_channel_candidates (
     guild_id INTEGER NOT NULL,
     game_id INTEGER NOT NULL,
