@@ -15,6 +15,7 @@ GROUPS = (
     "LFG & Voice",
     "Support",
     "Integrations",
+    "Skills",
     "Security & Privacy",
     "Other",
 )
@@ -43,6 +44,8 @@ def group_for(finding):
         "music bot", "partner", "marketplace", "gaming-deals",
     )):
         return "Integrations"
+    if "skill runtime" in name or name.startswith("skill "):
+        return "Skills"
     # Security/privacy wins over functional keywords such as "suggestions".
     # Example: "Staff suggestions privacy" is a privacy finding, not a Community feature finding.
     if any(word in name for word in ("privacy", "permission", "unknown categor", "staff")):
@@ -301,6 +304,9 @@ class HealthView(SafeView):
                 content=integration_text(self.guild),
                 view=IntegrationsView(self.guild, self.actor_id),
             )
+        if self.selected == "Skills":
+            from cogs.skills import open_management
+            return await open_management(interaction, replace=True)
         if self.selected in {"Core", "Security & Privacy"}:
             return await interaction.response.edit_message(
                 content="# 🧱 Server Structure\nReview existing resources before applying any changes.",

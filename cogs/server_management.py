@@ -96,8 +96,8 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
                    ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
-                   ('Managed Messages', self.messages), ('Games', self.games), ('Features', self.features),
-                   ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
+                   ('Skills', self.skills), ('Managed Messages', self.messages), ('Games', self.games),
+                   ('Features', self.features), ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
             actions.append(('Owner Change Log', self.owner_changelog))
             actions.append(('Support & Requests', self.support_entries))
@@ -138,6 +138,10 @@ class ManagementView(Menu):
 
     async def integrations(self, interaction):
         await interaction.response.edit_message(content=integration_text(self.guild), view=IntegrationsView(self.guild, self.admin_id))
+
+    async def skills(self, interaction):
+        from cogs.skills import open_management
+        await open_management(interaction, replace=True)
 
     async def messages(self, interaction):
         from cogs.managed_messages import open_editor

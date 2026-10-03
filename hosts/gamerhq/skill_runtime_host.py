@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from skill_runtime.contracts.context import SkillContext
 from skill_runtime.runtime import EventBus, ScopedEventBus, ScopedScheduler, ScopedSkillApi, SkillApiRouter, SkillManager, SkillRegistry
@@ -14,6 +15,13 @@ from .skill_scheduler import GamerHQSchedulerStore
 
 
 PolicyFactory = Callable[[int, str], DiscordResourcePolicy]
+
+
+@dataclass(frozen=True, slots=True)
+class SkillRestoreReport:
+    started: tuple[str, ...] = ()
+    unavailable: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
 
 
 class GamerHQSkillRuntimeHost:
@@ -77,8 +85,28 @@ class GamerHQSkillRuntimeHost:
         await self.event_bus.unsubscribe_skill(guild_id=guild_id, skill_id=skill_id)
         return changed
 
-    async def restore_guild(self, guild_id: int) -> tuple[str, ...]:
-        return await self.manager.restore_guild(guild_id=guild_id)
+    async def restore_guild(self, guild_id: int) -> SkillRestoreReport:
+        enabled = await self.state.enabled_skill_ids(guild_id=guild_id)
+        started = []
+        unavailable = []
+        failed = []
+        for skill_id in enabled:
+            if not self.registry.contains(skill_id):
+                unavailable.append(skill_id)
+                continue
+            try:
+                if await self.manager.start(guild_id=guild_id, skill_id=skill_id):
+                    started.append(skill_id)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Skill start failed guild=%s skill=%s", guild_id, skill_id
+                )
+                failed.append(skill_id)
+        return SkillRestoreReport(
+            started=tuple(started),
+            unavailable=tuple(unavailable),
+            failed=tuple(failed),
+        )
 
     async def stop_guild(self, guild_id: int) -> tuple[str, ...]:
         stopped = await self.manager.stop_guild(guild_id=guild_id)

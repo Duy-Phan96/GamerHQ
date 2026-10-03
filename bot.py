@@ -25,6 +25,7 @@ class GamerHQBot(commands.Bot):
         self.tree.on_error = tree_error
         self.health_task = None
         self.operational_log_started = set()
+        self.skill_runtime = None
 
     async def setup_hook(self):
         # Container-only, ephemeral heartbeat. Local development needs no /tmp.
@@ -36,6 +37,16 @@ class GamerHQBot(commands.Bot):
         print(f"[GamerHQ] Runtime database: {DB_PATH.resolve()}")
         db.init_db()
         db.seed_catalog()
+
+        # Portable Skill Runtime: construct the host explicitly. Merely loading
+        # the Runtime does not enable Skills or start scheduler work.
+        from skill_runtime.runtime import SkillRegistry
+        from hosts.gamerhq.skill_runtime_host import GamerHQSkillRuntimeHost
+        from skills import first_party_skills
+        skill_registry = SkillRegistry()
+        skill_registry.extend(first_party_skills())
+        self.skill_runtime = GamerHQSkillRuntimeHost(self, skill_registry)
+        await self.skill_runtime.register()
 
         await self.load_extension("cogs.games")
         await self.load_extension("cogs.voice")
@@ -76,6 +87,15 @@ class GamerHQBot(commands.Bot):
                     with suppress(asyncio.CancelledError):
                         await self.health_task
             finally:
+                runtime = getattr(self, 'skill_runtime', None)
+                if runtime is not None:
+                    for guild in tuple(getattr(self, 'guilds', ())):
+                        try:
+                            await runtime.stop_guild(guild.id)
+                        except Exception:
+                            logging.getLogger(__name__).exception(
+                                "Skill Runtime shutdown cleanup failed guild=%s", guild.id
+                            )
                 if getattr(self, 'twitch_hub', None):
                     await self.twitch_hub.close()
         finally:
@@ -89,6 +109,16 @@ bot = GamerHQBot()
 async def on_ready():
     print(f"GamerHQ Bot is online as {bot.user}!")
     for guild in bot.guilds:
+        if bot.skill_runtime is not None:
+            report = await bot.skill_runtime.restore_guild(guild.id)
+            if report.unavailable:
+                logging.getLogger(__name__).warning(
+                    "Unavailable enabled Skills guild=%s count=%s", guild.id, len(report.unavailable)
+                )
+            if report.failed:
+                logging.getLogger(__name__).warning(
+                    "Skill startup failures guild=%s count=%s", guild.id, len(report.failed)
+                )
         if guild.id not in bot.operational_log_started:
             bot.operational_log_started.add(guild.id)
             from services.server_log_service import startup

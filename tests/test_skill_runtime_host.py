@@ -79,6 +79,18 @@ class SkillRuntimeHostTests(unittest.IsolatedAsyncioTestCase):
         for call in host.event_bus.unsubscribe_skill.await_args_list:
             self.assertEqual(call.kwargs,{"guild_id":123,"skill_id":"fixture-skill"})
 
+    async def test_restore_reports_unknown_and_failed_skills_without_blocking_known(self):
+        host=GamerHQSkillRuntimeHost(self.bot,self.registry)
+        host.state.enabled_skill_ids=AsyncMock(return_value=("fixture-skill","missing-skill"))
+        host.manager.start=AsyncMock(side_effect=RuntimeError("synthetic start failure"))
+
+        report=await host.restore_guild(123)
+
+        self.assertEqual(report.started,())
+        self.assertEqual(report.unavailable,("missing-skill",))
+        self.assertEqual(report.failed,("fixture-skill",))
+        host.manager.start.assert_awaited_once_with(guild_id=123,skill_id="fixture-skill")
+
     async def test_policy_factory_is_bound_per_guild_and_skill(self):
         calls=[]
         class Allow:
