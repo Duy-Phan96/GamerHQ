@@ -70,8 +70,11 @@ class GamerHQSchedulerStore:
                     payload_json=excluded.payload_json,
                     enabled=1,
                     next_run_at=excluded.next_run_at,
+                    failure_count=0,
                     revision=skill_jobs.revision+1,
                     last_error_code=NULL,
+                    lease_until=0,
+                    lease_token=NULL,
                     updated_at=excluded.updated_at
                 """,
                 (
