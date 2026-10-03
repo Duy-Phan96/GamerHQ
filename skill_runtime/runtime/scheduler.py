@@ -149,7 +149,11 @@ class SchedulerEngine:
                 guild_id=job.guild_id,
                 skill_id=job.skill_id,
             ):
-                await self.store.defer_job(job, next_run_at=next_run)
+                # Recurring jobs skip missed executions while disabled. A due
+                # one-shot has no later recurrence, so retain it with a short
+                # retry window instead of silently losing it.
+                deferred_next = next_run if next_run is not None else now + 60
+                await self.store.defer_job(job, next_run_at=deferred_next)
                 deferred += 1
                 continue
 
