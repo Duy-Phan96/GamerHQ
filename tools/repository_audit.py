@@ -47,7 +47,10 @@ def private_path(name):
     if portable_runtime: private_parts.discard('runtime')
     return (bool(private_parts) or
             (low.startswith('.env') and low!='.env.example') or
-            bool(re.search(r'\.(?:db|sqlite3?)(?:-(?:wal|shm|journal))?
+            bool(re.search(r'\.(?:db|sqlite3?)(?:-(?:wal|shm|journal))?$',low)) or
+            low.endswith(('.log','.pem','.key','.pyc','.bak','.zip')) or
+            low.startswith(('credentials.','secrets.')))
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--history',action='store_true')
