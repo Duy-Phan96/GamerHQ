@@ -67,8 +67,88 @@ def can_undo(change):
                 and change.get("action") in {"channel_update", "category_update", "message_delete"})
 
 
+def _safe(value, limit=90):
+    text = str(value if value is not None else "")
+    return discord.utils.escape_mentions(discord.utils.escape_markdown(text))[:limit]
+
+
+def _resource_name(change):
+    before, after = change.get("before") or {}, change.get("after") or {}
+    return after.get("name") or before.get("name") or {
+        "guild": "Server settings",
+        "message": "Managed bot message",
+    }.get(change.get("resource_type"), "Unknown resource")
+
+
+def _resource_label(change):
+    name = _safe(_resource_name(change), 75)
+    kind = change.get("resource_type")
+    if kind == "channel":
+        return f"#{name}"
+    if kind == "category":
+        return f"Category **{name}**"
+    if kind == "role":
+        return f"Role **{name}**"
+    if kind == "guild":
+        return f"Server **{name}**"
+    return f"**{name}**"
+
+
+def _summary(change):
+    """One-line human summary for the owner-log channel."""
+    action = change.get("action", "")
+    before, after = change.get("before") or {}, change.get("after") or {}
+    resource = _resource_label(change)
+
+    if action.endswith("_delete") or action in {"channel_delete", "category_delete", "message_delete"}:
+        if change.get("resource_type") == "category":
+            return f"{resource} was deleted."
+        if change.get("resource_type") == "message" or action == "message_delete":
+            return f"{resource} was deleted."
+        return f"{resource} was deleted."
+
+    if action.endswith("_create"):
+        return f"{resource} was created."
+
+    changes = []
+    fields = set(after.get("_fields", []))
+    if before.get("name") != after.get("name") and before.get("name") is not None and after.get("name") is not None:
+        changes.append(f"renamed from **{_safe(before['name'], 55)}**")
+    if before.get("category_id") != after.get("category_id") and (
+        "category_id" in fields or action in {"channel_update", "security_review", "offline_reconcile"}
+    ):
+        changes.append("moved to another category")
+    if "topic" in fields:
+        changes.append("topic changed")
+    if "slowmode_delay" in fields:
+        changes.append("slowmode changed")
+    if "overwrites" in fields or "permissions" in fields:
+        changes.append("permissions changed")
+    if "nsfw" in fields:
+        changes.append("age restriction changed")
+    if change.get("resource_type") == "role" and "colour" in fields:
+        changes.append("colour changed")
+    if change.get("resource_type") == "role" and "mentionable" in fields:
+        changes.append("mention setting changed")
+    if change.get("resource_type") == "role" and "hoist" in fields:
+        changes.append("display setting changed")
+
+    if not changes:
+        if action == "channel_restore":
+            return f"{resource} was restored as a replacement."
+        if action == "security_review":
+            return f"{resource} changed and needs a security review."
+        if action.endswith("_offline") or action == "offline_reconcile":
+            return f"{resource} changed while GamerHQ was offline."
+        return f"{resource} changed."
+
+    if len(changes) == 1:
+        return f"{resource}: {changes[0]}."
+    return f"{resource}: {', '.join(changes[:2])}" + (f" and {len(changes)-2} more changes." if len(changes) > 2 else ".")
+
+
 def render_notice(change):
-    """Never interpolate resource names/IDs, actors, content or tokens into the channel."""
+    """Show the useful summary immediately; keep raw/history details behind owner review."""
     kind = {
         "channel_update": "Channel changed", "category_update": "Category changed",
         "channel_delete": "Channel removed", "category_delete": "Category removed",
@@ -79,19 +159,27 @@ def render_notice(change):
         _, resource, event = change["action"].split("_", 2)
         subject = {"channel": "Channel", "category": "Category", "role": "Role", "guild": "Server settings"}.get(resource, "Resource")
         kind = subject + {"update": " changed", "create": " created", "delete": " removed", "offline": " changed while offline"}.get(event, " changed")
+
     state = {"UNDOING": "Undo in progress", "UNDONE": "✅ Undone", "RESTORED": "♻️ Replacement restored",
              "REVIEW_REQUIRED": "⚠️ Review required"}.get(change.get("status"), "Recorded")
+    summary = _summary(change)
+
     if can_undo(change):
-        help_text = "Use **Undo** to review this change privately and confirm before reversing it."
+        help_text = "↩️ **Undo available** — review and confirm if you want to restore the previous editable state."
     elif change.get("status") in {"UNDONE", "RESTORED"}:
-        help_text = "This change has already been handled. Its private review remains available."
-    elif change.get("action") in {"channel_delete", "category_delete"}:
-        help_text = "Deletion cannot be undone. Review any available replacement option; deleted history is not recoverable."
+        help_text = "This change has already been handled."
+    elif change.get("action") in {"channel_delete", "category_delete"} or change.get("action", "").endswith("_delete"):
+        help_text = "Deleted history cannot be recovered automatically."
     else:
-        help_text = "Review this change privately. Automatic Undo is not available for this change."
-    return (f"## 🕘 Change #{int(change['id'])} · {kind}\n"
-            f"<t:{int(change['created_at'])}:f> · **{state}**\n\n{help_text}\n"
-            "Details and actions are available only to the current server owner.")
+        help_text = "Automatic Undo is not available for this change."
+
+    return (
+        f"## 🕘 Change #{int(change['id'])} · {kind}\n"
+        f"<t:{int(change['created_at'])}:f> · **{state}**\n\n"
+        f"**{summary}**\n\n"
+        f"{help_text}\n"
+        "Use **Details** only for additional context."
+    )
 
 
 def change_for_message(guild, channel_id, message_id):
