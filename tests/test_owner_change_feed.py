@@ -77,13 +77,33 @@ class OwnerFeedTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(message.view.is_persistent())
         self.assertEqual(message.view.undo.label, 'Undo')
         self.assertFalse(message.view.undo.disabled)
-        for forbidden in ('secret-', 'never-publish-this', '<@71>', '8888', 'secret description'):
+        # The short resource/action summary is intentionally visible directly
+        # in owner-changelog; raw logical keys, IDs, tokens and private description
+        # stay behind owner-only Details.
+        self.assertIn('#secret-after', message.content)
+        self.assertIn('renamed from', message.content)
+        for forbidden in ('secret-private-resource', 'never-publish-this', '<@71>', '8888', 'secret description'):
             self.assertNotIn(forbidden, message.content)
         mentions = self.room.send.call_args.kwargs['allowed_mentions']
         self.assertFalse(mentions.everyone)
         self.assertFalse(mentions.users)
         self.guild.fetch_channels.assert_not_awaited()
         self.room.history.assert_not_called()
+
+    async def test_delete_notice_shows_resource_and_action_without_opening_details(self):
+        change = structure.record_change(
+            self.guild, 'channel', 'looking-for-group', 8899, self.owner.id, 'channel_delete',
+            {'name': '🎯・looking-for-group', 'category_id': 77, 'position': 4},
+            {'name': '🎯・looking-for-group', 'deleted': True},
+            reversible=False,
+        )
+        await feed.flush(self.guild)
+        notice = self.message(change).content
+        self.assertIn('#🎯・looking-for-group', notice)
+        self.assertIn('was deleted', notice)
+        self.assertIn('Deleted history is not recoverable automatically', notice)
+        self.assertNotIn('Category ID', notice)
+        self.assertNotIn('Position', notice)
 
     async def test_two_changes_produce_two_separate_messages_in_order(self):
         first, second = self.change(), self.change(action='category_update')

@@ -272,13 +272,14 @@ def can_undo(change):
 
 
 def detail_text(change):
-    """Human-readable private review; important safety guidance is never truncated."""
+    """Short owner-only explanation of what happened; hide raw snapshot mechanics."""
     def safe(value, limit=90):
-        text = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+        text = str(value if value is not None else "")
         return discord.utils.escape_mentions(discord.utils.escape_markdown(text))[:limit]
 
     kind = change["resource_type"]
     before, after = change["before"], change["after"]
+    action = change.get("action", "")
     name = after.get("name") or before.get("name") or {
         "guild": "Server settings", "channel": "Channel", "category": "Category", "role": "Role"
     }.get(kind, "Resource")
@@ -290,58 +291,67 @@ def detail_text(change):
     }.get(kind, safe(name, 70))
 
     status = {
-        "APPLIED": "Recorded",
-        "UNDOING": "Undo in progress",
-        "UNDONE": "Undone",
-        "RESTORED": "Replacement restored",
-        "REVIEW_REQUIRED": "Needs review",
+        "APPLIED": "Recorded", "UNDOING": "Undo in progress", "UNDONE": "Undone",
+        "RESTORED": "Replacement restored", "REVIEW_REQUIRED": "Needs review",
     }.get(change.get("status"), safe(change.get("status", "Recorded"), 40))
 
-    labels = {
-        "name": "Name", "topic": "Topic", "nsfw": "Age-restricted channel",
-        "slowmode_delay": "Slowmode", "bitrate": "Voice bitrate",
-        "user_limit": "Voice user limit", "rtc_region": "Voice region",
-        "colour": "Role colour", "hoist": "Show role separately",
-        "mentionable": "Role can be mentioned", "description": "Server description",
-        "afk_timeout": "AFK timeout", "permissions": "Permissions",
-        "overwrites": "Channel permissions", "category_id": "Category",
-    }
+    lines = [f"# 🕘 Change #{change['id']} · {subject}", f"Status: **{status}**", ""]
 
-    header = f"# 🕘 Change #{change['id']} · {subject}\nStatus: **{status}**\n\n"
-    fields = change["after"].get("_fields", [])
-    body = []
-    for field in fields[:6]:
-        old, new = before.get(field), after.get(field)
-        label = labels.get(field, field.replace("_", " ").title())
-        if field == "category_id":
-            body.append("**Category:** moved to a different category.")
-        elif field in {"permissions", "overwrites"}:
-            body.append(f"**{label}:** changed.")
-        elif field == "topic":
-            body.append(f"**Topic:** {safe(old or 'No topic', 70)} → {safe(new or 'No topic', 70)}")
-        else:
-            body.append(f"**{label}:** {safe(old, 70)} → {safe(new, 70)}")
-    if len(fields) > 6:
-        body.append(f"… {len(fields) - 6} additional details are saved in the private history.")
+    if action.endswith("_delete"):
+        lines.append(f"**What happened:** {subject} was deleted from Discord.")
+        if kind == "channel":
+            lines.append("The old channel and its message history cannot be restored automatically.")
+        elif kind == "category":
+            lines.append("The category itself is gone. Child channels may remain elsewhere on the server.")
+    elif action.endswith("_create"):
+        lines.append(f"**What happened:** {subject} was created.")
+    elif action.endswith("_offline"):
+        lines.append("**What happened:** GamerHQ detected a difference after coming back online.")
+        lines.append("The exact moment of the change is unknown.")
+    else:
+        fields = set(after.get("_fields", []))
+        changes = []
+        if "name" in fields and before.get("name") != after.get("name"):
+            changes.append(f"Renamed **{safe(before.get('name'), 70)}** → **{safe(after.get('name'), 70)}**")
+        if "category_id" in fields:
+            changes.append("moved to a different category")
+        if "topic" in fields:
+            changes.append("Topic changed")
+        if "slowmode_delay" in fields:
+            changes.append("Slowmode changed")
+        if "overwrites" in fields or "permissions" in fields:
+            changes.append("Permissions changed")
+        if "nsfw" in fields:
+            changes.append("Age restriction changed")
+        if "bitrate" in fields:
+            changes.append("Voice bitrate changed")
+        if "user_limit" in fields:
+            changes.append("Voice user limit changed")
+        if "rtc_region" in fields:
+            changes.append("Voice region changed")
+        if kind == "role" and "colour" in fields:
+            changes.append("Role colour changed")
+        if kind == "role" and "mentionable" in fields:
+            changes.append("Mention setting changed")
+        if kind == "role" and "hoist" in fields:
+            changes.append("Display setting changed")
+        if not changes:
+            changes.append("The resource changed")
+        lines.append("**What happened:** " + ". ".join(changes[:4]) + ".")
+        if len(changes) > 4:
+            lines.append(f"{len(changes) - 4} additional technical changes are stored in history.")
 
-    context = (
-        "\nThis is the net difference detected after GamerHQ came back online; the exact moment or actor is unknown."
-        if change["action"].endswith("_offline")
-        else "\nActor information was recorded by Discord audit evidence."
-        if change.get("actor_id")
-        else "\nWho made this change could not be verified reliably."
-    )
-    guidance = (
-        "\n\n**Undo available:** this restores only the listed editable fields after checking that nothing changed again."
-        if can_undo(change)
-        else "\n\n**Undo unavailable:** ordering, permissions, creation/deletion and uncertain offline changes need manual review. Deleted message/channel history cannot be recovered."
-    )
-    footer = context + guidance
-    body_text = "\n".join(body)
-    budget = max(0, 1950 - len(header) - len(footer))
-    if len(body_text) > budget:
-        body_text = body_text[:max(0, budget - 2)].rstrip() + "…"
-    return header + body_text + footer
+    if change.get("actor_id"):
+        lines.append("\nDiscord audit evidence identified an actor for this change.")
+    else:
+        lines.append("\nDiscord did not provide enough reliable audit evidence to identify who made it.")
+
+    if can_undo(change):
+        lines.append("\n**Undo available:** restores only the previous editable values after checking that nothing changed again.")
+    else:
+        lines.append("\n**Undo unavailable:** deletion, permissions, ordering and uncertain offline changes need manual review.")
+
+    return "\n".join(lines)[:1950]
 
 
 async def _fetch(guild, kind, resource_id, client):

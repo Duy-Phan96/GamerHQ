@@ -138,6 +138,16 @@ class ObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Channel changed', rendered)
         self.assertIn('before', observer.detail_text(change))
 
+    async def test_deleted_channel_details_are_plain_language_not_snapshot_diff(self):
+        resource = self.channel(name='🎯・looking-for-group')
+        await observer.observe(self.guild, 'channel', resource, None)
+        change = self.latest()
+        rendered = observer.detail_text(change)
+        self.assertIn('#🎯・looking-for-group', rendered)
+        self.assertIn('was deleted from Discord', rendered)
+        for noisy in ('Default Auto Archive Duration', 'Default Thread Slowmode Delay', 'Deleted:', 'Overwrites:'):
+            self.assertNotIn(noisy, rendered)
+
     async def test_first_baseline_is_quiet_then_offline_net_change_is_recorded_once(self):
         channel = self.channel()
         self.guild.channels = [channel]
