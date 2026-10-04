@@ -15,7 +15,7 @@ from skill_runtime.contracts.schedule import (
     schedule_to_dict,
 )
 from skill_runtime.runtime.registry import SkillRegistry
-from skill_runtime.runtime.scheduler import ScheduledJob, SchedulerEngine
+from skill_runtime.runtime.scheduler import ScheduledJob, SchedulerEngine, StaleSchedulerClaimError
 
 
 class FakeSkill:
@@ -249,6 +249,26 @@ class SchedulerEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, "RuntimeError")
         self.assertNotIn("private payload detail", code)
         self.assertEqual(next_run, 220)
+
+    async def test_stale_completion_does_not_stop_shared_scheduler(self):
+        await self.engine.upsert_job(
+            guild_id=1,
+            skill_id="scheduler-skill",
+            key="post:stale",
+            handler_id="post.execute.v1",
+            schedule=IntervalSchedule(60),
+            payload={},
+            now=100,
+        )
+
+        async def stale_finish(job, *, ran_at, next_run_at):
+            raise StaleSchedulerClaimError("stale")
+
+        self.store.finish_success = stale_finish
+        report = await self.engine.run_due(now=160)
+        self.assertEqual(report.claimed, 1)
+        self.assertEqual(report.executed, 0)
+        self.assertEqual(report.failed, 0)
 
     async def test_missing_handler_is_failure_not_crash(self):
         job = ScheduledJob(
