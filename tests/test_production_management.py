@@ -176,6 +176,29 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         text = _skill_detail_text(status)
         self.assertIn('External package: gamerhq-skill-external', text)
 
+    def test_unavailable_external_skill_has_no_enable_action(self):
+        from cogs.server_management import SkillDetailsView, _skill_detail_text
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        status = GuildSkillStatus(
+            skill_id='missing-external',
+            name='Missing External',
+            version='unknown',
+            description='Configured external Skill package is unavailable.',
+            enabled=False,
+            running=False,
+            health='UNAVAILABLE',
+            health_detail='The configured external Skill package could not be loaded.',
+            required_capabilities=(),
+            missing_capabilities=(),
+            source_kind='external',
+            source_distribution=None,
+        )
+        view = SkillDetailsView(self.guild, 42, status)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertNotIn('Review Enable', labels)
+        self.assertIn('Unavailable', _skill_detail_text(status))
+
     async def test_skill_lifecycle_change_requires_owner_review(self):
         from cogs.server_management import SkillDetailsView, SkillToggleConfirmView
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
