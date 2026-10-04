@@ -40,6 +40,10 @@ class SchedulerRunReport:
     unavailable_handlers: int
 
 
+class StaleSchedulerClaimError(RuntimeError):
+    """A claimed job was changed or reclaimed before completion."""
+
+
 class SchedulerStorePort(Protocol):
     async def upsert_job(self, job: ScheduledJob) -> None: ...
     async def remove_job(self, *, guild_id: int, skill_id: str, key: str) -> bool: ...
@@ -187,7 +191,7 @@ class SchedulerEngine:
 
             try:
                 await self.store.finish_success(job, ran_at=now, next_run_at=next_run)
-            except RuntimeError:
+            except StaleSchedulerClaimError:
                 # The job may have been edited, paused or deleted while its
                 # handler was running. Store revision/claim protection already
                 # guarantees that this stale completion did not overwrite the
