@@ -8,7 +8,7 @@ from types import MappingProxyType
 
 from database import db
 from skill_runtime.contracts.schedule import schedule_from_dict, schedule_to_dict
-from skill_runtime.runtime.scheduler import ScheduledJob
+from skill_runtime.runtime.scheduler import ScheduledJob, StaleSchedulerClaimError
 from .skill_host import _valid_identity
 
 _MAX_JOB_JSON_BYTES = 64 * 1024
@@ -203,7 +203,7 @@ class GamerHQSchedulerStore:
                     (int(next_run_at), int(ran_at), int(ran_at), *where),
                 )
             if cursor.rowcount != 1:
-                raise RuntimeError("Scheduler claim is stale; completion was not applied.")
+                raise StaleSchedulerClaimError("Scheduler claim is stale; completion was not applied.")
 
     async def finish_failure(self, job: ScheduledJob, *, error_code: str, next_run_at: int | None) -> None:
         where = self._owned_where(job)
@@ -221,7 +221,7 @@ class GamerHQSchedulerStore:
                 (next_run_at, error_code, now, *where),
             )
             if cursor.rowcount != 1:
-                raise RuntimeError("Scheduler claim is stale; failure was not applied.")
+                raise StaleSchedulerClaimError("Scheduler claim is stale; failure was not applied.")
 
     async def defer_job(self, job: ScheduledJob, *, next_run_at: int | None) -> None:
         where = self._owned_where(job)
@@ -237,7 +237,7 @@ class GamerHQSchedulerStore:
                 (next_run_at, now, *where),
             )
             if cursor.rowcount != 1:
-                raise RuntimeError("Scheduler claim is stale; defer was not applied.")
+                raise StaleSchedulerClaimError("Scheduler claim is stale; defer was not applied.")
 
     async def list_jobs(self, *, guild_id: int, skill_id: str | None = None) -> tuple[ScheduledJob, ...]:
         if guild_id <= 0:
