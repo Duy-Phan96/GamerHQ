@@ -12,6 +12,8 @@ class SkillProductionPackagingTests(unittest.TestCase):
             "skill_runtime/ ./skill_runtime/",
             "hosts/ ./hosts/",
             "skills/ ./skills/",
+            "packages/gamerhq-skill-recurring-posts/ /tmp/gamerhq-skill-recurring-posts/",
+            "pip install --no-cache-dir --no-deps /tmp/gamerhq-skill-recurring-posts",
         ):
             self.assertIn(required, dockerfile)
 
