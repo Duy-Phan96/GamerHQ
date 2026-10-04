@@ -143,5 +143,19 @@ Shared persistent Scheduler contracts/engine plus the GamerHQ SQLite host adapte
 
 See [Skill Scheduler](scheduler.md) for the scheduler contract and execution guarantees.
 
-### Later
-Discord adapter, Skills management UI, then Recurring Posts as the first reference Skill.
+### Slice F
+Guild-scoped Discord capability adapter plus `/server manage → Skills`.
+
+Portable Skills can inspect allowed channel metadata and send messages only through
+explicit capabilities. Discord.py exceptions are translated into host-neutral
+errors, and declared capabilities are validated against what the GamerHQ host
+actually provides before activation.
+
+The management UI reads the existing Skill registry and `skill_guild_state`.
+It does not create a second enablement store. Disabling a Skill therefore also
+continues to use the scheduler's existing disabled-Skill gate.
+
+### Next
+Recurring Posts becomes the first reference Skill using registry/lifecycle,
+Skill storage, `scheduler.jobs`, Discord capabilities and the Skills management
+surface.
