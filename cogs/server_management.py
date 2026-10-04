@@ -529,7 +529,7 @@ class RecurringPostScheduleView(Menu):
 class RecurringPostModal(discord.ui.Modal):
     def __init__(self, guild, actor_id, channel_id, kind):
         super().__init__(title={'interval': 'Interval Post', 'daily': 'Daily Post', 'weekly': 'Weekly Post'}[kind])
-        self.guild, self.actor_id, self.channel_id, self.kind = guild, actor_id, channel_id
+        self.guild, self.actor_id, self.channel_id, self.kind = guild, actor_id, channel_id, kind
         self.name = discord.ui.TextInput(label='Name', max_length=80, placeholder='Rules reminder')
         self.content = discord.ui.TextInput(
             label='Message',
