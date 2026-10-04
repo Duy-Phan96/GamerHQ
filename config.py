@@ -44,6 +44,20 @@ STREAMER_HUB_ENABLED = os.getenv("STREAMER_HUB_ENABLED", "false").lower() == "tr
 STREAMER_ROLE_SELECTION_ENABLED = os.getenv("STREAMER_ROLE_SELECTION_ENABLED", "false").lower() == "true"
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID", "").strip()
 
+
+def skill_ids(name):
+    values = tuple(value.strip() for value in os.getenv(name, "").split(",") if value.strip())
+    if len(set(values)) != len(values):
+        raise ConfigurationError(f"{name} must not contain duplicate Skill IDs.")
+    import re
+    pattern = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+    if any(not pattern.fullmatch(value) for value in values):
+        raise ConfigurationError(f"{name} must contain lowercase kebab-case Skill IDs.")
+    return values
+
+
+EXTERNAL_SKILLS = skill_ids("GAMERHQ_EXTERNAL_SKILLS")
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")
 CHOOSE_GAMES_CHANNEL_ID = discord_id("CHOOSE_GAMES_CHANNEL_ID")
