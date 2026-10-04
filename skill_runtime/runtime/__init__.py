@@ -4,8 +4,9 @@ from .event_bus import EventBus
 from .manager import SkillManager, SkillStateStorePort
 from .registry import SkillRegistry
 from .scoped import ScopedEventBus, ScopedSkillApi
-from .registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration
+from .registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration, ScopedSkillManagementRegistration
 from .packages import ENTRY_POINT_GROUP, InstalledSkillPackage, SkillPackageError, discover_installed_skills
+from .management_router import SkillManagementError, SkillManagementRouter
 
 __all__ = [
     "EventBus",
@@ -13,7 +14,10 @@ __all__ = [
     "ScopedSkillApi",
     "ScopedSchedulerRegistration",
     "ScopedSkillApiRegistration",
+    "ScopedSkillManagementRegistration",
     "SkillApiError",
+    "SkillManagementError",
+    "SkillManagementRouter",
     "ENTRY_POINT_GROUP",
     "InstalledSkillPackage",
     "SkillPackageError",
