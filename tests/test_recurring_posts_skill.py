@@ -2,8 +2,13 @@ import unittest
 from types import SimpleNamespace
 
 from skills.recurring_posts import (
+    CREATE_API,
+    DELETE_API,
+    GET_API,
     HANDLER_ID,
+    LIST_API,
     MIN_INTERVAL_SECONDS,
+    SET_ACTIVE_API,
     RecurringPostsSkill,
 )
 
@@ -82,6 +87,14 @@ class FakeRegistrationScheduler:
         self.handlers[handler_id] = handler
 
 
+class FakeManagementRegistration:
+    def __init__(self):
+        self.handlers = {}
+
+    def expose(self, contract_id, handler):
+        self.handlers[contract_id] = handler
+
+
 class RecurringPostsSkillTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.skill = RecurringPostsSkill()
@@ -110,10 +123,48 @@ class RecurringPostsSkillTests(unittest.IsolatedAsyncioTestCase):
         values.update(overrides)
         return await self.skill.create_post(self.ctx, **values)
 
-    async def test_registration_binds_one_stable_versioned_handler(self):
-        registration = FakeRegistrationScheduler()
-        await self.skill.register(SimpleNamespace(scheduler=registration))
-        self.assertEqual(tuple(registration.handlers), (HANDLER_ID,))
+    async def test_registration_binds_scheduler_and_management_contracts(self):
+        scheduler = FakeRegistrationScheduler()
+        management = FakeManagementRegistration()
+        await self.skill.register(
+            SimpleNamespace(scheduler=scheduler, management=management)
+        )
+        self.assertEqual(tuple(scheduler.handlers), (HANDLER_ID,))
+        self.assertEqual(
+            set(management.handlers),
+            {LIST_API, GET_API, CREATE_API, SET_ACTIVE_API, DELETE_API},
+        )
+
+    async def test_management_contracts_drive_crud_without_private_host_access(self):
+        created = await self.skill._manage_create(
+            self.ctx,
+            {
+                "name": "Rules reminder",
+                "channelId": 10,
+                "content": "Please remember the rules.",
+                "schedule": {"type": "interval", "seconds": MIN_INTERVAL_SECONDS},
+            },
+        )
+        post_id = created["post"]["id"]
+
+        listed = await self.skill._manage_list(self.ctx, {})
+        self.assertEqual(len(listed["posts"]), 1)
+
+        fetched = await self.skill._manage_get(self.ctx, {"postId": post_id})
+        self.assertEqual(fetched["post"]["content"], "Please remember the rules.")
+
+        paused = await self.skill._manage_set_active(
+            self.ctx,
+            {"postId": post_id, "active": False},
+        )
+        self.assertFalse(paused["post"]["active"])
+
+        deleted = await self.skill._manage_delete(
+            self.ctx,
+            {"postId": post_id},
+        )
+        self.assertTrue(deleted["deleted"])
+        self.assertEqual((await self.skill._manage_list(self.ctx, {}))["posts"], [])
 
     async def test_create_persists_configuration_and_upserts_scheduler_job(self):
         post = await self.create()
