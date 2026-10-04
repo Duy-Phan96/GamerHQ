@@ -1,15 +1,22 @@
 """Friendly entry points over the existing reviewed server operations."""
 import uuid
+from types import SimpleNamespace
 
 import discord
 from database import db
 from services.response_service import SafeView, check_admin
 from services.server_service import ServerMessageError
 from cogs.server import RoleAdminSession
-from skills.recurring_posts import schedule_label
+from skill_runtime.contracts.schedule import DailySchedule, IntervalSchedule, WeeklySchedule, schedule_from_dict
 
 TITLE = '# ⚙️ GamerHQ Server Management\nManage the most important GamerHQ settings.'
 SECTIONS = ('Core Server', 'Integrations', 'Roles & Permissions', 'Features', 'Review', 'Finish')
+
+_RECURRING_LIST_API = "recurring-posts.list.v1"
+_RECURRING_GET_API = "recurring-posts.get.v1"
+_RECURRING_CREATE_API = "recurring-posts.create.v1"
+_RECURRING_SET_ACTIVE_API = "recurring-posts.set-active.v1"
+_RECURRING_DELETE_API = "recurring-posts.delete.v1"
 
 
 def friendly_plan(view):
@@ -206,7 +213,7 @@ def _skill_detail_text(status):
         f'**Source:** {source}',
         f'**Status:** {_skill_status_label(status)}',
         f'**Runtime:** {"Running" if status.running else "Stopped"}',
-        f'**Configuration:** {"Available" if status.skill_id == "recurring-posts" else "No configuration surface registered."}',
+        f'**Configuration:** {"Available" if status.management_available else "No configuration surface registered."}',
         f'**Required capabilities:** {capabilities}',
     ]
     if status.missing_capabilities:
@@ -283,7 +290,7 @@ class SkillDetailsView(Menu):
                 'Review Disable' if status.enabled else 'Review Enable',
                 self.review_toggle,
             )
-        if status.skill_id == 'recurring-posts' and status.enabled:
+        if status.skill_id == 'recurring-posts' and status.enabled and status.management_available:
             self.action('Configure', self.configure)
         self.action('Back to Skills', self.back)
 
@@ -376,13 +383,55 @@ class SkillToggleConfirmView(Menu):
         )
 
 
-async def _recurring_runtime(interaction, guild):
+async def _recurring_call(interaction, guild, contract_id, payload):
     runtime = getattr(interaction.client, 'skill_runtime', None)
     if runtime is None:
         raise RuntimeError('Skill Runtime is unavailable.')
-    skill = runtime.registry.get('recurring-posts')
-    ctx = await runtime.context(guild.id, 'recurring-posts')
-    return runtime, skill, ctx
+    return await runtime.call_management(
+        guild_id=guild.id,
+        skill_id='recurring-posts',
+        contract_id=contract_id,
+        payload=payload,
+    )
+
+
+def _recurring_post(value):
+    if not isinstance(value, dict):
+        try:
+            value = dict(value)
+        except Exception as exc:
+            raise ValueError('Invalid Recurring Posts management response.') from exc
+    try:
+        schedule = dict(value['schedule'])
+        return SimpleNamespace(
+            id=str(value['id']),
+            name=str(value['name']),
+            channel_id=int(value['channelId']),
+            content=str(value['content']),
+            schedule=schedule,
+            active=bool(value['active']),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError('Invalid Recurring Posts management response.') from exc
+
+
+def _recurring_schedule_label(value):
+    schedule = schedule_from_dict(value)
+    if isinstance(schedule, IntervalSchedule):
+        minutes = schedule.seconds // 60
+        if minutes % 60 == 0:
+            hours = minutes // 60
+            return f"Every {hours} hour{'s' if hours != 1 else ''}"
+        return f"Every {minutes} minutes"
+    if isinstance(schedule, DailySchedule):
+        return f"Daily at {schedule.hour:02d}:{schedule.minute:02d} · {schedule.timezone}"
+    if isinstance(schedule, WeeklySchedule):
+        days = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+        return (
+            f"{days[schedule.weekday]} at {schedule.hour:02d}:{schedule.minute:02d} "
+            f"· {schedule.timezone}"
+        )
+    raise ValueError('Unsupported Recurring Posts schedule.')
 
 
 def _recurring_overview(posts):
@@ -399,15 +448,15 @@ def _recurring_overview(posts):
             state = '🟢 Active' if post.active else '⏸️ Paused'
             lines.append(
                 f'• **{discord.utils.escape_markdown(post.name)[:70]}** — {state}\n'
-                f'  <#{post.channel_id}> · {schedule_label(post.schedule)}'
+                f'  <#{post.channel_id}> · {_recurring_schedule_label(post.schedule)}'
             )
     return '\n'.join(lines)[:1950]
 
 
 async def open_recurring_posts(interaction, guild, actor_id):
     try:
-        _, skill, ctx = await _recurring_runtime(interaction, guild)
-        posts = await skill.list_posts(ctx)
+        response = await _recurring_call(interaction, guild, _RECURRING_LIST_API, {})
+        posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
     except Exception:
         return await interaction.response.edit_message(
             content='# 🔁 Recurring Posts\nConfiguration is currently unavailable.',
@@ -429,15 +478,20 @@ class RecurringPostPicker(discord.ui.Select):
                 discord.SelectOption(
                     label=post.name[:100],
                     value=post.id,
-                    description=(('Active' if post.active else 'Paused') + ' · ' + schedule_label(post.schedule))[:100],
+                    description=(('Active' if post.active else 'Paused') + ' · ' + _recurring_schedule_label(post.schedule))[:100],
                 )
                 for post in posts[:20]
             ],
         )
 
     async def callback(self, interaction):
-        _, skill, ctx = await _recurring_runtime(interaction, self.view.guild)
-        post = await skill.get_post(ctx, self.values[0])
+        response = await _recurring_call(
+            interaction,
+            self.view.guild,
+            _RECURRING_GET_API,
+            {'postId': self.values[0]},
+        )
+        post = _recurring_post(response['post'])
         await interaction.response.edit_message(
             content=_recurring_post_detail(post),
             view=RecurringPostDetailView(self.view.guild, self.view.admin_id, post),
@@ -616,15 +670,24 @@ class RecurringPostModal(discord.ui.Modal):
             )
         try:
             schedule = self._schedule_value()
-            _, skill, ctx = await _recurring_runtime(interaction, self.guild)
-            await skill.create_post(
-                ctx,
-                name=str(self.name.value),
-                channel_id=self.channel_id,
-                content=str(self.content.value),
-                schedule=schedule,
+            await _recurring_call(
+                interaction,
+                self.guild,
+                _RECURRING_CREATE_API,
+                {
+                    'name': str(self.name.value),
+                    'channelId': self.channel_id,
+                    'content': str(self.content.value),
+                    'schedule': schedule,
+                },
             )
-            posts = await skill.list_posts(ctx)
+            response = await _recurring_call(
+                interaction,
+                self.guild,
+                _RECURRING_LIST_API,
+                {},
+            )
+            posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
         except (ValueError, KeyError):
             return await interaction.response.send_message(
                 'That schedule is invalid. Use at least 15 minutes, a valid HH:MM time, and an IANA timezone such as Europe/Berlin.',
@@ -650,7 +713,7 @@ def _recurring_post_detail(post):
         f'# 🔁 {discord.utils.escape_markdown(post.name)[:80]}\n'
         f'**Status:** {state}\n'
         f'**Channel:** <#{post.channel_id}>\n'
-        f'**Schedule:** {schedule_label(post.schedule)}\n\n'
+        f'**Schedule:** {_recurring_schedule_label(post.schedule)}\n\n'
         f'**Message**\n{preview}'
     )[:1950]
 
@@ -667,8 +730,13 @@ class RecurringPostDetailView(Menu):
     async def toggle(self, interaction):
         if interaction.user.id != self.guild.owner_id:
             return await interaction.response.send_message('Only the server owner can change recurring posts.', ephemeral=True)
-        _, skill, ctx = await _recurring_runtime(interaction, self.guild)
-        post = await skill.set_active(ctx, post_id=self.post_id, active=not self.active)
+        response = await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_SET_ACTIVE_API,
+            {'postId': self.post_id, 'active': not self.active},
+        )
+        post = _recurring_post(response['post'])
         await interaction.response.edit_message(
             content=_recurring_post_detail(post),
             view=RecurringPostDetailView(self.guild, self.admin_id, post),
@@ -696,17 +764,32 @@ class RecurringPostDeleteConfirmView(Menu):
     async def confirm(self, interaction):
         if interaction.user.id != self.guild.owner_id:
             return await interaction.response.send_message('Only the server owner can delete recurring posts.', ephemeral=True)
-        _, skill, ctx = await _recurring_runtime(interaction, self.guild)
-        await skill.delete_post(ctx, post_id=self.post_id)
-        posts = await skill.list_posts(ctx)
+        await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_DELETE_API,
+            {'postId': self.post_id},
+        )
+        response = await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_LIST_API,
+            {},
+        )
+        posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
         await interaction.response.edit_message(
             content='✅ Recurring Post deleted.\n\n' + _recurring_overview(posts),
             view=RecurringPostsView(self.guild, self.admin_id, posts),
         )
 
     async def cancel(self, interaction):
-        _, skill, ctx = await _recurring_runtime(interaction, self.guild)
-        post = await skill.get_post(ctx, self.post_id)
+        response = await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_GET_API,
+            {'postId': self.post_id},
+        )
+        post = _recurring_post(response['post'])
         await interaction.response.edit_message(
             content=_recurring_post_detail(post),
             view=RecurringPostDetailView(self.guild, self.admin_id, post),
