@@ -27,7 +27,7 @@ def secret_findings(text):
         value=match.group(2)
         if len(value)<8 or value.casefold() in PLACEHOLDERS: continue
         if value.startswith(('os.','values.','self.','str(','(','<','$','env.','discord.')):continue
-        if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_')):continue
+        if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_','must-not-appear')):continue
         # Only assignments of literal secrets, not Python expressions/docs prose.
         line=text[match.start():text.find('\n',match.start()) if '\n' in text[match.start():] else len(text)]
         rhs=re.split(r'[:=]',line,maxsplit=1)[-1].lstrip()
