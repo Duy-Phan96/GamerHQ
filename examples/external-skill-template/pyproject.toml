@@ -18,3 +18,4 @@ packages = ["gamerhq_skill_example"]
 skill-id = "example-skill"
 runtime-api = "1"
 sdk = ">=0.1,<0.2"
+capabilities = []
