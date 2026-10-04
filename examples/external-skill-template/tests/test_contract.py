@@ -7,7 +7,7 @@ if str(TEMPLATE_ROOT) not in sys.path:
     sys.path.insert(0, str(TEMPLATE_ROOT))
 
 from gamerhq_skill_example import create_skill
-from skill_runtime import require_clean_skill_source, validate_skill_factory, validate_skill_package_metadata
+from skill_runtime import require_clean_skill_source, validate_skill_factory, validate_skill_package_matches_implementation, validate_skill_package_metadata
 
 
 class PackageContractTests(unittest.TestCase):
@@ -15,6 +15,13 @@ class PackageContractTests(unittest.TestCase):
         report = validate_skill_package_metadata(TEMPLATE_ROOT / "pyproject.toml")
         self.assertEqual(report.skill_id, "example-skill")
         self.assertEqual(report.runtime_api_version, "1")
+
+    def test_static_package_metadata_matches_executable_manifest(self):
+        report = validate_skill_package_matches_implementation(
+            TEMPLATE_ROOT / "pyproject.toml",
+            create_skill(),
+        )
+        self.assertEqual(report.capabilities, ())
 
     def test_skill_source_stays_portable(self):
         require_clean_skill_source((TEMPLATE_ROOT / "gamerhq_skill_example",))
