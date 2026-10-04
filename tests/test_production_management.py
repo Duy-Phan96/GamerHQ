@@ -124,6 +124,37 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)
 
+    async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
+        from cogs.server_management import ManagementView, SkillsView, open_skills
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        interaction = self.interaction(owner)
+        status = GuildSkillStatus(
+            skill_id='fixture-skill',
+            name='Fixture Skill',
+            version='1.0.0',
+            description='Portable fixture',
+            enabled=False,
+            running=False,
+            health='DISABLED',
+            health_detail='Skill is disabled for this guild.',
+            required_capabilities=('discord.messages.send',),
+            missing_capabilities=(),
+        )
+        runtime = SimpleNamespace(statuses=AsyncMock(return_value=(status,)))
+        interaction.client.skill_runtime = runtime
+
+        manage = ManagementView(self.guild, owner.id)
+        self.assertIn('Skills', [child.label for child in manage.children if isinstance(child, discord.ui.Button)])
+
+        await open_skills(interaction, self.guild, owner.id)
+        runtime.statuses.assert_awaited_once_with(guild_id=self.guild.id)
+        kwargs = interaction.response.edit_message.call_args.kwargs
+        self.assertIsInstance(kwargs['view'], SkillsView)
+        self.assertIn('Fixture Skill', kwargs['content'])
+        self.assertIn('Disabled', kwargs['content'])
+
     async def test_imported_catalog_is_offered_by_actual_select_games_button(self):
         from cogs.games import ChooseGamesButtons, GameSelectionSession
         from config import DISPLAY_GROUP_ORDER
