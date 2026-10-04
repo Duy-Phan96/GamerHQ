@@ -52,6 +52,7 @@ class GuildSkillStatus:
     missing_capabilities: tuple[str, ...]
     source_kind: str = "built-in"
     source_distribution: str | None = None
+    management_available: bool = False
 
 
 class GamerHQSkillRuntime:
@@ -124,6 +125,7 @@ class GamerHQSkillRuntime:
             missing_capabilities=(),
             source_kind="external",
             source_distribution=None,
+            management_available=False,
         )
 
     async def register_all(self) -> None:
@@ -328,6 +330,7 @@ class GamerHQSkillRuntime:
             missing_capabilities=missing,
             source_kind=source_kind,
             source_distribution=source_distribution,
+            management_available=bool(skill.manifest.management_apis.exposes),
         )
 
     async def statuses(self, *, guild_id: int) -> tuple[GuildSkillStatus, ...]:
