@@ -78,6 +78,7 @@ class GamerHQSkillRuntime:
         self._scheduler_stop = asyncio.Event()
         self._scheduler_task: asyncio.Task | None = None
         self._sources: dict[str, tuple[str, str | None]] = {}
+        self._unavailable_external: dict[str, str] = {}
 
     def register(
         self,
@@ -90,10 +91,35 @@ class GamerHQSkillRuntime:
             raise ValueError("Skill source kind must be built-in or external.")
         self.registry.register(skill)
         self._sources[skill.manifest.id] = (source_kind, source_distribution)
+        self.clear_external_unavailable(skill.manifest.id)
 
     def source(self, skill_id: str) -> tuple[str, str | None]:
         self.registry.get(skill_id)
         return self._sources.get(skill_id, ("built-in", None))
+
+    def record_external_unavailable(self, skill_id: str) -> None:
+        if self.registry.contains(skill_id):
+            return
+        self._unavailable_external[skill_id] = "package_unavailable"
+
+    def clear_external_unavailable(self, skill_id: str) -> None:
+        self._unavailable_external.pop(skill_id, None)
+
+    def _unavailable_status(self, skill_id: str) -> GuildSkillStatus:
+        return GuildSkillStatus(
+            skill_id=skill_id,
+            name=skill_id.replace("-", " ").title(),
+            version="unknown",
+            description="Configured external Skill package is unavailable.",
+            enabled=False,
+            running=False,
+            health="UNAVAILABLE",
+            health_detail="The configured external Skill package could not be loaded.",
+            required_capabilities=(),
+            missing_capabilities=(),
+            source_kind="external",
+            source_distribution=None,
+        )
 
     async def register_all(self) -> None:
         await self.manager.register_all()
@@ -236,6 +262,8 @@ class GamerHQSkillRuntime:
                 self.log.exception("Skill shutdown failed guild=%s", guild.id)
 
     async def status(self, *, guild_id: int, skill_id: str) -> GuildSkillStatus:
+        if not self.registry.contains(skill_id) and skill_id in self._unavailable_external:
+            return self._unavailable_status(skill_id)
         skill = self.registry.get(skill_id)
         permissions = self.permissions(skill_id)
         missing = permissions.missing_declared()
@@ -281,4 +309,7 @@ class GamerHQSkillRuntime:
         result = []
         for skill in self.registry.all():
             result.append(await self.status(guild_id=guild_id, skill_id=skill.manifest.id))
-        return tuple(result)
+        for skill_id in sorted(self._unavailable_external):
+            if not self.registry.contains(skill_id):
+                result.append(self._unavailable_status(skill_id))
+        return tuple(sorted(result, key=lambda item: item.skill_id))
