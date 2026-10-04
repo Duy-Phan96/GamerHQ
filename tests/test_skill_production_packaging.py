@@ -15,6 +15,18 @@ class SkillProductionPackagingTests(unittest.TestCase):
         ):
             self.assertIn(required, dockerfile)
 
+    def test_docker_context_includes_complete_skill_runtime_stack(self):
+        dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+        for required in (
+            "!skill_runtime/",
+            "!skill_runtime/**/*.py",
+            "!hosts/",
+            "!hosts/**/*.py",
+            "!skills/",
+            "!skills/**/*.py",
+        ):
+            self.assertIn(required, dockerignore)
+
     def test_ci_keeps_packaging_checks_running_after_independent_audit_failure(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(
             encoding="utf-8"
