@@ -129,9 +129,10 @@ Start here when building a new Skill:
 
 1. [Skill Developer Guide](developer-guide.md)
 2. [Strict Authoring Contract](authoring-contract.md)
-3. [Skill Review Checklist](review-checklist.md)
-4. [External Skill packages](external-packages.md)
-5. [Creating a Skill](creating-a-skill.md)
+3. [SDK Conformance Check](conformance.md)
+4. [Skill Review Checklist](review-checklist.md)
+5. [External Skill packages](external-packages.md)
+6. [Creating a Skill](creating-a-skill.md)
 
 The Developer Guide is the primary human-facing reference. The Authoring
 Contract is intentionally stricter and may also be used as input for code
