@@ -96,7 +96,8 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
                    ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
-                   ('Managed Messages', self.messages), ('Games', self.games), ('Features', self.features),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Skills', self.skills),
+                   ('Features', self.features),
                    ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
             actions.append(('Owner Change Log', self.owner_changelog))
@@ -143,6 +144,9 @@ class ManagementView(Menu):
         from cogs.managed_messages import open_editor
         await open_editor(interaction)
 
+    async def skills(self, interaction):
+        await open_skills(interaction, self.guild, self.admin_id)
+
     async def features(self, interaction):
         import config
         await interaction.response.edit_message(content='# Features\n'
@@ -159,6 +163,159 @@ class ManagementView(Menu):
         destination = channel(self.guild)
         text = f'Private operational updates: {destination.mention}' if destination else 'The private STAFF log needs attention. Review existing channels, then preview fixes; the owner can add missing resources.'
         await interaction.response.edit_message(content='# 📜 Server Log\n' + text, view=StructureView(self.guild, self.admin_id))
+
+
+def _skill_status_label(status):
+    if status.missing_capabilities or status.health in ('UNAVAILABLE', 'ERROR', 'FAIL'):
+        return '🔴 Unavailable'
+    if status.enabled:
+        return '🟢 Enabled'
+    return '⚪ Disabled'
+
+
+def _skills_overview_text(statuses):
+    lines = [
+        '# 🧩 Skills',
+        'Manage portable GamerHQ Skills for this server. Enablement is stored per guild; Discord remains an integration, not the source of truth.',
+    ]
+    if not statuses:
+        lines.append('')
+        lines.append('No portable Skills are registered in this build yet.')
+        return '\n'.join(lines)
+    lines.append('')
+    for status in statuses[:25]:
+        lines.append(
+            f'• **{discord.utils.escape_markdown(status.name)[:80]}** '
+            f'v{status.version} — {_skill_status_label(status)}'
+        )
+    if len(statuses) > 25:
+        lines.append(f'\n{len(statuses) - 25} additional Skills are not shown in this Discord selector.')
+    lines.append('\nSelect a Skill to review capabilities and activation.')
+    return '\n'.join(lines)[:1950]
+
+
+def _skill_detail_text(status):
+    capabilities = ', '.join(f'`{value}`' for value in status.required_capabilities) or 'None'
+    lines = [
+        f'# 🧩 {discord.utils.escape_markdown(status.name)[:80]}',
+        discord.utils.escape_markdown(status.description)[:500],
+        '',
+        f'**Version:** {status.version}',
+        f'**Status:** {_skill_status_label(status)}',
+        f'**Runtime:** {"Running" if status.running else "Stopped"}',
+        '**Configuration:** No configuration surface registered.',
+        f'**Required capabilities:** {capabilities}',
+    ]
+    if status.missing_capabilities:
+        lines.append('**Unavailable capabilities:** ' + ', '.join(
+            f'`{value}`' for value in status.missing_capabilities
+        ))
+    if status.health_detail:
+        lines.append(f'**Health:** {discord.utils.escape_markdown(status.health_detail)[:300]}')
+    return '\n'.join(lines)[:1950]
+
+
+async def open_skills(interaction, guild, actor_id):
+    runtime = getattr(interaction.client, 'skill_runtime', None)
+    if runtime is None:
+        return await interaction.response.edit_message(
+            content='# 🧩 Skills\nSkill Runtime is unavailable in this process.',
+            view=ManagementView(guild, actor_id),
+        )
+    statuses = await runtime.statuses(guild_id=guild.id)
+    await interaction.response.edit_message(
+        content=_skills_overview_text(statuses),
+        view=SkillsView(guild, actor_id, statuses),
+    )
+
+
+class SkillPicker(discord.ui.Select):
+    def __init__(self, statuses):
+        super().__init__(
+            placeholder='Choose a Skill',
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=status.name[:100],
+                    value=status.skill_id,
+                    description=(f'{_skill_status_label(status)} • v{status.version}')[:100],
+                )
+                for status in statuses[:25]
+            ],
+        )
+
+    async def callback(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        if runtime is None:
+            return await interaction.response.edit_message(
+                content='# 🧩 Skills\nSkill Runtime is unavailable in this process.',
+                view=ManagementView(self.view.guild, self.view.admin_id),
+            )
+        status = await runtime.status(guild_id=self.view.guild.id, skill_id=self.values[0])
+        await interaction.response.edit_message(
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.view.guild, self.view.admin_id, status),
+        )
+
+
+class SkillsView(Menu):
+    def __init__(self, guild, actor_id, statuses):
+        super().__init__(guild, actor_id)
+        self.statuses = tuple(statuses)
+        if self.statuses:
+            self.add_item(SkillPicker(self.statuses))
+        self.action('Back to Management', self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(content=TITLE, view=ManagementView(self.guild, self.admin_id))
+
+
+class SkillDetailsView(Menu):
+    def __init__(self, guild, actor_id, status):
+        super().__init__(guild, actor_id)
+        self.skill_id = status.skill_id
+        if not status.missing_capabilities:
+            self.action('Disable' if status.enabled else 'Enable', self.toggle)
+        self.action('Back to Skills', self.back)
+
+    async def _refresh(self, interaction, *, notice=None):
+        runtime = interaction.client.skill_runtime
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        text = _skill_detail_text(status)
+        if notice:
+            text = (notice + '\n\n' + text)[:1950]
+        await interaction.edit_original_response(
+            content=text,
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+    async def toggle(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        if runtime is None:
+            return await interaction.response.send_message('Skill Runtime is unavailable.', ephemeral=True)
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if status.enabled:
+                changed = await runtime.disable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
+                notice = '✅ Skill disabled.' if changed else 'ℹ️ Skill was already disabled.'
+            else:
+                changed = await runtime.enable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
+                notice = '✅ Skill enabled.' if changed else 'ℹ️ Skill was already enabled.'
+        except (PermissionError, ValueError, KeyError):
+            notice = '❌ This Skill cannot be activated with the current host capabilities.'
+        except Exception:
+            notice = '❌ Skill activation failed. Check the private server log.'
+        await self._refresh(interaction, notice=notice)
+
+    async def back(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        statuses = await runtime.statuses(guild_id=self.guild.id) if runtime is not None else ()
+        await interaction.response.edit_message(
+            content=_skills_overview_text(statuses),
+            view=SkillsView(self.guild, self.admin_id, statuses),
+        )
 
 
 class StructureView(Menu):
