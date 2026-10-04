@@ -114,3 +114,22 @@ an arbitrary URL supplied by the Skill.
 This does not replace package signing or a future trust registry, but it prevents
 the basic operational ambiguity of seeing an enabled Skill without knowing which
 installed package provided it.
+
+## Failure isolation
+
+Configured external packages are loaded independently.
+
+A missing, broken or incompatible external Skill must not prevent GamerHQ,
+built-in Skills or another healthy external Skill from starting.
+
+When loading fails:
+
+- the package code is not activated;
+- the Skill is marked unavailable in the host Runtime;
+- `/server manage → Skills` still shows the configured Skill;
+- no Enable action is offered while the package is unavailable;
+- user-facing status uses a bounded generic explanation;
+- private import/validation exception details are not exposed.
+
+If a later deployment installs or fixes the package, successful registration
+clears the unavailable marker and the normal disabled/enabled lifecycle resumes.
