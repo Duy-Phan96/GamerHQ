@@ -112,3 +112,12 @@ The portable `SkillRegistry` validates code-level registrations. It does **not**
 - an unknown persisted Skill ID fails closed and should be surfaced by host health diagnostics.
 
 The manager does not know whether the host uses SQLite, PostgreSQL, a service, or another persistence mechanism.
+
+
+## External packages
+
+A Skill may live in its own Git repository and be installed as a Python package.
+External packages use the `gamerhq.skills` entry-point group and are loaded only
+when their stable Skill ID appears in the deployment allowlist.
+
+See [External Skill packages](external-packages.md).
