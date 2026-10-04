@@ -278,7 +278,7 @@ class SkillDetailsView(Menu):
     def __init__(self, guild, actor_id, status):
         super().__init__(guild, actor_id)
         self.skill_id = status.skill_id
-        if not status.missing_capabilities:
+        if not status.missing_capabilities and status.health not in ('UNAVAILABLE', 'ERROR'):
             self.action(
                 'Review Disable' if status.enabled else 'Review Enable',
                 self.review_toggle,
