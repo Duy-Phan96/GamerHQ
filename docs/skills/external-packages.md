@@ -97,3 +97,20 @@ that SDK is the next packaging milestone.
 
 See [Creating a Skill](creating-a-skill.md) and the
 [external Skill template](../../examples/external-skill-template/README.md).
+
+
+## Runtime provenance
+
+When GamerHQ registers a Skill, the host records whether it came from:
+
+- a built-in GamerHQ Skill; or
+- an external installed Python distribution.
+
+The Skills management detail view surfaces this provenance to administrators.
+
+For external Skills the displayed source is the installed distribution name, not
+an arbitrary URL supplied by the Skill.
+
+This does not replace package signing or a future trust registry, but it prevents
+the basic operational ambiguity of seeing an enabled Skill without knowing which
+installed package provided it.
