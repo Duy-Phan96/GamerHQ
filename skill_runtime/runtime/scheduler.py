@@ -185,7 +185,15 @@ class SchedulerEngine:
                 failed += 1
                 continue
 
-            await self.store.finish_success(job, ran_at=now, next_run_at=next_run)
+            try:
+                await self.store.finish_success(job, ran_at=now, next_run_at=next_run)
+            except RuntimeError:
+                # The job may have been edited, paused or deleted while its
+                # handler was running. Store revision/claim protection already
+                # guarantees that this stale completion did not overwrite the
+                # newer state. Treat it as isolated work instead of killing the
+                # shared scheduler loop.
+                continue
             executed += 1
 
         return SchedulerRunReport(
