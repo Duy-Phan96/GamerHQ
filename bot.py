@@ -39,7 +39,10 @@ class GamerHQBot(commands.Bot):
         db.seed_catalog()
 
         from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+        from skills import first_party_skills
         self.skill_runtime = GamerHQSkillRuntime(self)
+        for skill in first_party_skills():
+            self.skill_runtime.register(skill)
         await self.skill_runtime.register_all()
 
         await self.load_extension("cogs.games")
@@ -84,7 +87,11 @@ class GamerHQBot(commands.Bot):
                 if getattr(self, 'twitch_hub', None):
                     await self.twitch_hub.close()
         finally:
-            await super().close()
+            try:
+                if self.skill_runtime is not None:
+                    await self.skill_runtime.close()
+            finally:
+                await super().close()
 
 
 bot = GamerHQBot()
@@ -93,6 +100,12 @@ bot = GamerHQBot()
 @bot.event
 async def on_ready():
     print(f"GamerHQ Bot is online as {bot.user}!")
+    if bot.skill_runtime is not None:
+        try:
+            await bot.skill_runtime.start_scheduler()
+        except Exception:
+            logging.getLogger(__name__).exception('Skill Scheduler failed to start.')
+
     for guild in bot.guilds:
         if guild.id not in bot.operational_log_started:
             bot.operational_log_started.add(guild.id)
