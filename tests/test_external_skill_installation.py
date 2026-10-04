@@ -47,17 +47,26 @@ class ExternalSkillInstallationTests(unittest.TestCase):
                 )
 
             code = """
+import os
+from pathlib import Path
+import gamerhq_skill_recurring_posts
 from skill_runtime import validate_skill_implementation
 from skill_runtime.runtime.packages import discover_installed_skills
 
+target = Path(os.environ["GAMERHQ_TEST_TARGET"]).resolve()
+module_path = Path(gamerhq_skill_recurring_posts.__file__).resolve()
+assert target in module_path.parents
+
 loaded = discover_installed_skills(("example-skill", "recurring-posts"))
 assert [item.entry_point for item in loaded] == ["example-skill", "recurring-posts"]
+assert loaded[1].distribution == "gamerhq-skill-recurring-posts"
 reports = [validate_skill_implementation(item.skill) for item in loaded]
 assert [report.skill_id for report in reports] == ["example-skill", "recurring-posts"]
 print(",".join(report.skill_id for report in reports))
 """
             env = os.environ.copy()
             env["PYTHONPATH"] = str(target)
+            env["GAMERHQ_TEST_TARGET"] = str(target)
             result = subprocess.run(
                 [sys.executable, "-c", code],
                 cwd=temp_path,
