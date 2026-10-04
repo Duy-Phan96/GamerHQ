@@ -60,6 +60,26 @@ class SkillRuntimeBoundaryTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(ROOT)} contains {value!r}")
         self.assertEqual(violations, [], "\n".join(violations))
 
+    def test_server_management_does_not_import_private_skill_implementations(self):
+        path = ROOT / "cogs" / "server_management.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        violations = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules = [node.module]
+            else:
+                continue
+            for module in modules:
+                if module == "skills" or module.startswith("skills."):
+                    violations.append(module)
+        self.assertEqual(
+            violations,
+            [],
+            "Server management must use public Skill management contracts, not private Skill imports.",
+        )
+
     def test_gamerhq_adapter_is_outside_portable_runtime(self):
         adapter = ROOT / "hosts" / "gamerhq" / "skill_host.py"
         self.assertTrue(adapter.is_file())
