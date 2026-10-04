@@ -46,8 +46,11 @@ def discover_installed_skills(enabled: Iterable[str]) -> tuple[InstalledSkillPac
     if invalid:
         raise SkillPackageError("External Skill allowlist contains an invalid Skill ID.")
 
+    requested_set = set(requested)
     available = {}
     for entry_point in _entry_points():
+        if entry_point.name not in requested_set:
+            continue
         if entry_point.name in available:
             raise SkillPackageError(
                 f"Multiple installed packages expose Skill entry point: {entry_point.name}."
