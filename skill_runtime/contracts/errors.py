@@ -7,7 +7,7 @@ class HostCapabilityError(RuntimeError):
     code = "host_capability_error"
 
 
-class CapabilityUnavailableError(HostCapabilityError):
+class CapabilityUnavailableError(HostCapabilityError, PermissionError):
     code = "capability_unavailable"
 
 
@@ -15,11 +15,11 @@ class ResourceNotFoundError(HostCapabilityError):
     code = "resource_not_found"
 
 
-class HostPermissionDeniedError(HostCapabilityError):
+class HostPermissionDeniedError(HostCapabilityError, PermissionError):
     code = "permission_denied"
 
 
-class InvalidHostOperationError(HostCapabilityError):
+class InvalidHostOperationError(HostCapabilityError, ValueError):
     code = "invalid_operation"
 
 
