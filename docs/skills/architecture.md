@@ -197,3 +197,29 @@ normal capability/lifecycle enforcement
 
 The runtime never clones a Git repository or runs package installation from a
 Discord interaction.
+
+
+## Host management contracts
+
+Portable Skills may expose versioned Management APIs for trusted host
+administration surfaces.
+
+Dependency direction:
+
+```text
+GamerHQ management UI
+        ↓
+SkillManagementRouter
+        ↓
+versioned Management API
+        ↓
+fresh guild-scoped SkillContext
+        ↓
+portable Skill implementation
+```
+
+This prevents host UI code from importing an external Skill's private Python
+implementation merely to configure it.
+
+Management APIs are not Skill-to-Skill APIs and do not grant another Skill
+access to administrative operations.
