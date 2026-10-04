@@ -1,10 +1,15 @@
 # Recurring Posts Skill
 
-Recurring Posts is GamerHQ's first complete reference Skill.
+Recurring Posts is GamerHQ's first complete reference external Skill package.
 
 Its purpose is both practical and architectural: it proves that a real feature
-can be implemented without importing GamerHQ business logic, Discord.py or raw
-database helpers.
+can be implemented, packaged and discovered independently without importing
+GamerHQ business logic, Discord.py or raw database helpers.
+
+The package currently lives at
+`packages/gamerhq-skill-recurring-posts/` as an extraction-ready staging
+location. That directory is intentionally structured so it can move into its own
+GitHub repository without changing the Skill ID or host management contracts.
 
 ## User flow
 
@@ -103,3 +108,21 @@ Current V1:
 - no arbitrary cron expressions.
 
 These constraints keep the first reference Skill simple, predictable and safe.
+
+
+## Package boundary
+
+Distribution: `gamerhq-skill-recurring-posts`
+
+Entry point:
+
+```toml
+[project.entry-points."gamerhq.skills"]
+recurring-posts = "gamerhq_skill_recurring_posts:create_skill"
+```
+
+GamerHQ installs the package in the reviewed production image and loads it
+through the same external package discovery path used by third-party Skills.
+
+The host UI does not import the package implementation. Configuration is routed
+only through the versioned Recurring Posts Management APIs.
