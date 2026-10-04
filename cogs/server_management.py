@@ -196,12 +196,14 @@ def _skills_overview_text(statuses):
 
 
 def _skill_detail_text(status):
+    source = 'Built-in GamerHQ Skill' if status.source_kind == 'built-in' else f'External package: {discord.utils.escape_markdown(status.source_distribution or "unknown")[:100]}'
     capabilities = ', '.join(f'`{value}`' for value in status.required_capabilities) or 'None'
     lines = [
         f'# 🧩 {discord.utils.escape_markdown(status.name)[:80]}',
         discord.utils.escape_markdown(status.description)[:500],
         '',
         f'**Version:** {status.version}',
+        f'**Source:** {source}',
         f'**Status:** {_skill_status_label(status)}',
         f'**Runtime:** {"Running" if status.running else "Stopped"}',
         f'**Configuration:** {"Available" if status.skill_id == "recurring-posts" else "No configuration surface registered."}',
