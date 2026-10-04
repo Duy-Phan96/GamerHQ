@@ -49,6 +49,8 @@ class GuildSkillStatus:
     health_detail: str
     required_capabilities: tuple[str, ...]
     missing_capabilities: tuple[str, ...]
+    source_kind: str = "built-in"
+    source_distribution: str | None = None
 
 
 class GamerHQSkillRuntime:
@@ -75,9 +77,23 @@ class GamerHQSkillRuntime:
         self.log = logging.getLogger("gamerhq.skills")
         self._scheduler_stop = asyncio.Event()
         self._scheduler_task: asyncio.Task | None = None
+        self._sources: dict[str, tuple[str, str | None]] = {}
 
-    def register(self, skill) -> None:
+    def register(
+        self,
+        skill,
+        *,
+        source_kind: str = "built-in",
+        source_distribution: str | None = None,
+    ) -> None:
+        if source_kind not in {"built-in", "external"}:
+            raise ValueError("Skill source kind must be built-in or external.")
         self.registry.register(skill)
+        self._sources[skill.manifest.id] = (source_kind, source_distribution)
+
+    def source(self, skill_id: str) -> tuple[str, str | None]:
+        self.registry.get(skill_id)
+        return self._sources.get(skill_id, ("built-in", None))
 
     async def register_all(self) -> None:
         await self.manager.register_all()
@@ -245,6 +261,7 @@ class GamerHQSkillRuntime:
                 health = report.state
                 detail = report.detail
 
+        source_kind, source_distribution = self.source(skill_id)
         return GuildSkillStatus(
             skill_id=skill.manifest.id,
             name=skill.manifest.name,
@@ -256,6 +273,8 @@ class GamerHQSkillRuntime:
             health_detail=detail,
             required_capabilities=tuple(skill.manifest.permissions),
             missing_capabilities=missing,
+            source_kind=source_kind,
+            source_distribution=source_distribution,
         )
 
     async def statuses(self, *, guild_id: int) -> tuple[GuildSkillStatus, ...]:
