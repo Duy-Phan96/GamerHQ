@@ -36,3 +36,29 @@ It deliberately does not:
 
 Use it as one fast preflight in addition to the full tests and
 [Skill Review Checklist](review-checklist.md).
+
+
+## Static source audit
+
+Use the SDK source audit to catch obvious host coupling before review:
+
+```python
+from pathlib import Path
+from skill_runtime import require_clean_skill_source
+
+require_clean_skill_source((Path("gamerhq_skill_example"),))
+```
+
+The source audit does not import or execute the inspected files. It parses Python
+source and rejects known forbidden boundaries such as:
+
+- Discord.py imports;
+- GamerHQ bot/cog/config/database/host/service imports;
+- another first-party `skills` package import;
+- `dotenv`;
+- `subprocess`;
+- direct `os.getenv` / `os.environ` access;
+- `os.system` / `os.popen`.
+
+This is a developer guard, not a malware sandbox or proof that code is safe.
+Human review and the full Skill Review Checklist are still required.
