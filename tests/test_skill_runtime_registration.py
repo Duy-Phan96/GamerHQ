@@ -60,6 +60,58 @@ class SkillRuntimeRegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.db_patch.stop()
         self.temp.cleanup()
 
+    async def test_registration_tracks_builtin_and_external_provenance(self):
+        self.assertEqual(
+            self.runtime.source("registration-fixture"),
+            ("built-in", None),
+        )
+
+        external = RegistrationFixtureSkill()
+        external.manifest = SkillManifest(
+            id="external-fixture",
+            name="External Fixture",
+            version="1.0.0",
+            runtime_api_version="1",
+            description="fixture",
+            author="test",
+            permissions=(SkillCapability.SCHEDULER_JOBS.value,),
+        )
+        self.runtime.register(
+            external,
+            source_kind="external",
+            source_distribution="gamerhq-skill-external-fixture",
+        )
+        self.assertEqual(
+            self.runtime.source("external-fixture"),
+            ("external", "gamerhq-skill-external-fixture"),
+        )
+
+    async def test_status_exposes_skill_provenance(self):
+        external = RegistrationFixtureSkill()
+        external.manifest = SkillManifest(
+            id="external-status",
+            name="External Status",
+            version="1.0.0",
+            runtime_api_version="1",
+            description="fixture",
+            author="test",
+            permissions=(SkillCapability.SCHEDULER_JOBS.value,),
+        )
+        self.runtime.register(
+            external,
+            source_kind="external",
+            source_distribution="gamerhq-skill-external-status",
+        )
+        status = await self.runtime.status(
+            guild_id=self.guild.id,
+            skill_id="external-status",
+        )
+        self.assertEqual(status.source_kind, "external")
+        self.assertEqual(
+            status.source_distribution,
+            "gamerhq-skill-external-status",
+        )
+
     async def test_registration_runs_once_and_handler_receives_guild_context(self):
         await self.runtime.register_all()
         await self.runtime.register_all()
