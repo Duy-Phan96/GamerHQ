@@ -49,3 +49,21 @@ move.
 
 Run the GamerHQ SDK conformance/source-audit checks and the package's offline
 tests before release.
+
+
+## Developer workflow
+
+Before changing behavior, review:
+
+- `SKILL_DESIGN.md` — architecture and contract inventory;
+- `AGENTS.md` — repository rules for developers and coding agents;
+- `RELEASE_CHECKLIST.md` — release and deployment readiness.
+
+The GamerHQ host migration/extraction procedure is documented in:
+
+`docs/skills/recurring-posts-extraction.md`
+
+from the GamerHQ repository.
+
+The package must remain independently testable without a Discord token or
+production database.
