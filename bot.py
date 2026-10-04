@@ -40,12 +40,15 @@ class GamerHQBot(commands.Bot):
 
         from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
         from skills import first_party_skills
-        from hosts.gamerhq.skill_packages import load_external_skill_packages
+        from hosts.gamerhq.skill_packages import configured_skill_ids, load_external_skill_packages
         from config import EXTERNAL_SKILLS
         self.skill_runtime = GamerHQSkillRuntime(self)
         for skill in first_party_skills():
             self.skill_runtime.register(skill, source_kind="built-in")
-        load_external_skill_packages(self.skill_runtime, EXTERNAL_SKILLS)
+        load_external_skill_packages(
+            self.skill_runtime,
+            configured_skill_ids(EXTERNAL_SKILLS),
+        )
         await self.skill_runtime.register_all()
 
         await self.load_extension("cogs.games")
