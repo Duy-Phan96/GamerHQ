@@ -14,6 +14,7 @@ from typing import Any, Iterable, Mapping
 
 from database import db
 from skill_runtime.contracts.capabilities import KNOWN_CAPABILITIES, SkillCapability
+from skill_runtime.contracts.errors import CapabilityUnavailableError
 from skill_runtime.contracts.manifest import SKILL_ID
 
 _STORAGE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -77,6 +78,24 @@ class CapabilityPermissions:
         if unknown:
             raise ValueError("Unknown declared Skill capability: " + ", ".join(sorted(unknown)))
 
+    @property
+    def declared(self) -> frozenset[str]:
+        return self._declared
+
+    @property
+    def available(self) -> frozenset[str]:
+        return self._available
+
+    def missing_declared(self) -> tuple[str, ...]:
+        return tuple(sorted(self._declared - self._available))
+
+    def require_all_declared(self) -> None:
+        missing = self.missing_declared()
+        if missing:
+            raise CapabilityUnavailableError(
+                "Host does not provide required Skill capabilities: " + ", ".join(missing) + "."
+            )
+
     def allows(self, capability: str) -> bool:
         return capability in self._declared and capability in self._available
 
@@ -86,7 +105,7 @@ class CapabilityPermissions:
         if capability not in self._declared:
             raise PermissionError(f"Skill did not declare capability: {capability}.")
         if capability not in self._available:
-            raise PermissionError(f"Host does not provide capability: {capability}.")
+            raise CapabilityUnavailableError(f"Host does not provide capability: {capability}.")
 
 
 class GamerHQSkillStorage:
