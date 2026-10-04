@@ -1,0 +1,99 @@
+# External Skill packages
+
+GamerHQ Skills may live in independent Git repositories and Python packages.
+
+The host does not clone or install remote code at runtime. Deployment installs a
+reviewed package first; GamerHQ then loads only explicitly allowlisted Skill
+entry points.
+
+## Package contract
+
+An external package exposes exactly one zero-argument factory through the Python
+entry-point group:
+
+```text
+gamerhq.skills
+```
+
+Example `pyproject.toml`:
+
+```toml
+[project]
+name = "gamerhq-skill-hello-world"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[project.entry-points."gamerhq.skills"]
+hello-world = "gamerhq_skill_hello_world:create_skill"
+```
+
+The entry-point name must exactly match `skill.manifest.id`.
+
+Example factory:
+
+```python
+def create_skill():
+    return HelloWorldSkill()
+```
+
+## Host allowlist
+
+Installing a Python package is not sufficient to activate it.
+
+The deployment must also explicitly list its Skill ID:
+
+```env
+GAMERHQ_EXTERNAL_SKILLS=hello-world,server-reminders
+```
+
+At startup GamerHQ:
+
+1. reads the explicit allowlist;
+2. discovers already-installed `gamerhq.skills` entry points;
+3. loads only matching IDs;
+4. verifies entry-point name == manifest ID;
+5. passes the Skill through the normal SkillRegistry validation;
+6. applies the same capability and Runtime API compatibility checks as first-party Skills.
+
+Unknown, duplicated or broken packages fail closed.
+
+## GitHub workflow
+
+A future developer can keep each Skill in its own repository:
+
+```text
+gamerhq-skill-recurring-posts/
+gamerhq-skill-events/
+gamerhq-skill-xp/
+gamerhq-skill-amazon-deals/
+```
+
+Each repository owns its implementation, tests, README, changelog and package
+version. GamerHQ owns the Runtime/SDK and host capability contracts.
+
+This means a Skill can be developed, versioned and reviewed without adding its
+private implementation to the GamerHQ repository.
+
+## Installation model
+
+V1 installation is deployment-controlled, for example by pinning the package or
+Git commit during image build.
+
+Do not implement a Discord command that runs `git clone`, `pip install` or
+executes a GitHub URL directly. Package installation changes executable code and
+belongs to a reviewed deployment boundary.
+
+A later website/marketplace may automate that deployment workflow after package
+signing, trust policy, compatibility checks and rollback behavior are defined.
+
+## SDK dependency
+
+The public Runtime Python package is still physically located in GamerHQ today.
+The entry-point contract is designed so `skill_runtime/` can later be published
+as a dedicated SDK package without changing Skill manifests or entry-point IDs.
+
+For a fully independent third-party developer experience, extracting/publishing
+that SDK is the next packaging milestone.
+
+See [Creating a Skill](creating-a-skill.md) and the
+[external Skill template](../../examples/external-skill-template/README.md).
