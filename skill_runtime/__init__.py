@@ -79,6 +79,7 @@ __all__ = [
     "validate_skill_factory",
     "validate_skill_implementation",
     "validate_skill_package_metadata",
+    "validate_skill_package_matches_implementation",
     "SkillPackageMetadataReport",
     "SkillSourceAuditReport",
     "SkillSourceFinding",
@@ -86,4 +87,4 @@ __all__ = [
     "require_clean_skill_source",
 ]
 
-from .devtools import SkillConformanceError, SkillConformanceReport, SkillPackageMetadataReport, SkillSourceAuditReport, SkillSourceFinding, audit_skill_source, require_clean_skill_source, validate_skill_factory, validate_skill_implementation, validate_skill_package_metadata
+from .devtools import SkillConformanceError, SkillConformanceReport, SkillPackageMetadataReport, SkillSourceAuditReport, SkillSourceFinding, audit_skill_source, require_clean_skill_source, validate_skill_factory, validate_skill_implementation, validate_skill_package_matches_implementation, validate_skill_package_metadata
