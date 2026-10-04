@@ -101,9 +101,9 @@ async def on_ready():
                 await startup(guild, bot)
             except Exception:
                 logging.getLogger(__name__).warning('Startup diagnostics unavailable; review /server manage.')
-        if self.skill_runtime is not None and self.skill_runtime.registry.ids():
+        if bot.skill_runtime is not None and bot.skill_runtime.registry.ids():
             try:
-                await self.skill_runtime.restore_guild(guild_id=guild.id)
+                await bot.skill_runtime.restore_guild(guild_id=guild.id)
             except Exception:
                 logging.getLogger(__name__).exception('Skill Runtime restore failed for guild %s.', guild.id)
 
