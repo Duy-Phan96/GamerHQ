@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hosts.gamerhq.skill_packages import load_external_skill_packages
+from hosts.gamerhq.skill_packages import BUNDLED_SKILL_IDS, configured_skill_ids, load_external_skill_packages
 from skill_runtime.runtime.packages import InstalledSkillPackage, SkillPackageError
 
 
@@ -21,6 +21,13 @@ class FakeRuntime:
 
 
 class ExternalSkillHostLoadingTests(unittest.TestCase):
+    def test_recurring_posts_is_a_bundled_external_package(self):
+        self.assertIn("recurring-posts", BUNDLED_SKILL_IDS)
+        self.assertEqual(
+            configured_skill_ids(("recurring-posts", "other-skill")),
+            ("recurring-posts", "other-skill"),
+        )
+
     def test_one_broken_package_does_not_block_healthy_package(self):
         runtime = FakeRuntime()
         healthy_skill = SimpleNamespace(
