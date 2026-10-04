@@ -17,6 +17,18 @@ class SkillProductionPackagingTests(unittest.TestCase):
         ):
             self.assertIn(required, dockerfile)
 
+    def test_docker_context_includes_runtime_and_external_reference_skill(self):
+        dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+        for required in (
+            "!skill_runtime/",
+            "!hosts/",
+            "!skills/",
+            "!packages/gamerhq-skill-recurring-posts/",
+            "!packages/gamerhq-skill-recurring-posts/**/*.py",
+            "!packages/gamerhq-skill-recurring-posts/pyproject.toml",
+        ):
+            self.assertIn(required, dockerignore)
+
     def test_ci_keeps_packaging_checks_running_after_independent_audit_failure(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(
             encoding="utf-8"
