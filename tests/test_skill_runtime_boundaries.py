@@ -80,6 +80,21 @@ class SkillRuntimeBoundaryTests(unittest.TestCase):
             "Server management must use public Skill management contracts, not private Skill imports.",
         )
 
+    def test_recurring_posts_has_no_parallel_builtin_implementation(self):
+        self.assertFalse(
+            (ROOT / "skills" / "recurring_posts.py").exists(),
+            "Recurring Posts must live only in its external package, not in parallel under skills/.",
+        )
+        self.assertTrue(
+            (
+                ROOT
+                / "packages"
+                / "gamerhq-skill-recurring-posts"
+                / "gamerhq_skill_recurring_posts"
+                / "skill.py"
+            ).is_file()
+        )
+
     def test_gamerhq_adapter_is_outside_portable_runtime(self):
         adapter = ROOT / "hosts" / "gamerhq" / "skill_host.py"
         self.assertTrue(adapter.is_file())
