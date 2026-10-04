@@ -27,7 +27,7 @@ def secret_findings(text):
         value=match.group(2)
         if len(value)<8 or value.casefold() in PLACEHOLDERS: continue
         if value.startswith(('os.','values.','self.','str(','(','<','$','env.','discord.')):continue
-        if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_')):continue
+        if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_','must-not-appear')):continue
         # Only assignments of literal secrets, not Python expressions/docs prose.
         line=text[match.start():text.find('\n',match.start()) if '\n' in text[match.start():] else len(text)]
         rhs=re.split(r'[:=]',line,maxsplit=1)[-1].lstrip()
@@ -39,7 +39,13 @@ def secret_findings(text):
 
 def private_path(name):
     path=Path(name);low=path.name.lower()
-    return (bool(set(path.parts)&PRIVATE_PARTS) or
+    # skill_runtime/runtime is intentional portable source code. Keep the
+    # generic runtime/ private-data guard everywhere else.
+    parts=path.parts
+    portable_runtime=len(parts)>=2 and parts[0]=='skill_runtime' and parts[1]=='runtime'
+    private_parts=set(parts)&PRIVATE_PARTS
+    if portable_runtime: private_parts.discard('runtime')
+    return (bool(private_parts) or
             (low.startswith('.env') and low!='.env.example') or
             bool(re.search(r'\.(?:db|sqlite3?)(?:-(?:wal|shm|journal))?$',low)) or
             low.endswith(('.log','.pem','.key','.pyc','.bak','.zip')) or

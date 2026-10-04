@@ -25,6 +25,7 @@ class GamerHQBot(commands.Bot):
         self.tree.on_error = tree_error
         self.health_task = None
         self.operational_log_started = set()
+        self.skill_runtime = None
 
     async def setup_hook(self):
         # Container-only, ephemeral heartbeat. Local development needs no /tmp.
@@ -37,17 +38,32 @@ class GamerHQBot(commands.Bot):
         db.init_db()
         db.seed_catalog()
 
+        from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+        from skills import first_party_skills
+        from hosts.gamerhq.skill_packages import configured_skill_ids, load_external_skill_packages
+        from config import EXTERNAL_SKILLS
+        self.skill_runtime = GamerHQSkillRuntime(self)
+        for skill in first_party_skills():
+            self.skill_runtime.register(skill, source_kind="built-in")
+        load_external_skill_packages(
+            self.skill_runtime,
+            configured_skill_ids(EXTERNAL_SKILLS),
+        )
+        await self.skill_runtime.register_all()
+
         await self.load_extension("cogs.games")
         await self.load_extension("cogs.voice")
         await self.load_extension("cogs.voice_controls")
         await self.load_extension("cogs.area")
         await self.load_extension("cogs.server")
         await self.load_extension("cogs.server_changes")
+        await self.load_extension("cogs.owner_changelog")
         await self.load_extension("cogs.gocdkeys")
         await self.load_extension("cogs.roles")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
         await self.load_extension("cogs.lfg")
+        await self.load_extension("cogs.lobby_admin")
         await self.load_extension("cogs.streamer")
 
         guild = discord.Object(id=GUILD_ID)
@@ -77,7 +93,12 @@ class GamerHQBot(commands.Bot):
                 if getattr(self, 'twitch_hub', None):
                     await self.twitch_hub.close()
         finally:
-            await super().close()
+            try:
+                skill_runtime = getattr(self, 'skill_runtime', None)
+                if skill_runtime is not None:
+                    await skill_runtime.close()
+            finally:
+                await super().close()
 
 
 bot = GamerHQBot()
@@ -86,6 +107,12 @@ bot = GamerHQBot()
 @bot.event
 async def on_ready():
     print(f"GamerHQ Bot is online as {bot.user}!")
+    if bot.skill_runtime is not None:
+        try:
+            await bot.skill_runtime.start_scheduler()
+        except Exception:
+            logging.getLogger(__name__).exception('Skill Scheduler failed to start.')
+
     for guild in bot.guilds:
         if guild.id not in bot.operational_log_started:
             bot.operational_log_started.add(guild.id)
@@ -94,6 +121,12 @@ async def on_ready():
                 await startup(guild, bot)
             except Exception:
                 logging.getLogger(__name__).warning('Startup diagnostics unavailable; review /server manage.')
+        if bot.skill_runtime is not None and bot.skill_runtime.registry.ids():
+            try:
+                await bot.skill_runtime.restore_guild(guild_id=guild.id)
+            except Exception:
+                logging.getLogger(__name__).exception('Skill Runtime restore failed for guild %s.', guild.id)
+
         # Legacy channel migration is an explicit maintenance operation only.
         # Startup must not delete DB-linked game channels or rename community channels.
         try:

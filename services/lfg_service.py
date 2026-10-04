@@ -83,22 +83,22 @@ def invited_user_ids(event_id: int) -> set[int]:
 
 
 def render_event(guild: discord.Guild, event: dict) -> str:
-    game = db.get_game_by_id(int(event["game_id"]))
-    game_label = f"{game['emoji']} **{game['name']}**" if game else "🎮 **Unknown Game**"
+    game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
     joined = joined_user_ids(int(event["id"]))
     host = guild.get_member(int(event["host_id"]))
     host_label = host.mention if host else f"<@{event['host_id']}>"
 
     lines = [
-        f"# 🎮 {discord.utils.escape_mentions(event['title'])}",
+        f"# 📅 {discord.utils.escape_mentions(event['title'])}",
         "",
-        game_label,
         f"📅 {discord_timestamp(int(event['start_at']), 'F')} ({discord_timestamp(int(event['start_at']), 'R')})",
-        f"👥 **{len(joined)}/{event['max_players']} players**",
+        f"👥 **{len(joined)}/{event['max_players']} participants**",
         f"🔔 Voice invite: **{event['invite_lead_minutes']} min before**",
         f"👤 Hosted by {host_label}",
         "",
     ]
+    if game:
+        lines.insert(2, f"{game['emoji']} **{game['name']}**")
 
     if joined:
         mentions = [f"<@{user_id}>" for user_id in joined[:20]]
@@ -124,16 +124,16 @@ def render_event(guild: discord.Guild, event: dict) -> str:
 
 
 async def notify_invited_users(guild: discord.Guild, event: dict, message: discord.Message) -> None:
-    game = db.get_game_by_id(int(event["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+    game_suffix = f" for **{game['name']}**" if game else ""
     for user_id in invited_user_ids(int(event["id"])):
         member = guild.get_member(user_id)
         if member is None or member.bot:
             continue
         try:
             await member.send(
-                f"# 🎮 GamerHQ Event Invite\n\n"
-                f"You've been invited to **{event['title']}** for **{game_name}**.\n"
+                f"# 📅 GamerHQ Event Invite\n\n"
+                f"You've been invited to **{event['title']}**{game_suffix}.\n"
                 f"📅 {discord_timestamp(int(event['start_at']), 'F')}\n\n"
                 f"Open the event and use **Join Event** if you'd like to take part:\n{message.jump_url}"
             )

@@ -42,7 +42,15 @@ def permissions(overwrites):
 
 
 def wire(channel):
-    return dict(name=channel.name, category=channel.category_id, position=channel.position,
+    # Real Discord channels expose category_id=None when detached. Using the
+    # category object directly also keeps offline/synthetic snapshots tolerant.
+    category_id = getattr(getattr(channel, 'category', None), 'id', None)
+    if category_id is None:
+        try:
+            category_id = channel.category_id
+        except (AttributeError, TypeError):
+            category_id = None
+    return dict(name=channel.name, category=category_id, position=channel.position,
                 permissions=permissions(channel.overwrites))
 
 
@@ -123,6 +131,9 @@ def safe_rights(channel, name):
     if name == 'free-games':
         from services.support_service import free_games_overwrites
         result = free_games_overwrites(channel)
+    elif name == 'amazon':
+        from services.amazon_integration_service import channel_overwrites
+        result = channel_overwrites(channel)
     elif name in CHANNELS:
         result = overwrites(channel.guild, name, channel.overwrites, channel.category)
     else:
@@ -132,9 +143,20 @@ def safe_rights(channel, name):
 
 def target(guild, name):
     if name in adoption.supported():
-        return adoption.desired(guild, name)
-    from services.instant_gaming_service import targets, CHANNELS
-    return dict(name=CHANNELS[name][0], category=targets(guild)[name].id, position=None)
+        result = adoption.desired(guild, name)
+    else:
+        from services.instant_gaming_service import targets, CHANNELS
+        result = dict(name=CHANNELS[name][0], category=targets(guild)[name].id, position=None)
+    from services import structure_adoption_service as runtime
+    state = runtime.channel_state(guild, name)
+    if state and not state.get('deleted'):
+        if 'name' in state:
+            result['name'] = state['name']
+        if 'category_id' in state:
+            result['category'] = state['category_id']
+        if 'position' in state:
+            result['position'] = state['position']
+    return result
 
 
 def snapshot(channel, name):

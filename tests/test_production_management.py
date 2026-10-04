@@ -124,6 +124,154 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)
 
+    async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
+        from cogs.server_management import ManagementView, SkillsView, open_skills
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        interaction = self.interaction(owner)
+        status = GuildSkillStatus(
+            skill_id='fixture-skill',
+            name='Fixture Skill',
+            version='1.0.0',
+            description='Portable fixture',
+            enabled=False,
+            running=False,
+            health='DISABLED',
+            health_detail='Skill is disabled for this guild.',
+            required_capabilities=('discord.messages.send',),
+            missing_capabilities=(),
+        )
+        runtime = SimpleNamespace(statuses=AsyncMock(return_value=(status,)))
+        interaction.client.skill_runtime = runtime
+
+        manage = ManagementView(self.guild, owner.id)
+        self.assertIn('Skills', [child.label for child in manage.children if isinstance(child, discord.ui.Button)])
+
+        await open_skills(interaction, self.guild, owner.id)
+        runtime.statuses.assert_awaited_once_with(guild_id=self.guild.id)
+        kwargs = interaction.response.edit_message.call_args.kwargs
+        self.assertIsInstance(kwargs['view'], SkillsView)
+        self.assertIn('Fixture Skill', kwargs['content'])
+        self.assertIn('Disabled', kwargs['content'])
+
+    def test_skill_details_show_external_package_provenance(self):
+        from cogs.server_management import _skill_detail_text
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        status = GuildSkillStatus(
+            skill_id='external-skill',
+            name='External Skill',
+            version='1.0.0',
+            description='Portable external fixture',
+            enabled=False,
+            running=False,
+            health='DISABLED',
+            health_detail='Skill is disabled for this guild.',
+            required_capabilities=(),
+            missing_capabilities=(),
+            source_kind='external',
+            source_distribution='gamerhq-skill-external',
+        )
+        text = _skill_detail_text(status)
+        self.assertIn('External package: gamerhq-skill-external', text)
+
+    def test_unavailable_external_skill_has_no_enable_action(self):
+        from cogs.server_management import SkillDetailsView, _skill_detail_text
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        status = GuildSkillStatus(
+            skill_id='missing-external',
+            name='Missing External',
+            version='unknown',
+            description='Configured external Skill package is unavailable.',
+            enabled=False,
+            running=False,
+            health='UNAVAILABLE',
+            health_detail='The configured external Skill package could not be loaded.',
+            required_capabilities=(),
+            missing_capabilities=(),
+            source_kind='external',
+            source_distribution=None,
+        )
+        view = SkillDetailsView(self.guild, 42, status)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertNotIn('Review Enable', labels)
+        self.assertIn('Unavailable', _skill_detail_text(status))
+
+    async def test_skill_lifecycle_change_requires_owner_review(self):
+        from cogs.server_management import SkillDetailsView, SkillToggleConfirmView
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        status = GuildSkillStatus(
+            skill_id='fixture-skill',
+            name='Fixture Skill',
+            version='1.0.0',
+            description='Portable fixture',
+            enabled=False,
+            running=False,
+            health='DISABLED',
+            health_detail='Skill is disabled for this guild.',
+            required_capabilities=('discord.messages.send',),
+            missing_capabilities=(),
+        )
+        runtime = SimpleNamespace(
+            status=AsyncMock(return_value=status),
+            enable_skill=AsyncMock(return_value=True),
+            disable_skill=AsyncMock(return_value=True),
+        )
+
+        admin = SimpleNamespace(id=43, guild_permissions=discord.Permissions(administrator=True))
+        self.guild.members = [owner, admin]
+        denied = self.interaction(admin)
+        denied.client.skill_runtime = runtime
+        view = SkillDetailsView(self.guild, admin.id, status)
+        await view.review_toggle(denied)
+        runtime.status.assert_not_awaited()
+        self.assertIn('Only the server owner', denied.response.send_message.call_args.args[0])
+
+        allowed = self.interaction(owner)
+        allowed.client.skill_runtime = runtime
+        owner_view = SkillDetailsView(self.guild, owner.id, status)
+        await owner_view.review_toggle(allowed)
+        confirm = allowed.response.edit_message.call_args.kwargs['view']
+        self.assertIsInstance(confirm, SkillToggleConfirmView)
+        runtime.enable_skill.assert_not_awaited()
+
+    async def test_enabled_recurring_posts_skill_exposes_configure_action(self):
+        from cogs.server_management import SkillDetailsView
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        status = GuildSkillStatus(
+            skill_id='recurring-posts',
+            name='Recurring Posts',
+            version='1.0.0',
+            description='Portable fixture',
+            enabled=True,
+            running=True,
+            health='PASS',
+            health_detail='0 active recurring post(s), 0 configured.',
+            required_capabilities=('scheduler.jobs',),
+            missing_capabilities=(),
+            management_available=True,
+        )
+        view = SkillDetailsView(self.guild, owner.id, status)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Configure', labels)
+        self.assertIn('Review Disable', labels)
+
+    def test_recurring_post_interval_modal_builds_scheduler_contract(self):
+        from cogs.server_management import RecurringPostModal
+
+        modal = RecurringPostModal(self.guild, 42, 123, 'interval')
+        modal.schedule._value = '180'
+        self.assertEqual(
+            modal._schedule_value(),
+            {'type': 'interval', 'seconds': 10800},
+        )
+
     async def test_imported_catalog_is_offered_by_actual_select_games_button(self):
         from cogs.games import ChooseGamesButtons, GameSelectionSession
         from config import DISPLAY_GROUP_ORDER

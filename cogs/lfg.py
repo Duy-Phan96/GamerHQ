@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from services.operation_context import measured
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 import re
 import secrets
 import sqlite3
@@ -15,8 +16,8 @@ from services import lobby_service as lobby_rules
 from services.lobby_dashboard import event_lock, sync_card, cleanup_ended
 import logging
 from services.lfg_service import (
-    SERVER_TZ, find_lfg_channel, find_game_lfg_channel, member_has_game_role,
-    render_event, user_games,
+    SERVER_TZ, find_lfg_channel, member_has_game_role,
+    render_event,
 )
 
 
@@ -68,8 +69,8 @@ async def delete_event_posts(guild: discord.Guild, event: dict) -> None:
     return success
 
 async def notify_cancelled_users(guild: discord.Guild, event: dict) -> None:
-    game = db.get_game_by_id(int(event["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+    game_suffix = f" for **{game['name']}**" if game else ""
     recipients = {
         int(row["user_id"])
         for row in db.get_lfg_event_members(int(event["id"]))
@@ -82,7 +83,7 @@ async def notify_cancelled_users(guild: discord.Guild, event: dict) -> None:
         try:
             await member.send(
                 f"# ❌ GamerHQ Event Cancelled\n\n"
-                f"**{event['title']}** for **{game_name}** was cancelled by the host."
+                f"**{event['title']}**{game_suffix} was cancelled by the creator."
             )
         except (discord.Forbidden, discord.HTTPException):
             pass
@@ -108,9 +109,23 @@ async def delete_event_voice(guild: discord.Guild, event: dict) -> bool:
     return True
 
 
+def _global_voice_category(guild: discord.Guild) -> discord.CategoryChannel | None:
+    return next(
+        (
+            category for category in guild.categories
+            if category.name.casefold() == "🔊 VOICE CHANNELS".casefold()
+        ),
+        None,
+    )
+
+
 def event_voice_overwrites(guild: discord.Guild, event: dict) -> dict:
+    private = event.get("visibility") == "private"
     overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False if private else True,
+            connect=False if private else True,
+        ),
     }
     bot_member = guild.me
     if bot_member:
@@ -131,9 +146,12 @@ def event_voice_overwrites(guild: discord.Guild, event: dict) -> dict:
             manage_channels=is_host, move_members=is_host,
         )
     from services.music_bot_service import with_music_access
-    game = db.get_game_by_id(event['game_id'])
-    parent = guild.get_channel(game['category_id']) if game and game.get('category_id') else None
-    return with_music_access(guild, overwrites, 'voice', parent=parent)
+    return with_music_access(
+        guild,
+        overwrites,
+        'voice',
+        parent=_global_voice_category(guild),
+    )
 
 
 async def send_voice_ready_dm(guild: discord.Guild, event: dict, member: discord.Member, channel: discord.VoiceChannel) -> bool:
@@ -153,15 +171,15 @@ async def send_voice_ready_dm(guild: discord.Guild, event: dict, member: discord
     if not fresh or fresh.get("status") != "scheduled":
         return False
 
-    game = db.get_game_by_id(int(fresh["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(fresh["game_id"])) if int(fresh.get("game_id") or 0) else None
+    game_suffix = f" · **{game['name']}**" if game else ""
     host = guild.get_member(int(fresh["host_id"]))
     host_label = host.mention if host else f"<@{int(fresh['host_id'])}>"
     lead = int(fresh["invite_lead_minutes"])
     try:
         await member.send(
             f"# 🎧 Your GamerHQ Voice is Ready\n\n"
-            f"**{fresh['title']}** · **{game_name}**\n"
+            f"**{fresh['title']}**{game_suffix}\n"
             f"👤 Hosted by {host_label}\n"
             f"📅 <t:{int(fresh['start_at'])}:F> (<t:{int(fresh['start_at'])}:R>)\n"
             f"🔔 Starts in about **{lead} minutes**\n\n"
@@ -187,11 +205,17 @@ async def create_event_voice(guild: discord.Guild, event: dict) -> discord.Voice
         if isinstance(existing, discord.VoiceChannel):
             return existing
 
-    game = db.get_game_by_id(int(fresh["game_id"]))
-    category = guild.get_channel(int(game["category_id"])) if game and game.get("category_id") else None
+    category = _global_voice_category(guild)
+    if category is None:
+        logging.getLogger(__name__).warning(
+            "Event voice not created: global VOICE CHANNELS category missing guild=%s event=%s",
+            guild.id,
+            event_id,
+        )
+        return None
     try:
         channel = await guild.create_voice_channel(
-            name=f"🎮・{fresh['title']}"[:100],
+            name=f"📅・{fresh['title']}"[:100],
             category=category if isinstance(category, discord.CategoryChannel) else None,
             overwrites=event_voice_overwrites(guild, fresh),
             reason=f"GamerHQ LFG event #{event_id} voice",
@@ -254,18 +278,17 @@ class ConfirmCancelEventView(discord.ui.View):
         if not event:
             return await interaction.response.edit_message(content="❌ This event no longer exists.", view=None)
 
-        is_admin = isinstance(interaction.user, discord.Member) and interaction.user.guild_permissions.administrator
-        if interaction.user.id != int(event["host_id"]) and not is_admin:
-            return await interaction.response.send_message("❌ Only the host or an administrator can delete this event.", ephemeral=True)
+        if interaction.user.id != int(event["host_id"]):
+            return await interaction.response.send_message("❌ Only the event creator can cancel this event.", ephemeral=True)
 
         try:
-            event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, 'cancelled', administrator=is_admin)
+            event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, 'cancelled')
         except ValueError as exc:
             return await interaction.response.send_message(str(exc), ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await notify_cancelled_users(interaction.guild, event)
         await refresh_event_posts(interaction.guild, self.event_id)
-        await interaction.edit_original_response(content="Lobby cancelled. The final card remains for 24 hours; voice cleanup waits until empty.", view=None)
+        await interaction.edit_original_response(content="Event cancelled. The final card remains for 24 hours; voice cleanup waits until empty.", view=None)
         self.stop()
 
     @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
@@ -301,8 +324,11 @@ async def _revoke_private_event_access(guild: discord.Guild, event: dict, member
         await channel.set_permissions(member, overwrite=None)
 
 
-async def create_private_event_channel(guild: discord.Guild, event: dict, game: dict) -> discord.TextChannel | None:
-    category = guild.get_channel(int(game["category_id"])) if game.get("category_id") else None
+async def create_private_event_channel(guild: discord.Guild, event: dict, game: dict | None = None) -> discord.TextChannel | None:
+    category = guild.get_channel(int(game["category_id"])) if game and game.get("category_id") else None
+    if not isinstance(category, discord.CategoryChannel):
+        lfg_channel = find_lfg_channel(guild)
+        category = lfg_channel.category if isinstance(lfg_channel, discord.TextChannel) else None
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
     }
@@ -352,6 +378,7 @@ async def delete_private_event_channel(guild: discord.Guild, event: dict) -> boo
             pass
         except discord.HTTPException:
             return False
+    db.set_lfg_event_private_channel(int(event["id"]), None)
     return True
 
 
@@ -464,6 +491,18 @@ async def prompt_add_game_and_join(interaction: discord.Interaction, event: dict
     )
 
 
+def google_calendar_url(event: dict) -> str:
+    start = datetime.fromtimestamp(int(event["start_at"]), SERVER_TZ)
+    end = start + timedelta(hours=2)
+    dates = f"{start.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}/{end.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    return "https://calendar.google.com/calendar/render?" + urlencode({
+        "action": "TEMPLATE",
+        "text": str(event["title"]),
+        "dates": dates,
+        "details": "GamerHQ event",
+    })
+
+
 class LFGEventView(discord.ui.View):
     def __init__(self, event_id: int):
         super().__init__(timeout=None)
@@ -472,22 +511,26 @@ class LFGEventView(discord.ui.View):
                                  custom_id=f"gamerhq:lfg:join:{self.event_id}")
         leave = discord.ui.Button(label="Leave", emoji="↩️", style=discord.ButtonStyle.secondary,
                                   custom_id=f"gamerhq:lfg:leave:{self.event_id}")
-        # Public event posts only contain actions that are meant for everyone.
-        # Host-only management lives in the ephemeral /lfg manage panel, so other
-        # members never see a destructive Cancel Event button they cannot use.
         event = db.get_lfg_event(self.event_id)
         share_label = "Share Invite" if event and event.get("visibility") == "private" else "Share Event"
         share = discord.ui.Button(label=share_label, emoji="🔗", style=discord.ButtonStyle.secondary,
                                   custom_id=f"gamerhq:lfg:share:{self.event_id}")
         join.callback, leave.callback, share.callback = self.join_event, self.leave_event, self.share_event
         self.add_item(join); self.add_item(leave); self.add_item(share)
-        manage = discord.ui.Button(label='Lobby Actions', style=discord.ButtonStyle.primary,
-                                   custom_id=f'gamerhq:lfg:manage:{self.event_id}')
-        async def manage_callback(interaction):
-            from cogs.lobby_management import open_panel
-            await open_panel(interaction, self.event_id)
-        manage.callback = manage_callback
-        self.add_item(manage)
+        if event:
+            self.add_item(discord.ui.Button(
+                label="Google Calendar", emoji="📅", style=discord.ButtonStyle.link,
+                url=google_calendar_url(event),
+            ))
+            if event.get("visibility") == "private":
+                dissolve = discord.ui.Button(
+                    label="Dissolve Event",
+                    emoji="🗑️",
+                    style=discord.ButtonStyle.danger,
+                    custom_id=f"gamerhq:lfg:dissolve:{self.event_id}",
+                )
+                dissolve.callback = self.dissolve_event
+                self.add_item(dissolve)
 
     async def join_event(self, interaction: discord.Interaction):
         if not isinstance(interaction.user, discord.Member) or not interaction.guild:
@@ -495,16 +538,14 @@ class LFGEventView(discord.ui.View):
         event = db.get_lfg_event(self.event_id)
         if not event or event["status"] != "scheduled":
             return await interaction.response.send_message("❌ This event is no longer available.", ephemeral=True)
-        game = db.get_game_by_id(int(event["game_id"]))
-        if not game:
-            return await interaction.response.send_message("❌ This event's game is unavailable.", ephemeral=True)
+        game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
         if event.get("visibility") == "private":
             states = {int(r["user_id"]): r["status"] for r in db.get_lfg_event_members(self.event_id)}
             if interaction.user.id != int(event["host_id"]) and states.get(interaction.user.id) not in {"invited", "joined"}:
                 return await interaction.response.send_message(
                     "🔒 This is a private event. Use its private invite code or ask the host for an invitation.", ephemeral=True
                 )
-        if not member_has_game_role(interaction.user, game):
+        if game and not member_has_game_role(interaction.user, game):
             return await prompt_add_game_and_join(interaction, event, game, interaction.guild)
         await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(interaction.guild, event, interaction.user)
@@ -556,6 +597,23 @@ class LFGEventView(discord.ui.View):
             return await interaction.followup.send("❌ Event link is currently unavailable.", ephemeral=True)
         await interaction.followup.send(f"# 🔗 Share Event\n\n{url}", ephemeral=True)
 
+    async def dissolve_event(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
+        event = db.get_lfg_event(self.event_id)
+        if not event or event.get("status") != "scheduled":
+            return await interaction.response.send_message("❌ This event is no longer active.", ephemeral=True)
+        if interaction.user.id != int(event["host_id"]):
+            return await interaction.response.send_message("❌ Only the event creator can dissolve this event.", ephemeral=True)
+        await interaction.response.send_message(
+            "✅ Event dissolved. The private event chat will close now. "
+            "An active voice channel stays open until everyone leaves.",
+            ephemeral=True,
+        )
+        event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, "completed")
+        await delete_private_event_channel(interaction.guild, event)
+        await delete_event_voice(interaction.guild, event)
+
     async def leave_event(self, interaction: discord.Interaction):
         if not interaction.guild:
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
@@ -590,15 +648,13 @@ class HostedEventSelect(discord.ui.Select):
         self.parent_view = parent
         options = []
         for event in events[:25]:
-            game = db.get_game_by_id(int(event["game_id"]))
-            game_name = game["name"] if game else "Unknown game"
             start_at = int(event["start_at"])
             options.append(
                 discord.SelectOption(
                     label=str(event["title"])[:100],
-                    description=f"{game_name} • {datetime.fromtimestamp(start_at, SERVER_TZ).strftime('%b %d, %H:%M')}"[:100],
+                    description=f"{datetime.fromtimestamp(start_at, SERVER_TZ).strftime('%b %d, %H:%M')} • {int(event.get('duration_minutes') or 120)} min"[:100],
                     value=str(event["id"]),
-                    emoji="🎮",
+                    emoji="📅",
                 )
             )
         super().__init__(
@@ -686,10 +742,8 @@ class LFGInviteDMView(discord.ui.View):
         event = db.get_lfg_event(self.event_id)
         if member is None or event is None or event.get("status") != "scheduled":
             return await interaction.response.send_message("❌ This event is no longer available.")
-        game = db.get_game_by_id(int(event["game_id"]))
-        if not game:
-            return await interaction.response.send_message("❌ This event's game is unavailable.")
-        if not member_has_game_role(member, game):
+        game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+        if game and not member_has_game_role(member, game):
             return await prompt_add_game_and_join(interaction, event, game, guild)
         await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(guild, event, member)
@@ -703,8 +757,8 @@ class LFGInviteDMView(discord.ui.View):
 
 
 async def send_event_invites(guild: discord.Guild, event: dict, event_message: discord.Message) -> None:
-    game = db.get_game_by_id(int(event["game_id"]))
-    game_name = game["name"] if game else "Gaming event"
+    game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+    game_suffix = f" for **{game['name']}**" if game else ""
     host = guild.get_member(int(event["host_id"]))
     host_label = host.mention if host is not None else f"<@{int(event['host_id'])}>"
     invited = [
@@ -717,8 +771,8 @@ async def send_event_invites(guild: discord.Guild, event: dict, event_message: d
             continue
         try:
             await member.send(
-                f"# 🎮 GamerHQ Event Invite\n\n"
-                f"You've been invited to **{event['title']}** for **{game_name}**.\n"
+                f"# 📅 GamerHQ Event Invite\n\n"
+                f"You've been invited to **{event['title']}**{game_suffix}.\n"
                 f"👤 **Invited by:** {host_label}\n"
                 f"📅 <t:{int(event['start_at'])}:F> (<t:{int(event['start_at'])}:R>)\n\n"
                 f"Click **Join Event** below to join immediately.\n"
@@ -764,15 +818,14 @@ class EventDraftView(discord.ui.View):
         start_at = int(dt.timestamp())
         inv = " · ".join(f"<@{x}>" for x in sorted(b.invited_ids)) or "None"
         return (
-            "# 🎮 Event Preview\n\n"
+            "# 📅 Event Preview\n\n"
             f"**Title:** {b.title}\n"
-            f"**Game:** {b.game['emoji']} {b.game['name']}\n"
             f"**Start:** <t:{start_at}:F> (<t:{start_at}:R>)\n"
             f"**Players:** {b.max_players} total\n"
             f"**Voice invite:** {b.invite_lead} minutes before\n"
             f"**Visibility:** {'🔒 Private · Invite only' if b.visibility == 'private' else '🌐 Public'}\n\n"
             f"**Invited:** {inv}\n\n"
-            "Optionally select players to invite above. They can join even if they have not selected the game yet; GamerHQ will offer to add the game role when they join.\n\n"
+            "Optionally select players to invite above.\n\n"
             "Nothing has been posted yet."
         )
 
@@ -800,11 +853,9 @@ class EventDraftView(discord.ui.View):
         await interaction.response.defer(ephemeral=True, thinking=True)
         b = self.builder
         current = interaction.guild.get_member(self.host.id)
-        fresh_game = db.get_game_by_id(b.game['id']) if b.game else None
-        if not current or not fresh_game or not fresh_game.get('area_enabled') or not member_has_game_role(current, fresh_game):
-            return await interaction.edit_original_response(content='Your game access changed. Reopen the event builder.', view=None)
+        if not current:
+            return await interaction.edit_original_response(content='Your server membership changed. Reopen the event builder.', view=None)
         general = find_lfg_channel(interaction.guild)
-        game_channel = find_game_lfg_channel(interaction.guild, b.game)
         if not general:
             return await interaction.edit_original_response(content="❌ General looking-for-group channel not found.", view=None)
 
@@ -817,7 +868,7 @@ class EventDraftView(discord.ui.View):
             return await interaction.edit_original_response(content=str(exc), view=None)
         try:
             event = db.create_lfg_event(
-                guild_id=interaction.guild.id, game_id=b.game["id"], host_id=b.host.id,
+                guild_id=interaction.guild.id, game_id=0, host_id=b.host.id,
                 title=b.title, start_at=start_at, max_players=b.max_players,
                 invite_lead_minutes=b.invite_lead, visibility=b.visibility,
                 share_token=secrets.token_urlsafe(8), enforce_member_limits=True,
@@ -835,7 +886,7 @@ class EventDraftView(discord.ui.View):
         target_channels = []
         if b.visibility == "private":
             try:
-                private_channel = await create_private_event_channel(interaction.guild, event, b.game)
+                private_channel = await create_private_event_channel(interaction.guild, event, None)
             except (discord.HTTPException, TimeoutError, OSError):
                 return await interaction.edit_original_response(
                     content="❌ Private lobby creation could not be confirmed. The lobby record is retained; ask staff to inspect Discord before retrying.", view=None)
@@ -845,16 +896,14 @@ class EventDraftView(discord.ui.View):
             event = db.get_lfg_event(event["id"])
             target_channels = [private_channel]
         else:
-            target_channels = list(dict.fromkeys([general, game_channel]))
+            target_channels = [general]
         for channel in target_channels:
             if not isinstance(channel, discord.TextChannel):
                 continue
             try:
-                from services.role_service import lfg_notification
-                prefix, mentions = lfg_notification(interaction.guild, b.game['id'], private=b.visibility == 'private', already_posted=bool(posts))
                 post = await channel.send(
-                    prefix + render_event(interaction.guild, event), view=view,
-                    allowed_mentions=mentions,
+                    render_event(interaction.guild, event), view=view,
+                    allowed_mentions=discord.AllowedMentions.none(),
                 )
                 db.add_lfg_event_message(event["id"], channel_id=channel.id, message_id=post.id)
                 posts.append(post)
@@ -900,26 +949,6 @@ class EventTitleModal(discord.ui.Modal, title="Event Title"):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
-class BuilderGameSelect(discord.ui.Select):
-    def __init__(self, builder):
-        self.builder = builder
-        options = []
-        for game in builder.games[:25]:
-            options.append(discord.SelectOption(
-                label=game["name"][:100], value=str(game["id"]), emoji=game.get("emoji") or "🎮",
-                default=builder.game is not None and int(game["id"]) == int(builder.game["id"]),
-            ))
-        placeholder = f"🎮 {builder.game['name']}" if builder.game else "🎮 Choose game"
-        super().__init__(placeholder=placeholder[:150], options=options, row=0, disabled=builder.game_locked)
-
-    async def callback(self, interaction):
-        self.builder.game = next(g for g in self.builder.games if str(g["id"]) == self.values[0])
-        # Invites belong to the selected game. Never carry them across a game change.
-        self.builder.invited_ids.clear()
-        self.builder._rebuild()
-        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
-
-
 class BuilderDateSelect(discord.ui.Select):
     def __init__(self, builder):
         self.builder = builder
@@ -933,7 +962,7 @@ class BuilderDateSelect(discord.ui.Select):
                 default=builder.date == d.isoformat(),
             ))
         label = datetime.fromisoformat(builder.date).strftime("%a, %d.%m.%Y") if builder.date else "Choose date"
-        super().__init__(placeholder=f"📅 {label}"[:150], options=options, row=1)
+        super().__init__(placeholder=f"📅 {label}"[:150], options=options, row=0)
 
     async def callback(self, interaction):
         self.builder.date = self.values[0]
@@ -956,7 +985,7 @@ class BuilderTimeSelect(discord.ui.Select):
                     default=selected == label,
                 ))
         placeholder = f"🕐 Time · {selected}" if selected else "🕐 Choose time"
-        super().__init__(placeholder=placeholder[:150], options=options, row=2)
+        super().__init__(placeholder=placeholder[:150], options=options, row=1)
 
     async def callback(self, interaction):
         self.builder.time_12h = self.values[0]
@@ -970,7 +999,7 @@ class BuilderPlayersSelect(discord.ui.Select):
         self.builder = builder
         options = [discord.SelectOption(label=f"{n} players", value=str(n), emoji="👥", default=builder.max_players == n) for n in range(2, 26)]
         placeholder = f"👥 {builder.max_players} players" if builder.max_players else "👥 Choose total players"
-        super().__init__(placeholder=placeholder[:150], options=options, row=3)
+        super().__init__(placeholder=placeholder[:150], options=options, row=2)
 
     async def callback(self, interaction):
         self.builder.max_players = int(self.values[0])
@@ -979,13 +1008,10 @@ class BuilderPlayersSelect(discord.ui.Select):
 
 
 class EventBuilderView(discord.ui.View):
-    def __init__(self, *, host, games, game=None, game_locked=False):
+    def __init__(self, *, host):
         super().__init__(timeout=600)
         self.host = host
-        self.games = games
-        self.game = game
-        self.game_locked = game_locked
-        self.title = "Gaming Session"
+        self.title = "GamerHQ Event"
         self.date = None
         self.time_12h = None
         self.period = "PM"
@@ -1003,7 +1029,6 @@ class EventBuilderView(discord.ui.View):
         self.voice_lead.label = f"{self.invite_lead}m"
         self.visibility_button.label = "Public" if self.visibility == "public" else "Private"
         self.visibility_button.emoji = "🌐" if self.visibility == "public" else "🔒"
-        self.add_item(BuilderGameSelect(self))
         self.add_item(BuilderDateSelect(self))
         self.add_item(BuilderTimeSelect(self))
         self.add_item(BuilderPlayersSelect(self))
@@ -1029,16 +1054,15 @@ class EventBuilderView(discord.ui.View):
         return f"{self.time_12h} {self.period}"
 
     def content(self):
-        game = f"{self.game.get('emoji') or '🎮'} {self.game['name']}" if self.game else "Not selected"
         date = datetime.fromisoformat(self.date).strftime("%A, %d %B %Y") if self.date else "Not selected"
         return (
-            "# 🎮 Create GamerHQ Event\n\n"
-            "Configure your event below. Your selections stay visible while you edit.\n\n"
+            "# 📅 Create GamerHQ Event\n\n"
+            "Plan an event for the community. You can manage it after creation and add it to Google Calendar.\n\n"
             f"**📝 Title:** {self.title}\n"
-            f"**🎮 Game:** {game}{' 🔒' if self.game_locked else ''}\n"
             f"**📅 Date:** {date}\n"
             f"**🕐 Time:** {self._display_time()} · Europe/Berlin\n"
             f"**👥 Players:** {self.max_players}\n"
+
             f"**🔔 Voice invite:** {self.invite_lead} min before\n"
             f"**👁️ Visibility:** {'🌐 Public' if self.visibility == 'public' else '🔒 Private · Invite only'}\n"
             "Discord will display the final event in each member's local time."
@@ -1078,8 +1102,8 @@ class EventBuilderView(discord.ui.View):
 
     @discord.ui.button(label="Preview", emoji="👁️", style=discord.ButtonStyle.success, row=4)
     async def preview(self, interaction, button):
-        if not self.game or not self.date or self.hour is None:
-            return await interaction.response.send_message("❌ Choose a game, date and time first.", ephemeral=True)
+        if not self.date or self.hour is None:
+            return await interaction.response.send_message("❌ Choose a date and time first.", ephemeral=True)
         hour, minute = self.hour, self.minute
         dt = datetime.fromisoformat(self.date).replace(hour=hour, minute=minute, tzinfo=SERVER_TZ)
         if dt <= datetime.now(SERVER_TZ):
@@ -1092,13 +1116,6 @@ class EventBuilderView(discord.ui.View):
     # Even a decorated button omitted by _rebuild is instantiated by View.__init__.
 
 
-def game_for_lfg_channel(guild: discord.Guild, channel_id: int):
-    for game in db.get_area_games(lfg_only=True):
-        cid = game.get("lfg_channel_id") or game.get("clips_channel_id")
-        if cid and int(cid) == int(channel_id):
-            return game
-    return None
-
 class LFGHubView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Create Event",emoji="➕",style=discord.ButtonStyle.primary,custom_id="gamerhq:lfg:create")
@@ -1110,17 +1127,7 @@ class LFGHubView(discord.ui.View):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            games = user_games(interaction.user)
-            if not games:
-                return await interaction.edit_original_response(content="🎮 Select a game in Choose Your Games first.", view=None)
-            channel_game = game_for_lfg_channel(interaction.guild, interaction.channel_id)
-            if channel_game and not any(int(g["id"]) == int(channel_game["id"]) for g in games):
-                return await interaction.edit_original_response(
-                    content=f"🎮 Add **{channel_game['name']}** to your games first.", view=None
-                )
-            builder = EventBuilderView(
-                host=interaction.user, games=games[:25], game=channel_game, game_locked=channel_game is not None
-            )
+            builder = EventBuilderView(host=interaction.user)
             await interaction.edit_original_response(content=builder.content(), view=builder)
         except Exception as exc:
             print(f"[GamerHQ][LFG] Create Event button failed: {exc}")
@@ -1132,7 +1139,7 @@ class LFGHubView(discord.ui.View):
 def build_lfg_hub_view(): return LFGHubView()
 
 class LFG(commands.Cog):
-    lfg = app_commands.Group(name="lfg", description="Looking for Group events and tools.")
+    lfg = app_commands.Group(name="lfg", description="GamerHQ events and scheduling tools.")
 
     def __init__(self,bot):
         self.bot=bot
@@ -1164,24 +1171,22 @@ class LFG(commands.Cog):
                     if not event or event['status'] != 'scheduled':
                         continue
                     voice_id = event.get("voice_channel_id")
-                    # Retire old events after a generous six-hour window. Never kick an
-                    # active voice room; cleanup waits until it is empty.
-                    if now >= int(event["start_at"]) + 6 * 3600:
-                        voice = guild.get_channel(int(voice_id)) if voice_id else None
-                        if isinstance(voice, discord.VoiceChannel) and voice.members:
-                            continue
+                    # Event duration is intentionally not user-managed. A scheduled
+                    # event closes two hours after start; occupied voice is preserved separately.
+                    stale_at = int(event["start_at"]) + 2 * 3600
+                    if now >= stale_at:
                         lobby_rules.end(event_id, guild.id, event['host_id'], 'completed')
                         await refresh_event_posts(guild, event_id)
                         continue
                     invite_at = int(event["start_at"]) - int(event["invite_lead_minutes"]) * 60
-                    if not voice_id and now >= invite_at and now < int(event["start_at"]) + 2 * 3600:
+                    if not voice_id and now >= invite_at and now < stale_at:
                         await create_event_voice(guild, event)
                         continue
                     if voice_id:
                         channel = guild.get_channel(int(voice_id))
                         if channel is None:
                             db.clear_lfg_event_voice(event_id)
-                        elif isinstance(channel, discord.VoiceChannel) and now >= int(event["start_at"]) + 2 * 3600 and not channel.members:
+                        elif isinstance(channel, discord.VoiceChannel) and not channel.members and now >= int(event["start_at"]):
                             try:
                                 await channel.delete(reason=f"GamerHQ LFG event #{event_id} finished and voice is empty")
                             except discord.NotFound:
@@ -1201,20 +1206,7 @@ class LFG(commands.Cog):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            games = user_games(interaction.user)
-            if not games:
-                return await interaction.edit_original_response(content="🎮 Select a game in Choose Your Games first.", view=None)
-            channel_game = game_for_lfg_channel(interaction.guild, interaction.channel_id)
-            if channel_game and not any(int(g["id"]) == int(channel_game["id"]) for g in games):
-                return await interaction.edit_original_response(
-                    content=f"🎮 Add **{channel_game['name']}** to your games first.", view=None
-                )
-            builder = EventBuilderView(
-                host=interaction.user,
-                games=games[:25],
-                game=channel_game,
-                game_locked=channel_game is not None,
-            )
+            builder = EventBuilderView(host=interaction.user)
             await interaction.edit_original_response(content=builder.content(), view=builder)
         except Exception as exc:
             print(f"[GamerHQ][LFG] /lfg create failed: {exc}")
@@ -1223,7 +1215,7 @@ class LFG(commands.Cog):
                 content="❌ Event creation could not be opened. The error was logged for GamerHQ staff.", view=None
             )
 
-    @lfg.command(name="create", description="Create a GamerHQ Looking for Group event.")
+    @lfg.command(name="create", description="Create a scheduled GamerHQ event.")
     async def lfg_create(self, interaction: discord.Interaction):
         await self._open_event_builder(interaction)
 
@@ -1235,10 +1227,8 @@ class LFG(commands.Cog):
         event = db.get_lfg_event_by_share_token(code.strip())
         if not event or int(event["guild_id"]) != interaction.guild.id or event.get("visibility") != "private":
             return await interaction.response.send_message("❌ This private event invite is invalid, disabled, or expired.", ephemeral=True)
-        game = db.get_game_by_id(int(event["game_id"]))
-        if not game:
-            return await interaction.response.send_message("❌ This event's game is unavailable.", ephemeral=True)
-        if not member_has_game_role(interaction.user, game):
+        game = db.get_game_by_id(int(event["game_id"])) if int(event.get("game_id") or 0) else None
+        if game and not member_has_game_role(interaction.user, game):
             return await prompt_add_game_and_join(interaction, event, game, interaction.guild, share_token=code.strip())
         await interaction.response.defer(ephemeral=interaction.guild is not None, thinking=True)
         result = await _finish_join(interaction.guild, event, interaction.user, share_token=code.strip())
@@ -1250,7 +1240,7 @@ class LFG(commands.Cog):
             return await interaction.followup.send("✅ You're already in this private event.", ephemeral=True)
         await interaction.followup.send("✅ You've joined the private event and now have access to its event channel.", ephemeral=True)
 
-    @lfg.command(name="manage", description="Manage or cancel LFG events you created.")
+    @lfg.command(name="manage", description="Manage or cancel events you created.")
     async def lfg_manage(self, interaction: discord.Interaction):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             return await interaction.response.send_message("❌ This can only be used inside GamerHQ.", ephemeral=True)
@@ -1261,9 +1251,9 @@ class LFG(commands.Cog):
         ]
         events.sort(key=lambda event: int(event["start_at"]))
         if not events:
-            return await interaction.edit_original_response(content="🎮 You don't currently have any active LFG events to manage.")
+            return await interaction.edit_original_response(content="📅 You don't currently have any active events to manage.")
         await interaction.edit_original_response(
-            content="# ⚙️ Manage Your LFG Events\n\nChoose one of your events below. Only you can see this panel.",
+            content="# ⚙️ Manage Your Events\n\nChoose one of your events below. Only you can manage events you created.",
             view=LFGManageView(interaction.user.id, events),
         )
     async def cog_load(self):

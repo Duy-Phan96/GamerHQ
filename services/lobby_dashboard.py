@@ -100,21 +100,51 @@ async def sync_card(guild, event, view):
         db.add_lfg_event_message(event['id'], channel_id=channel.id, message_id=message.id)
 
 
-async def cleanup_ended(guild, *, reconcile=False):
+async def cleanup_ended(guild, *, reconcile=False, event_id=None):
+    """Close only tracked resources; occupied or unknown voice blocks destructive cleanup."""
     from cogs.lfg import delete_event_posts, delete_event_voice, delete_private_event_channel, refresh_event_posts
     with db.connect() as conn:
-        rows = [dict(r) for r in conn.execute("SELECT * FROM lfg_events WHERE guild_id=? AND ended_at IS NOT NULL AND status IN ('cancelled','completed')", (guild.id,))]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM lfg_events WHERE guild_id=? AND ended_at IS NOT NULL AND status IN ('cancelled','completed') "
+            "AND (? IS NULL OR id=?)", (guild.id, event_id, event_id))]
     for event in rows:
         if reconcile:
             await refresh_event_posts(guild, event['id'])
-        voice = guild.get_channel(event['voice_channel_id']) if event.get('voice_channel_id') else None
-        if isinstance(voice, discord.VoiceChannel) and voice.members:
-            continue
-        voice_clean = await delete_event_voice(guild, event)
-        if int(time.time()) >= event['ended_at'] + 86400:
-            posts_clean = await delete_event_posts(guild, event)
+        async with event_lock(event['id']):
+            event = db.get_lfg_event(event['id'])
+            if not event or event['guild_id'] != guild.id or event['status'] not in {'cancelled', 'completed'} or event['ended_at'] is None:
+                continue
+            voice_id = event.get('voice_channel_id')
+            if voice_id:
+                # Missing gateway state is not proof of an empty/deleted room.
+                if getattr(guild, 'unavailable', False) is True:
+                    continue
+                voice = guild.get_channel(voice_id)
+                if voice is None:
+                    try:
+                        voice = await guild.fetch_channel(voice_id)
+                    except discord.NotFound:
+                        db.clear_lfg_event_voice(event['id'])
+                        event = db.get_lfg_event(event['id'])
+                    except discord.HTTPException:
+                        continue
+                if voice is not None:
+                    if not isinstance(voice, discord.VoiceChannel) or voice.members:
+                        continue
+                    if guild.get_channel(voice_id) is None:
+                        # Wait for the gateway instead of letting a cache-only delete
+                        # helper mistake a REST-only object for a deleted voice.
+                        continue
+
+            # No participant is removed from voice. Keep the private chat as well
+            # while occupied; terminal events remain visible in the admin overview.
+            voice_clean = await delete_event_voice(guild, event)
+            if event.get('voice_channel_id') and not voice_clean:
+                continue
             channel_clean = await delete_private_event_channel(guild, event)
-            if voice_clean and posts_clean and channel_clean:
-                with db.connect() as conn:
-                    conn.execute('UPDATE lfg_events SET ended_at=NULL, dashboard_channel_id=NULL, dashboard_message_id=NULL WHERE id=?', (event['id'],))
-                    conn.execute('DELETE FROM lfg_event_messages WHERE event_id=?', (event['id'],))
+            if int(time.time()) >= event['ended_at'] + 86400:
+                posts_clean = await delete_event_posts(guild, event)
+                if voice_clean and posts_clean and channel_clean:
+                    with db.connect() as conn:
+                        conn.execute('UPDATE lfg_events SET ended_at=NULL, dashboard_channel_id=NULL, dashboard_message_id=NULL WHERE id=?', (event['id'],))
+                        conn.execute('DELETE FROM lfg_event_messages WHERE event_id=?', (event['id'],))

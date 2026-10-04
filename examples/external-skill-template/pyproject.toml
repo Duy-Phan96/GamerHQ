@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gamerhq-skill-example"
+version = "0.1.0"
+description = "Example external GamerHQ Skill package"
+requires-python = ">=3.12"
+
+[project.entry-points."gamerhq.skills"]
+example-skill = "gamerhq_skill_example:create_skill"
+
+[tool.setuptools]
+packages = ["gamerhq_skill_example"]
+
+[tool.gamerhq]
+skill-id = "example-skill"
+runtime-api = "1"
+sdk = ">=0.1,<0.2"
+capabilities = []
