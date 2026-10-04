@@ -29,10 +29,12 @@ jobs:
       - run: python -m pytest
       - run: python -m tools.repository_audit --history
       - run: bash -n scripts/update.sh scripts/backup.sh
+        if: always()
       - name: Validate Compose without credentials
+        if: always()
         run: |
           touch ../.env
           docker compose config --quiet
       - name: Build production image (no bot login)
-        if: matrix.python == '3.12'
+        if: always() && matrix.python == '3.12'
         run: docker compose build
