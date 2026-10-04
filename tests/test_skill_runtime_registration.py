@@ -112,6 +112,45 @@ class SkillRuntimeRegistrationTests(unittest.IsolatedAsyncioTestCase):
             "gamerhq-skill-external-status",
         )
 
+    async def test_unavailable_external_skill_is_visible_and_cleared_after_registration(self):
+        self.runtime.record_external_unavailable("missing-external")
+        status = await self.runtime.status(
+            guild_id=self.guild.id,
+            skill_id="missing-external",
+        )
+        self.assertEqual(status.health, "UNAVAILABLE")
+        self.assertEqual(status.source_kind, "external")
+        self.assertFalse(status.enabled)
+
+        external = RegistrationFixtureSkill()
+        external.manifest = SkillManifest(
+            id="missing-external",
+            name="Recovered External",
+            version="1.0.0",
+            runtime_api_version="1",
+            description="fixture",
+            author="test",
+            permissions=(SkillCapability.SCHEDULER_JOBS.value,),
+        )
+        self.runtime.register(
+            external,
+            source_kind="external",
+            source_distribution="gamerhq-skill-recovered",
+        )
+        recovered = await self.runtime.status(
+            guild_id=self.guild.id,
+            skill_id="missing-external",
+        )
+        self.assertEqual(recovered.health, "DISABLED")
+        self.assertEqual(recovered.source_distribution, "gamerhq-skill-recovered")
+
+    async def test_statuses_include_configured_unavailable_external_skill(self):
+        self.runtime.record_external_unavailable("missing-external")
+        statuses = await self.runtime.statuses(guild_id=self.guild.id)
+        ids = [status.skill_id for status in statuses]
+        self.assertIn("registration-fixture", ids)
+        self.assertIn("missing-external", ids)
+
     async def test_registration_runs_once_and_handler_receives_guild_context(self):
         await self.runtime.register_all()
         await self.runtime.register_all()
