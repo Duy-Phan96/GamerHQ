@@ -44,9 +44,13 @@ class GamerHQBot(commands.Bot):
         from config import EXTERNAL_SKILLS
         self.skill_runtime = GamerHQSkillRuntime(self)
         for skill in first_party_skills():
-            self.skill_runtime.register(skill)
+            self.skill_runtime.register(skill, source_kind="built-in")
         for package in discover_installed_skills(EXTERNAL_SKILLS):
-            self.skill_runtime.register(package.skill)
+            self.skill_runtime.register(
+                package.skill,
+                source_kind="external",
+                source_distribution=package.distribution or package.entry_point,
+            )
         await self.skill_runtime.register_all()
 
         await self.load_extension("cogs.games")
