@@ -3,7 +3,8 @@ from types import MappingProxyType
 
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.events import EventContract, EventEnvelope
-from skill_runtime.contracts.manifest import SkillEvents, SkillManifest, SkillPublicApis, validate_manifest
+from skill_runtime.contracts.manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
+from skill_runtime.contracts.management import ManagementApiContract
 from skill_runtime.contracts.public_api import PublicApiContract
 
 
@@ -27,6 +28,7 @@ class SkillContractTests(unittest.TestCase):
                 consumes=(),
             ),
             public_apis=SkillPublicApis(),
+            management_apis=SkillManagementApis(),
         )
         values.update(overrides)
         return SkillManifest(**values)
@@ -61,6 +63,21 @@ class SkillContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "versioned"):
             EventContract("recurring-post.sent")
         self.assertEqual(EventContract("recurring-post.sent.v1").id, "recurring-post.sent.v1")
+
+    def test_management_api_ids_are_explicitly_versioned(self):
+        self.assertEqual(
+            ManagementApiContract("recurring-posts.list.v1").id,
+            "recurring-posts.list.v1",
+        )
+        with self.assertRaisesRegex(ValueError, "versioned"):
+            ManagementApiContract("recurring-posts.list")
+
+    def test_duplicate_management_api_is_rejected(self):
+        contract = ManagementApiContract("recurring-posts.list.v1")
+        with self.assertRaisesRegex(ValueError, "Duplicate management API"):
+            self.manifest(
+                management_apis=SkillManagementApis(exposes=(contract, contract))
+            )
 
     def test_public_api_ids_are_explicitly_versioned(self):
         self.assertEqual(PublicApiContract("events.get-event.v1").id, "events.get-event.v1")
@@ -103,6 +120,7 @@ class SkillContractTests(unittest.TestCase):
         object.__setattr__(manifest, "permissions", ())
         object.__setattr__(manifest, "events", SkillEvents())
         object.__setattr__(manifest, "public_apis", SkillPublicApis())
+        object.__setattr__(manifest, "management_apis", SkillManagementApis())
         validate_manifest(manifest, supported_api_versions=frozenset({"1", "2"}))
 
 
