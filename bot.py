@@ -88,8 +88,9 @@ class GamerHQBot(commands.Bot):
                     await self.twitch_hub.close()
         finally:
             try:
-                if self.skill_runtime is not None:
-                    await self.skill_runtime.close()
+                skill_runtime = getattr(self, 'skill_runtime', None)
+                if skill_runtime is not None:
+                    await skill_runtime.close()
             finally:
                 await super().close()
 
