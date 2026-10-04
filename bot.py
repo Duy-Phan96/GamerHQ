@@ -25,6 +25,7 @@ class GamerHQBot(commands.Bot):
         self.tree.on_error = tree_error
         self.health_task = None
         self.operational_log_started = set()
+        self.skill_runtime = None
 
     async def setup_hook(self):
         # Container-only, ephemeral heartbeat. Local development needs no /tmp.
@@ -36,6 +37,10 @@ class GamerHQBot(commands.Bot):
         print(f"[GamerHQ] Runtime database: {DB_PATH.resolve()}")
         db.init_db()
         db.seed_catalog()
+
+        from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+        self.skill_runtime = GamerHQSkillRuntime(self)
+        await self.skill_runtime.register_all()
 
         await self.load_extension("cogs.games")
         await self.load_extension("cogs.voice")
@@ -96,6 +101,12 @@ async def on_ready():
                 await startup(guild, bot)
             except Exception:
                 logging.getLogger(__name__).warning('Startup diagnostics unavailable; review /server manage.')
+        if self.skill_runtime is not None and self.skill_runtime.registry.ids():
+            try:
+                await self.skill_runtime.restore_guild(guild_id=guild.id)
+            except Exception:
+                logging.getLogger(__name__).exception('Skill Runtime restore failed for guild %s.', guild.id)
+
         # Legacy channel migration is an explicit maintenance operation only.
         # Startup must not delete DB-linked game channels or rename community channels.
         try:
