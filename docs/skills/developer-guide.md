@@ -464,4 +464,4 @@ A Skill is ready for review only when:
 - README documents all dependency surfaces;
 - no secrets or production data are required for tests.
 
-Run the [SDK Conformance Check](conformance.md) as a fast offline preflight, then use the [Skill Review Checklist](review-checklist.md) for full review.
+Run the [SDK Conformance Check](conformance.md), including the static source audit, as a fast offline preflight, then use the [Skill Review Checklist](review-checklist.md) for full review.
