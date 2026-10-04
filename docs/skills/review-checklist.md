@@ -22,6 +22,7 @@ Use this checklist for every first-party or external GamerHQ Skill before allowi
 
 - [ ] Every host operation maps to a declared capability.
 - [ ] Requested capabilities are minimal.
+- [ ] External package static capability metadata exactly matches SkillManifest.permissions.
 - [ ] No capability is requested only for hypothetical future work.
 - [ ] Missing capabilities fail closed.
 
