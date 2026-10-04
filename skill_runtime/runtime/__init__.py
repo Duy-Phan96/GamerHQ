@@ -5,6 +5,7 @@ from .manager import SkillManager, SkillStateStorePort
 from .registry import SkillRegistry
 from .scoped import ScopedEventBus, ScopedSkillApi
 from .registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration
+from .packages import ENTRY_POINT_GROUP, InstalledSkillPackage, SkillPackageError, discover_installed_skills
 
 __all__ = [
     "EventBus",
@@ -13,6 +14,10 @@ __all__ = [
     "ScopedSchedulerRegistration",
     "ScopedSkillApiRegistration",
     "SkillApiError",
+    "ENTRY_POINT_GROUP",
+    "InstalledSkillPackage",
+    "SkillPackageError",
+    "discover_installed_skills",
     "SkillApiRouter",
     "SkillManager",
     "SkillRegistry",
