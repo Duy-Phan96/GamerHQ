@@ -155,6 +155,27 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Fixture Skill', kwargs['content'])
         self.assertIn('Disabled', kwargs['content'])
 
+    def test_skill_details_show_external_package_provenance(self):
+        from cogs.server_management import _skill_detail_text
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        status = GuildSkillStatus(
+            skill_id='external-skill',
+            name='External Skill',
+            version='1.0.0',
+            description='Portable external fixture',
+            enabled=False,
+            running=False,
+            health='DISABLED',
+            health_detail='Skill is disabled for this guild.',
+            required_capabilities=(),
+            missing_capabilities=(),
+            source_kind='external',
+            source_distribution='gamerhq-skill-external',
+        )
+        text = _skill_detail_text(status)
+        self.assertIn('External package: gamerhq-skill-external', text)
+
     async def test_skill_lifecycle_change_requires_owner_review(self):
         from cogs.server_management import SkillDetailsView, SkillToggleConfirmView
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
