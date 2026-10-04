@@ -12,6 +12,7 @@ from pathlib import Path
 import tomllib
 from collections.abc import Callable, Iterable
 
+from .contracts.capabilities import KNOWN_CAPABILITIES
 from .contracts.manifest import SkillManifest, validate_manifest
 
 
@@ -231,6 +232,7 @@ class SkillPackageMetadataReport:
     skill_id: str
     runtime_api_version: str
     sdk_compatibility: str
+    capabilities: tuple[str, ...]
     entry_point: str
 
 
@@ -252,6 +254,7 @@ def validate_skill_package_metadata(path: str | Path) -> SkillPackageMetadataRep
         skill_id = str(tool["skill-id"]).strip()
         runtime_api = str(tool["runtime-api"]).strip()
         sdk_compat = str(tool["sdk"]).strip()
+        raw_capabilities = tool["capabilities"]
         entry_points = project["entry-points"]["gamerhq.skills"]
     except (OSError, UnicodeError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
         raise SkillConformanceError(
@@ -266,6 +269,16 @@ def validate_skill_package_metadata(path: str | Path) -> SkillPackageMetadataRep
         raise SkillConformanceError("Skill package must declare tool.gamerhq.runtime-api.")
     if not sdk_compat:
         raise SkillConformanceError("Skill package must declare tool.gamerhq.sdk.")
+    if not isinstance(raw_capabilities, list) or any(not isinstance(value, str) for value in raw_capabilities):
+        raise SkillConformanceError("Skill package capabilities must be a string list.")
+    capabilities = tuple(value.strip() for value in raw_capabilities)
+    if any(not value for value in capabilities):
+        raise SkillConformanceError("Skill package capabilities must not be empty strings.")
+    if len(set(capabilities)) != len(capabilities):
+        raise SkillConformanceError("Skill package capabilities must not contain duplicates.")
+    unknown_capabilities = sorted(set(capabilities) - KNOWN_CAPABILITIES)
+    if unknown_capabilities:
+        raise SkillConformanceError("Skill package declares an unknown capability.")
     if not isinstance(entry_points, dict) or len(entry_points) != 1:
         raise SkillConformanceError(
             "External Skill packages must expose exactly one gamerhq.skills entry point."
@@ -282,5 +295,30 @@ def validate_skill_package_metadata(path: str | Path) -> SkillPackageMetadataRep
         skill_id=skill_id,
         runtime_api_version=runtime_api,
         sdk_compatibility=sdk_compat,
+        capabilities=capabilities,
         entry_point=target,
     )
+
+
+def validate_skill_package_matches_implementation(
+    path: str | Path,
+    skill: object,
+) -> SkillPackageMetadataReport:
+    """Verify static package-review metadata matches the executable manifest."""
+    metadata_report = validate_skill_package_metadata(path)
+    implementation_report = validate_skill_implementation(skill)
+    manifest = skill.manifest
+
+    if metadata_report.skill_id != implementation_report.skill_id:
+        raise SkillConformanceError(
+            "Package metadata Skill ID does not match the executable manifest."
+        )
+    if metadata_report.runtime_api_version != implementation_report.runtime_api_version:
+        raise SkillConformanceError(
+            "Package metadata Runtime API does not match the executable manifest."
+        )
+    if tuple(metadata_report.capabilities) != tuple(manifest.permissions):
+        raise SkillConformanceError(
+            "Package metadata capabilities do not match the executable manifest."
+        )
+    return metadata_report
