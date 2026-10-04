@@ -155,7 +155,22 @@ The management UI reads the existing Skill registry and `skill_guild_state`.
 It does not create a second enablement store. Disabling a Skill therefore also
 continues to use the scheduler's existing disabled-Skill gate.
 
-### Next
-Recurring Posts becomes the first reference Skill using registry/lifecycle,
-Skill storage, `scheduler.jobs`, Discord capabilities and the Skills management
-surface.
+### Slice G
+Recurring Posts is the first complete reference Skill.
+
+It uses only public Runtime surfaces:
+
+- process-level `SkillRegistrationContext` for stable scheduler/API handlers;
+- guild-scoped `SkillContext` for execution;
+- namespaced Skill storage;
+- the shared persistent scheduler;
+- narrow Discord capabilities;
+- owner-controlled `/server manage → Skills` configuration.
+
+No Skill-owned scheduler loop or database table is introduced.
+
+The host starts one shared Scheduler worker. Handler execution reconstructs a
+fresh guild-scoped SkillContext so process-level registration never leaks a
+Discord Guild/client into portable Skill code.
+
+See [Recurring Posts](recurring-posts.md).
