@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import ast
 import inspect
 from pathlib import Path
+import tomllib
 from collections.abc import Callable, Iterable
 
 from .contracts.manifest import SkillManifest, validate_manifest
@@ -222,3 +223,64 @@ def require_clean_skill_source(paths: Iterable[str | Path]) -> SkillSourceAuditR
             f"Skill source audit failed: {first.rule} at {first.path}:{first.line}."
         )
     return report
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPackageMetadataReport:
+    package_name: str
+    skill_id: str
+    runtime_api_version: str
+    sdk_compatibility: str
+    entry_point: str
+
+
+def validate_skill_package_metadata(path: str | Path) -> SkillPackageMetadataReport:
+    """Validate the developer-facing package metadata contract.
+
+    External Skill repositories declare one Skill per Python distribution.
+    The [tool.gamerhq] section documents the intended Runtime/SDK compatibility,
+    while the Python entry point remains the executable discovery contract.
+    """
+    pyproject = Path(path)
+    if pyproject.is_dir():
+        pyproject = pyproject / "pyproject.toml"
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        project = data["project"]
+        package_name = str(project["name"]).strip()
+        tool = data["tool"]["gamerhq"]
+        skill_id = str(tool["skill-id"]).strip()
+        runtime_api = str(tool["runtime-api"]).strip()
+        sdk_compat = str(tool["sdk"]).strip()
+        entry_points = project["entry-points"]["gamerhq.skills"]
+    except (OSError, UnicodeError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        raise SkillConformanceError(
+            "Skill package metadata is missing or invalid."
+        ) from exc
+
+    if not package_name:
+        raise SkillConformanceError("Skill package name is required.")
+    if not skill_id:
+        raise SkillConformanceError("Skill package must declare tool.gamerhq.skill-id.")
+    if not runtime_api:
+        raise SkillConformanceError("Skill package must declare tool.gamerhq.runtime-api.")
+    if not sdk_compat:
+        raise SkillConformanceError("Skill package must declare tool.gamerhq.sdk.")
+    if not isinstance(entry_points, dict) or len(entry_points) != 1:
+        raise SkillConformanceError(
+            "External Skill packages must expose exactly one gamerhq.skills entry point."
+        )
+    entry_id, target = next(iter(entry_points.items()))
+    if str(entry_id) != skill_id:
+        raise SkillConformanceError(
+            "Package Skill ID must match its gamerhq.skills entry-point name."
+        )
+    if not isinstance(target, str) or ":" not in target:
+        raise SkillConformanceError("Skill entry point must target module:factory.")
+    return SkillPackageMetadataReport(
+        package_name=package_name,
+        skill_id=skill_id,
+        runtime_api_version=runtime_api,
+        sdk_compatibility=sdk_compat,
+        entry_point=target,
+    )
