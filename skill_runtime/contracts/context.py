@@ -66,6 +66,14 @@ class SchedulerRegistrationPort(Protocol):
     ) -> None: ...
 
 
+class SkillManagementRegistrationPort(Protocol):
+    def expose(
+        self,
+        contract_id: str,
+        handler: Callable[["SkillContext", Mapping[str, Any]], Awaitable[Mapping[str, Any]]],
+    ) -> None: ...
+
+
 class SkillApiRegistrationPort(Protocol):
     def expose(
         self,
@@ -108,6 +116,7 @@ class SkillRegistrationContext:
 
     skill_id: str
     scheduler: SchedulerRegistrationPort
+    management: SkillManagementRegistrationPort
     skills: SkillApiRegistrationPort
     logger: SkillLogger
 
