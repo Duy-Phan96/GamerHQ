@@ -10,6 +10,12 @@
 !CHANGELOG.md
 !cogs/
 !cogs/**/*.py
+!skill_runtime/
+!skill_runtime/**/*.py
+!hosts/
+!hosts/**/*.py
+!skills/
+!skills/**/*.py
 !services/
 !services/**/*.py
 !database/
