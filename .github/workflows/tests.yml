@@ -1,11 +1,20 @@
 name: Offline tests
-on: [push, pull_request]
+on:
+  # Feature branches are checked through their PR, avoiding duplicate push/PR runs.
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python: ['3.12', '3.14']
     steps:
@@ -20,10 +29,12 @@ jobs:
       - run: python -m pytest
       - run: python -m tools.repository_audit --history
       - run: bash -n scripts/update.sh scripts/backup.sh
+        if: always()
       - name: Validate Compose without credentials
+        if: always()
         run: |
           touch ../.env
           docker compose config --quiet
       - name: Build production image (no bot login)
-        if: matrix.python == '3.12'
+        if: always() && matrix.python == '3.12'
         run: docker compose build

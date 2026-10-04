@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gamerhq-skill-sdk"
+version = "0.1.0"
+description = "Portable Skill Runtime contracts and SDK for GamerHQ-compatible hosts"
+readme = "docs/skills/README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [{name = "GamerHQ"}]
+keywords = ["discord", "plugins", "skills", "sdk"]
+
+[project.urls]
+Repository = "https://github.com/Duy-Phan96/GamerHQ"
+Documentation = "https://github.com/Duy-Phan96/GamerHQ/tree/develop/docs/skills"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["skill_runtime", "skill_runtime.*"]
+exclude = ["tests*", "hosts*", "skills*", "cogs*", "services*", "database*", "tools*"]

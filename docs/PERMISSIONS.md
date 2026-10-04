@@ -75,3 +75,14 @@ roles do not grant access. Existing unrelated deny bits are preserved.
 STAFF games-log uses the private server-log policy: staff read/history, GamerHQ
 posting/embeds, no ordinary member visibility. Candidate buttons recheck owner/admin
 access; staff reading the log does not automatically authorize channel creation.
+
+## Owner Change Log
+
+Use a compact access list (at most @everyone, owner and GamerHQ), not one deny per
+server/game role. Confirmed repair replaces this mapped channel's ACL only and
+never changes guild roles or synchronizes broad STAFF grants into it.
+
+An Administrator can still see the channel. Only the non-sensitive launcher is
+posted there; history, change details and Undo/restore actions are owner-authorized
+ephemeral responses. See [Owner Change Log](OWNER_CHANGELOG.md) for setup, retries,
+privacy limitations and regression coverage.

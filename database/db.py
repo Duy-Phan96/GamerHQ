@@ -159,6 +159,47 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS skill_guild_state (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+    version TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS skill_guild_state_enabled
+ON skill_guild_state(guild_id, enabled, skill_id);
+
+CREATE TABLE IF NOT EXISTS skill_storage (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id, storage_key)
+);
+
+CREATE TABLE IF NOT EXISTS skill_jobs (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    job_key TEXT NOT NULL,
+    handler_id TEXT NOT NULL,
+    schedule_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    next_run_at INTEGER,
+    last_run_at INTEGER,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1,
+    last_error_code TEXT,
+    lease_until INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id, job_key)
+);
+CREATE INDEX IF NOT EXISTS skill_jobs_due
+ON skill_jobs(enabled, next_run_at, lease_until);
+
 CREATE TABLE IF NOT EXISTS game_channel_candidates (
     guild_id INTEGER NOT NULL,
     game_id INTEGER NOT NULL,
@@ -171,6 +212,25 @@ CREATE TABLE IF NOT EXISTS game_legacy_hints (
     game_id INTEGER PRIMARY KEY,
     resources_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS structure_change_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    resource_type TEXT NOT NULL,
+    logical_key TEXT NOT NULL,
+    resource_id INTEGER,
+    actor_id INTEGER,
+    action TEXT NOT NULL,
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    reversible INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'APPLIED',
+    created_at INTEGER NOT NULL,
+    undone_at INTEGER,
+    undone_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS structure_change_log_guild_created
+ON structure_change_log(guild_id, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS deleted_games (
     name_key TEXT PRIMARY KEY,
@@ -200,6 +260,7 @@ CREATE TABLE IF NOT EXISTS lfg_events (
     start_at INTEGER NOT NULL,
     max_players INTEGER NOT NULL,
     invite_lead_minutes INTEGER NOT NULL DEFAULT 15,
+    duration_minutes INTEGER NOT NULL DEFAULT 120,
     channel_id INTEGER,
     message_id INTEGER,
     status TEXT NOT NULL DEFAULT 'scheduled',
@@ -312,6 +373,15 @@ def init_db():
         if version not in (0, SCHEMA_VERSION):
             raise ValueError('Unsupported GamerHQ database schema version; use the matching application release.')
         conn.executescript(SCHEMA)
+
+        # Additive Skill Scheduler migrations for development/forward-compatible
+        # databases created by earlier Runtime slices. Existing jobs/state stay intact.
+        skill_job_cols = {row["name"] for row in conn.execute("PRAGMA table_info(skill_jobs)").fetchall()}
+        if "revision" not in skill_job_cols:
+            conn.execute("ALTER TABLE skill_jobs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+        if "lease_token" not in skill_job_cols:
+            conn.execute("ALTER TABLE skill_jobs ADD COLUMN lease_token TEXT")
+
         affiliate_cols = {row['name'] for row in conn.execute('PRAGMA table_info(processed_affiliate_deals)')}
         for name in ('normalized_game', 'source_key'):
             if name not in affiliate_cols:
@@ -325,6 +395,7 @@ def init_db():
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(lfg_events)").fetchall()}
         for name, definition in {
             "note": "TEXT NOT NULL DEFAULT ''",
+            "duration_minutes": "INTEGER NOT NULL DEFAULT 120",
             "dashboard_channel_id": "INTEGER",
             "dashboard_message_id": "INTEGER",
             "ended_at": "INTEGER",
@@ -682,9 +753,13 @@ def delete_managed_role(role_id):
         conn.execute("DELETE FROM managed_roles WHERE role_id=?", (role_id,))
 
 
-def create_lfg_event(*, guild_id, game_id, host_id, title, start_at, max_players, invite_lead_minutes, visibility="public", share_token=None, enforce_member_limits=False):
+def create_lfg_event(*, guild_id, game_id=None, host_id, title, start_at, max_players, invite_lead_minutes, duration_minutes=120, visibility="public", share_token=None, enforce_member_limits=False):
     from services.game_area_safety import require_available
-    require_available(game_id)
+    normalized_game_id = int(game_id) if game_id else 0
+    if normalized_game_id:
+        require_available(normalized_game_id)
+    if not 30 <= int(duration_minutes) <= 1440:
+        raise ValueError("Event duration must be between 30 minutes and 24 hours.")
     with connect() as conn:
         if enforce_member_limits:
             conn.execute('BEGIN IMMEDIATE')
@@ -694,15 +769,15 @@ def create_lfg_event(*, guild_id, game_id, host_id, title, start_at, max_players
             if previous and now - int(previous['value']) < 30:
                 raise ValueError('Please wait 30 seconds between creating lobbies.')
             if conn.execute("SELECT 1 FROM lfg_events WHERE guild_id=? AND host_id=? AND game_id=? AND start_at=? AND title=? AND visibility=? AND status='scheduled'",
-                            (guild_id, host_id, game_id, start_at, title, visibility)).fetchone():
+                            (guild_id, host_id, normalized_game_id, start_at, title, visibility)).fetchone():
                 raise ValueError('An identical lobby already exists. Open /lfg manage.')
             conn.execute('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, str(now)))
         cur = conn.execute(
             """
-            INSERT INTO lfg_events(guild_id,game_id,host_id,title,start_at,max_players,invite_lead_minutes,visibility,share_token)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO lfg_events(guild_id,game_id,host_id,title,start_at,max_players,invite_lead_minutes,duration_minutes,visibility,share_token)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
             """,
-            (guild_id, game_id, host_id, title, start_at, max_players, invite_lead_minutes, visibility, share_token),
+            (guild_id, normalized_game_id, host_id, title, start_at, max_players, invite_lead_minutes, int(duration_minutes), visibility, share_token),
         )
         event_id = cur.lastrowid
         conn.execute(

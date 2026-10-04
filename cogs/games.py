@@ -856,6 +856,24 @@ class NotificationSelectionSession(discord.ui.View):
         await interaction.response.edit_message(content="✖️ Game selection cancelled. Nothing was changed.", view=None); self.stop()
 
 
+async def open_game_selector(interaction: discord.Interaction):
+    """Open the canonical member game selector from any trusted entry point."""
+    games = db.get_selector_games()
+    if not games:
+        # Keep the selection rules unchanged, but distinguish a genuinely empty
+        # catalog from selectable rows whose stored role mappings need repair.
+        unavailable = [g for g in db.get_selectable_games() if g.get('active')]
+        if unavailable:
+            logging.getLogger(__name__).warning('Selectable games lack usable role mappings: guild=%s games=%s',
+                interaction.guild.id, [g['id'] for g in unavailable])
+        text = ('Game selection is temporarily unavailable. Please try again later.' if unavailable else
+                'No games are currently available for selection.')
+        await interaction.response.send_message(text, ephemeral=True)
+        return
+    session = GameSelectionSession(interaction.user, games)
+    await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
+
+
 class ChooseGamesButtons(discord.ui.View):
     def __init__(self, cog=None):
         super().__init__(timeout=None)
@@ -863,20 +881,7 @@ class ChooseGamesButtons(discord.ui.View):
 
     @discord.ui.button(label="Select Games", emoji="🎮", style=discord.ButtonStyle.primary, custom_id="gamerhq:select_games_categories")
     async def select_games(self, interaction: discord.Interaction, button: discord.ui.Button):
-        games = db.get_selector_games()
-        if not games:
-            # Keep the selection rules unchanged, but distinguish a genuinely empty
-            # catalog from selectable rows whose stored role mappings need repair.
-            unavailable = [g for g in db.get_selectable_games() if g.get('active')]
-            if unavailable:
-                logging.getLogger(__name__).warning('Selectable games lack usable role mappings: guild=%s games=%s',
-                    interaction.guild.id, [g['id'] for g in unavailable])
-            text = ('Game selection is temporarily unavailable. Please try again later.' if unavailable else
-                    'No games are currently available for selection.')
-            await interaction.response.send_message(text, ephemeral=True)
-            return
-        session = GameSelectionSession(interaction.user, games)
-        await interaction.response.send_message(session.status_text(), view=session, ephemeral=True)
+        await open_game_selector(interaction)
 
     @discord.ui.button(label="Suggest Game", emoji="💡", style=discord.ButtonStyle.secondary, custom_id="gamerhq:suggest_game")
     async def suggest_game(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1524,7 +1529,7 @@ class Games(commands.Cog):
         try:
             game_row = db.upsert_custom_game(name, emoji, group)
             db.set_game_role(game_row["id"], role.id)
-            db.set_game_selectable(game_row["id"], visible)
+            db.set_game_selectable(game_row["id"], False)
 
             if category is not None:
                 db.set_game_structure(
@@ -1564,9 +1569,12 @@ class Games(commands.Cog):
                 f"✅ **{name}** recovered into the Game Library.\n"
                 f"🔗 Existing role linked: {role.mention}\n"
                 f"📁 Existing area: **{'re-linked' if category else 'none found'}**\n"
-                f"👁️ Visible in Choose Your Games: **{'Yes' if visible else 'No'}**"
+                "👁️ Recovered as hidden. Confirm the following Games-channel review to show it."
             )
         )
+        if visible:
+            from cogs.game_channels import open_visibility
+            await open_visibility(interaction, game_row["id"], True)
 
     @recover_existing.autocomplete("group")
     async def recover_existing_group_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -1646,55 +1654,17 @@ class Games(commands.Cog):
             for g in search_games(current, selectable_only=False, limit=25)
         ]
 
-    @game_admin.command(name="set-visible", description="Admin: show/hide a library game in Choose Your Games without changing its area.")
+    @game_admin.command(name="set-visible", description="Admin: show or hide a game and its shared Games text channel.")
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(game="Library game name", visible="Show or hide this game in the Beta selector")
+    @app_commands.describe(game="Library game name", visible="Show the game and its text channel, or hide both without deleting messages")
     async def set_visible(self, interaction: discord.Interaction, game: str, visible: bool):
-        # Refreshing all managed/pinned category messages can take longer than
-        # Discord's initial interaction window, so acknowledge immediately.
         await interaction.response.defer(ephemeral=True, thinking=True)
-
         selected = resolve_library_game(game)
         if selected is None:
             await interaction.edit_original_response(content="❌ Game not found in the library.")
             return
-        role_status = "not-needed"
-        if visible:
-            role, role_status, role_error = await resolve_or_adopt_game_role(
-                interaction.guild,
-                selected,
-                create_if_missing=True,
-            )
-            if role is None:
-                await interaction.edit_original_response(
-                    content=f"❌ {role_error or 'The game role could not be resolved.'}"
-                )
-                return
-
-        db.set_game_selectable(selected["id"], visible)
-        if bool(selected['selectable']) != visible:
-            from services.game_channel_service import audit
-            await audit(interaction.guild, 'Game Available' if visible else 'Game Hidden', selected['name'])
-        try:
-            await refresh_choose_games_message(self.bot, view=GameCategoryView, intro_view=lambda: ChooseGamesButtons(self))
-        except GameStructureError as exc:
-            await interaction.edit_original_response(
-                content=f"⚠️ The game state was saved, but Choose Your Games could not refresh: `{exc.original}`"
-            )
-            return
-        role_note = ""
-        if visible and role_status == "adopted":
-            role_note = "\n🔗 Existing matching Discord role re-linked to the Game Library entry."
-        elif visible and role_status == "created":
-            role_note = "\n➕ Missing Discord game role recreated and linked."
-
-        await interaction.edit_original_response(
-            content=(
-                f"✅ **{selected['name']}** is now {'visible' if visible else 'hidden'} in Choose Your Games. "
-                "Its visibility is stored in the database and preserved across overview rebuilds/restarts."
-                f"{role_note}"
-            )
-        )
+        from cogs.game_channels import open_visibility
+        await open_visibility(interaction, selected["id"], visible)
 
     @set_visible.autocomplete("game")
     async def set_visible_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -1712,7 +1682,7 @@ class Games(commands.Cog):
         name="New game name",
         group="Game category used in Choose Your Games",
         emoji="Emoji used for the game role and buttons",
-        visible="Show the new game in Choose Your Games immediately",
+        visible="Review showing this game and creating or reusing its Games text channel",
     )
     async def create_game(
         self,
@@ -1761,7 +1731,7 @@ class Games(commands.Cog):
                     reason=f"GamerHQ create Game Library entry: {name}",
                 )
             db.set_game_role(game["id"], role.id)
-            db.set_game_selectable(game["id"], visible)
+            db.set_game_selectable(game["id"], False)
             game = db.get_game_by_id(game["id"])
             from services.game_channel_service import audit
             await audit(interaction.guild, 'Game Approved', game['name'])
@@ -1782,33 +1752,12 @@ class Games(commands.Cog):
             return
 
         if visible:
-            try:
-                await refresh_choose_games_message(
-                    self.bot,
-                    view=GameCategoryView,
-                    intro_view=lambda: ChooseGamesButtons(self),
-                )
-                overview = "\n✅ `choose-your-games` updated."
-            except GameStructureError as exc:
-                overview = (
-                    "\n⚠️ The game was created, but `choose-your-games` could not refresh: "
-                    f"`{type(exc.original).__name__}: {exc.original}`"
-                )
+            from cogs.game_channels import open_visibility
+            await open_visibility(interaction, game["id"], True)
         else:
-            overview = "\nℹ️ The game is hidden from `choose-your-games` until you enable it with `/game-admin set-visible`."
-
-        role_result = (
-            "its existing Discord game role was linked"
-            if reused_existing_role
-            else "its game role was created"
-        )
-        await interaction.edit_original_response(
-            content=(
-                f"✅ **{game['name']}** was added to the Game Library and {role_result}."
-                f"{overview}\n"
-                "No dedicated Discord area was created. Use `/game-admin add-area` when needed."
-            )
-        )
+            await interaction.edit_original_response(
+                content=f"✅ **{game['name']}** was added to the library as hidden. "
+                        "Use Show Game or `/game-admin set-visible` to review its Games channel.")
 
     @create_game.autocomplete("group")
     async def create_group_autocomplete(self, interaction: discord.Interaction, current: str):

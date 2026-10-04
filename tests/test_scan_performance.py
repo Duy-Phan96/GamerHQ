@@ -264,7 +264,7 @@ class ScanPerformanceTests(unittest.IsolatedAsyncioTestCase):
             interaction.edit_original_response.reset_mock()
             check.reset_mock()
             view = HealthView(self.guild, interaction.user.id, [])
-            await view.details.callback(interaction)
+            await view.details(interaction)
             check.assert_awaited_once_with(self.guild, self.bot, messages=True)
         self.assertEqual(interaction.edit_original_response.await_count, 2)
         self.assertIn('attachments', interaction.edit_original_response.await_args.kwargs)

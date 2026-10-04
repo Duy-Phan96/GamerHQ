@@ -1,14 +1,22 @@
 """Friendly entry points over the existing reviewed server operations."""
 import uuid
+from types import SimpleNamespace
 
 import discord
 from database import db
 from services.response_service import SafeView, check_admin
 from services.server_service import ServerMessageError
 from cogs.server import RoleAdminSession
+from skill_runtime.contracts.schedule import DailySchedule, IntervalSchedule, WeeklySchedule, schedule_from_dict
 
 TITLE = '# ⚙️ GamerHQ Server Management\nManage the most important GamerHQ settings.'
 SECTIONS = ('Core Server', 'Integrations', 'Roles & Permissions', 'Features', 'Review', 'Finish')
+
+_RECURRING_LIST_API = "recurring-posts.list.v1"
+_RECURRING_GET_API = "recurring-posts.get.v1"
+_RECURRING_CREATE_API = "recurring-posts.create.v1"
+_RECURRING_SET_ACTIVE_API = "recurring-posts.set-active.v1"
+_RECURRING_DELETE_API = "recurring-posts.delete.v1"
 
 
 def friendly_plan(view):
@@ -94,10 +102,32 @@ class Menu(RoleAdminSession):
 class ManagementView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
-        for label, callback in [('Server Structure', self.structure), ('Roles & Permissions', self.roles),
-                                ('Integrations', self.integrations), ('Managed Messages', self.messages),
-                                ('Games', self.games), ('Features', self.features), ('Server Log', self.server_log)]:
+        actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
+                   ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Skills', self.skills),
+                   ('Features', self.features),
+                   ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
+        if actor_id == guild.owner_id:
+            actions.append(('Owner Change Log', self.owner_changelog))
+            actions.append(('Support & Requests', self.support_entries))
+        for label, callback in actions:
             self.action(label, callback)
+
+    async def server_check(self, interaction):
+        from cogs.health import open_server_check
+        await open_server_check(interaction)
+
+    async def support_entries(self, interaction):
+        from cogs.ticket_entry_repair import open_management
+        await open_management(interaction)
+
+    async def lobby_admin(self, interaction):
+        from cogs.lobby_admin import open_management
+        await open_management(interaction)
+
+    async def owner_changelog(self, interaction):
+        from cogs.owner_changelog import open_management
+        await open_management(interaction)
 
     async def games(self, interaction):
         from cogs.game_channels import GamesMenu
@@ -122,6 +152,9 @@ class ManagementView(Menu):
         from cogs.managed_messages import open_editor
         await open_editor(interaction)
 
+    async def skills(self, interaction):
+        await open_skills(interaction, self.guild, self.admin_id)
+
     async def features(self, interaction):
         import config
         await interaction.response.edit_message(content='# Features\n'
@@ -140,6 +173,629 @@ class ManagementView(Menu):
         await interaction.response.edit_message(content='# 📜 Server Log\n' + text, view=StructureView(self.guild, self.admin_id))
 
 
+def _skill_status_label(status):
+    if status.missing_capabilities or status.health in ('UNAVAILABLE', 'ERROR', 'FAIL'):
+        return '🔴 Unavailable'
+    if status.enabled:
+        return '🟢 Enabled'
+    return '⚪ Disabled'
+
+
+def _skills_overview_text(statuses):
+    lines = [
+        '# 🧩 Skills',
+        'Manage portable GamerHQ Skills for this server. Enablement is stored per guild; Discord remains an integration, not the source of truth.',
+    ]
+    if not statuses:
+        lines.append('')
+        lines.append('No portable Skills are registered in this build yet.')
+        return '\n'.join(lines)
+    lines.append('')
+    for status in statuses[:25]:
+        lines.append(
+            f'• **{discord.utils.escape_markdown(status.name)[:80]}** '
+            f'v{status.version} — {_skill_status_label(status)}'
+        )
+    if len(statuses) > 25:
+        lines.append(f'\n{len(statuses) - 25} additional Skills are not shown in this Discord selector.')
+    lines.append('\nSelect a Skill to review capabilities and activation.')
+    return '\n'.join(lines)[:1950]
+
+
+def _skill_detail_text(status):
+    source = 'Built-in GamerHQ Skill' if status.source_kind == 'built-in' else f'External package: {discord.utils.escape_markdown(status.source_distribution or "unknown")[:100]}'
+    capabilities = ', '.join(f'`{value}`' for value in status.required_capabilities) or 'None'
+    lines = [
+        f'# 🧩 {discord.utils.escape_markdown(status.name)[:80]}',
+        discord.utils.escape_markdown(status.description)[:500],
+        '',
+        f'**Version:** {status.version}',
+        f'**Source:** {source}',
+        f'**Status:** {_skill_status_label(status)}',
+        f'**Runtime:** {"Running" if status.running else "Stopped"}',
+        f'**Configuration:** {"Available" if status.management_available else "No configuration surface registered."}',
+        f'**Required capabilities:** {capabilities}',
+    ]
+    if status.missing_capabilities:
+        lines.append('**Unavailable capabilities:** ' + ', '.join(
+            f'`{value}`' for value in status.missing_capabilities
+        ))
+    if status.health_detail:
+        lines.append(f'**Health:** {discord.utils.escape_markdown(status.health_detail)[:300]}')
+    return '\n'.join(lines)[:1950]
+
+
+async def open_skills(interaction, guild, actor_id):
+    runtime = getattr(interaction.client, 'skill_runtime', None)
+    if runtime is None:
+        return await interaction.response.edit_message(
+            content='# 🧩 Skills\nSkill Runtime is unavailable in this process.',
+            view=ManagementView(guild, actor_id),
+        )
+    statuses = await runtime.statuses(guild_id=guild.id)
+    await interaction.response.edit_message(
+        content=_skills_overview_text(statuses),
+        view=SkillsView(guild, actor_id, statuses),
+    )
+
+
+class SkillPicker(discord.ui.Select):
+    def __init__(self, statuses):
+        super().__init__(
+            placeholder='Choose a Skill',
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=status.name[:100],
+                    value=status.skill_id,
+                    description=(f'{_skill_status_label(status)} • v{status.version}')[:100],
+                )
+                for status in statuses[:25]
+            ],
+        )
+
+    async def callback(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        if runtime is None:
+            return await interaction.response.edit_message(
+                content='# 🧩 Skills\nSkill Runtime is unavailable in this process.',
+                view=ManagementView(self.view.guild, self.view.admin_id),
+            )
+        status = await runtime.status(guild_id=self.view.guild.id, skill_id=self.values[0])
+        await interaction.response.edit_message(
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.view.guild, self.view.admin_id, status),
+        )
+
+
+class SkillsView(Menu):
+    def __init__(self, guild, actor_id, statuses):
+        super().__init__(guild, actor_id)
+        self.statuses = tuple(statuses)
+        if self.statuses:
+            self.add_item(SkillPicker(self.statuses))
+        self.action('Back to Management', self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(content=TITLE, view=ManagementView(self.guild, self.admin_id))
+
+
+class SkillDetailsView(Menu):
+    def __init__(self, guild, actor_id, status):
+        super().__init__(guild, actor_id)
+        self.skill_id = status.skill_id
+        if not status.missing_capabilities and status.health not in ('UNAVAILABLE', 'ERROR'):
+            self.action(
+                'Review Disable' if status.enabled else 'Review Enable',
+                self.review_toggle,
+            )
+        if status.skill_id == 'recurring-posts' and status.enabled and status.management_available:
+            self.action('Configure', self.configure)
+        self.action('Back to Skills', self.back)
+
+    async def configure(self, interaction):
+        await open_recurring_posts(interaction, self.guild, self.admin_id)
+
+    async def review_toggle(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can enable or disable Skills. Admins can still review Skill status.',
+                ephemeral=True,
+            )
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        if runtime is None:
+            return await interaction.response.send_message('Skill Runtime is unavailable.', ephemeral=True)
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        action = 'Disable' if status.enabled else 'Enable'
+        effect = (
+            'Future Skill execution will be blocked, while configuration and persisted scheduler jobs are retained.'
+            if status.enabled else
+            'Required host capabilities will be rechecked before the Skill starts for this server.'
+        )
+        await interaction.response.edit_message(
+            content=(
+                f'# {action} {discord.utils.escape_markdown(status.name)[:80]}?\n'
+                f'{effect}\n\nNothing changes until you confirm.'
+            ),
+            view=SkillToggleConfirmView(self.guild, self.admin_id, status),
+        )
+
+    async def back(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        statuses = await runtime.statuses(guild_id=self.guild.id) if runtime is not None else ()
+        await interaction.response.edit_message(
+            content=_skills_overview_text(statuses),
+            view=SkillsView(self.guild, self.admin_id, statuses),
+        )
+
+
+class SkillToggleConfirmView(Menu):
+    def __init__(self, guild, actor_id, status):
+        super().__init__(guild, actor_id)
+        self.skill_id = status.skill_id
+        self.expected_enabled = status.enabled
+        self.action('Confirm Disable' if status.enabled else 'Confirm Enable', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can enable or disable Skills.',
+                ephemeral=True,
+            )
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        if runtime is None:
+            return await interaction.response.send_message('Skill Runtime is unavailable.', ephemeral=True)
+
+        current = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        if current.enabled != self.expected_enabled:
+            return await interaction.response.edit_message(
+                content='Skill state changed while this confirmation was open. Review the current state before trying again.',
+                view=SkillDetailsView(self.guild, self.admin_id, current),
+            )
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if current.enabled:
+                changed = await runtime.disable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
+                notice = '✅ Skill disabled.' if changed else 'ℹ️ Skill was already disabled.'
+            else:
+                changed = await runtime.enable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
+                notice = '✅ Skill enabled.' if changed else 'ℹ️ Skill was already enabled.'
+        except (PermissionError, ValueError, KeyError):
+            notice = '❌ This Skill cannot be activated with the current host capabilities.'
+        except Exception:
+            notice = '❌ Skill activation failed. Check the private server log.'
+
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        await interaction.edit_original_response(
+            content=(notice + '\n\n' + _skill_detail_text(status))[:1950],
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+    async def cancel(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        await interaction.response.edit_message(
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+
+async def _recurring_call(interaction, guild, contract_id, payload):
+    runtime = getattr(interaction.client, 'skill_runtime', None)
+    if runtime is None:
+        raise RuntimeError('Skill Runtime is unavailable.')
+    return await runtime.call_management(
+        guild_id=guild.id,
+        skill_id='recurring-posts',
+        contract_id=contract_id,
+        payload=payload,
+    )
+
+
+def _recurring_post(value):
+    if not isinstance(value, dict):
+        try:
+            value = dict(value)
+        except Exception as exc:
+            raise ValueError('Invalid Recurring Posts management response.') from exc
+    try:
+        schedule = dict(value['schedule'])
+        return SimpleNamespace(
+            id=str(value['id']),
+            name=str(value['name']),
+            channel_id=int(value['channelId']),
+            content=str(value['content']),
+            schedule=schedule,
+            active=bool(value['active']),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError('Invalid Recurring Posts management response.') from exc
+
+
+def _recurring_schedule_label(value):
+    schedule = schedule_from_dict(value)
+    if isinstance(schedule, IntervalSchedule):
+        minutes = schedule.seconds // 60
+        if minutes % 60 == 0:
+            hours = minutes // 60
+            return f"Every {hours} hour{'s' if hours != 1 else ''}"
+        return f"Every {minutes} minutes"
+    if isinstance(schedule, DailySchedule):
+        return f"Daily at {schedule.hour:02d}:{schedule.minute:02d} · {schedule.timezone}"
+    if isinstance(schedule, WeeklySchedule):
+        days = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+        return (
+            f"{days[schedule.weekday]} at {schedule.hour:02d}:{schedule.minute:02d} "
+            f"· {schedule.timezone}"
+        )
+    raise ValueError('Unsupported Recurring Posts schedule.')
+
+
+def _recurring_overview(posts):
+    lines = [
+        '# 🔁 Recurring Posts',
+        'Create automatic server posts using the shared Skill Scheduler.',
+        'Minimum interval: **15 minutes**. Daily and weekly schedules use an explicit timezone.',
+        '',
+    ]
+    if not posts:
+        lines.append('No recurring posts configured yet.')
+    else:
+        for post in posts[:20]:
+            state = '🟢 Active' if post.active else '⏸️ Paused'
+            lines.append(
+                f'• **{discord.utils.escape_markdown(post.name)[:70]}** — {state}\n'
+                f'  <#{post.channel_id}> · {_recurring_schedule_label(post.schedule)}'
+            )
+    return '\n'.join(lines)[:1950]
+
+
+async def open_recurring_posts(interaction, guild, actor_id):
+    try:
+        response = await _recurring_call(interaction, guild, _RECURRING_LIST_API, {})
+        posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
+    except Exception:
+        return await interaction.response.edit_message(
+            content='# 🔁 Recurring Posts\nConfiguration is currently unavailable.',
+            view=ManagementView(guild, actor_id),
+        )
+    await interaction.response.edit_message(
+        content=_recurring_overview(posts),
+        view=RecurringPostsView(guild, actor_id, posts),
+    )
+
+
+class RecurringPostPicker(discord.ui.Select):
+    def __init__(self, posts):
+        super().__init__(
+            placeholder='Choose a recurring post',
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=post.name[:100],
+                    value=post.id,
+                    description=(('Active' if post.active else 'Paused') + ' · ' + _recurring_schedule_label(post.schedule))[:100],
+                )
+                for post in posts[:20]
+            ],
+        )
+
+    async def callback(self, interaction):
+        response = await _recurring_call(
+            interaction,
+            self.view.guild,
+            _RECURRING_GET_API,
+            {'postId': self.values[0]},
+        )
+        post = _recurring_post(response['post'])
+        await interaction.response.edit_message(
+            content=_recurring_post_detail(post),
+            view=RecurringPostDetailView(self.view.guild, self.view.admin_id, post),
+        )
+
+
+class RecurringPostsView(Menu):
+    def __init__(self, guild, actor_id, posts):
+        super().__init__(guild, actor_id)
+        self.posts = tuple(posts)
+        if self.posts:
+            self.add_item(RecurringPostPicker(self.posts))
+        self.action('Add Post', self.add, row=2)
+        self.action('Back to Skill', self.back, row=2)
+
+    async def add(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can create recurring posts.',
+                ephemeral=True,
+            )
+        await interaction.response.edit_message(
+            content='# 🔁 New Recurring Post\nChoose the destination channel first.',
+            view=RecurringPostChannelView(self.guild, self.admin_id),
+        )
+
+    async def back(self, interaction):
+        runtime = interaction.client.skill_runtime
+        status = await runtime.status(guild_id=self.guild.id, skill_id='recurring-posts')
+        await interaction.response.edit_message(
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+
+class RecurringChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder='Choose destination channel',
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+        )
+
+    async def callback(self, interaction):
+        channel_id = int(self.values[0].id)
+        await interaction.response.edit_message(
+            content='# 🔁 New Recurring Post\nChoose a schedule type.',
+            view=RecurringPostScheduleView(self.view.guild, self.view.admin_id, channel_id),
+        )
+
+
+class RecurringPostChannelView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.add_item(RecurringChannelSelect())
+        self.action('Cancel', self.cancel, row=2)
+
+    async def cancel(self, interaction):
+        await open_recurring_posts(interaction, self.guild, self.admin_id)
+
+
+class RecurringPostScheduleView(Menu):
+    def __init__(self, guild, actor_id, channel_id):
+        super().__init__(guild, actor_id)
+        self.channel_id = channel_id
+        self.action('Interval', self.interval)
+        self.action('Daily', self.daily)
+        self.action('Weekly', self.weekly)
+        self.action('Cancel', self.cancel)
+
+    async def interval(self, interaction):
+        await interaction.response.send_modal(
+            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'interval')
+        )
+
+    async def daily(self, interaction):
+        await interaction.response.send_modal(
+            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'daily')
+        )
+
+    async def weekly(self, interaction):
+        await interaction.response.send_modal(
+            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'weekly')
+        )
+
+    async def cancel(self, interaction):
+        await open_recurring_posts(interaction, self.guild, self.admin_id)
+
+
+class RecurringPostModal(discord.ui.Modal):
+    def __init__(self, guild, actor_id, channel_id, kind):
+        super().__init__(title={'interval': 'Interval Post', 'daily': 'Daily Post', 'weekly': 'Weekly Post'}[kind])
+        self.guild, self.actor_id, self.channel_id, self.kind = guild, actor_id, channel_id, kind
+        self.name = discord.ui.TextInput(label='Name', max_length=80, placeholder='Rules reminder')
+        self.content = discord.ui.TextInput(
+            label='Message',
+            style=discord.TextStyle.paragraph,
+            max_length=2000,
+            placeholder='Message to post automatically',
+        )
+        self.add_item(self.name)
+        self.add_item(self.content)
+        if kind == 'interval':
+            self.schedule = discord.ui.TextInput(
+                label='Every N minutes',
+                placeholder='180',
+                default='180',
+                max_length=6,
+            )
+            self.add_item(self.schedule)
+        elif kind == 'daily':
+            self.schedule = discord.ui.TextInput(
+                label='Time (HH:MM)',
+                placeholder='09:00',
+                default='09:00',
+                max_length=5,
+            )
+            self.timezone = discord.ui.TextInput(
+                label='IANA timezone',
+                placeholder='Europe/Berlin',
+                default='Europe/Berlin',
+                max_length=64,
+            )
+            self.add_item(self.schedule)
+            self.add_item(self.timezone)
+        else:
+            self.weekday = discord.ui.TextInput(
+                label='Weekday',
+                placeholder='Monday',
+                default='Monday',
+                max_length=9,
+            )
+            self.schedule = discord.ui.TextInput(
+                label='Time (HH:MM)',
+                placeholder='09:00',
+                default='09:00',
+                max_length=5,
+            )
+            self.timezone = discord.ui.TextInput(
+                label='IANA timezone',
+                placeholder='Europe/Berlin',
+                default='Europe/Berlin',
+                max_length=64,
+            )
+            self.add_item(self.weekday)
+            self.add_item(self.schedule)
+            self.add_item(self.timezone)
+
+    def _schedule_value(self):
+        if self.kind == 'interval':
+            minutes = int(str(self.schedule.value).strip())
+            return {'type': 'interval', 'seconds': minutes * 60}
+        hour, minute = [int(value) for value in str(self.schedule.value).strip().split(':', 1)]
+        timezone = str(self.timezone.value).strip()
+        if self.kind == 'daily':
+            return {'type': 'daily', 'hour': hour, 'minute': minute, 'timezone': timezone}
+        days = {
+            'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+            'friday': 4, 'saturday': 5, 'sunday': 6,
+        }
+        weekday = days[str(self.weekday.value).strip().lower()]
+        return {
+            'type': 'weekly',
+            'weekday': weekday,
+            'hour': hour,
+            'minute': minute,
+            'timezone': timezone,
+        }
+
+    async def on_submit(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can create recurring posts.',
+                ephemeral=True,
+            )
+        try:
+            schedule = self._schedule_value()
+            await _recurring_call(
+                interaction,
+                self.guild,
+                _RECURRING_CREATE_API,
+                {
+                    'name': str(self.name.value),
+                    'channelId': self.channel_id,
+                    'content': str(self.content.value),
+                    'schedule': schedule,
+                },
+            )
+            response = await _recurring_call(
+                interaction,
+                self.guild,
+                _RECURRING_LIST_API,
+                {},
+            )
+            posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
+        except (ValueError, KeyError):
+            return await interaction.response.send_message(
+                'That schedule is invalid. Use at least 15 minutes, a valid HH:MM time, and an IANA timezone such as Europe/Berlin.',
+                ephemeral=True,
+            )
+        except Exception:
+            return await interaction.response.send_message(
+                'Recurring Post could not be saved. Check the private server log.',
+                ephemeral=True,
+            )
+        await interaction.response.edit_message(
+            content='✅ Recurring Post created.\n\n' + _recurring_overview(posts),
+            view=RecurringPostsView(self.guild, self.actor_id, posts),
+        )
+
+
+def _recurring_post_detail(post):
+    state = '🟢 Active' if post.active else '⏸️ Paused'
+    preview = discord.utils.escape_markdown(post.content)
+    if len(preview) > 700:
+        preview = preview[:697] + '...'
+    return (
+        f'# 🔁 {discord.utils.escape_markdown(post.name)[:80]}\n'
+        f'**Status:** {state}\n'
+        f'**Channel:** <#{post.channel_id}>\n'
+        f'**Schedule:** {_recurring_schedule_label(post.schedule)}\n\n'
+        f'**Message**\n{preview}'
+    )[:1950]
+
+
+class RecurringPostDetailView(Menu):
+    def __init__(self, guild, actor_id, post):
+        super().__init__(guild, actor_id)
+        self.post_id = post.id
+        self.active = post.active
+        self.action('Pause' if post.active else 'Resume', self.toggle)
+        self.action('Delete', self.delete)
+        self.action('Back', self.back)
+
+    async def toggle(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message('Only the server owner can change recurring posts.', ephemeral=True)
+        response = await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_SET_ACTIVE_API,
+            {'postId': self.post_id, 'active': not self.active},
+        )
+        post = _recurring_post(response['post'])
+        await interaction.response.edit_message(
+            content=_recurring_post_detail(post),
+            view=RecurringPostDetailView(self.guild, self.admin_id, post),
+        )
+
+    async def delete(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message('Only the server owner can delete recurring posts.', ephemeral=True)
+        await interaction.response.edit_message(
+            content='# Delete Recurring Post?\nThis removes the configuration and its scheduler job. It does not delete messages that were already posted.',
+            view=RecurringPostDeleteConfirmView(self.guild, self.admin_id, self.post_id),
+        )
+
+    async def back(self, interaction):
+        await open_recurring_posts(interaction, self.guild, self.admin_id)
+
+
+class RecurringPostDeleteConfirmView(Menu):
+    def __init__(self, guild, actor_id, post_id):
+        super().__init__(guild, actor_id)
+        self.post_id = post_id
+        self.action('Confirm Delete', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message('Only the server owner can delete recurring posts.', ephemeral=True)
+        await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_DELETE_API,
+            {'postId': self.post_id},
+        )
+        response = await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_LIST_API,
+            {},
+        )
+        posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
+        await interaction.response.edit_message(
+            content='✅ Recurring Post deleted.\n\n' + _recurring_overview(posts),
+            view=RecurringPostsView(self.guild, self.admin_id, posts),
+        )
+
+    async def cancel(self, interaction):
+        response = await _recurring_call(
+            interaction,
+            self.guild,
+            _RECURRING_GET_API,
+            {'postId': self.post_id},
+        )
+        post = _recurring_post(response['post'])
+        await interaction.response.edit_message(
+            content=_recurring_post_detail(post),
+            view=RecurringPostDetailView(self.guild, self.admin_id, post),
+        )
+
+
 class StructureView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
@@ -153,8 +809,19 @@ class StructureView(Menu):
                 from cogs.server import open_operation
                 await open_operation(interaction, 'setup', friendly=True)
             self.action('Preview Missing Resources', missing)
+            self.action('Removed Resources', self.removed_resources)
         self.action('Review Duplicate Messages', self.duplicates)
         self.action('Back to Management', self.back)
+
+    async def removed_resources(self, interaction):
+        from services import resource_restore_service as restore
+        names = restore.removed_names(self.guild)
+        if not names:
+            return await interaction.response.send_message(
+                'No intentionally removed managed channels are waiting for restore.', ephemeral=True)
+        await interaction.response.send_message(
+            '# Removed Resources\nSelect a resource to preview an explicit restore. Nothing is recreated automatically.',
+            view=RemovedResourcesView(self.guild, self.admin_id, names), ephemeral=True)
 
     async def duplicates(self, interaction):
         from services.message_reconciliation import audit
@@ -307,7 +974,7 @@ class SetupWizard(Menu):
     @discord.ui.button(label='Back')
     async def back(self, interaction, button):
         self.page = max(0, self.page - 1)
-        self.section.label = 'Open Section'
+        self.section.label = 'Finish Setup' if self.page == 5 else 'Open Section'
         await interaction.response.edit_message(content=self.text(), view=self)
 
 
@@ -352,3 +1019,53 @@ class DeveloperView(Menu):
         await interaction.response.send_message('Production Doctor runs on the VPS without Discord changes:\n'
             '```sh\npython -m tools.production_doctor --help\n```\n'
             'Follow docs/PRODUCTION_OPERATIONS.md. Never paste `.env` contents into Discord.', ephemeral=True)
+
+
+class RemovedResourcesView(Menu):
+    def __init__(self, guild, actor_id, names):
+        super().__init__(guild, actor_id)
+        options = [discord.SelectOption(label=name[:100], value=name) for name in names[:25]]
+        picker = discord.ui.Select(placeholder='Choose removed resource', options=options)
+
+        async def choose(interaction):
+            if interaction.user.id != self.guild.owner_id:
+                return await interaction.response.send_message('Only the server owner can restore resources.', ephemeral=True)
+            from services import resource_restore_service as restore
+            try:
+                draft = restore.preview(self.guild, interaction.user, picker.values[0])
+            except ServerMessageError as exc:
+                return await interaction.response.send_message(str(exc), ephemeral=True)
+            row = draft['row']
+            parent = self.guild.get_channel(draft['parent_id'])
+            await interaction.response.send_message(
+                f"# Restore {row['label']}\nCreate a new managed channel under **{parent.name}**? "
+                "The previous Discord channel history cannot be recovered.",
+                view=RestoreRemovedConfirm(self.guild, interaction.user.id, draft),
+                ephemeral=True,
+            )
+
+        picker.callback = choose
+        self.add_item(picker)
+
+
+class RestoreRemovedConfirm(Menu):
+    def __init__(self, guild, actor_id, draft):
+        super().__init__(guild, actor_id)
+        self.draft = draft
+        self.action('Confirm Restore', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message('Only the server owner can restore resources.', ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        from services import resource_restore_service as restore
+        try:
+            resource = await restore.restore(self.guild, interaction.user, self.draft)
+            await interaction.edit_original_response(
+                content=f'✅ Restored {resource.mention}. Existing application data was preserved.', view=None)
+        except (ServerMessageError, discord.HTTPException) as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(content='Cancelled. Nothing restored.', view=None)

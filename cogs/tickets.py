@@ -14,7 +14,40 @@ async def reply_error(interaction, error):
     else:
         await report_error(interaction,error,'support ticket')
 
+async def reply_opened_ticket(interaction, item, created, *, request=False):
+    """Link the saved private chat; an uncertain creation is not a ready ticket."""
+    guild = interaction.guild
+    channel_id = item.get('channel_id')
+    channel = guild.get_channel(channel_id) if channel_id else None
+    if channel is None and channel_id:
+        try:
+            channel = await guild.fetch_channel(channel_id)
+        except (discord.HTTPException, TimeoutError):
+            channel = None
+    ready = bool(channel and channel.guild.id == guild.id and item.get('opening_message_id'))
+    if ready:
+        access = channel.permissions_for(interaction.user)
+        ready = bool(access.view_channel and access.read_message_history)
+    view = None
+    if ready:
+        view = discord.ui.View()
+        label = ('Open Request' if created else 'Open Existing Request') if request else (
+            'Open Ticket' if created else 'Open Existing Ticket')
+        view.add_item(discord.ui.Button(label=label,
+            url=f'https://discord.com/channels/{guild.id}/{channel.id}'))
+        text = ('✅ Your private request has been created.' if created else
+                'ℹ️ You already have an open request of this type.') if request else (
+                '✅ Your private support chat is ready. Tell us what you need help with in the ticket.' if created else
+                'ℹ️ You already have an open support ticket. Continue in your existing chat.')
+    else:
+        text = ('Your request is saved, but its chat is not confirmed ready. Please ask the GamerHQ team '
+                'to check it. No replacement was created.')
+    await interaction.followup.send(text, view=view, ephemeral=True,
+                                    allowed_mentions=discord.AllowedMentions.none())
+
+
 class TicketModal(discord.ui.Modal, title='Create Support Ticket'):
+    """Compatibility for previously opened forms; the public button no longer requires one."""
     subject = discord.ui.TextInput(label='Subject', max_length=100)
     description = discord.ui.TextInput(label='What do you need help with?', style=discord.TextStyle.paragraph, max_length=900)
     feature = discord.ui.TextInput(label='Feature (optional)', placeholder='Bot / LFG / Voice / Roles / Game Areas / Other', required=False, max_length=20)
@@ -23,13 +56,7 @@ class TicketModal(discord.ui.Modal, title='Create Support Ticket'):
         await interaction.response.defer(ephemeral=True)
         try:
             item, created = await tickets.open_ticket(interaction.guild, interaction.user, str(self.subject), str(self.description), str(self.feature))
-            channel = interaction.guild.get_channel(item['channel_id']) if item['channel_id'] else None
-            view = discord.ui.View()
-            if channel:
-                view.add_item(discord.ui.Button(label='Open Ticket' if created else 'Open Existing Ticket', url=f'https://discord.com/channels/{interaction.guild.id}/{channel.id}'))
-            text = '✅ Your private support ticket is ready.' if created else '⚠️ You already have an open support ticket.'
-            if not channel: text += ' Its creation needs staff review; no duplicate was created.'
-            await interaction.followup.send(text,view=view,ephemeral=True)
+            await reply_opened_ticket(interaction, item, created)
         except Exception as error:
             await reply_error(interaction,error)
 
@@ -41,12 +68,18 @@ class TicketEntry(SafeView):
 
     @discord.ui.button(label='Create Support Ticket', style=discord.ButtonStyle.primary, custom_id='gamerhq:tickets:create')
     async def create(self, interaction, button):
-        raw = db.get_setting(f'ticket_entry:{interaction.guild_id}')
-        channel = db.get_setting(f'managed_channel:{interaction.guild_id}:need-support')
-        if not interaction.guild or str(interaction.message.id)!=raw or str(interaction.channel_id)!=channel:
-            await interaction.response.send_message('⚠️ Open the current Need Support entry.',ephemeral=True)
-            return
-        await interaction.response.send_modal(TicketModal())
+        from services.ticket_entry_service import binding_problem
+        from cogs.ticket_entry_repair import reject
+        await interaction.response.defer(ephemeral=True)
+        try:
+            problem = binding_problem(interaction, 'support')
+            if problem:
+                await reject(interaction, 'support', problem, deferred=True)
+                return
+            item, created = await tickets.open_support_chat(interaction.guild, interaction.user)
+            await reply_opened_ticket(interaction, item, created)
+        except Exception as error:
+            await reply_error(interaction, error)
 
 
 def bound_ticket(interaction):
@@ -85,7 +118,12 @@ class CloseConfirmation(SafeView):
         await interaction.response.edit_message(content='ℹ️ Ticket remains open.',view=None)
 
 class TicketActions(SafeView):
-    def __init__(self): super().__init__(timeout=None)
+    def __init__(self, *, status=None):
+        super().__init__(timeout=None)
+        if status == 'CLOSED':
+            self.clear_items()  # Old persistent callbacks still check the stored closed state.
+        elif status is not None:
+            self.wait.disabled = status != 'IN_PROGRESS'
 
     async def act(self,interaction,action):
         await interaction.response.defer(ephemeral=True)
@@ -125,18 +163,15 @@ class SupportOffers(SafeView):
             section = {'ELECTRICITY_REQUEST': 'household'}.get(kind)
             if section is None:
                 raise ValueError('Please use the current Electricity request button.')
-            if (not guild or str(interaction.channel_id)!=db.get_setting(support.channel_key(guild, support.section_channel(section)))
-                    or str(interaction.message.id)!=db.get_setting(support.message_key(guild, section))):
-                raise ValueError('Please use the current message in the Electricity channel.')
+            from services.ticket_entry_service import binding_problem
+            from cogs.ticket_entry_repair import reject
+            problem = binding_problem(interaction, 'electricity')
+            if problem:
+                await reject(interaction, 'electricity', problem, deferred=True)
+                return
             title,description=tickets.REQUEST_COPY[kind]
             item,created=await tickets.open_ticket(guild,interaction.user,title,description,ticket_type=kind)
-            channel=guild.get_channel(item['channel_id']) if item['channel_id'] else None
-            view=discord.ui.View()
-            if channel:
-                view.add_item(discord.ui.Button(label='Open Request',url=f'https://discord.com/channels/{guild.id}/{channel.id}'))
-            text='✅ Your private request has been created.' if created else 'ℹ️ You already have an open request of this type.'
-            if not channel:text+=' Please ask the GamerHQ team to check your existing request.'
-            await interaction.followup.send(text,view=view,ephemeral=True)
+            await reply_opened_ticket(interaction, item, created, request=True)
         except Exception as error:
             await reply_error(interaction,error)
 
@@ -156,9 +191,17 @@ class Tickets(commands.Cog):
     async def reconcile(self,guild,member_id=None):
         try:
             await tickets.recover(guild,member_id)
-            if member_id is None: await tickets.refresh_entry(guild)
         except Exception:
             log.exception('Ticket recovery needs review guild=%s',guild.id)
+        if member_id is None:
+            # A private ticket failure must not prevent healthy public entries
+            # from refreshing. Each phase has independent errors and no setup.
+            from services.support_service import refresh_electricity_entry
+            for kind, refresh in [('support', tickets.refresh_entry), ('electricity', refresh_electricity_entry)]:
+                try:
+                    await refresh(guild)
+                except Exception:
+                    log.exception('Ticket entry refresh needs review guild=%s kind=%s',guild.id,kind)
 
     @commands.Cog.listener()
     async def on_ready(self):

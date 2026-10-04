@@ -24,10 +24,15 @@ def slug(name):
 
 
 def category(guild):
-    raw = db.get_setting(f'managed_category:{guild.id}:gaming')
-    result = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    raw = db.get_setting(f'managed_category:{guild.id}:games') or db.get_setting(f'managed_category:{guild.id}:gaming')
+    result = guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if not isinstance(result, discord.CategoryChannel):
-        raise ValueError('Review the GAMING category in Server Structure before creating a channel.')
+        result = next(
+            (c for c in guild.categories if c.name.casefold() in {"🎮 games", "🎮 gaming"}),
+            None,
+        )
+    if not isinstance(result, discord.CategoryChannel):
+        raise ValueError('Review the GAMES category in Server Structure before creating a channel.')
     return result
 
 
@@ -36,19 +41,71 @@ def log_channel(guild):
     return channel(guild, name='games-log')
 
 
-def overwrites(guild, role, resource=None):
+def hidden_key(guild, game_id):
+    return f'game_channel_hidden:{guild.id}:{game_id}'
+
+
+def overwrites(guild, role, resource=None, *, visible=None):
+    """Scoped game-access policy, also used by repair for explicitly hidden rooms.
+
+    Unrelated overwrite bits and member-specific denies survive. Visibility
+    operations validate unexpected access grants before using this policy.
+    """
     from services.onboarding_service import is_staff
-    values = {target: discord.PermissionOverwrite.from_pair(*value.pair()) for target, value in resource.overwrites.items()} if resource else {}
-    for target in set(values) | {guild.default_role, role, guild.me} | {r for r in guild.roles if is_staff(r)}:
+    if visible is None:
+        visible = True
+        if resource is not None:
+            games = [g for g in db.get_all_games() if g.get('channel_id') == resource.id]
+            if len(games) == 1:
+                visible = db.get_setting(hidden_key(guild, games[0]['id'])) != '1'
+    values = {t: discord.PermissionOverwrite.from_pair(*o.pair())
+              for t, o in resource.overwrites.items()} if resource else {}
+    staff = {r for r in guild.roles if is_staff(r)}
+    # Preserve the existing repair security contract: an unexpected positive
+    # grant must not become desired access merely because it exists on Discord.
+    # New visibility previews block these grants before calling this function.
+    targets = staff | {guild.default_role, guild.me} | {t for t, o in values.items() if o.view_channel is True}
+    if role is not None:
+        targets.add(role)
+    for target in targets:
+        if target is None:
+            continue
         value = values.get(target, discord.PermissionOverwrite())
-        allowed = target == role or target == guild.me or (target in guild.roles and is_staff(target))
-        value.view_channel = allowed
+        allowed = target == guild.me or target in staff or (target == role and visible)
+        value.view_channel = bool(allowed)
         if allowed:
             value.read_message_history = value.send_messages = True
         if target == guild.me:
             value.embed_links = value.attach_files = value.manage_channels = True
         values[target] = value
     return values
+
+
+async def create_reserved_channel(guild, game, parent, role, *, reason):
+    """Shared creation primitive; an uncertain remote result is never retried blind."""
+    reservation = f'game_channel_creation:{guild.id}:{game["id"]}'
+    with db.connect() as conn:
+        claimed = conn.execute('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)',
+                               (reservation, 'reserved')).rowcount
+    if not claimed:
+        raise ValueError('A previous channel creation needs review; no duplicate was created.')
+    try:
+        channel = await guild.create_text_channel(slug(game['name']), category=parent,
+            overwrites=overwrites(guild, role, visible=True), reason=reason)
+    except discord.HTTPException as exc:
+        if exc.status in (400, 403):
+            with db.connect() as conn:
+                conn.execute('DELETE FROM settings WHERE key=?', (reservation,))
+        raise
+    # Persist the returned identity before any further awaits/cache convergence.
+    with db.connect() as conn:
+        stored = conn.execute('UPDATE games SET channel_id=? WHERE id=? AND channel_id IS NULL',
+                              (channel.id, game['id'])).rowcount
+        conn.execute('UPDATE settings SET value=? WHERE key=?',
+                     (json.dumps({'state': 'CREATED', 'channel_id': channel.id}), reservation))
+    if not stored:
+        raise ValueError('Channel created but its mapping changed. Review this creation before retrying.')
+    return channel
 
 
 def candidates(guild):
@@ -78,6 +135,8 @@ async def audit(guild, title, description):
 async def check_threshold(guild, game_id, *, count=None):
     game = db.get_game_by_id(game_id)
     if not game or not game['active'] or not game['selectable'] or game.get('channel_id'):
+        return
+    if db.get_setting(f'game_channel_removed:{guild.id}:{game_id}') == '1':
         return
     try:
         role = game_role(guild, game_id, game.get('role_id'))
@@ -146,8 +205,8 @@ def description(plan):
     if plan['action'] == 'remove':
         return text + 'Delete this managed Discord channel and its message history? The game, role and stored game/event history remain. This cannot be undone.'
     if plan['action'] == 'migrate':
-        return text + 'Move and rename the recorded chat into 🎮 GAMING, preserving its ID and history. Old category, LFG and create-voice resources remain for separate manual review.'
-    return text + 'Create one role-gated text channel in 🎮 GAMING.\n' + (
+        return text + 'Move and rename the recorded chat into 🎮 GAMES, preserving its ID and history. Old category, LFG and create-voice resources remain for separate manual review.'
+    return text + 'Create one role-gated text channel in 🎮 GAMES.\n' + (
         'The configured soft limit has been reached. Create Anyway requires explicit approval.' if plan['count'] >= config.GAME_CHANNEL_SOFT_LIMIT else 'Members with this game role can see and chat here.')
 
 
@@ -209,24 +268,20 @@ async def apply(guild, actor, plan, *, override=False):
         role = game_role(guild, game_id, current['role'])
         if plan['action'] == 'migrate':
             dependencies(game_id, channel.id)
-            updated = await channel.edit(name=slug(plan['game']['name']), category=parent, overwrites=overwrites(guild, role, channel), reason='GamerHQ confirmed legacy chat migration')
+            from services.channel_change_service import edit as tracked_edit
+            updated = await tracked_edit(channel, name=slug(plan['game']['name']), category=parent, overwrites=overwrites(guild, role, channel), reason='GamerHQ confirmed legacy chat migration')
             if updated is not None:
                 channel = updated
         else:
-            # Persist intent before an API write: uncertain delivery requires review,
-            # never an automatic second create after a crash/retry.
-            key = f'game_channel_creation:{guild.id}:{game_id}'
-            with db.connect() as conn:
-                if not conn.execute('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)', (key, 'reserved')).rowcount:
-                    raise ValueError('A previous creation needs owner review before retrying.')
-            channel = await guild.create_text_channel(slug(plan['game']['name']), category=parent,
-                overwrites=overwrites(guild, role), reason='GamerHQ confirmed optional game channel')
+            channel = await create_reserved_channel(guild, plan['game'], parent, role,
+                reason='GamerHQ confirmed optional game channel')
         with db.connect() as conn:
             conn.execute('UPDATE games SET channel_id=? WHERE id=?', (channel.id, game_id))
             if plan['action'] == 'migrate':
                 conn.execute('INSERT OR REPLACE INTO game_legacy_hints VALUES(?,?)', (game_id, json.dumps(plan['hints'])))
                 conn.execute('UPDATE games SET area_enabled=0, category_id=NULL, chat_channel_id=NULL, lfg_channel_id=NULL, clips_channel_id=NULL, memes_channel_id=NULL, create_voice_channel_id=NULL WHERE id=?', (game_id,))
             conn.execute("INSERT INTO game_channel_candidates(guild_id,game_id,threshold_reached_at,status) VALUES(?,?,?,'CREATED') ON CONFLICT(guild_id,game_id) DO UPDATE SET status='CREATED'", (guild.id, game_id, int(time.time())))
+            conn.execute('DELETE FROM settings WHERE key=?', (f'game_channel_removed:{guild.id}:{game_id}',))
         await sort_channels(guild, extra=channel)
         await audit(guild, 'Game Channel Created', plan['game']['name'])
         from services.server_log_service import emit
@@ -235,18 +290,26 @@ async def apply(guild, actor, plan, *, override=False):
 
 
 async def sort_channels(guild, *, extra=None):
+    """Reuse absolute slots occupied by game rooms, not server-wide positions 0..N.
+
+    Only managed game channels in this category are submitted. Staff, unrelated
+    channels and shared gaming/LFG rooms keep their existing slots.
+    """
     parent = category(guild)
-    channels = []
-    for game in sorted(db.get_all_games(), key=lambda g: g['name'].casefold()):
+    rooms = []
+    for game in sorted(db.get_all_games(), key=lambda g: (g['name'].casefold(), g['id'])):
         cid = game.get('channel_id')
-        ch = extra if extra and cid == extra.id else guild.get_channel(cid) if cid else None
-        if ch and ch.category_id == parent.id:
-            channels.append(ch)
-    # Only managed channels move; unrelated category children retain relative order.
-    start = min((c.position for c in parent.channels), default=0)
-    for index, channel in enumerate(channels):
-        if channel.position != start+index:
-            await channel.edit(position=start+index, reason='GamerHQ alphabetical game channels')
+        room = extra if extra and cid == extra.id else guild.get_channel(cid) if cid else None
+        if room and room.category_id == parent.id:
+            rooms.append(room)
+    if len({c.id for c in rooms}) != len(rooms):
+        raise ValueError('A game channel is linked twice; review its mapping before sorting.')
+    slots = sorted(c.position for c in rooms)
+    payload = [{'id': c.id, 'position': position} for c, position in zip(rooms, slots)
+               if c.position != position]
+    if payload:
+        from services.channel_change_service import bulk_positions
+        await bulk_positions(guild, payload, reason='GamerHQ alphabetical Games channels')
 
 
 def order_plan(guild):

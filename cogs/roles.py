@@ -263,7 +263,8 @@ class OnboardingEntry(discord.ui.View):
 
     @discord.ui.button(label='Get Started', emoji='👋', custom_id='gamerhq:onboarding:start')
     async def start(self, interaction, button):
-        await open_profile(interaction)
+        from cogs.server_tour import open_tour
+        await open_tour(interaction)
 
 
 class Roles(commands.Cog):

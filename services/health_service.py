@@ -71,19 +71,34 @@ async def _scan(guild, bot=None, *, messages=True):
         required = {'gamerhq:roles:select','gamerhq:roles:suggest','gamerhq:suggestions:submit','gamerhq:suggestions:ACCEPTED','gamerhq:tickets:create','gamerhq:tickets:take','gamerhq:tickets:wait','gamerhq:tickets:close','gamerhq:offers:electricity'}
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
-        'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','looking-for-group','guide','need-support'],
+        'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','guide','need-support'],
+        'games': ['gaming-chat','looking-for-group'],
         'community': ['newbies','general','introductions','suggestions','bot-commands'],
         'events': ['community-events','tournaments','giveaways'],
     }
     channels = {}
+    from services.channel_change_service import removed
+    from services.structure_adoption_service import desired_channel_name, desired_channel_parent
     for group,names in groups.items():
-        categories = [c for c in guild.categories if alias(c.name)==group]
-        add(group.upper(),'PASS' if len(categories)==1 else 'MANUAL_REVIEW' if len(categories)>1 else 'REPAIRABLE' if group=='events' else 'CRITICAL',f'{len(categories)} category matches.')
-        if len(categories) == 1 and not db.get_setting(f'managed_category:{guild.id}:{group}'):
+        raw_category = db.get_setting(f'managed_category:{guild.id}:{group}')
+        mapped_category = guild.get_channel(int(raw_category)) if raw_category and str(raw_category).isdigit() else None
+        categories = [mapped_category] if isinstance(mapped_category, discord.CategoryChannel) else [c for c in guild.categories if alias(c.name)==group]
+        intentionally_removed_category = db.get_setting(f'managed_category_removed:{guild.id}:{group}') == '1'
+        state = ('PASS' if len(categories)==1 else 'INFO' if intentionally_removed_category and not categories
+                 else 'MANUAL_REVIEW' if len(categories)>1 else 'REPAIRABLE' if group=='events' else 'CRITICAL')
+        detail = ('Intentionally removed; explicit owner setup can restore it.' if state == 'INFO'
+                  else f'{len(categories)} category matches.')
+        add(group.upper(), state, detail)
+        if len(categories) == 1 and not raw_category:
             add(f'{group} category mapping', 'RECONCILE', 'Existing category needs linking. Run /server reconcile; nothing has changed.')
         for name in names:
+            if removed(guild, name):
+                add(name, 'INFO', 'Optional managed channel intentionally removed; it will not be recreated by normal repair.')
+                channels[name] = None
+                continue
             matches=[c for c in guild.text_channels if alias(c.name)==name and c.category and alias(c.category.name) in groups]
-            if len(matches)>1: add(f'{name} duplicates','MANUAL_REVIEW','Multiple core channel names; mapped resource retained, others require review.')
+            if len(matches)>1 and not db.get_setting(f'managed_channel:{guild.id}:{name}'):
+                add(f'{name} duplicates','MANUAL_REVIEW','Multiple unlinked core channel names; existing mappings are not replaced by name.')
             try: channel=core_channel(guild,name)
             except ServerMessageError:
                 add(name,'MANUAL_REVIEW','Existing channel needs review. Open /server reconcile to review matches; nothing has changed.'); continue
@@ -92,10 +107,11 @@ async def _scan(guild, bot=None, *, messages=True):
                 add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
             if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
                 add(f'{name} mapping', 'RECONCILE', 'Existing channel needs linking. Run /server reconcile; no duplicate will be created.')
-            issue = channel.category is None or alias(channel.category.name)!=group or (name=='guide' and channel.name!='📘・guide')
-            if name == 'community-events':
-                issue = issue or channel.name != '🎉・community-events' or db.get_setting(f'managed_channel:{guild.id}:{name}') != str(channel.id)
-            add(name,'REPAIRABLE' if issue else 'PASS','Managed name/location needs setup repair.' if issue else f'Channel {channel.id}.')
+            default_parent = categories[0] if len(categories) == 1 else channel.category
+            wanted_parent = desired_channel_parent(guild, name, default_parent)
+            wanted_name = desired_channel_name(guild, name, channel.name)
+            issue = channel.category_id != getattr(wanted_parent, 'id', channel.category_id) or channel.name != wanted_name
+            add(name,'REPAIRABLE' if issue else 'PASS','Managed runtime state differs from Discord.' if issue else f'Channel {channel.id}; current Discord layout is accepted.')
             if group=='start-here' or name=='suggestions':
                 everyone=channel.overwrites_for(guild.default_role)
                 posting = everyone.send_messages is not False or any(o.send_messages is True and t!=guild.me and not (t in guild.roles and (t.permissions.administrator or t.permissions.manage_messages or t.permissions.manage_guild or t.permissions.moderate_members)) for t,o in channel.overwrites.items())
@@ -215,6 +231,8 @@ async def _scan(guild, bot=None, *, messages=True):
     from services.bot_group_service import diagnostics as bot_groups_health, member as bot_member
     for row in bot_groups_health(guild):
         add(*row)
+    from services.amazon_integration_service import diagnostics as amazon_diagnostics
+    add(*amazon_diagnostics(guild))
     from services.instant_gaming_service import affiliate_category, overwrites as ig_overwrites, BOT_RIGHTS
     try:
         stats = affiliate_category(guild)
