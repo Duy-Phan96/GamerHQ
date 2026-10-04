@@ -39,3 +39,18 @@ Read the canonical authoring documents in the GamerHQ SDK repository:
 
 Your Skill should be reviewable against those rules without access to GamerHQ
 production, secrets or a live Discord token.
+
+
+## Package compatibility metadata
+
+Keep the `[tool.gamerhq]` section in `pyproject.toml` aligned with the Skill:
+
+```toml
+[tool.gamerhq]
+skill-id = "example-skill"
+runtime-api = "1"
+sdk = ">=0.1,<0.2"
+```
+
+The package contract test validates this metadata together with the entry point,
+source portability and Skill lifecycle shape.
