@@ -13,6 +13,7 @@ example-skill = "gamerhq_skill_example:create_skill"
 skill-id = "example-skill"
 runtime-api = "1"
 sdk = ">=0.1,<0.2"
+capabilities = ["storage.skill", "scheduler.jobs"]
 ```
 
 The SDK validates that:
@@ -55,3 +56,37 @@ A new Python process then discovers the Skill only through the installed
 
 This guards against accidentally relying on GamerHQ application modules merely
 because the Skill template lives inside the same source repository today.
+
+
+## Static capability review
+
+External packages must declare their requested host capabilities in
+`[tool.gamerhq].capabilities`.
+
+This lets CI, reviewers and future package/marketplace tooling inspect the
+permission request without importing or executing the Skill.
+
+The static list must exactly match `SkillManifest.permissions` in the same
+order.
+
+Example:
+
+```toml
+[tool.gamerhq]
+skill-id = "server-reminders"
+runtime-api = "1"
+sdk = ">=0.1,<0.2"
+capabilities = [
+  "discord.channels.read",
+  "discord.messages.send",
+  "scheduler.jobs",
+  "storage.skill",
+]
+```
+
+A capability must be known by the SDK. Unknown or duplicate capability IDs fail
+the package preflight.
+
+The runtime manifest remains authoritative during actual Skill registration; the
+static list exists so permission review does not require executing untrusted
+package code first.
