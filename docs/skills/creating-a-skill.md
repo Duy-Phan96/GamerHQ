@@ -1,6 +1,6 @@
 # Creating a Skill
 
-This document describes the future-facing SDK contract. Recurring Posts will become the first reference implementation.
+This document describes the public SDK contract. Recurring Posts is the first reference implementation.
 
 ## 1. Create a Skill package
 
