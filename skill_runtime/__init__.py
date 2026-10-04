@@ -27,6 +27,7 @@ from .runtime import (
     SchedulerStorePort,
     ScopedScheduler,
     ScopedSchedulerRegistration,
+    StaleSchedulerClaimError,
     ScopedSkillApiRegistration,
 )
 
@@ -70,6 +71,7 @@ __all__ = [
     "SchedulerStorePort",
     "ScopedScheduler",
     "ScopedSchedulerRegistration",
+    "StaleSchedulerClaimError",
     "ScopedSkillApiRegistration",
     "validate_manifest",
 ]
