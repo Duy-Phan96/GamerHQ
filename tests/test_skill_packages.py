@@ -61,6 +61,16 @@ class ExternalSkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(SkillPackageError, "manifest ID"):
             self.discover(("expected-skill",), (wrong,))
 
+    def test_unrelated_duplicate_entry_points_do_not_block_requested_skill(self):
+        requested = FakeEntryPoint("requested-skill", lambda: FakeSkill("requested-skill"))
+        unrelated_one = FakeEntryPoint("other-skill", lambda: FakeSkill("other-skill"), "one")
+        unrelated_two = FakeEntryPoint("other-skill", lambda: FakeSkill("other-skill"), "two")
+        loaded = self.discover(
+            ("requested-skill",),
+            (requested, unrelated_one, unrelated_two),
+        )
+        self.assertEqual([item.entry_point for item in loaded], ["requested-skill"])
+
     def test_duplicate_installed_entry_points_fail_closed(self):
         one = FakeEntryPoint("same-skill", lambda: FakeSkill("same-skill"), "one")
         two = FakeEntryPoint("same-skill", lambda: FakeSkill("same-skill"), "two")
