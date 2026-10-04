@@ -133,7 +133,8 @@ Start here when building a new Skill:
 4. [Skill Review Checklist](review-checklist.md)
 5. [External Skill packages](external-packages.md)
 6. [External Skill CI](external-ci.md)
-7. [Creating a Skill](creating-a-skill.md)
+7. [Package Compatibility](package-compatibility.md)
+8. [Creating a Skill](creating-a-skill.md)
 
 The Developer Guide is the primary human-facing reference. The Authoring
 Contract is intentionally stricter and may also be used as input for code
