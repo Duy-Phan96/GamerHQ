@@ -6,6 +6,7 @@ import re
 
 from .capabilities import KNOWN_CAPABILITIES
 from .events import EventContract
+from .management import ManagementApiContract
 from .public_api import PublicApiContract
 
 SKILL_ID = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -26,6 +27,11 @@ class SkillPublicApis:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillManagementApis:
+    exposes: tuple[ManagementApiContract, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SkillManifest:
     id: str
     name: str
@@ -36,6 +42,7 @@ class SkillManifest:
     permissions: tuple[str, ...] = ()
     events: SkillEvents = field(default_factory=SkillEvents)
     public_apis: SkillPublicApis = field(default_factory=SkillPublicApis)
+    management_apis: SkillManagementApis = field(default_factory=SkillManagementApis)
 
     def __post_init__(self) -> None:
         validate_manifest(self)
@@ -78,3 +85,8 @@ def validate_manifest(manifest: SkillManifest, *, supported_api_versions: frozen
     duplicate_apis = _duplicates((*exposed, *api_consumed))
     if duplicate_apis:
         raise ValueError("Duplicate public Skill API declarations are not allowed: " + ", ".join(sorted(duplicate_apis)))
+
+    management = tuple(contract.id for contract in manifest.management_apis.exposes)
+    duplicate_management = _duplicates(management)
+    if duplicate_management:
+        raise ValueError("Duplicate management API declarations are not allowed: " + ", ".join(sorted(duplicate_management)))
