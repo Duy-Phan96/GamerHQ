@@ -90,6 +90,8 @@ manifest = SkillManifest(
 
 Do not request broad permissions for possible future features. Add a capability when a released feature actually needs it.
 
+For external packages, mirror the exact capability list in `[tool.gamerhq].capabilities` so reviewers can inspect permissions without executing the package. The package preflight requires that list to match `SkillManifest.permissions` exactly.
+
 ## 5. Capability model
 
 Capabilities are the only supported Skill → host privilege boundary.
