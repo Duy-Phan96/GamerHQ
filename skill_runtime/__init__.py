@@ -5,7 +5,8 @@ be extracted into an independent SDK/runtime package.
 """
 
 from .contracts.capabilities import SkillCapability
-from .contracts.context import SkillContext
+from .contracts.context import DiscordChannelInfo, SkillContext
+from .contracts.errors import CapabilityUnavailableError, HostCapabilityError, HostPermissionDeniedError, InvalidHostOperationError, ResourceNotFoundError, TransientHostError
 from .contracts.events import EventContract, EventDeliveryReport, EventEnvelope
 from .contracts.lifecycle import Skill, SkillHealth
 from .contracts.manifest import SkillEvents, SkillManifest, SkillPublicApis, validate_manifest
@@ -28,6 +29,13 @@ from .runtime import (
 )
 
 __all__ = [
+    "CapabilityUnavailableError",
+    "DiscordChannelInfo",
+    "HostCapabilityError",
+    "HostPermissionDeniedError",
+    "InvalidHostOperationError",
+    "ResourceNotFoundError",
+    "TransientHostError",
     "DailySchedule",
     "IntervalSchedule",
     "OnceSchedule",
