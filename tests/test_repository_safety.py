@@ -48,6 +48,8 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertFalse(secret_findings('DISCORD_TOKEN=\nGUILD_ID=0\nTOKEN = os.getenv("DISCORD_TOKEN")'))
         self.assertFalse(secret_findings('token = secrets.token_urlsafe(8)'))
         self.assertFalse(secret_findings('https://www.instant-gaming.com/?igr=gamer-0a9671a'))
+        self.assertFalse(secret_findings('secret = "private-value-must-not-appear"'))
+        self.assertTrue(secret_findings('secret = "literal-production-credential-value"'))
         self.assertTrue(private_path('transcripts/private.txt'))
         self.assertFalse(private_path('.env.example'))
         self.assertFalse(private_path('skill_runtime/runtime/manager.py'))
