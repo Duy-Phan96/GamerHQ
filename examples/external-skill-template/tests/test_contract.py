@@ -1,4 +1,10 @@
+import sys
 import unittest
+from pathlib import Path
+
+TEMPLATE_ROOT = Path(__file__).resolve().parents[1]
+if str(TEMPLATE_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEMPLATE_ROOT))
 
 from gamerhq_skill_example import create_skill
 from skill_runtime import validate_skill_factory
