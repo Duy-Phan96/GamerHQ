@@ -13,3 +13,8 @@ example-skill = "gamerhq_skill_example:create_skill"
 
 [tool.setuptools]
 packages = ["gamerhq_skill_example"]
+
+[tool.gamerhq]
+skill-id = "example-skill"
+runtime-api = "1"
+sdk = ">=0.1,<0.2"
