@@ -59,7 +59,7 @@ The Runtime/host can later route the same contract in-process, to another proces
 
 Every Skill implements:
 
-1. `register()`
+1. `register(registration_ctx)`
 2. `enable(ctx)`
 3. `disable(ctx)`
 4. `start(ctx)`
