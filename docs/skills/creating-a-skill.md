@@ -43,7 +43,20 @@ Do not create an API for every Skill by default. Prefer Events for loose couplin
 
 Every public contract must have a versioned ID such as `events.get-event.v1` and be declared in the manifest.
 
-## 6. Use SkillContext
+## 6. Register process-level handlers
+
+`register(ctx)` receives a `SkillRegistrationContext`. Use it only for
+process-stable bindings such as versioned scheduler handlers or Public Skill API
+handlers.
+
+A registered scheduler handler receives a fresh guild-scoped `SkillContext`
+when it actually executes.
+
+Do not keep a Guild object, Discord client or database connection in registration
+state.
+
+## 7. Use SkillContext
+
 
 Use host capabilities such as:
 
@@ -57,15 +70,15 @@ await ctx.audit.write(...)
 
 Do not use the Discord token, raw GamerHQ DB access, another Skill's private tables, or another Skill's internal Python modules.
 
-## 7. Keep storage private
+## 8. Keep storage private
 
 The host gives each Skill a namespaced storage view. Shared information crosses boundaries through documented Events or Public Skill APIs.
 
-## 8. Test contracts without production
+## 9. Test contracts without production
 
 SDK tests should validate manifests, capabilities, event schemas, API IDs, lifecycle compatibility, storage isolation, and later scheduler behavior using fakes. A third-party developer must not need a live Discord token to run contract tests.
 
-## 9. Document every dependency surface
+## 10. Document every dependency surface
 
 Each Skill README should list:
 
@@ -84,7 +97,7 @@ Each Skill README should list:
 - security notes
 - examples
 
-## 10. Forbidden coupling
+## 11. Forbidden coupling
 
 A Skill must not import another Skill's private implementation. Allowed collaboration mechanisms are:
 
