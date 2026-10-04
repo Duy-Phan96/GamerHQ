@@ -174,3 +174,26 @@ fresh guild-scoped SkillContext so process-level registration never leaks a
 Discord Guild/client into portable Skill code.
 
 See [Recurring Posts](recurring-posts.md).
+
+
+## External Skill package boundary
+
+Independent Skill repositories are discovered through installed Python entry
+points in the `gamerhq.skills` group.
+
+Package discovery is deliberately separate from package installation:
+
+```text
+reviewed deployment installs package
+        ↓
+explicit GAMERHQ_EXTERNAL_SKILLS allowlist
+        ↓
+installed entry-point discovery
+        ↓
+SkillRegistry validation
+        ↓
+normal capability/lifecycle enforcement
+```
+
+The runtime never clones a Git repository or runs package installation from a
+Discord interaction.
