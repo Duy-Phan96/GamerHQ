@@ -27,7 +27,8 @@ A generated or manually written Skill MUST:
 17. keep health checks read-only;
 18. keep disable non-destructive by default;
 19. avoid leaking private exception text or secrets;
-20. document every public dependency surface.
+20. document every public dependency surface;
+21. declare the same capability list in external package metadata and the executable SkillManifest.
 
 ## Forbidden dependencies
 
