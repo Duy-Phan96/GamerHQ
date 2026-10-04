@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "examples" / "external-skill-template"
+RECURRING = ROOT / "packages" / "gamerhq-skill-recurring-posts"
 
 
 class ExternalSkillInstallationTests(unittest.TestCase):
@@ -27,7 +28,7 @@ class ExternalSkillInstallationTests(unittest.TestCase):
                 "--target",
                 str(target),
             ]
-            for source in (ROOT, TEMPLATE):
+            for source in (ROOT, TEMPLATE, RECURRING):
                 result = subprocess.run(
                     [*base, str(source)],
                     cwd=temp_path,
@@ -49,12 +50,11 @@ class ExternalSkillInstallationTests(unittest.TestCase):
 from skill_runtime import validate_skill_implementation
 from skill_runtime.runtime.packages import discover_installed_skills
 
-loaded = discover_installed_skills(("example-skill",))
-assert len(loaded) == 1
-assert loaded[0].entry_point == "example-skill"
-report = validate_skill_implementation(loaded[0].skill)
-assert report.skill_id == "example-skill"
-print(report.skill_id)
+loaded = discover_installed_skills(("example-skill", "recurring-posts"))
+assert [item.entry_point for item in loaded] == ["example-skill", "recurring-posts"]
+reports = [validate_skill_implementation(item.skill) for item in loaded]
+assert [report.skill_id for report in reports] == ["example-skill", "recurring-posts"]
+print(",".join(report.skill_id for report in reports))
 """
             env = os.environ.copy()
             env["PYTHONPATH"] = str(target)
@@ -71,7 +71,7 @@ print(report.skill_id)
                 0,
                 msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
             )
-            self.assertEqual(result.stdout.strip(), "example-skill")
+            self.assertEqual(result.stdout.strip(), "example-skill,recurring-posts")
 
 
 if __name__ == "__main__":
