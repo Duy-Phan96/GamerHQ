@@ -1,6 +1,7 @@
 from .schedule import DailySchedule, IntervalSchedule, OnceSchedule, ScheduleSpec, WeeklySchedule, next_run_at, schedule_from_dict, schedule_to_dict
 from .capabilities import SkillCapability
-from .context import SkillContext
+from .context import DiscordChannelInfo, SkillContext
+from .errors import CapabilityUnavailableError, HostCapabilityError, HostPermissionDeniedError, InvalidHostOperationError, ResourceNotFoundError, TransientHostError
 from .events import EventContract, EventDeliveryReport, EventEnvelope
 from .lifecycle import Skill, SkillHealth
 from .manifest import SkillEvents, SkillManifest, SkillPublicApis, validate_manifest
@@ -15,6 +16,13 @@ __all__ = [
     "next_run_at",
     "schedule_from_dict",
     "schedule_to_dict",
+    "CapabilityUnavailableError",
+    "DiscordChannelInfo",
+    "HostCapabilityError",
+    "HostPermissionDeniedError",
+    "InvalidHostOperationError",
+    "ResourceNotFoundError",
+    "TransientHostError",
     "EventContract",
     "EventDeliveryReport",
     "EventEnvelope",
