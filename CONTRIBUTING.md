@@ -10,3 +10,16 @@ Install `requirements.lock` and `requirements-dev.txt` into a local virtual envi
 Review `git diff` and `git diff --cached`; do not force-add excluded private/runtime files. Use the root topic index to select affected documentation rather than reading every guide. Update changed public behavior/commands/configuration and the relevant changelog entry alongside implementation; keep temporary reports and private IDs/data out of permanent user documentation.
 
 The owner reviews releases, chooses repository licensing and performs deployment/push operations. See SECURITY.md for private reporting and RELEASE_CHECKLIST.md for live acceptance.
+
+
+## Skill development
+
+New first-party or external Skills must follow the canonical:
+
+- [Skill Developer Guide](docs/skills/developer-guide.md)
+- [Strict Authoring Contract](docs/skills/authoring-contract.md)
+- [Skill Review Checklist](docs/skills/review-checklist.md)
+- [SDK Conformance Check](docs/skills/conformance.md)
+
+Start independent Skill repositories from
+`examples/external-skill-template/` rather than copying GamerHQ host code.
