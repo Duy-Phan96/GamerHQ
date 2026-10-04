@@ -1,11 +1,13 @@
-"""First-party portable Skills shipped with GamerHQ."""
+"""First-party portable Skills shipped directly inside GamerHQ.
 
-from .recurring_posts import RecurringPostsSkill
+External/bundled packages are discovered through the standard gamerhq.skills
+entry-point mechanism instead of being imported here.
+"""
 
 
 def first_party_skills():
-    """Return new process-local Skill instances for the GamerHQ host."""
-    return (RecurringPostsSkill(),)
+    """Return process-local Skills that are intentionally built into GamerHQ."""
+    return ()
 
 
-__all__ = ["RecurringPostsSkill", "first_party_skills"]
+__all__ = ["first_party_skills"]
