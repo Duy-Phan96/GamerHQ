@@ -50,7 +50,7 @@ class FakeSkill:
         )
         self.calls = []
 
-    async def register(self):
+    async def register(self, ctx):
         self.calls.append("register")
 
     async def enable(self, ctx):
