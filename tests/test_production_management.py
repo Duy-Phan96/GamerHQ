@@ -195,6 +195,38 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(confirm, SkillToggleConfirmView)
         runtime.enable_skill.assert_not_awaited()
 
+    async def test_enabled_recurring_posts_skill_exposes_configure_action(self):
+        from cogs.server_management import SkillDetailsView
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        status = GuildSkillStatus(
+            skill_id='recurring-posts',
+            name='Recurring Posts',
+            version='1.0.0',
+            description='Portable fixture',
+            enabled=True,
+            running=True,
+            health='PASS',
+            health_detail='0 active recurring post(s), 0 configured.',
+            required_capabilities=('scheduler.jobs',),
+            missing_capabilities=(),
+        )
+        view = SkillDetailsView(self.guild, owner.id, status)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Configure', labels)
+        self.assertIn('Review Disable', labels)
+
+    def test_recurring_post_interval_modal_builds_scheduler_contract(self):
+        from cogs.server_management import RecurringPostModal
+
+        modal = RecurringPostModal(self.guild, 42, 123, 'interval')
+        modal.schedule._value = '180'
+        self.assertEqual(
+            modal._schedule_value(),
+            {'type': 'interval', 'seconds': 10800},
+        )
+
     async def test_imported_catalog_is_offered_by_actual_select_games_button(self):
         from cogs.games import ChooseGamesButtons, GameSelectionSession
         from config import DISPLAY_GROUP_ORDER
