@@ -10,11 +10,12 @@ from skill_runtime.contracts.context import SkillContext, SkillRegistrationConte
 from skill_runtime.contracts.errors import CapabilityUnavailableError, ResourceNotFoundError
 from skill_runtime.runtime.api_router import SkillApiRouter
 from skill_runtime.runtime.event_bus import EventBus
+from skill_runtime.runtime.management_router import SkillManagementRouter
 from skill_runtime.runtime.manager import SkillManager
 from skill_runtime.runtime.registry import SkillRegistry
 from skill_runtime.runtime.scheduler import SchedulerEngine, ScopedScheduler
 from skill_runtime.runtime.scoped import ScopedEventBus, ScopedSkillApi
-from skill_runtime.runtime.registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration
+from skill_runtime.runtime.registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration, ScopedSkillManagementRegistration
 
 from .skill_discord import DISCORD_HOST_CAPABILITIES, GamerHQDiscordAdapter
 from .skill_host import (
@@ -63,6 +64,10 @@ class GamerHQSkillRuntime:
         self.scheduler_store = GamerHQSchedulerStore()
         self.events = EventBus(self.registry, availability=self.state.is_enabled)
         self.apis = SkillApiRouter(self.registry, availability=self.state.is_enabled)
+        self.management = SkillManagementRouter(
+            self.registry,
+            availability=self.state.is_enabled,
+        )
         self.scheduler = SchedulerEngine(
             self.registry,
             self.scheduler_store,
@@ -133,6 +138,11 @@ class GamerHQSkillRuntime:
                 skill_id=skill_id,
                 context_factory=self.context,
             ),
+            management=ScopedSkillManagementRegistration(
+                self.management,
+                skill_id=skill_id,
+                context_factory=self.context,
+            ),
             skills=ScopedSkillApiRegistration(
                 self.apis,
                 skill_id=skill_id,
@@ -190,6 +200,21 @@ class GamerHQSkillRuntime:
                 skill_id=skill_id,
             ),
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
+        )
+
+    async def call_management(
+        self,
+        *,
+        guild_id: int,
+        skill_id: str,
+        contract_id: str,
+        payload,
+    ):
+        return await self.management.call(
+            guild_id=guild_id,
+            skill_id=skill_id,
+            contract_id=contract_id,
+            payload=payload,
         )
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
