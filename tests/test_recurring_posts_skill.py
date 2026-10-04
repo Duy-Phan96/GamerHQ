@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from skills.recurring_posts import (
+from gamerhq_skill_recurring_posts import (
     CREATE_API,
     DELETE_API,
     GET_API,
