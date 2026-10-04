@@ -74,4 +74,10 @@ __all__ = [
     "StaleSchedulerClaimError",
     "ScopedSkillApiRegistration",
     "validate_manifest",
+    "SkillConformanceError",
+    "SkillConformanceReport",
+    "validate_skill_factory",
+    "validate_skill_implementation",
 ]
+
+from .devtools import SkillConformanceError, SkillConformanceReport, validate_skill_factory, validate_skill_implementation
