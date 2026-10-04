@@ -420,7 +420,7 @@ Use fakes for SDK ports.
 
 Live Discord access is acceptance testing, not the normal unit-test environment.
 
-External repositories should also use the [External Skill CI](external-ci.md) pattern to run the same offline checks on Python 3.12 and 3.14.
+External repositories should also use the [External Skill CI](external-ci.md) pattern to run the same offline checks on Python 3.12 and 3.14. Declare and validate the [Package Compatibility](package-compatibility.md) metadata so package identity, Runtime API and SDK range stay explicit.
 
 ## 19. Documentation requirements
 
