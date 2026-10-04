@@ -276,28 +276,73 @@ class SkillDetailsView(Menu):
         super().__init__(guild, actor_id)
         self.skill_id = status.skill_id
         if not status.missing_capabilities:
-            self.action('Disable' if status.enabled else 'Enable', self.toggle)
+            self.action(
+                'Review Disable' if status.enabled else 'Review Enable',
+                self.review_toggle,
+            )
         self.action('Back to Skills', self.back)
 
-    async def _refresh(self, interaction, *, notice=None):
-        runtime = interaction.client.skill_runtime
-        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
-        text = _skill_detail_text(status)
-        if notice:
-            text = (notice + '\n\n' + text)[:1950]
-        await interaction.edit_original_response(
-            content=text,
-            view=SkillDetailsView(self.guild, self.admin_id, status),
-        )
-
-    async def toggle(self, interaction):
+    async def review_toggle(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can enable or disable Skills. Admins can still review Skill status.',
+                ephemeral=True,
+            )
         runtime = getattr(interaction.client, 'skill_runtime', None)
         if runtime is None:
             return await interaction.response.send_message('Skill Runtime is unavailable.', ephemeral=True)
         status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        action = 'Disable' if status.enabled else 'Enable'
+        effect = (
+            'Future Skill execution will be blocked, while configuration and persisted scheduler jobs are retained.'
+            if status.enabled else
+            'Required host capabilities will be rechecked before the Skill starts for this server.'
+        )
+        await interaction.response.edit_message(
+            content=(
+                f'# {action} {discord.utils.escape_markdown(status.name)[:80]}?\n'
+                f'{effect}\n\nNothing changes until you confirm.'
+            ),
+            view=SkillToggleConfirmView(self.guild, self.admin_id, status),
+        )
+
+    async def back(self, interaction):
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        statuses = await runtime.statuses(guild_id=self.guild.id) if runtime is not None else ()
+        await interaction.response.edit_message(
+            content=_skills_overview_text(statuses),
+            view=SkillsView(self.guild, self.admin_id, statuses),
+        )
+
+
+class SkillToggleConfirmView(Menu):
+    def __init__(self, guild, actor_id, status):
+        super().__init__(guild, actor_id)
+        self.skill_id = status.skill_id
+        self.expected_enabled = status.enabled
+        self.action('Confirm Disable' if status.enabled else 'Confirm Enable', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can enable or disable Skills.',
+                ephemeral=True,
+            )
+        runtime = getattr(interaction.client, 'skill_runtime', None)
+        if runtime is None:
+            return await interaction.response.send_message('Skill Runtime is unavailable.', ephemeral=True)
+
+        current = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        if current.enabled != self.expected_enabled:
+            return await interaction.response.edit_message(
+                content='Skill state changed while this confirmation was open. Review the current state before trying again.',
+                view=SkillDetailsView(self.guild, self.admin_id, current),
+            )
+
         await interaction.response.defer(ephemeral=True)
         try:
-            if status.enabled:
+            if current.enabled:
                 changed = await runtime.disable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
                 notice = '✅ Skill disabled.' if changed else 'ℹ️ Skill was already disabled.'
             else:
@@ -307,14 +352,19 @@ class SkillDetailsView(Menu):
             notice = '❌ This Skill cannot be activated with the current host capabilities.'
         except Exception:
             notice = '❌ Skill activation failed. Check the private server log.'
-        await self._refresh(interaction, notice=notice)
 
-    async def back(self, interaction):
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
+        await interaction.edit_original_response(
+            content=(notice + '\n\n' + _skill_detail_text(status))[:1950],
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+    async def cancel(self, interaction):
         runtime = getattr(interaction.client, 'skill_runtime', None)
-        statuses = await runtime.statuses(guild_id=self.guild.id) if runtime is not None else ()
+        status = await runtime.status(guild_id=self.guild.id, skill_id=self.skill_id)
         await interaction.response.edit_message(
-            content=_skills_overview_text(statuses),
-            view=SkillsView(self.guild, self.admin_id, statuses),
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.guild, self.admin_id, status),
         )
 
 
