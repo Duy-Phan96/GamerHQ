@@ -14,6 +14,17 @@ Use lowercase kebab-case, for example `recurring-posts`. The display name may ch
 
 Request only what the Skill needs. A Skill that does not declare `discord.roles.manage` must not receive that capability from its host context.
 
+The first Discord host capabilities are intentionally narrow:
+
+- `discord.channels.read` — resolve minimal metadata for a channel in the current guild;
+- `discord.messages.send` — send into a channel in the current guild;
+- `discord.embeds.send` — allow an embed payload in addition to message sending.
+
+Declaring a known capability is not enough by itself. The active host must also
+provide it. Activation fails closed when a required capability is unavailable.
+Portable Skills never receive the Discord client, a Guild object, or a raw
+Channel object.
+
 ## 4. Define events
 
 Events are versioned notifications. Document producer, consumers, payload fields, emission guarantees, privacy considerations, and failure semantics.
@@ -96,3 +107,19 @@ Each job should use:
 - a small JSON payload containing only the data needed to find the Skill-owned record.
 
 See [Skill Scheduler](scheduler.md).
+
+
+## Discord error model
+
+Host-specific Discord.py exceptions do not cross the SDK boundary. Skills may
+handle stable host-neutral failures such as unavailable capabilities, missing
+resources, permission denial, invalid operations and transient host failures.
+
+Do not inspect or persist raw Discord exception text as Skill state.
+
+## Guild scope
+
+Discord access is bound to the `SkillContext.guild_id`. A channel identifier
+from another guild must resolve as unavailable rather than allowing cross-guild
+access. Skills must not accept or pass raw Discord Guild objects through their
+portable APIs.
