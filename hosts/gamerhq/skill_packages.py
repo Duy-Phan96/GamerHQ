@@ -7,6 +7,13 @@ from collections.abc import Iterable
 
 from skill_runtime.runtime.packages import SkillPackageError, discover_installed_skills
 
+BUNDLED_SKILL_IDS = ("recurring-posts",)
+
+
+def configured_skill_ids(external_ids: Iterable[str]) -> tuple[str, ...]:
+    """Return bundled + configured external Skill IDs once, in stable order."""
+    return tuple(dict.fromkeys((*BUNDLED_SKILL_IDS, *tuple(external_ids))))
+
 
 @dataclass(frozen=True, slots=True)
 class ExternalSkillLoadReport:
