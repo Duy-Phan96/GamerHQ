@@ -310,7 +310,37 @@ Cross-Skill communication is limited to:
 2. documented Events;
 3. documented Public Skill APIs.
 
-## 13. Configuration UX
+## 13. Host management APIs
+
+Use a versioned Management API when the trusted host administration UI needs
+to configure or inspect a Skill without importing its private implementation.
+
+Management APIs are **host → Skill** contracts.
+
+They are different from Public Skill APIs:
+
+- Management API: trusted host administration/configuration.
+- Public Skill API: Skill → Skill request/response.
+
+A portable Skill may declare management operations such as:
+
+```text
+my-skill.list.v1
+my-skill.get.v1
+my-skill.create.v1
+my-skill.update.v1
+my-skill.delete.v1
+```
+
+Register handlers only through `SkillRegistrationContext.management`.
+
+The host must never import private Skill classes/models merely to render a
+configuration screen.
+
+Management request/response payloads must be small, versioned, documented and
+host-neutral.
+
+## 14. Configuration UX
 
 A Skill should expose configuration through the host's normal management surface, not invent an unrelated admin system.
 
@@ -333,7 +363,7 @@ inspect current state
 
 Owner-only/destructive actions must recheck authorization at confirmation time.
 
-## 14. Security requirements
+## 15. Security requirements
 
 A Skill must never:
 
@@ -351,7 +381,7 @@ A Skill must never:
 
 External HTTP access, roles, voice management and other privileged behavior require corresponding host capabilities before use.
 
-## 15. Error handling
+## 16. Error handling
 
 Use safe SDK/host-neutral exceptions where available.
 
@@ -368,7 +398,7 @@ One failed scheduled job or event consumer must not intentionally crash unrelate
 
 Never put secrets, message content or arbitrary exception strings into generic error codes.
 
-## 16. Versioning
+## 17. Versioning
 
 Use semantic versioning for the Skill.
 
@@ -388,7 +418,7 @@ Do not increase the Runtime API version just because the Skill version changed.
 
 Events, Public APIs and scheduler handler IDs are separately versioned contracts.
 
-## 17. Backward compatibility
+## 18. Backward compatibility
 
 Released Skills should assume existing users may have:
 
@@ -400,7 +430,7 @@ Released Skills should assume existing users may have:
 
 Never require deleting production data simply to upgrade a normal Skill version.
 
-## 18. Testing requirements
+## 19. Testing requirements
 
 A Skill repository should run offline without a Discord token.
 
@@ -424,7 +454,7 @@ Live Discord access is acceptance testing, not the normal unit-test environment.
 
 External repositories should also use the [External Skill CI](external-ci.md) pattern to run the same offline checks on Python 3.12 and 3.14. Declare and validate the [Package Compatibility](package-compatibility.md) metadata so package identity, Runtime API and SDK range stay explicit.
 
-## 19. Documentation requirements
+## 20. Documentation requirements
 
 Every Skill repository should document:
 
@@ -447,7 +477,7 @@ Every Skill repository should document:
 - installation instructions;
 - test command.
 
-## 20. Definition of Done
+## 21. Definition of Done
 
 A Skill is ready for review only when:
 
