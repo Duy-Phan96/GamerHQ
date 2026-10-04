@@ -78,6 +78,10 @@ __all__ = [
     "SkillConformanceReport",
     "validate_skill_factory",
     "validate_skill_implementation",
+    "SkillSourceAuditReport",
+    "SkillSourceFinding",
+    "audit_skill_source",
+    "require_clean_skill_source",
 ]
 
-from .devtools import SkillConformanceError, SkillConformanceReport, validate_skill_factory, validate_skill_implementation
+from .devtools import SkillConformanceError, SkillConformanceReport, SkillSourceAuditReport, SkillSourceFinding, audit_skill_source, require_clean_skill_source, validate_skill_factory, validate_skill_implementation
