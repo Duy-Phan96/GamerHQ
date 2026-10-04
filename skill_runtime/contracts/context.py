@@ -6,7 +6,15 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol
 from .events import EventDeliveryReport, EventEnvelope
 
 
+@dataclass(frozen=True, slots=True)
+class DiscordChannelInfo:
+    id: int
+    name: str
+    kind: str
+
+
 class DiscordPort(Protocol):
+    async def get_channel(self, *, channel_id: int) -> DiscordChannelInfo: ...
     async def send_message(self, *, channel_id: int, content: str | None = None, embed: Mapping[str, Any] | None = None,
                            allowed_mentions: Mapping[str, Any] | None = None) -> int: ...
     async def edit_own_message(self, *, channel_id: int, message_id: int, content: str | None = None,
