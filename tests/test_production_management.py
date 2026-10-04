@@ -255,6 +255,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
             health_detail='0 active recurring post(s), 0 configured.',
             required_capabilities=('scheduler.jobs',),
             missing_capabilities=(),
+            management_available=True,
         )
         view = SkillDetailsView(self.guild, owner.id, status)
         labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
