@@ -28,7 +28,8 @@ A generated or manually written Skill MUST:
 18. keep disable non-destructive by default;
 19. avoid leaking private exception text or secrets;
 20. document every public dependency surface;
-21. declare the same capability list in external package metadata and the executable SkillManifest.
+21. declare the same capability list in external package metadata and the executable SkillManifest;
+22. expose host configuration through versioned Management APIs instead of private host imports when custom administration is required.
 
 ## Forbidden dependencies
 
@@ -110,6 +111,11 @@ Use an Event when:
 Use a Public Skill API when:
 
 > Another Skill requires a direct request/response result.
+
+Use a Management API when:
+
+> The trusted host administration surface must configure or inspect the Skill
+> without importing its private implementation.
 
 Use Skill Storage when:
 
