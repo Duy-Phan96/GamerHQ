@@ -40,25 +40,12 @@ class GamerHQBot(commands.Bot):
 
         from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
         from skills import first_party_skills
-        from skill_runtime.runtime.packages import SkillPackageError, discover_installed_skills
+        from hosts.gamerhq.skill_packages import load_external_skill_packages
         from config import EXTERNAL_SKILLS
         self.skill_runtime = GamerHQSkillRuntime(self)
         for skill in first_party_skills():
             self.skill_runtime.register(skill, source_kind="built-in")
-        for skill_id in EXTERNAL_SKILLS:
-            try:
-                package = discover_installed_skills((skill_id,))[0]
-                self.skill_runtime.register(
-                    package.skill,
-                    source_kind="external",
-                    source_distribution=package.distribution or package.entry_point,
-                )
-            except (SkillPackageError, ValueError, TypeError):
-                self.skill_runtime.record_external_unavailable(skill_id)
-                logging.getLogger(__name__).warning(
-                    "Configured external Skill unavailable: %s",
-                    skill_id,
-                )
+        load_external_skill_packages(self.skill_runtime, EXTERNAL_SKILLS)
         await self.skill_runtime.register_all()
 
         await self.load_extension("cogs.games")
