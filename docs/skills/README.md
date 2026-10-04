@@ -121,3 +121,18 @@ External packages use the `gamerhq.skills` entry-point group and are loaded only
 when their stable Skill ID appears in the deployment allowlist.
 
 See [External Skill packages](external-packages.md).
+
+
+## Authoring
+
+Start here when building a new Skill:
+
+1. [Skill Developer Guide](developer-guide.md)
+2. [Strict Authoring Contract](authoring-contract.md)
+3. [Skill Review Checklist](review-checklist.md)
+4. [External Skill packages](external-packages.md)
+5. [Creating a Skill](creating-a-skill.md)
+
+The Developer Guide is the primary human-facing reference. The Authoring
+Contract is intentionally stricter and may also be used as input for code
+generation or AI-assisted Skill creation.
