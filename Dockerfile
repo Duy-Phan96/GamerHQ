@@ -16,6 +16,9 @@ COPY --chown=gamerhq:gamerhq bot.py config.py release_info.py VERSION CHANGELOG.
 ARG VCS_REF=unknown
 RUN printf '%s\n' "$VCS_REF" > /app/BUILD_COMMIT
 COPY --chown=gamerhq:gamerhq cogs/ ./cogs/
+COPY --chown=gamerhq:gamerhq skill_runtime/ ./skill_runtime/
+COPY --chown=gamerhq:gamerhq hosts/ ./hosts/
+COPY --chown=gamerhq:gamerhq skills/ ./skills/
 COPY --chown=gamerhq:gamerhq services/ ./services/
 COPY --chown=gamerhq:gamerhq database/ ./database/
 COPY --chown=gamerhq:gamerhq tools/ ./tools/
