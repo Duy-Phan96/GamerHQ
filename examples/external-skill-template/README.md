@@ -27,3 +27,15 @@ python -m pip install "gamerhq-skill-sdk @ git+https://github.com/Duy-Phan96/Gam
 
 Do not depend on a moving branch for a released Skill. Pin a commit or later a
 published SDK version.
+
+
+## Before implementing
+
+Read the canonical authoring documents in the GamerHQ SDK repository:
+
+- `docs/skills/developer-guide.md`
+- `docs/skills/authoring-contract.md`
+- `docs/skills/review-checklist.md`
+
+Your Skill should be reviewable against those rules without access to GamerHQ
+production, secrets or a live Discord token.
