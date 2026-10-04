@@ -155,6 +155,46 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Fixture Skill', kwargs['content'])
         self.assertIn('Disabled', kwargs['content'])
 
+    async def test_skill_lifecycle_change_requires_owner_review(self):
+        from cogs.server_management import SkillDetailsView, SkillToggleConfirmView
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        status = GuildSkillStatus(
+            skill_id='fixture-skill',
+            name='Fixture Skill',
+            version='1.0.0',
+            description='Portable fixture',
+            enabled=False,
+            running=False,
+            health='DISABLED',
+            health_detail='Skill is disabled for this guild.',
+            required_capabilities=('discord.messages.send',),
+            missing_capabilities=(),
+        )
+        runtime = SimpleNamespace(
+            status=AsyncMock(return_value=status),
+            enable_skill=AsyncMock(return_value=True),
+            disable_skill=AsyncMock(return_value=True),
+        )
+
+        admin = SimpleNamespace(id=43, guild_permissions=discord.Permissions(administrator=True))
+        self.guild.members = [owner, admin]
+        denied = self.interaction(admin)
+        denied.client.skill_runtime = runtime
+        view = SkillDetailsView(self.guild, admin.id, status)
+        await view.review_toggle(denied)
+        runtime.status.assert_not_awaited()
+        self.assertIn('Only the server owner', denied.response.send_message.call_args.args[0])
+
+        allowed = self.interaction(owner)
+        allowed.client.skill_runtime = runtime
+        owner_view = SkillDetailsView(self.guild, owner.id, status)
+        await owner_view.review_toggle(allowed)
+        confirm = allowed.response.edit_message.call_args.kwargs['view']
+        self.assertIsInstance(confirm, SkillToggleConfirmView)
+        runtime.enable_skill.assert_not_awaited()
+
     async def test_imported_catalog_is_offered_by_actual_select_games_button(self):
         from cogs.games import ChooseGamesButtons, GameSelectionSession
         from config import DISPLAY_GROUP_ORDER
