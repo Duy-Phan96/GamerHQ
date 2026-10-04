@@ -17,7 +17,9 @@ from skill_runtime import (
     EventEnvelope,
     SkillCapability,
     SkillEvents,
+    ManagementApiContract,
     SkillHealth,
+    SkillManagementApis,
     SkillManifest,
 )
 from skill_runtime.contracts.schedule import (
@@ -34,6 +36,11 @@ SENT_EVENT_ID = "recurring-post.sent.v1"
 STORAGE_KEY = "posts.v1"
 MAX_POSTS = 20
 MIN_INTERVAL_SECONDS = 15 * 60
+LIST_API = "recurring-posts.list.v1"
+GET_API = "recurring-posts.get.v1"
+CREATE_API = "recurring-posts.create.v1"
+SET_ACTIVE_API = "recurring-posts.set-active.v1"
+DELETE_API = "recurring-posts.delete.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +164,15 @@ class RecurringPostsSkill:
                 ),
             ),
         ),
+        management_apis=SkillManagementApis(
+            exposes=(
+                ManagementApiContract(LIST_API, "List configured recurring posts."),
+                ManagementApiContract(GET_API, "Read one recurring post."),
+                ManagementApiContract(CREATE_API, "Create a recurring post."),
+                ManagementApiContract(SET_ACTIVE_API, "Pause or resume a recurring post."),
+                ManagementApiContract(DELETE_API, "Delete a recurring post."),
+            ),
+        ),
     )
 
     def __init__(self):
@@ -167,6 +183,57 @@ class RecurringPostsSkill:
 
     async def register(self, ctx) -> None:
         ctx.scheduler.register_handler(HANDLER_ID, self._execute)
+        ctx.management.expose(LIST_API, self._manage_list)
+        ctx.management.expose(GET_API, self._manage_get)
+        ctx.management.expose(CREATE_API, self._manage_create)
+        ctx.management.expose(SET_ACTIVE_API, self._manage_set_active)
+        ctx.management.expose(DELETE_API, self._manage_delete)
+
+
+    async def _manage_list(self, ctx, payload) -> Mapping[str, Any]:
+        posts = await self.list_posts(ctx)
+        return {"posts": [post.to_dict() for post in posts]}
+
+    async def _manage_get(self, ctx, payload) -> Mapping[str, Any]:
+        post_id = str(payload.get("postId", "")).strip()
+        if not post_id:
+            raise ValueError("postId is required.")
+        post = await self.get_post(ctx, post_id)
+        return {"post": post.to_dict()}
+
+    async def _manage_create(self, ctx, payload) -> Mapping[str, Any]:
+        try:
+            name = str(payload["name"])
+            channel_id = int(payload["channelId"])
+            content = str(payload["content"])
+            schedule = payload["schedule"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Malformed recurring post request.") from exc
+        if not isinstance(schedule, Mapping):
+            raise ValueError("schedule must be an object.")
+        post = await self.create_post(
+            ctx,
+            name=name,
+            channel_id=channel_id,
+            content=content,
+            schedule=schedule,
+        )
+        return {"post": post.to_dict()}
+
+    async def _manage_set_active(self, ctx, payload) -> Mapping[str, Any]:
+        post_id = str(payload.get("postId", "")).strip()
+        active = payload.get("active")
+        if not post_id or not isinstance(active, bool):
+            raise ValueError("postId and boolean active are required.")
+        post = await self.set_active(ctx, post_id=post_id, active=active)
+        return {"post": post.to_dict()}
+
+    async def _manage_delete(self, ctx, payload) -> Mapping[str, Any]:
+        post_id = str(payload.get("postId", "")).strip()
+        if not post_id:
+            raise ValueError("postId is required.")
+        await self.delete_post(ctx, post_id=post_id)
+        return {"deleted": True, "postId": post_id}
 
     async def enable(self, ctx) -> None:
         await ctx.audit.write(action="enabled")
