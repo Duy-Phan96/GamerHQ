@@ -68,6 +68,13 @@ Use this checklist for every first-party or external GamerHQ Skill before allowi
 - [ ] Payloads are documented.
 - [ ] Private content is not shared unnecessarily.
 
+## Host management contracts
+
+- [ ] Host configuration does not import private Skill implementation modules.
+- [ ] Custom configuration uses declared versioned Management APIs.
+- [ ] Management payloads are bounded and host-neutral.
+- [ ] Management handlers do not expose raw host objects.
+
 ## UX
 
 - [ ] Configuration lives under normal host management UX.
