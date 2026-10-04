@@ -15,5 +15,15 @@ This template intentionally does not access Discord.py, GamerHQ database helpers
 services, cogs, tokens or another Skill's private implementation.
 
 During development, test against the matching GamerHQ Skill Runtime SDK version.
-The SDK is currently in the GamerHQ repository and is intended to become its own
-installable package later.
+The SDK is currently built from the GamerHQ repository as the
+`gamerhq-skill-sdk` distribution.
+
+For an independent repository, pin the exact reviewed SDK commit during
+development, for example:
+
+```sh
+python -m pip install "gamerhq-skill-sdk @ git+https://github.com/Duy-Phan96/GamerHQ.git@<reviewed-commit>"
+```
+
+Do not depend on a moving branch for a released Skill. Pin a commit or later a
+published SDK version.
