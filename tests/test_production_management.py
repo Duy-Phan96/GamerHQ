@@ -150,6 +150,50 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
         self.assertEqual(actions, ['Preview Questions', 'Review Profile Repair', 'Back to Management'])
 
+    async def test_member_onboarding_question_management_supports_edit_and_flags(self):
+        from cogs.server_management import (
+            MemberOnboardingView,
+            OnboardingQuestionDetailView,
+            OnboardingQuestionsView,
+            _onboarding_question_detail_text,
+        )
+        from services.member_onboarding_service import (
+            load_config,
+            questions_for_guild,
+        )
+
+        owner = self.actor()
+        questions = questions_for_guild(self.guild, include_disabled=True)
+        view = OnboardingQuestionsView(self.guild, owner.id, questions)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(labels, ['Reset Defaults', 'Back'])
+
+        age = next(q for q in questions if q.key == 'age')
+        detail = OnboardingQuestionDetailView(
+            self.guild,
+            owner.id,
+            age,
+            load_config(self.guild.id)['revision'],
+        )
+        labels = [child.label for child in detail.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Edit Question', labels)
+        self.assertIn('Disable', labels)
+        self.assertIn('Make Required', labels)
+        self.assertIn('Move to Channels & Roles', labels)
+        self.assertIn('Allow Multiple', labels)
+        self.assertIn('Back', labels)
+        text = _onboarding_question_detail_text(age)
+        self.assertIn("What's your age group?", text)
+        self.assertIn('Optional', text)
+        self.assertIn('Single answer', text)
+
+        landing = MemberOnboardingView(self.guild, owner.id)
+        landing_labels = [child.label for child in landing.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(
+            landing_labels,
+            ['Manage Questions', 'Preview Questions', 'Review Profile Repair', 'Discord Setup Guide', 'Back to Management'],
+        )
+
     async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
         from cogs.server_management import ManagementView, SkillsView, open_skills
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
