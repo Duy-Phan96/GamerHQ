@@ -1,5 +1,13 @@
 # GamerHQ Changelog
 
+## Recurring Posts 1.1 integration
+
+- Pin the standalone Recurring Posts Skill to reviewed immutable commit `8317d854f0a39811804b9f28eff9b7061a5417e8`.
+- Add review-before-save create/edit flows, including name, message, schedule type/settings and destination-channel changes.
+- Show the 15-minute interval minimum in the Discord form while keeping Skill-side validation authoritative.
+- Use the Skill's validation and delete-preview Management APIs instead of importing Skill internals.
+- Preserve existing post IDs, `posts.v1` storage and `post:<post-id>` scheduler identities during compatible edits.
+
 ## Game-independent event scheduling
 
 - Create Event no longer requires a selected game or game role; public events post to the central LFG board and private events keep their existing invite-only space.
