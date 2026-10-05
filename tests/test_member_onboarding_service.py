@@ -68,5 +68,81 @@ class MemberOnboardingServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("age-18-24", roles.personal_keys())
 
 
+    def test_question_overrides_persist_without_copying_dynamic_answers(self):
+        revision = onboarding.save_question_override(
+            self.guild.id,
+            "age",
+            prompt="Which age group fits you?",
+            required=True,
+            before_join=False,
+            expected_revision=0,
+        )
+        self.assertEqual(revision, 1)
+        question = next(
+            q for q in onboarding.questions_for_guild(self.guild, include_disabled=True)
+            if q.key == "age"
+        )
+        self.assertEqual(question.prompt, "Which age group fits you?")
+        self.assertTrue(question.required)
+        self.assertFalse(question.before_join)
+        self.assertEqual(
+            [answer.key for answer in question.answers],
+            ["age-under18", "age-18-20", "age-21-22", "age-23-24", "age-25plus"],
+        )
+        raw = db.get_setting(f"member_onboarding_config:{self.guild.id}")
+        self.assertNotIn("age-under18", raw)
+        self.assertNotIn("Under 18", raw)
+
+    def test_disabled_question_is_hidden_from_preview_but_manageable(self):
+        onboarding.save_question_override(
+            self.guild.id,
+            "gender",
+            enabled=False,
+            expected_revision=0,
+        )
+        visible = {q.key for q in onboarding.questions_for_guild(self.guild)}
+        managed = {q.key for q in onboarding.questions_for_guild(self.guild, include_disabled=True)}
+        self.assertNotIn("gender", visible)
+        self.assertIn("gender", managed)
+
+    def test_stale_question_edit_fails_closed(self):
+        onboarding.save_question_override(
+            self.guild.id,
+            "age",
+            prompt="Age?",
+            expected_revision=0,
+        )
+        with self.assertRaisesRegex(ValueError, "changed"):
+            onboarding.save_question_override(
+                self.guild.id,
+                "age",
+                required=True,
+                expected_revision=0,
+            )
+
+    def test_reset_defaults_preserves_revision_and_restores_builtin_values(self):
+        onboarding.save_question_override(
+            self.guild.id,
+            "games",
+            prompt="Pick your games",
+            enabled=False,
+            expected_revision=0,
+        )
+        revision = onboarding.reset_config(self.guild.id, expected_revision=1)
+        self.assertEqual(revision, 2)
+        config = onboarding.load_config(self.guild.id)
+        self.assertEqual(config["revision"], 2)
+        self.assertEqual(config["questions"], {})
+        question = next(q for q in onboarding.questions_for_guild(self.guild) if q.key == "games")
+        self.assertEqual(question.prompt, "What games do you play?")
+        self.assertTrue(question.enabled)
+
+    def test_invalid_question_prompt_and_unknown_key_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "between 3 and 100"):
+            onboarding.save_question_override(self.guild.id, "age", prompt="x")
+        with self.assertRaisesRegex(ValueError, "Unknown"):
+            onboarding.save_question_override(self.guild.id, "not-real", prompt="Valid prompt")
+
+
 if __name__ == "__main__":
     unittest.main()
