@@ -612,7 +612,7 @@ class LFGEventView(discord.ui.View):
         )
         event = lobby_rules.end(self.event_id, interaction.guild.id, interaction.user.id, "completed")
         from cogs.progression_activity import award_completed_lfg
-        await award_completed_lfg(interaction.client, interaction.guild, event)
+        await award_completed_lfg(getattr(interaction, "client", None), interaction.guild, event)
         await delete_private_event_channel(interaction.guild, event)
         await delete_event_voice(interaction.guild, event)
 
