@@ -21,12 +21,23 @@ class FakeGuild:
     def __init__(self, guild_id=1):
         self.id = guild_id
         self.channels = {}
+        self.members = {}
 
     def get_channel_or_thread(self, channel_id):
         return self.channels.get(channel_id)
 
     def get_channel(self, channel_id):
         return self.channels.get(channel_id)
+
+    def get_member(self, member_id):
+        return self.members.get(member_id)
+
+    async def fetch_member(self, member_id):
+        member = self.members.get(member_id)
+        if member is None:
+            response = SimpleNamespace(status=404, reason="Not Found")
+            raise discord.NotFound(response, "missing")
+        return member
 
 
 class FakeChannel:
@@ -81,6 +92,45 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
             skill_id="fixture-skill",
             permissions=CapabilityPermissions(declared, available=HOST_CAPABILITIES),
         )
+
+    async def test_member_lookup_is_guild_scoped_and_host_neutral(self):
+        member_role = SimpleNamespace(id=44, is_default=lambda: False)
+        everyone = SimpleNamespace(id=1, is_default=lambda: True)
+        member = SimpleNamespace(
+            id=7,
+            guild=self.guild,
+            display_name="Player",
+            name="player",
+            roles=[everyone, member_role],
+            joined_at=None,
+            bot=False,
+        )
+        self.guild.members[member.id] = member
+        adapter = self.adapter(SkillCapability.DISCORD_MEMBERS_READ.value)
+
+        info = await adapter.get_member(member_id=member.id)
+
+        self.assertEqual(info.id, 7)
+        self.assertEqual(info.display_name, "Player")
+        self.assertEqual(info.role_ids, (44,))
+        self.assertFalse(info.is_bot)
+
+        other_guild = FakeGuild(2)
+        self.guild.members[8] = SimpleNamespace(
+            id=8,
+            guild=other_guild,
+            display_name="Cross",
+            roles=[],
+            joined_at=None,
+            bot=False,
+        )
+        with self.assertRaises(ResourceNotFoundError):
+            await adapter.get_member(member_id=8)
+
+    async def test_member_read_requires_explicit_capability(self):
+        adapter = self.adapter()
+        with self.assertRaisesRegex(PermissionError, "discord.members.read"):
+            await adapter.get_member(member_id=7)
 
     async def test_channel_lookup_is_guild_scoped_and_host_neutral(self):
         adapter = self.adapter(SkillCapability.DISCORD_CHANNELS_READ.value)

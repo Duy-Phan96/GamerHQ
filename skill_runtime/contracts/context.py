@@ -7,6 +7,15 @@ from .events import EventDeliveryReport, EventEnvelope
 
 
 @dataclass(frozen=True, slots=True)
+class DiscordMemberInfo:
+    id: int
+    display_name: str
+    role_ids: tuple[int, ...]
+    joined_at: str | None
+    is_bot: bool
+
+
+@dataclass(frozen=True, slots=True)
 class DiscordChannelInfo:
     id: int
     name: str
@@ -14,6 +23,7 @@ class DiscordChannelInfo:
 
 
 class DiscordPort(Protocol):
+    async def get_member(self, *, member_id: int) -> DiscordMemberInfo: ...
     async def get_channel(self, *, channel_id: int) -> DiscordChannelInfo: ...
     async def send_message(self, *, channel_id: int, content: str | None = None, embed: Mapping[str, Any] | None = None,
                            allowed_mentions: Mapping[str, Any] | None = None) -> int: ...

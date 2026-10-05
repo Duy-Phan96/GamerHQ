@@ -12,6 +12,7 @@ class SkillCapability(StrEnum):
 
     DISCORD_MESSAGES_SEND = "discord.messages.send"
     DISCORD_CHANNELS_READ = "discord.channels.read"
+    DISCORD_MEMBERS_READ = "discord.members.read"
     DISCORD_MESSAGES_EDIT_OWN = "discord.messages.edit_own"
     DISCORD_MESSAGES_DELETE_OWN = "discord.messages.delete_own"
     DISCORD_EMBEDS_SEND = "discord.embeds.send"

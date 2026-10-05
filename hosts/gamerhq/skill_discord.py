@@ -11,7 +11,7 @@ from typing import Any
 import discord
 
 from skill_runtime.contracts.capabilities import SkillCapability
-from skill_runtime.contracts.context import DiscordChannelInfo
+from skill_runtime.contracts.context import DiscordChannelInfo, DiscordMemberInfo
 from skill_runtime.contracts.errors import (
     CapabilityUnavailableError,
     HostPermissionDeniedError,
@@ -25,6 +25,7 @@ from .skill_host import CapabilityPermissions, _valid_identity
 
 DISCORD_HOST_CAPABILITIES = frozenset({
     SkillCapability.DISCORD_CHANNELS_READ.value,
+    SkillCapability.DISCORD_MEMBERS_READ.value,
     SkillCapability.DISCORD_MESSAGES_SEND.value,
     SkillCapability.DISCORD_EMBEDS_SEND.value,
 })
@@ -72,6 +73,30 @@ class GamerHQDiscordAdapter:
         self.guild_id = guild.id
         self.skill_id = skill_id
         self.permissions = permissions
+
+    async def get_member(self, *, member_id: int) -> DiscordMemberInfo:
+        self.permissions.require(SkillCapability.DISCORD_MEMBERS_READ.value)
+        if int(member_id) <= 0:
+            raise InvalidHostOperationError("member_id must be positive.")
+        member = self.guild.get_member(int(member_id))
+        if member is None:
+            try:
+                member = await self.guild.fetch_member(int(member_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                translated = _translate_discord_error(exc)
+                if isinstance(translated, TransientHostError):
+                    raise translated from exc
+                raise ResourceNotFoundError("Discord member was not found in this guild.") from exc
+        if int(getattr(getattr(member, "guild", None), "id", 0)) != self.guild_id:
+            raise ResourceNotFoundError("Discord member was not found in this guild.")
+        joined_at = getattr(member, "joined_at", None)
+        return DiscordMemberInfo(
+            id=int(member.id),
+            display_name=str(getattr(member, "display_name", getattr(member, "name", "")))[:100],
+            role_ids=tuple(sorted(int(role.id) for role in getattr(member, "roles", ()) if not role.is_default())),
+            joined_at=joined_at.isoformat() if joined_at is not None else None,
+            is_bot=bool(getattr(member, "bot", False)),
+        )
 
     def _channel(self, channel_id: int):
         if int(channel_id) <= 0:
