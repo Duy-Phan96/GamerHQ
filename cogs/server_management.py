@@ -244,13 +244,34 @@ async def open_member_onboarding(interaction, guild, actor_id):
 class MemberOnboardingView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
+        self.action("Manage Questions", self.manage_questions)
         self.action("Preview Questions", self.preview_questions)
         self.action("Review Profile Repair", self.review_repair)
+        self.action("Discord Setup Guide", self.discord_guide)
         self.action("Back to Management", self.back)
+
+    async def manage_questions(self, interaction):
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
 
     async def preview_questions(self, interaction):
         await interaction.response.edit_message(
             content=_member_questions_text(self.guild),
+            view=MemberOnboardingPreviewView(self.guild, self.admin_id),
+        )
+
+    async def discord_guide(self, interaction):
+        await interaction.response.edit_message(
+            content=(
+                "# 🔗 Discord Community Onboarding\n"
+                "GamerHQ stores the desired question design, but Discord does not currently expose "
+                "a documented bot API that GamerHQ can safely use to publish these native onboarding questions.\n\n"
+                "**Apply manually in Discord Desktop:**\n"
+                "Server Settings → Onboarding → Questions\n\n"
+                "Use **Preview Questions** as the source for prompts and flags. "
+                "Age/profile answers map to GamerHQ-managed roles; Games uses a small popular subset.\n\n"
+                "Do not use unofficial/private Discord endpoints. A native Sync action can be added later "
+                "if Discord publishes a supported API."
+            )[:1950],
             view=MemberOnboardingPreviewView(self.guild, self.admin_id),
         )
 
@@ -294,6 +315,277 @@ class MemberOnboardingView(Menu):
             content=TITLE,
             view=ManagementView(self.guild, self.admin_id),
         )
+
+
+
+def _onboarding_question_detail_text(question):
+    state = "Enabled" if question.enabled else "Disabled"
+    flags = [
+        "Required" if question.required else "Optional",
+        "Multiple answers" if question.multiple else "Single answer",
+        "Before join" if question.before_join else "Channels & Roles",
+    ]
+    lines = [
+        f"# ❓ {discord.utils.escape_markdown(question.prompt)[:100]}",
+        f"**Status:** {state}",
+        f"**Mode:** {' · '.join(flags)}",
+        f"**Answers:** {len(question.answers)}",
+        "",
+    ]
+    if question.answers:
+        lines.extend(
+            f"• {discord.utils.escape_markdown(answer.label)[:100]}"
+            for answer in question.answers[:12]
+        )
+        if len(question.answers) > 12:
+            lines.append(f"• + {len(question.answers) - 12} more")
+    else:
+        lines.append("No answers are currently available.")
+    lines.extend([
+        "",
+        "Answer lists are generated from GamerHQ-managed roles or the current popular-game subset, "
+        "so role/game changes do not require duplicating the list here.",
+    ])
+    return "\n".join(lines)[:1950]
+
+
+async def open_onboarding_questions(interaction, guild, actor_id):
+    from services.member_onboarding_service import questions_for_guild
+    questions = questions_for_guild(guild, include_disabled=True)
+    await interaction.response.edit_message(
+        content=(
+            "# ❓ Manage Onboarding Questions\n"
+            "Edit GamerHQ's desired question settings. Answers stay linked to managed roles/games.\n\n"
+            "Choose a question below. Changes affect GamerHQ's saved desired state; native Discord Onboarding "
+            "must still be applied manually until Discord exposes a supported bot API."
+        ),
+        view=OnboardingQuestionsView(guild, actor_id, questions),
+    )
+
+
+class OnboardingQuestionPicker(discord.ui.Select):
+    def __init__(self, questions):
+        super().__init__(
+            placeholder="Choose a question",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=question.prompt[:100],
+                    value=question.key,
+                    description=(
+                        ("Enabled" if question.enabled else "Disabled")
+                        + " · "
+                        + ("Required" if question.required else "Optional")
+                    )[:100],
+                )
+                for question in questions[:25]
+            ],
+        )
+
+    async def callback(self, interaction):
+        from services.member_onboarding_service import load_config, questions_for_guild
+        question = next(
+            q for q in questions_for_guild(self.view.guild, include_disabled=True)
+            if q.key == self.values[0]
+        )
+        revision = load_config(self.view.guild.id)["revision"]
+        await interaction.response.edit_message(
+            content=_onboarding_question_detail_text(question),
+            view=OnboardingQuestionDetailView(
+                self.view.guild,
+                self.view.admin_id,
+                question,
+                revision,
+            ),
+        )
+
+
+class OnboardingQuestionsView(Menu):
+    def __init__(self, guild, actor_id, questions):
+        super().__init__(guild, actor_id)
+        self.questions = tuple(questions)
+        if self.questions:
+            self.add_item(OnboardingQuestionPicker(self.questions))
+        self.action("Reset Defaults", self.review_reset)
+        self.action("Back", self.back)
+
+    async def review_reset(self, interaction):
+        from services.member_onboarding_service import load_config
+        revision = load_config(self.guild.id)["revision"]
+        await interaction.response.edit_message(
+            content=(
+                "# Reset Onboarding Questions?\n"
+                "This removes GamerHQ question overrides and restores the built-in prompts/flags. "
+                "Managed roles, member roles and games are not deleted.\n\n"
+                "Nothing changes until you confirm."
+            ),
+            view=OnboardingResetConfirmView(self.guild, self.admin_id, revision),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_onboarding_text(self.guild),
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+class OnboardingQuestionEditModal(discord.ui.Modal, title="Edit Onboarding Question"):
+    prompt = discord.ui.TextInput(
+        label="Question",
+        placeholder="Short, clear question shown to members",
+        required=True,
+        min_length=3,
+        max_length=100,
+    )
+
+    def __init__(self, guild, actor_id, question, revision):
+        super().__init__()
+        self.guild_id = guild.id
+        self.actor_id = actor_id
+        self.question_key = question.key
+        self.revision = revision
+        self.prompt.default = question.prompt
+
+    async def on_submit(self, interaction):
+        if (
+            not interaction.guild
+            or interaction.guild.id != self.guild_id
+            or interaction.user.id != self.actor_id
+            or not interaction.user.guild_permissions.administrator
+        ):
+            return await interaction.response.send_message(
+                "This editor is no longer authorized. Reopen Member Onboarding.",
+                ephemeral=True,
+            )
+        from services.member_onboarding_service import (
+            load_config,
+            questions_for_guild,
+            save_question_override,
+        )
+        try:
+            save_question_override(
+                self.guild_id,
+                self.question_key,
+                prompt=str(self.prompt.value),
+                expected_revision=self.revision,
+            )
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        question = next(
+            q for q in questions_for_guild(interaction.guild, include_disabled=True)
+            if q.key == self.question_key
+        )
+        revision = load_config(self.guild_id)["revision"]
+        await interaction.response.edit_message(
+            content=_onboarding_question_detail_text(question),
+            view=OnboardingQuestionDetailView(
+                interaction.guild,
+                self.actor_id,
+                question,
+                revision,
+            ),
+        )
+
+
+class OnboardingQuestionDetailView(Menu):
+    def __init__(self, guild, actor_id, question, revision):
+        super().__init__(guild, actor_id)
+        self.question = question
+        self.revision = revision
+        self.action("Edit Question", self.edit)
+        self.action("Disable" if question.enabled else "Enable", self.toggle_enabled)
+        self.action("Make Optional" if question.required else "Make Required", self.toggle_required)
+        self.action(
+            "Move to Channels & Roles" if question.before_join else "Ask Before Join",
+            self.toggle_before_join,
+        )
+        self.action(
+            "Single Answer" if question.multiple else "Allow Multiple",
+            self.toggle_multiple,
+        )
+        self.action("Back", self.back)
+
+    async def _toggle(self, interaction, **change):
+        from services.member_onboarding_service import (
+            load_config,
+            questions_for_guild,
+            save_question_override,
+        )
+        try:
+            save_question_override(
+                self.guild.id,
+                self.question.key,
+                expected_revision=self.revision,
+                **change,
+            )
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        question = next(
+            q for q in questions_for_guild(self.guild, include_disabled=True)
+            if q.key == self.question.key
+        )
+        revision = load_config(self.guild.id)["revision"]
+        await interaction.response.edit_message(
+            content=_onboarding_question_detail_text(question),
+            view=OnboardingQuestionDetailView(
+                self.guild,
+                self.admin_id,
+                question,
+                revision,
+            ),
+        )
+
+    async def edit(self, interaction):
+        await interaction.response.send_modal(
+            OnboardingQuestionEditModal(
+                self.guild,
+                self.admin_id,
+                self.question,
+                self.revision,
+            )
+        )
+
+    async def toggle_enabled(self, interaction):
+        await self._toggle(interaction, enabled=not self.question.enabled)
+
+    async def toggle_required(self, interaction):
+        await self._toggle(interaction, required=not self.question.required)
+
+    async def toggle_before_join(self, interaction):
+        await self._toggle(interaction, before_join=not self.question.before_join)
+
+    async def toggle_multiple(self, interaction):
+        await self._toggle(interaction, multiple=not self.question.multiple)
+
+    async def back(self, interaction):
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
+
+
+class OnboardingResetConfirmView(Menu):
+    def __init__(self, guild, actor_id, revision):
+        super().__init__(guild, actor_id)
+        self.revision = revision
+        self.used = False
+        self.action("Confirm Reset", self.confirm)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This reset review was already used.",
+                ephemeral=True,
+            )
+        self.used = True
+        from services.member_onboarding_service import reset_config
+        try:
+            reset_config(self.guild.id, expected_revision=self.revision)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
+
+    async def cancel(self, interaction):
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
 
 
 class MemberOnboardingPreviewView(Menu):
