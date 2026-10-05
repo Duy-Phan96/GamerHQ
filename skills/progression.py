@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
+from datetime import datetime, timezone
 
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.lifecycle import SkillHealth
@@ -23,6 +24,8 @@ STATUS_API = "progression.status.v1"
 GET_CONFIG_API = "progression.get-config.v1"
 UPDATE_CONFIG_API = "progression.update-config.v1"
 PREVIEW_LEVEL_API = "progression.preview-level.v1"
+RECORD_ACTIVITY_API = "progression.record-activity.v1"
+MEMBER_STATUS_API = "progression.member-status.v1"
 
 DEFAULT_CONFIG = {
     "levelCurve": {
@@ -277,6 +280,8 @@ class ProgressionSkill:
                 ManagementApiContract(GET_CONFIG_API),
                 ManagementApiContract(UPDATE_CONFIG_API),
                 ManagementApiContract(PREVIEW_LEVEL_API),
+                ManagementApiContract(RECORD_ACTIVITY_API),
+                ManagementApiContract(MEMBER_STATUS_API),
             )
         ),
     )
@@ -286,6 +291,8 @@ class ProgressionSkill:
         ctx.management.expose(GET_CONFIG_API, self.get_config)
         ctx.management.expose(UPDATE_CONFIG_API, self.update_config)
         ctx.management.expose(PREVIEW_LEVEL_API, self.preview_level)
+        ctx.management.expose(RECORD_ACTIVITY_API, self.record_activity)
+        ctx.management.expose(MEMBER_STATUS_API, self.member_status)
 
     async def enable(self, ctx) -> None:
         if await ctx.storage.get(CONFIG_KEY) is None:
@@ -332,6 +339,91 @@ class ProgressionSkill:
         await ctx.storage.set(CONFIG_KEY, config)
         await ctx.audit.write(action="progression.config.updated", target="progression")
         return {"config": config}
+
+    async def _member_state(self, ctx, member_id: int) -> dict[str, Any]:
+        key = MEMBER_KEY_PREFIX + str(member_id)
+        state = await ctx.storage.get(key)
+        if not isinstance(state, Mapping):
+            state = {}
+        return {
+            "totalXp": int(state.get("totalXp", 0)),
+            "sourceXp": dict(state.get("sourceXp") or {}),
+            "dailyXp": dict(state.get("dailyXp") or {}),
+            "metrics": dict(state.get("metrics") or {}),
+            "achievements": list(state.get("achievements") or []),
+        }
+
+    async def member_status(self, ctx, payload) -> Mapping[str, Any]:
+        member_id = _positive_int(payload.get("memberId"), "memberId")
+        state = await self._member_state(ctx, member_id)
+        config = await self._config(ctx)
+        level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
+        return {
+            "memberId": member_id,
+            "totalXp": state["totalXp"],
+            "level": level,
+            "currentLevelXp": current,
+            "xpToNextLevel": needed,
+            "sourceXp": state["sourceXp"],
+            "metrics": state["metrics"],
+            "achievements": tuple(state["achievements"]),
+        }
+
+    async def record_activity(self, ctx, payload) -> Mapping[str, Any]:
+        member_id = _positive_int(payload.get("memberId"), "memberId")
+        source_id = str(payload.get("source", "")).strip()
+        units = _positive_int(payload.get("units", 1), "units", maximum=1000)
+        occurred_at = _positive_int(payload.get("occurredAt", 0), "occurredAt", minimum=0, maximum=4_102_444_800)
+        if occurred_at == 0:
+            occurred_at = int(datetime.now(timezone.utc).timestamp())
+
+        config = await self._config(ctx)
+        source = config["xpSources"].get(source_id)
+        if not source or not source.get("enabled"):
+            return {"memberId": member_id, "source": source_id, "awardedXp": 0, "reason": "disabled"}
+
+        state = await self._member_state(ctx, member_id)
+        day = datetime.fromtimestamp(occurred_at, tz=timezone.utc).date().isoformat()
+        daily = dict(state["dailyXp"].get(day) or {})
+        configured = int(source["xp"]) * units
+        cap = int(source.get("dailyCap", configured))
+        already = int(daily.get(source_id, 0))
+        awarded = max(0, min(configured, cap - already))
+
+        if awarded:
+            state["totalXp"] += awarded
+            state["sourceXp"][source_id] = int(state["sourceXp"].get(source_id, 0)) + awarded
+            daily[source_id] = already + awarded
+            state["dailyXp"] = {day: daily}
+
+        if source_id == "voice":
+            minutes = int(source.get("windowMinutes", 10)) * units
+            state["metrics"]["voiceMinutes"] = int(state["metrics"].get("voiceMinutes", 0)) + minutes
+        elif source_id == "lfgParticipation":
+            state["metrics"]["lfgParticipations"] = int(state["metrics"].get("lfgParticipations", 0)) + units
+        elif source_id == "eventHost":
+            state["metrics"]["eventsHosted"] = int(state["metrics"].get("eventsHosted", 0)) + units
+
+        await ctx.storage.set(MEMBER_KEY_PREFIX + str(member_id), state)
+        if awarded:
+            await ctx.audit.write(
+                action="progression.xp.awarded",
+                target=str(member_id),
+                metadata={"source": source_id, "xp": awarded},
+            )
+
+        level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
+        return {
+            "memberId": member_id,
+            "source": source_id,
+            "awardedXp": awarded,
+            "totalXp": state["totalXp"],
+            "level": level,
+            "currentLevelXp": current,
+            "xpToNextLevel": needed,
+            "dailySourceXp": int(daily.get(source_id, 0)),
+            "dailyCapReached": bool(source.get("dailyCap") and daily.get(source_id, 0) >= int(source["dailyCap"])),
+        }
 
     async def preview_level(self, ctx, payload) -> Mapping[str, Any]:
         total_xp = _positive_int(payload.get("totalXp", 0), "totalXp", minimum=0)
