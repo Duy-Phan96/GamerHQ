@@ -73,25 +73,42 @@ Current path:
 
 `/server manage → Member Onboarding`
 
-The first slice supports:
+Current server-side management supports:
 
 - current profile/onboarding status;
 - preview of GamerHQ's desired questions;
+- Edit Question;
+- Enable/Disable;
+- Required/Optional;
+- Before Join/Channels & Roles;
+- Single/Multiple answers;
+- Reset Defaults;
 - review/confirm profile-role repair;
 - safe legacy mapping retirement.
 
-The question preview is read-only. It does not currently modify Discord's native
-Community Onboarding configuration.
+Question settings are stored in GamerHQ with a revision number so stale editors
+fail closed.
+
+Answer lists are not copied into the settings payload. Age/Gender/Community
+answers are generated from current GamerHQ-managed role definitions, while the
+Games question uses the current bounded popular-game subset. This keeps role/game
+changes from creating a second stale onboarding catalog.
+
+These settings do not currently modify Discord's native Community Onboarding
+configuration.
 
 ## Discord sync boundary
 
-Before adding Discord onboarding write support, verify the currently supported
-Discord API and discord.py surface.
+The current public Discord developer documentation does not provide a supported
+bot endpoint for publishing Community Onboarding questions. GamerHQ therefore
+does not call undocumented/private Discord endpoints.
 
 Do not scrape or automate the Discord desktop UI.
 
-If native API support is insufficient for a desired field, show that limitation
-clearly rather than creating a second hidden source of truth.
+The management screen provides a Discord Setup Guide so an administrator can
+apply the reviewed desired state manually in Discord Desktop today. If Discord
+publishes a supported API later, add a native adapter behind the existing
+Preview/Review/Confirm boundary rather than changing the desired-state model.
 
 Future sync must include:
 
