@@ -113,7 +113,7 @@ class ProgressionActivity(commands.Cog):
 
 async def award_completed_lfg(bot, guild: discord.Guild, event: dict) -> None:
     """Award completion XP once per event/member using stable dedupe keys."""
-    runtime = getattr(bot, "skill_runtime", None)
+    runtime = getattr(bot, "skill_runtime", None) if bot is not None else None
     if runtime is None:
         return
     try:
