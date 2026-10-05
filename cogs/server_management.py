@@ -15,7 +15,11 @@ SECTIONS = ('Core Server', 'Integrations', 'Roles & Permissions', 'Features', 'R
 _RECURRING_LIST_API = "recurring-posts.list.v1"
 _RECURRING_GET_API = "recurring-posts.get.v1"
 _RECURRING_CREATE_API = "recurring-posts.create.v1"
+_RECURRING_DESCRIBE_API = "recurring-posts.describe.v1"
+_RECURRING_VALIDATE_API = "recurring-posts.validate.v1"
+_RECURRING_UPDATE_API = "recurring-posts.update.v1"
 _RECURRING_SET_ACTIVE_API = "recurring-posts.set-active.v1"
+_RECURRING_DELETE_PREVIEW_API = "recurring-posts.delete-preview.v1"
 _RECURRING_DELETE_API = "recurring-posts.delete.v1"
 
 
@@ -597,7 +601,7 @@ class RecurringPostModal(discord.ui.Modal):
         self.add_item(self.content)
         if kind == 'interval':
             self.schedule = discord.ui.TextInput(
-                label='Every N minutes',
+                label='Every N minutes (min. 15)',
                 placeholder='180',
                 default='180',
                 max_length=6,
