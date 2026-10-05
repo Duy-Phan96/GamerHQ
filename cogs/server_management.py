@@ -834,14 +834,101 @@ def _recurring_post_detail(post):
     )[:1950]
 
 
+class RecurringPostEditChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, post):
+        super().__init__(
+            placeholder='Choose new destination channel',
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+        )
+        self.post = post
+
+    async def callback(self, interaction):
+        channel_id = int(self.values[0].id)
+        payload = {
+            'postId': self.post.id,
+            'name': self.post.name,
+            'channelId': channel_id,
+            'content': self.post.content,
+            'schedule': self.post.schedule,
+            'active': self.post.active,
+        }
+        try:
+            response = await _recurring_call(
+                interaction,
+                self.view.guild,
+                _RECURRING_VALIDATE_API,
+                payload,
+            )
+        except Exception:
+            return await interaction.response.send_message(
+                'That channel could not be used for this Recurring Post.',
+                ephemeral=True,
+            )
+        await interaction.response.edit_message(
+            content=_recurring_review_text(response['preview'], editing=True),
+            view=RecurringPostSaveConfirmView(
+                self.view.guild,
+                self.view.admin_id,
+                payload,
+                editing=True,
+            ),
+        )
+
+
+class RecurringPostEditChannelView(Menu):
+    def __init__(self, guild, actor_id, post):
+        super().__init__(guild, actor_id)
+        self.post = post
+        self.add_item(RecurringPostEditChannelSelect(post))
+        self.action('Cancel', self.cancel, row=2)
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content=_recurring_post_detail(self.post),
+            view=RecurringPostDetailView(self.guild, self.admin_id, self.post),
+        )
+
+
 class RecurringPostDetailView(Menu):
     def __init__(self, guild, actor_id, post):
         super().__init__(guild, actor_id)
+        self.post = post
         self.post_id = post.id
         self.active = post.active
+        self.action('Edit', self.edit)
+        self.action('Change Channel', self.change_channel)
         self.action('Pause' if post.active else 'Resume', self.toggle)
         self.action('Delete', self.delete)
         self.action('Back', self.back)
+
+    async def edit(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can change recurring posts.',
+                ephemeral=True,
+            )
+        await interaction.response.edit_message(
+            content='# 🔁 Edit Recurring Post\nChoose the schedule type. Existing values are prefilled when the type stays the same.',
+            view=RecurringPostScheduleView(
+                self.guild,
+                self.admin_id,
+                self.post.channel_id,
+                post=self.post,
+            ),
+        )
+
+    async def change_channel(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can change recurring posts.',
+                ephemeral=True,
+            )
+        await interaction.response.edit_message(
+            content='# 🔁 Change Destination Channel\nChoose the new channel. You will review the change before saving.',
+            view=RecurringPostEditChannelView(self.guild, self.admin_id, self.post),
+        )
 
     async def toggle(self, interaction):
         if interaction.user.id != self.guild.owner_id:
@@ -860,9 +947,37 @@ class RecurringPostDetailView(Menu):
 
     async def delete(self, interaction):
         if interaction.user.id != self.guild.owner_id:
-            return await interaction.response.send_message('Only the server owner can delete recurring posts.', ephemeral=True)
+            return await interaction.response.send_message(
+                'Only the server owner can delete recurring posts.',
+                ephemeral=True,
+            )
+        try:
+            response = await _recurring_call(
+                interaction,
+                self.guild,
+                _RECURRING_DELETE_PREVIEW_API,
+                {'postId': self.post_id},
+            )
+            impact = dict(response.get('impact', {}))
+            warning = str(response.get('warning', 'Deleting this recurring post cannot be undone.'))
+        except Exception:
+            return await interaction.response.send_message(
+                'Delete preview is currently unavailable. Nothing was deleted.',
+                ephemeral=True,
+            )
+        lines = [
+            '# 🗑️ Delete Recurring Post?',
+            warning,
+            '',
+            f'**Post:** {discord.utils.escape_markdown(self.post.name)[:80]}',
+            f'**Configuration removed:** {"Yes" if impact.get("configurationRemoved") else "No"}',
+            f'**Scheduler job removed:** {"Yes" if impact.get("schedulerJobRemoved") else "No"}',
+            f'**Previously posted Discord messages removed:** {"Yes" if impact.get("previousDiscordMessagesDeleted") else "No"}',
+            '',
+            'Nothing changes until you confirm.',
+        ]
         await interaction.response.edit_message(
-            content='# Delete Recurring Post?\nThis removes the configuration and its scheduler job. It does not delete messages that were already posted.',
+            content='\n'.join(lines)[:1950],
             view=RecurringPostDeleteConfirmView(self.guild, self.admin_id, self.post_id),
         )
 
