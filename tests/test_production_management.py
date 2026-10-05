@@ -124,6 +124,32 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)
 
+    def test_member_onboarding_is_in_main_admin_flow_and_explains_current_limits(self):
+        from cogs.server_management import (
+            ManagementView,
+            MemberOnboardingView,
+            _member_onboarding_text,
+            _member_questions_text,
+        )
+
+        owner = self.actor()
+        manage = ManagementView(self.guild, owner.id)
+        labels = [child.label for child in manage.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Member Onboarding', labels)
+
+        text = _member_onboarding_text(self.guild)
+        self.assertIn('Under 18 · 18–20 · 21–22 · 23–24 · 25+', text)
+        self.assertIn('not applied automatically', text)
+
+        preview = _member_questions_text(self.guild)
+        self.assertIn("What's your age group?", preview)
+        self.assertIn('What games do you play?', preview)
+        self.assertIn('Nothing changes in Discord', preview)
+
+        view = MemberOnboardingView(self.guild, owner.id)
+        actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(actions, ['Preview Questions', 'Review Profile Repair', 'Back to Management'])
+
     async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
         from cogs.server_management import ManagementView, SkillsView, open_skills
         from hosts.gamerhq.skill_runtime import GuildSkillStatus

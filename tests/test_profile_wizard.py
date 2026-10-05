@@ -47,7 +47,7 @@ class ProfileWizardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await panels.diagnostics(self.guild, messages=True), [])
 
     async def test_preselection_back_cancel_and_review_before_save(self):
-        for key in ('gender-female', 'age-25-34', 'pc', 'playstation', 'giveaways'):
+        for key in ('gender-female', 'age-25plus', 'pc', 'playstation', 'giveaways'):
             self.member.roles.append(roles.preference_role(self.guild, 'base', key))
         session = RoleSelectionSession(self.member)
         control = session.children[0]
@@ -60,7 +60,7 @@ class ProfileWizardTests(unittest.IsolatedAsyncioTestCase):
         await session.confirm_selection(self.interaction())
         self.member.add_roles.assert_not_called()
         await self.review(session)
-        for expected in ('Non-binary / Diverse', '25–34'):
+        for expected in ('Non-binary / Diverse', '25+'):
             self.assertIn(expected, session.status_text())
         await session.cancel_selection(self.interaction())
         await session.confirm_selection(self.interaction())
@@ -77,12 +77,12 @@ class ProfileWizardTests(unittest.IsolatedAsyncioTestCase):
         self.member.roles = unrelated + [original]
         session = RoleSelectionSession(self.member)
         await self.select(session, ['gender-diverse'])
-        session.selected_keys.add('age-25-34')
+        session.selected_keys.add('age-25plus')
         await self.review(session)
         await asyncio.gather(session.confirm_selection(self.interaction()), session.confirm_selection(self.interaction()))
         self.assertTrue(all(r in self.member.roles for r in unrelated))
         self.assertNotIn(original, self.member.roles)
-        for key in ('gender-diverse', 'age-25-34'):
+        for key in ('gender-diverse', 'age-25plus'):
             self.assertIn(roles.preference_role(self.guild, 'base', key), self.member.roles)
         self.member.add_roles.assert_awaited_once()
         self.member.remove_roles.assert_awaited_once()
@@ -156,7 +156,7 @@ class ProfileWizardTests(unittest.IsolatedAsyncioTestCase):
         interaction.response.send_modal.assert_awaited_once()
 
     async def test_gender_age_choices_and_multi_select(self):
-        self.assertEqual([o.label for o in roles.ROLE_GROUPS['Age group']], ['Under 18', '18–24', '25–34', '35+'])
+        self.assertEqual([o.label for o in roles.ROLE_GROUPS['Age group']], ['Under 18', '18–20', '21–22', '23–24', '25+'])
         session = RoleSelectionSession(self.member)
         self.assertEqual([o.label for o in session.children[0].options], ['Male', 'Female', 'Non-binary / Diverse', 'Prefer not to say'])
         await session.next_step(self.interaction())
@@ -199,6 +199,28 @@ class ProfileWizardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(unrelated.id, self.board.messages)
         self.assertEqual(ids, {key: db.get_setting(value) for key, value in panels.message_keys(self.guild, self.board).items()})
         self.assertEqual(await panels.diagnostics(self.guild, messages=True), [])
+
+    async def test_explicit_repair_retires_legacy_age_mapping_without_touching_member_role(self):
+        legacy = await self.guild.create_role(name='18–24')
+        db.upsert_managed_role(
+            role_id=legacy.id,
+            role_kind='base',
+            role_key='age-18-24',
+            role_group='Age group',
+        )
+        self.member.roles.append(legacy)
+
+        await panels.sync(self.guild, repair=True)
+
+        self.assertIsNone(db.get_managed_role_by_key('base', 'age-18-24'))
+        archived = db.get_managed_role_by_key('legacy-profile', 'age-18-24')
+        self.assertEqual(archived['role_id'], legacy.id)
+        self.assertIn(legacy, self.member.roles)
+        self.assertIn(legacy, self.guild.roles)
+        self.assertIsNotNone(db.get_managed_role_by_key('base', 'age-18-20'))
+        self.assertIsNotNone(db.get_managed_role_by_key('base', 'age-21-22'))
+        self.assertIsNotNone(db.get_managed_role_by_key('base', 'age-23-24'))
+        self.assertIsNotNone(db.get_managed_role_by_key('base', 'age-25plus'))
 
     async def test_retirement_rejects_changed_fingerprint_and_retains_failed_delete(self):
         key, message = await self.legacy_panel()

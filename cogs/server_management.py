@@ -104,7 +104,7 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
                    ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
-                   ('Managed Messages', self.messages), ('Games', self.games), ('Skills', self.skills),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Member Onboarding', self.member_onboarding), ('Skills', self.skills),
                    ('Features', self.features),
                    ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
@@ -152,6 +152,9 @@ class ManagementView(Menu):
         from cogs.managed_messages import open_editor
         await open_editor(interaction)
 
+    async def member_onboarding(self, interaction):
+        await open_member_onboarding(interaction, self.guild, self.admin_id)
+
     async def skills(self, interaction):
         await open_skills(interaction, self.guild, self.admin_id)
 
@@ -171,6 +174,182 @@ class ManagementView(Menu):
         destination = channel(self.guild)
         text = f'Private operational updates: {destination.mention}' if destination else 'The private STAFF log needs attention. Review existing channels, then preview fixes; the owner can add missing resources.'
         await interaction.response.edit_message(content='# 📜 Server Log\n' + text, view=StructureView(self.guild, self.admin_id))
+
+
+
+def _member_onboarding_text(guild):
+    from services.member_onboarding_service import profile_status
+
+    status = profile_status(guild)
+    missing = status["missing"]
+    legacy = status["legacy"]
+    questions = status["questions"]
+
+    lines = [
+        "# 👤 Member Profile & Onboarding",
+        "Manage the profile roles and onboarding design members use to personalize GamerHQ.",
+        "",
+        f"**Profile roles:** {len(status['present'])} ready · {len(missing)} missing",
+        f"**Legacy mappings:** {len(legacy)}",
+        f"**Default questions:** {len(questions)}",
+        "",
+        "**Age groups:** Under 18 · 18–20 · 21–22 · 23–24 · 25+",
+        "Gender and age remain optional profile choices.",
+        "Games onboarding uses a small popular subset; the full library stays in Choose Your Games.",
+        "",
+        "Discord onboarding sync is not applied automatically from this screen yet. "
+        "Use Preview Questions to review GamerHQ's desired state first.",
+    ]
+    if legacy:
+        lines.append(
+            "\n⚠️ Legacy age/language mappings are retained until explicit Repair. "
+            "Existing member role assignments are never guessed or silently migrated."
+        )
+    return "\n".join(lines)[:1950]
+
+
+def _member_questions_text(guild):
+    from services.member_onboarding_service import questions_for_guild
+
+    lines = [
+        "# 👋 Onboarding Questions Preview",
+        "This is GamerHQ's desired onboarding design. Nothing changes in Discord from this preview.",
+        "",
+    ]
+    for index, question in enumerate(questions_for_guild(guild), start=1):
+        flags = []
+        flags.append("Required" if question.required else "Optional")
+        flags.append("Multiple answers" if question.multiple else "Single answer")
+        flags.append("Before join" if question.before_join else "Channels & Roles")
+        lines.append(f"**{index}. {question.prompt}**")
+        lines.append(" · ".join(flags))
+        if question.answers:
+            labels = [answer.label for answer in question.answers[:10]]
+            lines.append("Answers: " + " · ".join(labels))
+            if len(question.answers) > 10:
+                lines.append(f"+ {len(question.answers) - 10} more")
+        else:
+            lines.append("Answers: no selectable games are currently available.")
+        lines.append("")
+    return "\n".join(lines)[:1950]
+
+
+async def open_member_onboarding(interaction, guild, actor_id):
+    await interaction.response.edit_message(
+        content=_member_onboarding_text(guild),
+        view=MemberOnboardingView(guild, actor_id),
+    )
+
+
+class MemberOnboardingView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.action("Preview Questions", self.preview_questions)
+        self.action("Review Profile Repair", self.review_repair)
+        self.action("Back to Management", self.back)
+
+    async def preview_questions(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_questions_text(self.guild),
+            view=MemberOnboardingPreviewView(self.guild, self.admin_id),
+        )
+
+    async def review_repair(self, interaction):
+        from services.member_onboarding_service import profile_status
+
+        status = profile_status(self.guild)
+        missing = status["missing"]
+        legacy = status["legacy"]
+        lines = [
+            "# Review Profile Role Repair",
+            "This repair only creates/adopts the current GamerHQ profile roles and retires proven legacy mappings.",
+            "",
+            f"**Missing current roles:** {len(missing)}",
+            f"**Legacy mappings to retire:** {len(legacy)}",
+            "",
+        ]
+        if missing:
+            lines.extend(
+                f"• {group}: {option.emoji} {option.label}"
+                for group, option in missing[:15]
+            )
+        if legacy:
+            lines.append("\nLegacy Discord roles and existing member assignments are preserved.")
+            lines.append("Only their old GamerHQ profile mappings are retired.")
+        if not missing and not legacy:
+            lines.append("✅ No profile-role repair is currently needed.")
+        lines.append("\nNothing changes until you confirm.")
+        await interaction.response.edit_message(
+            content="\n".join(lines)[:1950],
+            view=MemberOnboardingRepairConfirmView(
+                self.guild,
+                self.admin_id,
+                expected_missing=tuple(option.key for _, option in missing),
+                expected_legacy=tuple(legacy),
+            ),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=TITLE,
+            view=ManagementView(self.guild, self.admin_id),
+        )
+
+
+class MemberOnboardingPreviewView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_onboarding_text(self.guild),
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+class MemberOnboardingRepairConfirmView(Menu):
+    def __init__(self, guild, actor_id, *, expected_missing, expected_legacy):
+        super().__init__(guild, actor_id)
+        self.expected_missing = tuple(expected_missing)
+        self.expected_legacy = tuple(expected_legacy)
+        self.used = False
+        self.action("Confirm Repair", self.confirm)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This repair review was already used. Reopen Member Onboarding.",
+                ephemeral=True,
+            )
+        from services.member_onboarding_service import profile_status
+        current = profile_status(self.guild)
+        current_missing = tuple(option.key for _, option in current["missing"])
+        current_legacy = tuple(current["legacy"])
+        if current_missing != self.expected_missing or current_legacy != self.expected_legacy:
+            return await interaction.response.edit_message(
+                content="Profile-role state changed while this review was open. Reopen Member Onboarding before repairing.",
+                view=MemberOnboardingView(self.guild, self.admin_id),
+            )
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            from services.role_panel_service import sync
+            await sync(self.guild, repair=True)
+            notice = "✅ Profile roles repaired. Existing member roles were preserved."
+        except (ValueError, ServerMessageError, discord.HTTPException):
+            notice = "❌ Profile role repair could not be completed safely. Review Roles & Permissions and try again."
+        await interaction.edit_original_response(
+            content=(notice + "\n\n" + _member_onboarding_text(self.guild))[:1950],
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_onboarding_text(self.guild),
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
 
 
 def _skill_status_label(status):
