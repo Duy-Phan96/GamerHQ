@@ -157,3 +157,24 @@ It does not import:
 - another Skill's private implementation.
 
 This keeps the Skill suitable for later extraction into its own repository.
+
+
+## Activity XP adapter V1
+
+GamerHQ's host adapter samples voice presence once per minute. A member is
+eligible only while:
+
+- the channel is not Discord's AFK channel;
+- at least two non-bot humans are present.
+
+Eligible minutes accumulate in memory until the configured Voice window is
+reached. The default 10-minute window then records one `voice` activity unit
+through the versioned Progression management contract.
+
+The portable Skill, not the Discord adapter, applies XP values, daily caps,
+member totals and level calculation. A bot restart may discard an incomplete
+voice window, but cannot duplicate completed XP windows.
+
+The XP ledger is stored only inside the Progression Skill namespace. Member
+state tracks total XP, per-source XP, daily cap accounting and activity metrics.
+No GamerHQ core progression table is introduced.
