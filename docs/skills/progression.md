@@ -178,3 +178,56 @@ voice window, but cannot duplicate completed XP windows.
 The XP ledger is stored only inside the Progression Skill namespace. Member
 state tracks total XP, per-source XP, daily cap accounting and activity metrics.
 No GamerHQ core progression table is introduced.
+
+
+## Announcements and web-ready configuration
+
+Progression announcement rules are part of the same structured Skill
+configuration used by the Discord management surface. They are not embedded in
+Discord UI code.
+
+Configuration includes:
+
+- enabled / disabled;
+- destination channel ID;
+- level-up announcements;
+- achievement announcements;
+- reward announcements;
+- editable message template.
+
+Supported template values currently include:
+
+`{member}`, `{member_id}`, `{level}`, `{xp}`, `{total_xp}`,
+`{achievement_name}`, `{achievement_emoji}` and `{reward_name}`.
+
+This is intentionally suitable for a future web control panel. A website can
+render XP sources as checkboxes/toggles and numeric inputs, and can edit
+achievements, rewards and announcements through the same versioned management
+contracts used by Discord.
+
+The product rule is:
+
+```text
+Progression configuration model
+        ↑
+Discord admin UI     Web admin UI
+```
+
+Neither UI becomes the source of truth.
+
+## Reward execution V1
+
+The portable Skill now executes reward grants that need only namespaced Skill
+state:
+
+- profile badge;
+- profile title;
+- XP bonus;
+- announcement trigger.
+
+Discord role and channel-access grants remain valid configuration types, but
+are not marked claimed until the host exposes safe owned-grant capabilities.
+This prevents a future host upgrade from losing rewards that were configured
+before role/channel execution became available.
+
+Member status reads are side-effect free and never emit announcements.
