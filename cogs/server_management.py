@@ -104,7 +104,7 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
                    ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
-                   ('Managed Messages', self.messages), ('Games', self.games), ('Member Onboarding', self.member_onboarding), ('Skills', self.skills),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Member Onboarding', self.member_onboarding), ('Server Boosters', self.server_boosters), ('Skills', self.skills),
                    ('Features', self.features),
                    ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
@@ -154,6 +154,9 @@ class ManagementView(Menu):
 
     async def member_onboarding(self, interaction):
         await open_member_onboarding(interaction, self.guild, self.admin_id)
+
+    async def server_boosters(self, interaction):
+        await open_server_boosters(interaction, self.guild, self.admin_id)
 
     async def skills(self, interaction):
         await open_skills(interaction, self.guild, self.admin_id)
@@ -641,6 +644,148 @@ class MemberOnboardingRepairConfirmView(Menu):
         await interaction.response.edit_message(
             content=_member_onboarding_text(self.guild),
             view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+
+def _server_booster_text(guild):
+    from services.server_booster_service import status
+
+    try:
+        current = status(guild)
+    except (ValueError, ServerMessageError) as exc:
+        return (
+            "# 💎 Server Boosters\n"
+            f"⚠️ {discord.utils.escape_markdown(str(exc))[:500]}\n\n"
+            "GamerHQ uses Discord's native Server Booster role as the source of truth "
+            "and will never create a replacement booster role."
+        )
+
+    channel = current["channel"]
+    action = current["action"]
+    state = {
+        "create": "Setup available",
+        "adopt": "Existing lounge can be adopted",
+        "repair": "Lounge needs repair",
+        "ready": "Ready",
+    }[action]
+    lines = [
+        "# 💎 Server Boosters",
+        "Reward current Server Boosters with a private community lounge.",
+        "",
+        f"**Discord Booster role:** {current['role'].mention}",
+        f"**Booster lounge:** {channel.mention if channel else 'Not created yet'}",
+        f"**Status:** {state}",
+        "",
+        "Discord owns booster membership. GamerHQ only manages the optional lounge and its access policy.",
+        "Future Progression/Achievement Skills may read booster status for badges, but they must not replace Discord's native role.",
+    ]
+    return "\n".join(lines)[:1950]
+
+
+async def open_server_boosters(interaction, guild, actor_id):
+    await interaction.response.edit_message(
+        content=_server_booster_text(guild),
+        view=ServerBoostersView(guild, actor_id),
+    )
+
+
+class ServerBoostersView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.action("Review Setup / Repair", self.review)
+        self.action("Back to Management", self.back)
+
+    async def review(self, interaction):
+        from services.server_booster_service import review_snapshot, status
+
+        try:
+            current = status(self.guild)
+            snapshot = review_snapshot(self.guild)
+        except (ValueError, ServerMessageError) as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+
+        action = current["action"]
+        if action == "ready":
+            text = (
+                "# 💎 Server Booster Lounge\n"
+                "✅ The lounge already matches GamerHQ's managed booster policy.\n\n"
+                "Nothing needs to change."
+            )
+        elif action == "create":
+            text = (
+                "# Review Booster Lounge Setup\n"
+                "Create **💎・booster-lounge** in COMMUNITY.\n\n"
+                "Access will be limited to the native Discord Server Booster role, Staff and GamerHQ."
+            )
+        elif action == "adopt":
+            text = (
+                "# Review Booster Lounge Adoption\n"
+                f"Adopt {current['channel'].mention} as GamerHQ's booster lounge and apply the managed private access policy."
+            )
+        else:
+            text = (
+                "# Review Booster Lounge Repair\n"
+                f"Repair {current['channel'].mention} to the managed name, COMMUNITY placement and private Booster/Staff/Bot access policy."
+            )
+        if action != "ready":
+            text += "\n\nUnknown/custom channel grants are removed so a private lounge cannot remain accidentally exposed."
+        text += "\n\nNothing changes until you confirm."
+        await interaction.response.edit_message(
+            content=text[:1950],
+            view=ServerBoosterConfirmView(
+                self.guild,
+                self.admin_id,
+                snapshot,
+                actionable=action != "ready",
+            ),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=TITLE,
+            view=ManagementView(self.guild, self.admin_id),
+        )
+
+
+class ServerBoosterConfirmView(Menu):
+    def __init__(self, guild, actor_id, snapshot, *, actionable):
+        super().__init__(guild, actor_id)
+        self.snapshot = dict(snapshot)
+        self.used = False
+        if actionable:
+            self.action("Confirm Setup / Repair", self.confirm)
+        self.action("Back", self.back)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This Booster review was already used. Reopen Server Boosters.",
+                ephemeral=True,
+            )
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        from services.server_booster_service import apply
+
+        try:
+            channel, changed = await apply(self.guild, self.snapshot)
+            notice = (
+                f"✅ Booster lounge {'updated' if changed else 'already ready'}: {channel.mention}"
+            )
+        except (ValueError, ServerMessageError, discord.HTTPException):
+            notice = (
+                "❌ Booster lounge setup could not be completed safely. "
+                "Reopen Server Boosters and review the current state."
+            )
+        await interaction.edit_original_response(
+            content=(notice + "\n\n" + _server_booster_text(self.guild))[:1950],
+            view=ServerBoostersView(self.guild, self.admin_id),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_server_booster_text(self.guild),
+            view=ServerBoostersView(self.guild, self.admin_id),
         )
 
 

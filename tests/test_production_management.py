@@ -194,6 +194,37 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
             ['Manage Questions', 'Preview Questions', 'Review Profile Repair', 'Discord Setup Guide', 'Back to Management'],
         )
 
+    async def test_server_boosters_are_in_main_admin_flow_and_require_native_role(self):
+        from cogs.server_management import (
+            ManagementView,
+            ServerBoostersView,
+            _server_booster_text,
+        )
+
+        owner = self.actor()
+        booster = self.guild.role(5000)
+        booster.name = 'Server Booster'
+        booster.managed = True
+        self.guild.roles.append(booster)
+        self.guild.premium_subscriber_role = booster
+        db.set_setting(f'managed_category:{self.guild.id}:community', self.community.id)
+
+        manage = ManagementView(self.guild, owner.id)
+        labels = [child.label for child in manage.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Server Boosters', labels)
+
+        text = _server_booster_text(self.guild)
+        self.assertIn('Discord owns booster membership', text)
+        self.assertIn('Setup available', text)
+
+        view = ServerBoostersView(self.guild, owner.id)
+        actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(actions, ['Review Setup / Repair', 'Back to Management'])
+
+        self.guild.premium_subscriber_role = None
+        unavailable = _server_booster_text(self.guild)
+        self.assertIn('will never create a replacement booster role', unavailable)
+
     async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
         from cogs.server_management import ManagementView, SkillsView, open_skills
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
