@@ -12,7 +12,7 @@ The production/development dependency is pinned through
 
 Current reviewed source commit:
 
-`0de2802473f953ec70ba930818f2968b158f6931`
+`8317d854f0a39811804b9f28eff9b7061a5417e8`
 
 ## Preserved runtime identity
 
@@ -29,7 +29,11 @@ The repository move does not change:
   - `recurring-posts.list.v1`
   - `recurring-posts.get.v1`
   - `recurring-posts.create.v1`
+  - `recurring-posts.describe.v1`
+  - `recurring-posts.validate.v1`
+  - `recurring-posts.update.v1`
   - `recurring-posts.set-active.v1`
+  - `recurring-posts.delete-preview.v1`
   - `recurring-posts.delete.v1`
 
 Existing guild enablement, Skill Storage and scheduler jobs therefore remain in
@@ -81,7 +85,7 @@ When updating the pinned Recurring Posts commit, verify:
 - GamerHQ discovers exactly one `recurring-posts` entry point;
 - existing `posts.v1` configuration remains readable;
 - existing scheduler jobs retain their keys and handler compatibility;
-- management create/pause/resume/delete still works;
+- management create/edit/preview/pause/resume/delete still works;
 - disable/re-enable remains non-destructive;
 - production Docker build installs the exact locked source;
 - rollback is possible by restoring the previous lock-file commit.
