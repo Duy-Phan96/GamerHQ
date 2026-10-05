@@ -358,13 +358,6 @@ class ProgressionSkill:
         member_id = _positive_int(payload.get("memberId"), "memberId")
         state = await self._member_state(ctx, member_id)
         config = await self._config(ctx)
-        for achievement in unlocked:
-            await ctx.audit.write(
-                action="progression.achievement.unlocked",
-                target=str(member_id),
-                metadata={"achievement": achievement["id"], "xp": achievement["xp"]},
-            )
-
         level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
         return {
             "memberId": member_id,
@@ -465,6 +458,12 @@ class ProgressionSkill:
                 action="progression.xp.awarded",
                 target=str(member_id),
                 metadata={"source": source_id, "xp": awarded},
+            )
+        for achievement in unlocked:
+            await ctx.audit.write(
+                action="progression.achievement.unlocked",
+                target=str(member_id),
+                metadata={"achievement": achievement["id"], "xp": achievement["xp"]},
             )
 
         level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
