@@ -7,6 +7,8 @@ import time
 import discord
 from discord.ext import commands, tasks
 
+from database import db
+
 log = logging.getLogger(__name__)
 
 GET_CONFIG_API = "progression.get-config.v1"
@@ -126,7 +128,7 @@ async def award_completed_lfg(bot, guild: discord.Guild, event: dict) -> None:
     host_id = int(event["host_id"])
     joined = {
         int(row["user_id"])
-        for row in __import__("database").db.get_lfg_event_members(event_id)
+        for row in db.get_lfg_event_members(event_id)
         if row["status"] == "joined"
     }
     joined.add(host_id)
