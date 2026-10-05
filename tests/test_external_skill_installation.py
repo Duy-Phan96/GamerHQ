@@ -1,3 +1,4 @@
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -5,14 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from skill_runtime import validate_skill_implementation
+from skill_runtime.runtime.packages import discover_installed_skills
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "examples" / "external-skill-template"
-RECURRING = ROOT / "packages" / "gamerhq-skill-recurring-posts"
 
 
 class ExternalSkillInstallationTests(unittest.TestCase):
-    def test_sdk_and_external_skill_install_and_discover_in_isolated_target(self):
+    def test_example_skill_installs_and_discovers_in_isolated_target(self):
         with tempfile.TemporaryDirectory() as temp:
             temp_path = Path(temp)
             target = temp_path / "site"
@@ -28,7 +31,7 @@ class ExternalSkillInstallationTests(unittest.TestCase):
                 "--target",
                 str(target),
             ]
-            for source in (ROOT, TEMPLATE, RECURRING):
+            for source in (ROOT, TEMPLATE):
                 result = subprocess.run(
                     [*base, str(source)],
                     cwd=temp_path,
@@ -49,20 +52,15 @@ class ExternalSkillInstallationTests(unittest.TestCase):
             code = """
 import os
 from pathlib import Path
-import gamerhq_skill_recurring_posts
 from skill_runtime import validate_skill_implementation
 from skill_runtime.runtime.packages import discover_installed_skills
 
 target = Path(os.environ["GAMERHQ_TEST_TARGET"]).resolve()
-module_path = Path(gamerhq_skill_recurring_posts.__file__).resolve()
-assert target in module_path.parents
-
-loaded = discover_installed_skills(("example-skill", "recurring-posts"))
-assert [item.entry_point for item in loaded] == ["example-skill", "recurring-posts"]
-assert loaded[1].distribution == "gamerhq-skill-recurring-posts"
-reports = [validate_skill_implementation(item.skill) for item in loaded]
-assert [report.skill_id for report in reports] == ["example-skill", "recurring-posts"]
-print(",".join(report.skill_id for report in reports))
+loaded = discover_installed_skills(("example-skill",))
+assert len(loaded) == 1
+report = validate_skill_implementation(loaded[0].skill)
+assert report.skill_id == "example-skill"
+print(report.skill_id)
 """
             env = os.environ.copy()
             env["PYTHONPATH"] = str(target)
@@ -80,7 +78,21 @@ print(",".join(report.skill_id for report in reports))
                 0,
                 msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
             )
-            self.assertEqual(result.stdout.strip(), "example-skill,recurring-posts")
+            self.assertEqual(result.stdout.strip(), "example-skill")
+
+    def test_pinned_recurring_posts_distribution_is_installed_and_discoverable(self):
+        distribution = importlib.metadata.distribution("gamerhq-skill-recurring-posts")
+        self.assertEqual(distribution.version, "1.0.0")
+
+        loaded = discover_installed_skills(("recurring-posts",))
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].distribution, "gamerhq-skill-recurring-posts")
+
+        report = validate_skill_implementation(loaded[0].skill)
+        self.assertEqual(report.skill_id, "recurring-posts")
+
+        module_path = Path(sys.modules[loaded[0].skill.__class__.__module__.split(".")[0]].__file__).resolve()
+        self.assertNotIn(str(ROOT / "packages"), str(module_path))
 
 
 if __name__ == "__main__":

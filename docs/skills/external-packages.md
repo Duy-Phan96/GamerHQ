@@ -76,8 +76,8 @@ private implementation to the GamerHQ repository.
 
 ## Installation model
 
-V1 installation is deployment-controlled, for example by pinning the package or
-Git commit during image build.
+V1 installation is deployment-controlled through `requirements-skills.lock`.
+Each external Skill is pinned to an immutable reviewed package artifact or Git commit before the production image is built.
 
 Do not implement a Discord command that runs `git clone`, `pip install` or
 executes a GitHub URL directly. Package installation changes executable code and
@@ -133,3 +133,23 @@ When loading fails:
 
 If a later deployment installs or fixes the package, successful registration
 clears the unavailable marker and the normal disabled/enabled lifecycle resumes.
+
+
+## External Skill lock file
+
+GamerHQ tracks deployment-approved external Skills in:
+
+`requirements-skills.lock`
+
+Example:
+
+```text
+gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/gamerhq-skill-recurring-posts/archive/<commit>.zip
+```
+
+The lock file is part of the GamerHQ release review. Updating a Skill therefore
+requires a normal GamerHQ PR/CI/build cycle even if the Skill repository has
+already merged a newer version.
+
+This deliberately prevents a moving `main` branch in a Skill repository from
+changing production behavior without host-side review.

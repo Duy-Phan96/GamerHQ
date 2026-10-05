@@ -3,6 +3,7 @@
 !Dockerfile
 !requirements.txt
 !requirements.lock
+!requirements-skills.lock
 !bot.py
 !config.py
 !release_info.py
@@ -16,11 +17,6 @@
 !hosts/**/*.py
 !skills/
 !skills/**/*.py
-!packages/
-!packages/gamerhq-skill-recurring-posts/
-!packages/gamerhq-skill-recurring-posts/**/*.py
-!packages/gamerhq-skill-recurring-posts/pyproject.toml
-!packages/gamerhq-skill-recurring-posts/README.md
 !services/
 !services/**/*.py
 !database/

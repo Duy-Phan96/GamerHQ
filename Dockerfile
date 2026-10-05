@@ -5,15 +5,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt requirements.lock .env.example ./
+COPY requirements.txt requirements.lock requirements-skills.lock .env.example ./
 RUN pip install --no-cache-dir --requirement requirements.lock \
     && pip check \
     && groupadd --gid 10001 gamerhq \
     && useradd --create-home --uid 10001 --gid 10001 gamerhq
 
-COPY packages/gamerhq-skill-recurring-posts/ /tmp/gamerhq-skill-recurring-posts/
-RUN pip install --no-cache-dir --no-deps /tmp/gamerhq-skill-recurring-posts \
-    && rm -rf /tmp/gamerhq-skill-recurring-posts \
+RUN pip install --no-cache-dir --no-deps --requirement requirements-skills.lock \
     && pip check
 
 # Copy only reviewed application sources; local runtime/private files stay out.
