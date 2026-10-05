@@ -109,5 +109,52 @@ class ProgressionActivity(commands.Cog):
         await self.bot.wait_until_ready()
 
 
+async def award_completed_lfg(bot, guild: discord.Guild, event: dict) -> None:
+    """Award completion XP once per event/member using stable dedupe keys."""
+    runtime = getattr(bot, "skill_runtime", None)
+    if runtime is None:
+        return
+    try:
+        status = await runtime.status(guild_id=guild.id, skill_id="progression")
+        if not status.enabled:
+            return
+    except Exception:
+        return
+
+    occurred_at = int(event.get("ended_at") or time.time())
+    event_id = int(event["id"])
+    host_id = int(event["host_id"])
+    joined = {
+        int(row["user_id"])
+        for row in __import__("database").db.get_lfg_event_members(event_id)
+        if row["status"] == "joined"
+    }
+    joined.add(host_id)
+
+    async def record(member_id: int, source: str):
+        try:
+            await runtime.call_management(
+                guild_id=guild.id,
+                skill_id="progression",
+                contract_id=RECORD_ACTIVITY_API,
+                payload={
+                    "memberId": member_id,
+                    "source": source,
+                    "units": 1,
+                    "occurredAt": occurred_at,
+                    "dedupeKey": f"lfg:{event_id}:{source}:{member_id}",
+                },
+            )
+        except Exception:
+            log.exception(
+                "Progression event award failed guild=%s event=%s member=%s source=%s",
+                guild.id, event_id, member_id, source,
+            )
+
+    for member_id in sorted(joined):
+        await record(member_id, "lfgParticipation")
+    await record(host_id, "eventHost")
+
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(ProgressionActivity(bot))
