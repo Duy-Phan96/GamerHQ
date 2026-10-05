@@ -351,6 +351,7 @@ class ProgressionSkill:
             "dailyXp": dict(state.get("dailyXp") or {}),
             "metrics": dict(state.get("metrics") or {}),
             "achievements": list(state.get("achievements") or []),
+            "seenActivity": list(state.get("seenActivity") or []),
         }
 
     async def member_status(self, ctx, payload) -> Mapping[str, Any]:
@@ -372,6 +373,7 @@ class ProgressionSkill:
     async def record_activity(self, ctx, payload) -> Mapping[str, Any]:
         member_id = _positive_int(payload.get("memberId"), "memberId")
         source_id = str(payload.get("source", "")).strip()
+        dedupe_key = str(payload.get("dedupeKey", "")).strip()[:160]
         units = _positive_int(payload.get("units", 1), "units", maximum=1000)
         occurred_at = _positive_int(payload.get("occurredAt", 0), "occurredAt", minimum=0, maximum=4_102_444_800)
         if occurred_at == 0:
@@ -383,6 +385,19 @@ class ProgressionSkill:
             return {"memberId": member_id, "source": source_id, "awardedXp": 0, "reason": "disabled"}
 
         state = await self._member_state(ctx, member_id)
+        if dedupe_key and dedupe_key in state["seenActivity"]:
+            level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
+            return {
+                "memberId": member_id,
+                "source": source_id,
+                "awardedXp": 0,
+                "reason": "duplicate",
+                "totalXp": state["totalXp"],
+                "level": level,
+                "currentLevelXp": current,
+                "xpToNextLevel": needed,
+                "unlockedAchievements": (),
+            }
         day = datetime.fromtimestamp(occurred_at, tz=timezone.utc).date().isoformat()
         daily = dict(state["dailyXp"].get(day) or {})
         configured = int(source["xp"]) * units
@@ -404,12 +419,51 @@ class ProgressionSkill:
         elif source_id == "eventHost":
             state["metrics"]["eventsHosted"] = int(state["metrics"].get("eventsHosted", 0)) + units
 
+        unlocked = []
+        thresholds = {
+            "first-mate": ("lfgParticipations", 1),
+            "event-regular": ("lfgParticipations", 10),
+            "community-host": ("eventsHosted", 10),
+            "voice-rookie": ("voiceMinutes", 300),
+            "voice-regular": ("voiceMinutes", 1500),
+            "voice-veteran": ("voiceMinutes", 6000),
+        }
+        achievement_map = {item["id"]: item for item in config["achievements"] if item.get("enabled")}
+        owned = set(state["achievements"])
+        for achievement_id, (metric, threshold) in thresholds.items():
+            if achievement_id in owned or int(state["metrics"].get(metric, 0)) < threshold:
+                continue
+            achievement = achievement_map.get(achievement_id)
+            if not achievement:
+                continue
+            owned.add(achievement_id)
+            state["achievements"].append(achievement_id)
+            bonus = int(achievement["xp"])
+            state["totalXp"] += bonus
+            state["sourceXp"]["achievement"] = int(state["sourceXp"].get("achievement", 0)) + bonus
+            unlocked.append({
+                "id": achievement_id,
+                "name": achievement["name"],
+                "emoji": achievement.get("emoji", ""),
+                "xp": bonus,
+            })
+
+        if dedupe_key:
+            state["seenActivity"].append(dedupe_key)
+            state["seenActivity"] = state["seenActivity"][-500:]
+
         await ctx.storage.set(MEMBER_KEY_PREFIX + str(member_id), state)
         if awarded:
             await ctx.audit.write(
                 action="progression.xp.awarded",
                 target=str(member_id),
                 metadata={"source": source_id, "xp": awarded},
+            )
+        for achievement in unlocked:
+            await ctx.audit.write(
+                action="progression.achievement.unlocked",
+                target=str(member_id),
+                metadata={"achievement": achievement["id"], "xp": achievement["xp"]},
             )
 
         level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
@@ -423,6 +477,7 @@ class ProgressionSkill:
             "xpToNextLevel": needed,
             "dailySourceXp": int(daily.get(source_id, 0)),
             "dailyCapReached": bool(source.get("dailyCap") and daily.get(source_id, 0) >= int(source["dailyCap"])),
+            "unlockedAchievements": tuple(unlocked),
         }
 
     async def preview_level(self, ctx, payload) -> Mapping[str, Any]:

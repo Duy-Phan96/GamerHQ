@@ -157,6 +157,80 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["sourceXp"]["voice"], 10)
         self.assertEqual(status["metrics"]["voiceMinutes"], 30)
 
+    async def test_dedupe_key_blocks_duplicate_event_award(self):
+        await self.skill.enable(self.ctx)
+        payload = {
+            "memberId": 7,
+            "source": "lfgParticipation",
+            "units": 1,
+            "occurredAt": 1_790_000_000,
+            "dedupeKey": "lfg:55:lfgParticipation:7",
+        }
+        first = await self.skill.record_activity(self.ctx, payload)
+        second = await self.skill.record_activity(self.ctx, payload)
+
+        self.assertEqual(first["awardedXp"], 25)
+        self.assertEqual(second["awardedXp"], 0)
+        self.assertEqual(second["reason"], "duplicate")
+
+    async def test_first_mate_and_event_regular_unlock_once(self):
+        await self.skill.enable(self.ctx)
+        unlocked = []
+        for index in range(10):
+            response = await self.skill.record_activity(
+                self.ctx,
+                {
+                    "memberId": 7,
+                    "source": "lfgParticipation",
+                    "units": 1,
+                    "occurredAt": 1_790_000_000 + index,
+                    "dedupeKey": f"lfg:{index}:lfgParticipation:7",
+                },
+            )
+            unlocked.extend(item["id"] for item in response["unlockedAchievements"])
+
+        self.assertEqual(unlocked.count("first-mate"), 1)
+        self.assertEqual(unlocked.count("event-regular"), 1)
+        status = await self.skill.member_status(self.ctx, {"memberId": 7})
+        self.assertIn("first-mate", status["achievements"])
+        self.assertIn("event-regular", status["achievements"])
+
+    async def test_community_host_unlocks_after_ten_completed_events(self):
+        await self.skill.enable(self.ctx)
+        unlocked = []
+        for index in range(10):
+            response = await self.skill.record_activity(
+                self.ctx,
+                {
+                    "memberId": 9,
+                    "source": "eventHost",
+                    "units": 1,
+                    "occurredAt": 1_790_000_000 + index,
+                    "dedupeKey": f"lfg:{index}:eventHost:9",
+                },
+            )
+            unlocked.extend(item["id"] for item in response["unlockedAchievements"])
+        self.assertEqual(unlocked.count("community-host"), 1)
+
+    async def test_voice_milestones_use_active_minutes(self):
+        await self.skill.enable(self.ctx)
+        response = None
+        for index in range(30):
+            response = await self.skill.record_activity(
+                self.ctx,
+                {
+                    "memberId": 11,
+                    "source": "voice",
+                    "units": 1,
+                    "occurredAt": 1_790_000_000 + index * 86400,
+                    "dedupeKey": f"voice:{index}:11",
+                },
+            )
+        self.assertIn(
+            "voice-rookie",
+            [item["id"] for item in response["unlockedAchievements"]],
+        )
+
     async def test_disabled_source_awards_nothing(self):
         await self.skill.enable(self.ctx)
         config = deepcopy(DEFAULT_CONFIG)
