@@ -60,6 +60,7 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.owner_changelog")
         await self.load_extension("cogs.gocdkeys")
         await self.load_extension("cogs.roles")
+        await self.load_extension("cogs.profile")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
         await self.load_extension("cogs.lfg")
