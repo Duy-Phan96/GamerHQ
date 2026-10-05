@@ -133,6 +133,44 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.storage.data["config.v1"]["levelCurve"]["maxLevel"], 75)
         self.assertEqual(self.audit.calls[0]["action"], "progression.config.updated")
 
+    async def test_record_activity_awards_xp_and_enforces_daily_cap(self):
+        await self.skill.enable(self.ctx)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["xpSources"]["voice"]["dailyCap"] = 10
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        first = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 1, "occurredAt": 1_790_000_000},
+        )
+        second = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 2, "occurredAt": 1_790_000_001},
+        )
+
+        self.assertEqual(first["awardedXp"], 5)
+        self.assertEqual(second["awardedXp"], 5)
+        self.assertTrue(second["dailyCapReached"])
+
+        status = await self.skill.member_status(self.ctx, {"memberId": 7})
+        self.assertEqual(status["totalXp"], 10)
+        self.assertEqual(status["sourceXp"]["voice"], 10)
+        self.assertEqual(status["metrics"]["voiceMinutes"], 30)
+
+    async def test_disabled_source_awards_nothing(self):
+        await self.skill.enable(self.ctx)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["xpSources"]["voice"]["enabled"] = False
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        result = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 1, "occurredAt": 1_790_000_000},
+        )
+
+        self.assertEqual(result["awardedXp"], 0)
+        self.assertEqual(result["reason"], "disabled")
+
     async def test_preview_level_is_deterministic(self):
         await self.skill.enable(self.ctx)
         response = await self.skill.preview_level(self.ctx, {"totalXp": 122})
