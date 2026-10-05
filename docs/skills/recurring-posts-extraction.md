@@ -1,33 +1,22 @@
-# Extract Recurring Posts to its own GitHub repository
+# Recurring Posts external repository extraction
 
-`packages/gamerhq-skill-recurring-posts/` is intentionally a complete repository-shaped package.
+Status: **completed**
 
-Moving it into a separate repository must be a packaging/deployment change, not a Skill rewrite.
+Recurring Posts now lives in its own repository:
 
-## Target repository
+`Duy-Phan96/gamerhq-skill-recurring-posts`
 
-Recommended repository name:
+GamerHQ no longer carries the private Skill implementation under `packages/`.
+The production/development dependency is pinned through
+`requirements-skills.lock` to an immutable reviewed commit.
 
-`gamerhq-skill-recurring-posts`
+Current reviewed source commit:
 
-Repository root after extraction:
+`0de2802473f953ec70ba930818f2968b158f6931`
 
-```text
-gamerhq-skill-recurring-posts/
-├─ .github/workflows/tests.yml
-├─ AGENTS.md
-├─ README.md
-├─ SKILL_DESIGN.md
-├─ pyproject.toml
-├─ gamerhq_skill_recurring_posts/
-│  ├─ __init__.py
-│  └─ skill.py
-└─ tests/
-   ├─ test_recurring_posts_contract.py
-   └─ test_skill.py
-```
+## Preserved runtime identity
 
-## Identity that MUST NOT change
+The repository move does not change:
 
 - Skill ID: `recurring-posts`
 - distribution: `gamerhq-skill-recurring-posts`
@@ -36,66 +25,63 @@ gamerhq-skill-recurring-posts/
 - scheduler handler: `recurring-post.execute.v1`
 - job key pattern: `post:<post-id>`
 - event: `recurring-post.sent.v1`
-- management API IDs:
+- management APIs:
   - `recurring-posts.list.v1`
   - `recurring-posts.get.v1`
   - `recurring-posts.create.v1`
   - `recurring-posts.set-active.v1`
   - `recurring-posts.delete.v1`
 
-Changing the Git repository must not create a new runtime identity or new persisted namespace.
+Existing guild enablement, Skill Storage and scheduler jobs therefore remain in
+the same namespaces.
 
-## Extraction steps
+## Ongoing developer workflow
 
-1. Create the new repository.
-2. Copy the contents of `packages/gamerhq-skill-recurring-posts/` to its repository root.
-3. Keep the `gamerhq.skills` entry point unchanged.
-4. Keep `[tool.gamerhq]` metadata aligned with `SkillManifest`.
-5. Run the package's Python 3.12/3.14 CI without Discord credentials.
-6. Pin a reviewed `gamerhq-skill-sdk` version/commit.
-7. Produce a reviewed package version or immutable Git commit.
-8. Change GamerHQ deployment to install that pinned external source instead of the bundled local directory.
-9. Keep `recurring-posts` in the GamerHQ configured/bundled Skill IDs during the deployment transition.
-10. Verify `/server manage → Skills` shows the same Skill ID and existing configuration.
-11. Verify one existing persisted scheduler job survives restart.
-12. Only then remove the bundled package directory from GamerHQ.
+Changes to Recurring Posts are developed and reviewed in the separate Skill
+repository.
+
+A normal release flow is:
+
+```text
+Skill feature branch
+      ↓
+Skill repository PR
+      ↓
+Python 3.12 / 3.14 Skill CI
+      ↓
+merge to Skill repository main
+      ↓
+review immutable Skill commit
+      ↓
+GamerHQ updates requirements-skills.lock
+      ↓
+GamerHQ PR + full host CI + production image build
+      ↓
+GamerHQ main / owner-controlled VPS update
+```
+
+GamerHQ must never install the moving Skill `main` branch directly.
 
 ## Deployment rule
 
-GamerHQ must install a pinned package version or immutable Git commit during image build/deployment.
+External code installation remains a build/deployment concern.
 
-Do not make Discord execute `git clone`, `pip install`, or arbitrary repository URLs at runtime.
+Discord interactions must never run `git clone`, `pip install`, or execute an
+arbitrary GitHub URL.
 
-Conceptual future dependency:
+If the pinned package cannot load, GamerHQ keeps the Skill configured but marks
+it `Unavailable` and continues starting healthy Skills.
 
-```text
-GamerHQ deployment
-      ↓
-pinned gamerhq-skill-recurring-posts release/commit
-      ↓
-Python package installation
-      ↓
-gamerhq.skills entry point
-      ↓
-SkillRegistry / capability validation
-```
+## Upgrade acceptance
 
-## Migration acceptance
+When updating the pinned Recurring Posts commit, verify:
 
-Before removing the bundled copy, verify:
-
-- package CI passes on Python 3.12 and 3.14;
+- standalone Skill CI passed on Python 3.12 and 3.14;
+- static package capability metadata matches the manifest;
 - GamerHQ discovers exactly one `recurring-posts` entry point;
-- package provenance shows `gamerhq-skill-recurring-posts`;
-- existing `posts.v1` data is visible;
-- existing `skill_jobs` entries retain the same Skill ID/job keys;
-- pause/resume/create/delete work through management contracts;
-- restart recovery works;
-- disabling the Skill retains configuration/jobs;
-- no GamerHQ module imports the package's private implementation.
-
-## Rollback
-
-If the external package cannot load, GamerHQ should show the configured Skill as `Unavailable` while the rest of the bot continues.
-
-Rollback by restoring the previously pinned package source/version. Do not rewrite or clear Skill storage merely to switch package source.
+- existing `posts.v1` configuration remains readable;
+- existing scheduler jobs retain their keys and handler compatibility;
+- management create/pause/resume/delete still works;
+- disable/re-enable remains non-destructive;
+- production Docker build installs the exact locked source;
+- rollback is possible by restoring the previous lock-file commit.
