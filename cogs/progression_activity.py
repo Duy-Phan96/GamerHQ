@@ -7,9 +7,10 @@ import time
 import discord
 from discord.ext import commands, tasks
 
-from skills.progression import GET_CONFIG_API, RECORD_ACTIVITY_API
-
 log = logging.getLogger(__name__)
+
+GET_CONFIG_API = "progression.get-config.v1"
+RECORD_ACTIVITY_API = "progression.record-activity.v1"
 
 
 def eligible_voice_members(guild: discord.Guild, channel: discord.VoiceChannel) -> tuple[discord.Member, ...]:
