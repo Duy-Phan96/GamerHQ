@@ -301,6 +301,7 @@ class ProgressionSkill:
             SkillCapability.AUDIT_WRITE.value,
             SkillCapability.DISCORD_MESSAGES_SEND.value,
             SkillCapability.DISCORD_CHANNELS_READ.value,
+            SkillCapability.DISCORD_MEMBERS_READ.value,
         ),
         management_apis=SkillManagementApis(
             exposes=(
@@ -390,39 +391,6 @@ class ProgressionSkill:
         state = await self._member_state(ctx, member_id)
         config = await self._config(ctx)
         level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
-        announcements = config["announcements"]
-        announcement_sent = False
-        if announcements.get("enabled") and announcements.get("channelId"):
-            primary_achievement = unlocked[0] if unlocked else {}
-            primary_reward = reward_events[0] if reward_events else {}
-            should_send = (
-                (unlocked and announcements.get("achievement"))
-                or (reward_events and announcements.get("reward"))
-                or (level > previous_level and announcements.get("levelUp"))
-            )
-            if should_send:
-                member = await ctx.discord.get_member(member_id=member_id)
-                values = {
-                    "member": member.display_name,
-                    "member_id": str(member_id),
-                    "level": str(level),
-                    "xp": str(sum(int(item.get("xp", 0)) for item in unlocked) + awarded),
-                    "total_xp": str(state["totalXp"]),
-                    "achievement_name": str(primary_achievement.get("name", "")),
-                    "achievement_emoji": str(primary_achievement.get("emoji", "")),
-                    "reward_name": str(primary_reward.get("name", "")),
-                }
-                message = announcements.get("template", "")
-                for key, value in values.items():
-                    message = message.replace("{" + key + "}", value)
-                if message.strip():
-                    await ctx.discord.send_message(
-                        channel_id=int(announcements["channelId"]),
-                        content=message[:2000],
-                        allowed_mentions={"everyone": False, "users": False, "roles": False, "replied_user": False},
-                    )
-                    announcement_sent = True
-
         return {
             "memberId": member_id,
             "totalXp": state["totalXp"],
@@ -557,9 +525,10 @@ class ProgressionSkill:
                     continue
                 elif kind == "announcement":
                     grants_applied.append({"type": "announcement"})
-            claimed.add(reward["id"])
-            state["claimedRewards"].append(reward["id"])
-            reward_events.append({"id": reward["id"], "name": reward["name"], "grants": tuple(grants_applied)})
+            if grants_applied:
+                claimed.add(reward["id"])
+                state["claimedRewards"].append(reward["id"])
+                reward_events.append({"id": reward["id"], "name": reward["name"], "grants": tuple(grants_applied)})
 
         await ctx.storage.set(MEMBER_KEY_PREFIX + str(member_id), state)
         if awarded:
@@ -576,6 +545,44 @@ class ProgressionSkill:
             )
 
         level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
+        announcements = config["announcements"]
+        announcement_sent = False
+        if announcements.get("enabled") and announcements.get("channelId"):
+            primary_achievement = unlocked[0] if unlocked else {}
+            primary_reward = reward_events[0] if reward_events else {}
+            should_send = (
+                (unlocked and announcements.get("achievement"))
+                or (reward_events and announcements.get("reward"))
+                or (level > previous_level and announcements.get("levelUp"))
+            )
+            if should_send:
+                member = await ctx.discord.get_member(member_id=member_id)
+                values = {
+                    "member": member.display_name,
+                    "member_id": str(member_id),
+                    "level": str(level),
+                    "xp": str(sum(int(item.get("xp", 0)) for item in unlocked) + awarded),
+                    "total_xp": str(state["totalXp"]),
+                    "achievement_name": str(primary_achievement.get("name", "")),
+                    "achievement_emoji": str(primary_achievement.get("emoji", "")),
+                    "reward_name": str(primary_reward.get("name", "")),
+                }
+                message = announcements.get("template", "")
+                for key, value in values.items():
+                    message = message.replace("{" + key + "}", value)
+                if message.strip():
+                    await ctx.discord.send_message(
+                        channel_id=int(announcements["channelId"]),
+                        content=message[:2000],
+                        allowed_mentions={
+                            "everyone": False,
+                            "users": False,
+                            "roles": False,
+                            "replied_user": False,
+                        },
+                    )
+                    announcement_sent = True
+
         return {
             "memberId": member_id,
             "source": source_id,
