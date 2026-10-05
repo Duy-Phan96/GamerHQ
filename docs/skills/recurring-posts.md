@@ -28,10 +28,14 @@ The owner can:
 - choose a destination text/announcement channel;
 - create interval, daily or weekly schedules;
 - use IANA timezones for fixed local times;
+- preview a configuration before saving;
+- edit name, destination channel, message and schedule;
 - pause and resume a post;
+- preview deletion impact before confirming removal;
 - delete a configuration and its scheduler job.
 
-The minimum interval is 15 minutes.
+The minimum interval is 15 minutes. The host shows that limit directly in the
+interval field and keeps the Skill's server-side validation authoritative.
 
 ## Platform dependencies
 
@@ -126,3 +130,8 @@ through the same external package discovery path used by third-party Skills.
 
 The host UI does not import the package implementation. Configuration is routed
 only through the versioned Recurring Posts Management APIs.
+
+Version 1.1 adds review-first create/edit flows, host-neutral validation
+previews, quick interval presets, compact management summaries and a
+delete-preview contract. GamerHQ consumes those contracts through the public
+Skill Runtime boundary rather than importing private Skill classes.
