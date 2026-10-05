@@ -104,7 +104,7 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
                    ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
-                   ('Managed Messages', self.messages), ('Games', self.games), ('Member Onboarding', self.member_onboarding), ('Skills', self.skills),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Member Onboarding', self.member_onboarding), ('Server Boosters', self.boosters), ('Skills', self.skills),
                    ('Features', self.features),
                    ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
@@ -154,6 +154,9 @@ class ManagementView(Menu):
 
     async def member_onboarding(self, interaction):
         await open_member_onboarding(interaction, self.guild, self.admin_id)
+
+    async def boosters(self, interaction):
+        await open_boosters(interaction, self.guild, self.admin_id)
 
     async def skills(self, interaction):
         await open_skills(interaction, self.guild, self.admin_id)
@@ -641,6 +644,106 @@ class MemberOnboardingRepairConfirmView(Menu):
         await interaction.response.edit_message(
             content=_member_onboarding_text(self.guild),
             view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+
+def _booster_text(guild):
+    from services.booster_service import inspect
+
+    state = inspect(guild)
+    role = state["role"]
+    channel = state["channel"]
+    count = len(getattr(role, "members", ())) if role else 0
+    status = {
+        "READY": "🟢 Ready",
+        "MISSING": "⚪ Not set up",
+        "ADOPT": "🟡 Existing channel can be adopted",
+        "REPAIR": "🟡 Needs repair",
+        "BLOCKED": "🔴 Needs attention",
+    }[state["status"]]
+    lines = [
+        "# 💎 Server Boosters",
+        "Discord's managed Server Booster role is the source of truth. GamerHQ never creates a duplicate booster role.",
+        "",
+        f"**Status:** {status}",
+        f"**Current boosters:** {count}",
+        f"**Booster role:** {getattr(role, 'mention', 'Unavailable')}",
+        f"**Booster Lounge:** {getattr(channel, 'mention', 'Not configured')}",
+        "",
+        state["reason"],
+        "",
+        "The lounge is optional and is created only after Review → Confirm. "
+        "Future XP/Achievement features can recognize booster status without making community participation pay-to-win.",
+    ]
+    return "\n".join(lines)[:1950]
+
+
+async def open_boosters(interaction, guild, actor_id):
+    await interaction.response.edit_message(
+        content=_booster_text(guild),
+        view=BoosterManagementView(guild, actor_id),
+    )
+
+
+class BoosterManagementView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        from services.booster_service import inspect
+        state = inspect(guild)
+        if state["status"] != "BLOCKED":
+            self.action("Review Booster Lounge", self.review)
+        self.action("Back to Management", self.back)
+
+    async def review(self, interaction):
+        from services.booster_service import preview, render_plan
+        try:
+            plan = preview(self.guild, interaction.user)
+        except (PermissionError, ValueError, ServerMessageError) as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await interaction.response.edit_message(
+            content=render_plan(self.guild, plan),
+            view=BoosterConfirmView(self.guild, self.admin_id, plan),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=TITLE,
+            view=ManagementView(self.guild, self.admin_id),
+        )
+
+
+class BoosterConfirmView(Menu):
+    def __init__(self, guild, actor_id, plan):
+        super().__init__(guild, actor_id)
+        self.plan = plan
+        self.used = False
+        self.action("Confirm Booster Lounge", self.confirm)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This Booster Lounge review was already used. Reopen Server Boosters.",
+                ephemeral=True,
+            )
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            from services.booster_service import apply
+            channel = await apply(self.guild, interaction.user, self.plan)
+            notice = f"✅ Booster Lounge ready: {channel.mention}"
+        except (PermissionError, ValueError, ServerMessageError, discord.HTTPException):
+            notice = "❌ Booster Lounge could not be changed safely. Reopen Server Boosters and review the current state."
+        await interaction.edit_original_response(
+            content=(notice + "\n\n" + _booster_text(self.guild))[:1950],
+            view=BoosterManagementView(self.guild, self.admin_id),
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content=_booster_text(self.guild),
+            view=BoosterManagementView(self.guild, self.admin_id),
         )
 
 
