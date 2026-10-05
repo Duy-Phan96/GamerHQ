@@ -267,6 +267,9 @@ class EndConfirm(BackView):
             authorized_event(interaction, self.event_id, host=True)
             event = rules.end(self.event_id, interaction.guild.id, interaction.user.id, self.status)
             await interaction.response.defer(ephemeral=True)
+            if self.status == "completed":
+                from cogs.progression_activity import award_completed_lfg
+                await award_completed_lfg(interaction.client, interaction.guild, event)
             await changed(interaction.guild, event)
             await notify_members(interaction.guild, event, f"Lobby {self.status}. Resources are cleaned up once voice is empty; the final card remains for 24 hours.")
             await interaction.edit_original_response(content=f'Lobby {self.status}.', view=None)
