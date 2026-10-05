@@ -1175,9 +1175,10 @@ class RecurringPostChannelView(Menu):
 
 
 class RecurringPostScheduleView(Menu):
-    def __init__(self, guild, actor_id, channel_id):
+    def __init__(self, guild, actor_id, channel_id, post=None):
         super().__init__(guild, actor_id)
         self.channel_id = channel_id
+        self.post = post
         self.action('Interval', self.interval)
         self.action('Daily', self.daily)
         self.action('Weekly', self.weekly)
@@ -1185,76 +1186,118 @@ class RecurringPostScheduleView(Menu):
 
     async def interval(self, interaction):
         await interaction.response.send_modal(
-            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'interval')
+            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'interval', post=self.post)
         )
 
     async def daily(self, interaction):
         await interaction.response.send_modal(
-            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'daily')
+            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'daily', post=self.post)
         )
 
     async def weekly(self, interaction):
         await interaction.response.send_modal(
-            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'weekly')
+            RecurringPostModal(self.guild, self.admin_id, self.channel_id, 'weekly', post=self.post)
         )
 
     async def cancel(self, interaction):
+        if self.post is not None:
+            return await interaction.response.edit_message(
+                content=_recurring_post_detail(self.post),
+                view=RecurringPostDetailView(self.guild, self.admin_id, self.post),
+            )
         await open_recurring_posts(interaction, self.guild, self.admin_id)
 
 
 class RecurringPostModal(discord.ui.Modal):
-    def __init__(self, guild, actor_id, channel_id, kind):
-        super().__init__(title={'interval': 'Interval Post', 'daily': 'Daily Post', 'weekly': 'Weekly Post'}[kind])
+    def __init__(self, guild, actor_id, channel_id, kind, *, post=None):
+        editing = post is not None
+        super().__init__(
+            title=(
+                {'interval': 'Edit Interval Post', 'daily': 'Edit Daily Post', 'weekly': 'Edit Weekly Post'}[kind]
+                if editing else
+                {'interval': 'Interval Post', 'daily': 'Daily Post', 'weekly': 'Weekly Post'}[kind]
+            )
+        )
         self.guild, self.actor_id, self.channel_id, self.kind = guild, actor_id, channel_id, kind
-        self.name = discord.ui.TextInput(label='Name', max_length=80, placeholder='Rules reminder')
+        self.post = post
+        self.name = discord.ui.TextInput(
+            label='Name',
+            max_length=80,
+            placeholder='Rules reminder',
+            default=post.name if editing else None,
+        )
         self.content = discord.ui.TextInput(
             label='Message',
             style=discord.TextStyle.paragraph,
             max_length=2000,
             placeholder='Message to post automatically',
+            default=post.content if editing else None,
         )
         self.add_item(self.name)
         self.add_item(self.content)
+
+        existing = post.schedule if editing else {}
         if kind == 'interval':
+            default_minutes = (
+                str(int(existing.get('seconds', 180 * 60)) // 60)
+                if existing.get('type') == 'interval'
+                else '180'
+            )
             self.schedule = discord.ui.TextInput(
                 label='Every N minutes (min. 15)',
                 placeholder='180',
-                default='180',
+                default=default_minutes,
                 max_length=6,
             )
             self.add_item(self.schedule)
         elif kind == 'daily':
+            default_time = (
+                f"{int(existing['hour']):02d}:{int(existing['minute']):02d}"
+                if existing.get('type') == 'daily'
+                else '09:00'
+            )
             self.schedule = discord.ui.TextInput(
                 label='Time (HH:MM)',
                 placeholder='09:00',
-                default='09:00',
+                default=default_time,
                 max_length=5,
             )
             self.timezone = discord.ui.TextInput(
                 label='IANA timezone',
                 placeholder='Europe/Berlin',
-                default='Europe/Berlin',
+                default=str(existing.get('timezone', 'Europe/Berlin')),
                 max_length=64,
             )
             self.add_item(self.schedule)
             self.add_item(self.timezone)
         else:
+            days = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+            default_weekday = (
+                days[int(existing['weekday'])]
+                if existing.get('type') == 'weekly'
+                else 'Monday'
+            )
+            default_time = (
+                f"{int(existing['hour']):02d}:{int(existing['minute']):02d}"
+                if existing.get('type') == 'weekly'
+                else '09:00'
+            )
             self.weekday = discord.ui.TextInput(
                 label='Weekday',
                 placeholder='Monday',
-                default='Monday',
+                default=default_weekday,
                 max_length=9,
             )
             self.schedule = discord.ui.TextInput(
                 label='Time (HH:MM)',
                 placeholder='09:00',
-                default='09:00',
+                default=default_time,
                 max_length=5,
             )
             self.timezone = discord.ui.TextInput(
                 label='IANA timezone',
                 placeholder='Europe/Berlin',
-                default='Europe/Berlin',
+                default=str(existing.get('timezone', 'Europe/Berlin')),
                 max_length=64,
             )
             self.add_item(self.weekday)
@@ -1285,29 +1328,26 @@ class RecurringPostModal(discord.ui.Modal):
     async def on_submit(self, interaction):
         if interaction.user.id != self.guild.owner_id:
             return await interaction.response.send_message(
-                'Only the server owner can create recurring posts.',
+                'Only the server owner can change recurring posts.',
                 ephemeral=True,
             )
         try:
-            schedule = self._schedule_value()
-            await _recurring_call(
-                interaction,
-                self.guild,
-                _RECURRING_CREATE_API,
-                {
-                    'name': str(self.name.value),
-                    'channelId': self.channel_id,
-                    'content': str(self.content.value),
-                    'schedule': schedule,
-                },
-            )
+            payload = {
+                'name': str(self.name.value),
+                'channelId': self.channel_id,
+                'content': str(self.content.value),
+                'schedule': self._schedule_value(),
+            }
+            if self.post is not None:
+                payload['postId'] = self.post.id
+                payload['active'] = self.post.active
             response = await _recurring_call(
                 interaction,
                 self.guild,
-                _RECURRING_LIST_API,
-                {},
+                _RECURRING_VALIDATE_API,
+                payload,
             )
-            posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
+            preview = response['preview']
         except (ValueError, KeyError):
             return await interaction.response.send_message(
                 'That schedule is invalid. Use at least 15 minutes, a valid HH:MM time, and an IANA timezone such as Europe/Berlin.',
@@ -1315,13 +1355,85 @@ class RecurringPostModal(discord.ui.Modal):
             )
         except Exception:
             return await interaction.response.send_message(
+                'Recurring Post could not be validated. Check the private server log.',
+                ephemeral=True,
+            )
+
+        await interaction.response.edit_message(
+            content=_recurring_review_text(preview, editing=self.post is not None),
+            view=RecurringPostSaveConfirmView(
+                self.guild,
+                self.actor_id,
+                payload,
+                editing=self.post is not None,
+            ),
+        )
+
+
+def _recurring_review_text(preview, *, editing):
+    status = '🟢 Active' if bool(preview.get('active', True)) else '⏸️ Paused'
+    content = discord.utils.escape_markdown(str(preview.get('content', '')))
+    if len(content) > 600:
+        content = content[:597] + '...'
+    title = 'Review Recurring Post Changes' if editing else 'Review New Recurring Post'
+    return (
+        f'# 🔁 {title}\n'
+        f'**Name:** {discord.utils.escape_markdown(str(preview.get("name", "")))[:80]}\n'
+        f'**Status:** {status}\n'
+        f'**Channel:** <#{int(preview["channelId"])}>\n'
+        f'**Schedule:** {preview.get("scheduleSummary", "Unknown schedule")}\n\n'
+        f'**Message**\n{content}\n\n'
+        'Nothing changes until you confirm.'
+    )[:1950]
+
+
+class RecurringPostSaveConfirmView(Menu):
+    def __init__(self, guild, actor_id, payload, *, editing):
+        super().__init__(guild, actor_id)
+        self.payload = dict(payload)
+        self.editing = editing
+        self.action('Confirm Changes' if editing else 'Create Post', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                'Only the server owner can change recurring posts.',
+                ephemeral=True,
+            )
+        contract = _RECURRING_UPDATE_API if self.editing else _RECURRING_CREATE_API
+        try:
+            await _recurring_call(interaction, self.guild, contract, self.payload)
+            response = await _recurring_call(interaction, self.guild, _RECURRING_LIST_API, {})
+            posts = tuple(_recurring_post(value) for value in response.get('posts', ()))
+        except Exception:
+            return await interaction.response.send_message(
                 'Recurring Post could not be saved. Check the private server log.',
                 ephemeral=True,
             )
         await interaction.response.edit_message(
-            content='✅ Recurring Post created.\n\n' + _recurring_overview(posts),
-            view=RecurringPostsView(self.guild, self.actor_id, posts),
+            content=(
+                ('✅ Recurring Post updated.\n\n' if self.editing else '✅ Recurring Post created.\n\n')
+                + _recurring_overview(posts)
+            ),
+            view=RecurringPostsView(self.guild, self.admin_id, posts),
         )
+
+    async def cancel(self, interaction):
+        post_id = str(self.payload.get('postId', '')).strip()
+        if post_id:
+            response = await _recurring_call(
+                interaction,
+                self.guild,
+                _RECURRING_GET_API,
+                {'postId': post_id},
+            )
+            post = _recurring_post(response['post'])
+            return await interaction.response.edit_message(
+                content=_recurring_post_detail(post),
+                view=RecurringPostDetailView(self.guild, self.admin_id, post),
+            )
+        await open_recurring_posts(interaction, self.guild, self.admin_id)
 
 
 def _recurring_post_detail(post):
