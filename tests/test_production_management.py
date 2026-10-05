@@ -148,7 +148,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
 
         view = MemberOnboardingView(self.guild, owner.id)
         actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
-        self.assertEqual(actions, ['Preview Questions', 'Review Profile Repair', 'Back to Management'])
+        self.assertEqual(actions, ['Manage Questions', 'Preview Questions', 'Review Profile Repair', 'Discord Setup Guide', 'Back to Management'])
 
     async def test_member_onboarding_question_management_supports_edit_and_flags(self):
         from cogs.server_management import (
