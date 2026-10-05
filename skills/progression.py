@@ -270,7 +270,7 @@ class ProgressionSkill:
         runtime_api_version="1",
         description="Configurable XP, levels, achievements and rewards for GamerHQ communities.",
         author="GamerHQ",
-        permissions=(SkillCapability.STORAGE_SKILL.value,),
+        permissions=(SkillCapability.STORAGE_SKILL.value, SkillCapability.AUDIT_WRITE.value),
         management_apis=SkillManagementApis(
             exposes=(
                 ManagementApiContract(STATUS_API),
