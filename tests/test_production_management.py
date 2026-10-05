@@ -194,6 +194,47 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
             ['Manage Questions', 'Preview Questions', 'Review Profile Repair', 'Discord Setup Guide', 'Back to Management'],
         )
 
+    def test_server_boosters_management_uses_discord_managed_role(self):
+        from cogs.server_management import (
+            BoosterManagementView,
+            ManagementView,
+            _booster_text,
+        )
+
+        owner = self.actor()
+        booster = self.guild.role(700)
+        booster.name = 'Server Booster'
+        booster.managed = True
+        booster.members = [SimpleNamespace(id=501), SimpleNamespace(id=502)]
+        self.guild.roles.append(booster)
+        self.guild.premium_subscriber_role = booster
+
+        manage = ManagementView(self.guild, owner.id)
+        labels = [child.label for child in manage.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Server Boosters', labels)
+
+        text = _booster_text(self.guild)
+        self.assertIn("Discord's managed Server Booster role", text)
+        self.assertIn('Current boosters:** 2', text)
+        self.assertIn('Not configured', text)
+
+        view = BoosterManagementView(self.guild, owner.id)
+        actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(actions, ['Review Booster Lounge', 'Back to Management'])
+
+    def test_server_boosters_management_blocks_when_discord_role_missing(self):
+        from cogs.server_management import BoosterManagementView, _booster_text
+
+        owner = self.actor()
+        self.guild.premium_subscriber_role = None
+        text = _booster_text(self.guild)
+        self.assertIn('Needs attention', text)
+        self.assertIn('not available yet', text)
+
+        view = BoosterManagementView(self.guild, owner.id)
+        actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(actions, ['Back to Management'])
+
     async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
         from cogs.server_management import ManagementView, SkillsView, open_skills
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
