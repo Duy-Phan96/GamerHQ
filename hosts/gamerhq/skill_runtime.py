@@ -315,7 +315,10 @@ class GamerHQSkillRuntime:
         enabled = await self.state.is_enabled(guild_id=guild_id, skill_id=skill_id)
         running = self.manager.is_running(guild_id=guild_id, skill_id=skill_id)
 
-        if missing:
+        if not installed:
+            health = "NOT_INSTALLED"
+            detail = "Skill package is available in the host but has not been added to this guild."
+        elif missing:
             health = "UNAVAILABLE"
             detail = "Required host capabilities are unavailable."
         elif not enabled:
