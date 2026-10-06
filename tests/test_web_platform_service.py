@@ -77,6 +77,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
                                         config_path="name",
                                     ),
                                 ),
+                                item_id_payload_key="postId",
                                 max_items=20,
                             ),
                         ),
@@ -141,6 +142,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(collection["operations"]["listContract"], "progression.get-config.v1")
         self.assertEqual(collection["operations"]["createContract"], "progression.update-config.v1")
         self.assertEqual(collection["itemFields"][0]["configPath"], "name")
+        self.assertEqual(collection["itemIdPayloadKey"], "postId")
         self.assertEqual(collection["maxItems"], 20)
 
     async def test_management_call_stays_on_versioned_runtime_router(self):
