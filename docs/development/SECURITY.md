@@ -100,3 +100,16 @@ Prefer bounded identifiers, action names, status and correlation context.
 
 Security-sensitive work is complete when relevant negative paths are tested and
 remaining manual/live security checks are explicitly documented.
+
+
+## Repository history audit scope
+
+`python -m tools.repository_audit --history` scans the commit history reachable
+from the checked-out `HEAD`.
+
+It deliberately does not scan every unrelated local/remote ref. An open feature
+branch must not make another branch's CI fail before that feature is merged.
+
+This does not weaken review of the current change: any credential-like content
+committed in the current branch's reachable history is still scanned, alongside
+the current publication candidates and staged content.
