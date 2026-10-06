@@ -28,6 +28,7 @@ RECORD_ACTIVITY_API = "progression.record-activity.v1"
 MEMBER_STATUS_API = "progression.member-status.v1"
 
 DEFAULT_CONFIG = {
+    "revision": 1,
     "levelCurve": {
         "base": 100,
         "linear": 20,
@@ -186,6 +187,7 @@ def _positive_int(value: Any, name: str, *, minimum: int = 1, maximum: int = 1_0
 
 def validate_config(value: Mapping[str, Any]) -> dict[str, Any]:
     config = deepcopy(dict(value))
+    config["revision"] = _positive_int(config.get("revision", 1), "revision")
     curve = dict(config.get("levelCurve") or {})
     curve["base"] = _positive_int(curve.get("base", 100), "levelCurve.base")
     curve["linear"] = _positive_int(curve.get("linear", 20), "levelCurve.linear", minimum=0)
@@ -365,7 +367,12 @@ class ProgressionSkill:
     async def update_config(self, ctx, payload) -> Mapping[str, Any]:
         if "config" not in payload:
             raise ValueError("config is required")
+        current = await self._config(ctx)
+        expected = payload.get("expectedRevision")
+        if expected is not None and int(expected) != int(current["revision"]):
+            raise ValueError("Progression configuration changed. Reopen configuration and review again.")
         config = validate_config(payload["config"])
+        config["revision"] = int(current["revision"]) + 1
         await ctx.storage.set(CONFIG_KEY, config)
         await ctx.audit.write(action="progression.config.updated", target="progression")
         return {"config": config}
