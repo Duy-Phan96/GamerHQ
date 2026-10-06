@@ -6,10 +6,13 @@ Its purpose is both practical and architectural: it proves that a real feature
 can be implemented, packaged and discovered independently without importing
 GamerHQ business logic, Discord.py or raw database helpers.
 
-The package currently lives at
-`packages/gamerhq-skill-recurring-posts/` as an extraction-ready staging
-location. That directory is intentionally structured so it can move into its own
-GitHub repository without changing the Skill ID or host management contracts.
+The package now lives in the independent repository:
+
+`Duy-Phan96/gamerhq-skill-recurring-posts`
+
+GamerHQ installs a reviewed immutable commit through
+`requirements-skills.lock`. The Skill ID, storage namespace and management
+contracts remain stable across repository extraction.
 
 ## User flow
 
@@ -131,7 +134,24 @@ through the same external package discovery path used by third-party Skills.
 The host UI does not import the package implementation. Configuration is routed
 only through the versioned Recurring Posts Management APIs.
 
-Version 1.1 adds review-first create/edit flows, host-neutral validation
-previews, quick interval presets, compact management summaries and a
-delete-preview contract. GamerHQ consumes those contracts through the public
-Skill Runtime boundary rather than importing private Skill classes.
+Version 1.2 adds Management UI Schema V1 on top of the existing public
+management contracts.
+
+Recurring Posts now declares a generic collection schema with list/create/get,
+validate, update, pause/resume, delete-preview and delete operations plus
+host-neutral item fields for name, Discord channel, message, schedule and active
+state.
+
+This allows Discord administration and gamerhq-web to build the management
+surface without importing private Skill classes or creating a Recurring
+Posts-specific frontend page.
+
+
+## Current reviewed deployment pin
+
+GamerHQ currently pins Recurring Posts 1.2.0 at:
+
+`d1b123db3425168d167ec589ea3135168ee11e8e`
+
+The production/development image should continue to use immutable reviewed
+commits rather than a moving branch.
