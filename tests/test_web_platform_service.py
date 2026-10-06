@@ -69,6 +69,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             version="0.1.0",
             description="Progression",
             installed=False,
+            configured=False,
             source_kind="built-in",
             source_distribution=None,
             enabled=True,
