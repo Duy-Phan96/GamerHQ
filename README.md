@@ -297,3 +297,11 @@ Owner/admin `/deals import-gocdkeys` imports up to ten copied deal/giveaway part
 Owner/admin `/deals create` previews curated Amazon, Instant Gaming, GoCDKeys or other partner deals before posting to the stored gaming-deals channel. Select `promotion_type:GIVEAWAY` for the existing giveaways channel with optional prize/end date/note and durable URL deduplication. Prices and verified links are supplied manually; the existing Amazon link and official Instant Gaming posts remain unchanged. [Deal workflow](docs/DEALS.md). GoCDKeys automatic lookup/backfill is currently unsupported (HTTP 403); [manual links remain available](docs/GOCDKEYS.md). Free Games remains separate.
 
 Local and VPS SQLite databases are separate runtime stores. Before cutover, migrate the existing runtime snapshot or use safe reconciliation; never run local and production GamerHQ simultaneously against the live guild. See [database migration and duplicate review](docs/DATABASE_MIGRATION.md).
+
+## Web platform integration
+
+GamerHQ remains the authoritative host for Skill Runtime state and configuration.
+The optional internal HTTP transport used by the separate web client is documented in
+[`docs/web-api.md`](docs/web-api.md). It is disabled by default and must not be exposed
+directly to browser clients.
+
