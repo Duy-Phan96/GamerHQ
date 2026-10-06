@@ -141,7 +141,8 @@ class SkillRuntimeRegistrationTests(unittest.IsolatedAsyncioTestCase):
             guild_id=self.guild.id,
             skill_id="missing-external",
         )
-        self.assertEqual(recovered.health, "DISABLED")
+        self.assertEqual(recovered.health, "NOT_INSTALLED")
+        self.assertFalse(recovered.installed)
         self.assertEqual(recovered.source_distribution, "gamerhq-skill-recovered")
 
     async def test_statuses_include_configured_unavailable_external_skill(self):
