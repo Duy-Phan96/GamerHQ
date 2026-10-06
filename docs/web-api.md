@@ -16,7 +16,7 @@ GamerHQWebPlatformService
 Skill Runtime / Management APIs
 ```
 
-The browser must not call this listener directly.
+The browser must not call this listener directly. The gateway does not enable CORS; browser-facing access belongs in the trusted BFF.
 
 ## Safe defaults
 
