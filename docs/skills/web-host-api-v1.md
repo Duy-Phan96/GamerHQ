@@ -266,3 +266,50 @@ Role items expose:
 These endpoints are read-only presentation resources. They do not replace
 Skill-side validation. A Skill remains authoritative about whether a selected
 channel or role is valid for its operation.
+
+
+## Guild Skill installation
+
+Host package presence and guild installation are separate lifecycle states.
+
+A package may be present in the host Runtime registry but not yet added to a
+specific Discord server.
+
+Add a host-available Skill to one authorized guild with:
+
+`POST /api/v1/servers/{guildId}/skills/{skillId}/install`
+
+The operation is idempotent.
+
+It creates/updates host-owned per-guild lifecycle state with:
+
+- `installed=true`
+- `enabled=false` for a new installation
+
+Installation does not automatically enable the Skill and does not execute Skill
+lifecycle code.
+
+For backward compatibility, the existing enable path still marks a Skill as
+installed when older Discord management flows enable it directly. This
+compatibility behavior is transitional until every client has an explicit
+review/add flow.
+
+The host cannot dynamically download arbitrary Marketplace code through this
+endpoint. The Skill package must already be installed and registered in the
+host deployment. Marketplace package deployment/orchestration remains a
+separate platform concern.
+
+
+### Management-before-enable
+
+An installed Skill may expose its Management APIs while still disabled.
+
+This intentionally supports:
+
+`Review capabilities → Add → Configure → Enable`
+
+Only the management router uses guild installation availability. Runtime
+execution, Scheduler delivery, events and lifecycle start behavior remain gated
+by Skill enablement.
+
+This separation allows safe configuration before a Skill begins operating.

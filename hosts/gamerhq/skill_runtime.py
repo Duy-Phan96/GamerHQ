@@ -50,6 +50,7 @@ class GuildSkillStatus:
     health_detail: str
     required_capabilities: tuple[str, ...]
     missing_capabilities: tuple[str, ...]
+    installed: bool = True
     source_kind: str = "built-in"
     source_distribution: str | None = None
     management_available: bool = False
@@ -68,7 +69,7 @@ class GamerHQSkillRuntime:
         self.apis = SkillApiRouter(self.registry, availability=self.state.is_enabled)
         self.management = SkillManagementRouter(
             self.registry,
-            availability=self.state.is_enabled,
+            availability=self.state.is_installed,
         )
         self.scheduler = SchedulerEngine(
             self.registry,
@@ -118,6 +119,7 @@ class GamerHQSkillRuntime:
             name=skill_id.replace("-", " ").title(),
             version="unknown",
             description="Configured external Skill package is unavailable.",
+            installed=False,
             enabled=False,
             running=False,
             health="UNAVAILABLE",
@@ -226,6 +228,14 @@ class GamerHQSkillRuntime:
             payload=payload,
         )
 
+    async def install_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        skill = self.registry.get(skill_id)
+        return await self.state.install(
+            guild_id=guild_id,
+            skill_id=skill_id,
+            version=skill.manifest.version,
+        )
+
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
         # Context creation validates every required capability before lifecycle
         # code or persistent enabled state is touched.
@@ -301,10 +311,14 @@ class GamerHQSkillRuntime:
         skill = self.registry.get(skill_id)
         permissions = self.permissions(skill_id)
         missing = permissions.missing_declared()
+        installed = await self.state.is_installed(guild_id=guild_id, skill_id=skill_id)
         enabled = await self.state.is_enabled(guild_id=guild_id, skill_id=skill_id)
         running = self.manager.is_running(guild_id=guild_id, skill_id=skill_id)
 
-        if missing:
+        if not installed:
+            health = "NOT_INSTALLED"
+            detail = "Skill package is available in the host but has not been added to this guild."
+        elif missing:
             health = "UNAVAILABLE"
             detail = "Required host capabilities are unavailable."
         elif not enabled:
@@ -329,6 +343,7 @@ class GamerHQSkillRuntime:
             name=skill.manifest.name,
             version=skill.manifest.version,
             description=skill.manifest.description,
+            installed=installed,
             enabled=enabled,
             running=running,
             health=health,
