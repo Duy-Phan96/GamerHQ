@@ -44,13 +44,13 @@ class GuildSkillStatus:
     name: str
     version: str
     description: str
-    installed: bool
     enabled: bool
     running: bool
     health: str
     health_detail: str
     required_capabilities: tuple[str, ...]
     missing_capabilities: tuple[str, ...]
+    installed: bool = True
     source_kind: str = "built-in"
     source_distribution: str | None = None
     management_available: bool = False
