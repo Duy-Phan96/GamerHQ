@@ -14,13 +14,13 @@ import re
 from typing import Any
 
 _GITHUB_REQUIREMENT = re.compile(
-    r"^(?P<distribution>[A-Za-z0-9][A-Za-z0-9_.-]*)\\s*@\\s*"
-    r"(?P<url>https://github\\.com/(?P<repository>[^/\\s]+/[^/\\s]+)/archive/"
-    r"(?P<commit>[0-9a-f]{40})\\.zip)$"
+    r"^(?P<distribution>[A-Za-z0-9][A-Za-z0-9_.-]*)\s*@\s*"
+    r"(?P<url>https://github\.com/(?P<repository>[^/\s]+/[^/\s]+)/archive/"
+    r"(?P<commit>[0-9a-f]{40})\.zip)$"
 )
 _EXACT_REQUIREMENT = re.compile(
     r"^(?P<distribution>[A-Za-z0-9][A-Za-z0-9_.-]*)=="
-    r"(?P<version>[^=<>!~*\\s]+)$"
+    r"(?P<version>[^=<>!~*\s]+)$"
 )
 
 
