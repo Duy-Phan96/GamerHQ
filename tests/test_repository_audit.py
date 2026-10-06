@@ -27,9 +27,9 @@ class RepositoryAuditTests(unittest.TestCase):
         findings = repository_audit.secret_findings(
             'SKILL_SECURE_STORAGE = "secrets.skill"\n'
         )
-        self.assertIn("potential credential assignment", findings)
-        # The assignment heuristic intentionally remains conservative. The
-        # history scope fix prevents unrelated refs from affecting this branch.
+        self.assertNotIn("potential credential assignment", findings)
+        # Public capability IDs are not credential values. The history scope
+        # fix independently prevents unrelated refs from affecting this branch.
 
 
 if __name__ == "__main__":
