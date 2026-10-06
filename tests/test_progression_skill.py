@@ -71,6 +71,11 @@ class ProgressionManagementSchemaTests(unittest.TestCase):
         self.assertEqual(schema.version, "1")
         self.assertEqual(schema.read_contract, "progression.get-config.v1")
         self.assertEqual(schema.write_contract, "progression.update-config.v1")
+        self.assertIsNotNone(schema.document)
+        self.assertEqual(schema.document.read_path, "config")
+        self.assertEqual(schema.document.write_path, "config")
+        self.assertEqual(schema.document.revision_path, "revision")
+        self.assertEqual(schema.document.expected_revision_key, "expectedRevision")
         self.assertEqual(
             tuple(section.id for section in schema.sections),
             ("xp-sources", "level-curve", "achievements", "rewards", "announcements"),
