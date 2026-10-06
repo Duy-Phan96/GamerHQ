@@ -6,7 +6,7 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 
 ## Engineering direction
 
-GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with GamerHQ as its first host. The long-term direction includes third-party Skill development and an AI-ready capability layer while keeping today's Discord server stable and maintainable. See the [Engineering Vision](docs/VISION.md), [Skill Runtime documentation](docs/skills/README.md), and the [Skill Developer Guide](docs/skills/developer-guide.md).
+GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with GamerHQ as its first reference customer/host. The long-term direction includes third-party Skill development and an AI-ready capability layer while keeping today's Discord server stable and maintainable. See the [Engineering Vision](docs/VISION.md), [Skill Runtime documentation](docs/skills/README.md), [Skill Developer Guide](docs/skills/developer-guide.md), and the [Software Development Lifecycle](docs/development/SDLC.md).
 
 ## Features
 
@@ -278,7 +278,7 @@ Do not include real ticket text, private invite codes or unredacted user data in
 
 ## Further documentation
 
-- [Repository instructions](AGENTS.md) and [development workflow](docs/DEVELOPMENT_WORKFLOW.md): selective context, validation and reusable task prompts.
+- [Repository instructions](AGENTS.md), [development workflow](docs/DEVELOPMENT_WORKFLOW.md), and [SDLC](docs/development/SDLC.md): selective context, validation, AI-assisted development and Definition of Done.
 
 - [Architecture](docs/ARCHITECTURE.md): interaction layer, services, persistence and managed Discord resources.
 - Production uses Docker Compose on AlmaLinux, external private configuration/data, a non-root container, daily verified backups (14 daily snapshots), log rotation and owner-run updates from `main`.
