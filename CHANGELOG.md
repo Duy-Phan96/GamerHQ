@@ -1,11 +1,30 @@
 # GamerHQ Changelog
 
-## Portable Skill HTTP and secret storage
+## [Unreleased]
 
-- Add public `http.external` and `secrets.skill` host capabilities so portable Skills can call external provider APIs and store credentials without importing GamerHQ internals.
-- Keep Skill secrets in a dedicated encrypted, guild-and-Skill-scoped store; the capability remains unavailable until the host encryption key is configured.
-- Restrict external Skill HTTP to bounded HTTPS requests and translate transport failures to host-neutral Runtime errors.
-- Preserve the existing capability boundary, offline SDK packaging gates and host-neutral SkillContext architecture.
+### Added
+
+- Added public `http.external` and `secrets.skill` Skill capabilities with host-mediated HTTPS access and encrypted, guild-and-Skill-scoped secret storage.
+- Introduced the lightweight GamerHQ Software Development Lifecycle, Definition of Done, AI-assisted development SOP and architecture decision guidance.
+- Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
+- Added portable platform compilation and `gamerhq-skill-sdk` wheel-build CI gates.
+- Added Skill ecosystem governance for immutable release review, Marketplace publication and host deployment boundaries.
+- Added a read-only release preflight for semantic version metadata, the active changelog section and immutable external Skill pins.
+
+### Changed
+
+- Standardized new branch and commit naming guidance while preserving existing branch history.
+- Documented independent Host, SDK, Runtime API, external Skill and web versioning/release responsibilities.
+
+### Fixed
+
+_No entries yet._
+
+### Security
+
+- Restricted external Skill HTTP to public HTTPS targets with bounded timeouts/request sizes/responses; Skill secret storage fails closed unless the host encryption key is configured.
+
+> Older dated `[Unreleased]` headings below are retained as historical development snapshots. New work belongs only in this top section until it is promoted to a versioned release.
 
 
 ## Recurring Posts 1.1 integration
