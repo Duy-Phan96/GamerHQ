@@ -4,13 +4,17 @@
 
 - `main` — last known-good deployable release.
 - `develop` — integration branch for the next release.
-- `feature/<name>` — one feature or focused change.
+- `feat/<name>` — one feature or focused change.
 - `fix/<name>` — one bug fix.
+- `refactor/<name>` — focused internal restructuring.
+- `docs/<name>` — documentation-only change.
+- `test/<name>` — test-only change.
+- `chore/<name>` / `ci/<name>` — maintenance or CI work.
 
 ## Normal change
 
 1. Start from `develop`.
-2. Create a focused `feature/...` or `fix/...` branch.
+2. Create a focused branch using the documented `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/` or `ci/` prefix.
 3. Implement the change.
 4. Update tests/checklist and `CHANGELOG.md`.
 5. Test locally/test-server against a backed-up database.
