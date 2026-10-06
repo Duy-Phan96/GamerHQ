@@ -195,6 +195,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values[0]["id"], "progression")
         self.assertFalse(values[0]["state"]["installed"])
         self.assertTrue(values[0]["state"]["enabled"])
+        self.assertFalse(values[0]["state"]["configured"])
         self.assertTrue(values[0]["managementSchemaAvailable"])
         self.assertEqual(values[0]["capabilities"], ["storage.skill"])
 
