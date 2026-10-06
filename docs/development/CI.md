@@ -91,8 +91,16 @@ The command is read-only and verifies:
 - the active changelog section is `[Unreleased]`;
 - every dependency in `requirements-skills.lock` is an immutable exact pin.
 
-For GitHub archive dependencies, a full 40-character commit archive is required.
-Exact package-version pins are also accepted.
+Release preflight delegates external Skill dependency validation to the same
+reviewed deployment-plan parser used by `tools.skill_package_plan`.
+
+Accepted immutable forms are:
+
+- GitHub archive URLs pinned to a full lowercase 40-character commit SHA;
+- exact package-version pins using `distribution==version`.
+
+Moving branches/tags, short SHAs, ranges and normalized duplicate distribution
+names fail closed.
 
 The preflight never downloads packages, reads production configuration, changes
 files, tags a release or deploys.
