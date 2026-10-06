@@ -28,7 +28,7 @@ class SkillProductionPackagingTests(unittest.TestCase):
         self.assertIn(
             "gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/"
             "gamerhq-skill-recurring-posts/archive/"
-            "d1b123db3425168d167ec589ea3135168ee11e8e.zip",
+            "acbd05d287b1d4947f93a4da2d69fff2aa0fab0d.zip",
             lock,
         )
         self.assertNotIn("/main.zip", lock)
