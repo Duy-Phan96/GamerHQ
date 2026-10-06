@@ -150,3 +150,18 @@ The host cannot dynamically download arbitrary Marketplace code through this
 endpoint. The Skill package must already be installed and registered in the
 host deployment. Marketplace package deployment/orchestration remains a
 separate platform concern.
+
+
+### Management-before-enable
+
+An installed Skill may expose its Management APIs while still disabled.
+
+This intentionally supports:
+
+`Review capabilities → Add → Configure → Enable`
+
+Only the management router uses guild installation availability. Runtime
+execution, Scheduler delivery, events and lifecycle start behavior remain gated
+by Skill enablement.
+
+This separation allows safe configuration before a Skill begins operating.
