@@ -7,6 +7,7 @@
 - Introduced the lightweight GamerHQ Software Development Lifecycle, Definition of Done, AI-assisted development SOP and architecture decision guidance.
 - Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
 - Added portable platform compilation and `gamerhq-skill-sdk` wheel-build CI gates.
+- Added Skill ecosystem governance for review states, Marketplace publication, immutable host deployment and deprecation/quarantine.
 
 ### Changed
 
