@@ -235,6 +235,24 @@ class GamerHQWebPlatformService:
         )
         return _json_value(result)
 
+    async def install_skill(
+        self,
+        *,
+        guild_id: int,
+        skill_id: str,
+        authorized_guild_ids: Iterable[int],
+    ) -> dict[str, Any]:
+        self._require_guild(guild_id, authorized_guild_ids)
+        await self.skill_runtime.install_skill(
+            guild_id=int(guild_id),
+            skill_id=skill_id,
+        )
+        return await self.get_skill(
+            guild_id=int(guild_id),
+            skill_id=skill_id,
+            authorized_guild_ids=authorized_guild_ids,
+        )
+
     async def set_skill_enabled(
         self,
         *,
@@ -269,7 +287,7 @@ class GamerHQWebPlatformService:
                 # V1 represents Skills present in the host deployment. A future
                 # Marketplace catalog adds per-guild install/uninstall state.
                 "available": True,
-                "installed": True,
+                "installed": bool(status.installed),
                 "enabled": bool(status.enabled),
                 "configured": bool(status.management_available),
                 "healthy": status.health == "PASS",
