@@ -233,3 +233,36 @@ The transport may later live:
 
 That deployment decision must not change the contracts consumed by
 `gamerhq-web`.
+
+
+## Discord resource options
+
+The trusted web BFF can load read-only server resources for generic
+`discord_channel` and `discord_role` Management UI fields:
+
+- `GET /api/v1/servers/{guildId}/resources/channels`
+- `GET /api/v1/servers/{guildId}/resources/roles`
+
+These routes use the same server-side guild authorization as every other Host
+Web API operation.
+
+Channel items expose:
+
+- `id`
+- `name`
+- `kind`
+- `position`
+- `categoryId`
+- `categoryName`
+
+Role items expose:
+
+- `id`
+- `name`
+- `position`
+- `managed`
+- `isDefault`
+
+These endpoints are read-only presentation resources. They do not replace
+Skill-side validation. A Skill remains authoritative about whether a selected
+channel or role is valid for its operation.
