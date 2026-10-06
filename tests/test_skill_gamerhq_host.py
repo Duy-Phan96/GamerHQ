@@ -29,6 +29,42 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
     def permissions(self, *capabilities):
         return CapabilityPermissions(capabilities)
 
+    async def test_skill_installation_is_separate_from_enablement(self):
+        state = GamerHQSkillStateStore()
+
+        self.assertFalse(await state.is_installed(guild_id=1, skill_id="recurring-posts"))
+        self.assertTrue(
+            await state.install(
+                guild_id=1,
+                skill_id="recurring-posts",
+                version="1.2.1",
+            )
+        )
+        self.assertFalse(
+            await state.install(
+                guild_id=1,
+                skill_id="recurring-posts",
+                version="1.2.1",
+            )
+        )
+        self.assertTrue(await state.is_installed(guild_id=1, skill_id="recurring-posts"))
+        self.assertFalse(await state.is_enabled(guild_id=1, skill_id="recurring-posts"))
+        self.assertEqual(
+            await state.installed_skill_ids(guild_id=1),
+            ("recurring-posts",),
+        )
+
+    async def test_legacy_enable_marks_skill_installed_for_compatibility(self):
+        state = GamerHQSkillStateStore()
+        await state.set_enabled(
+            guild_id=1,
+            skill_id="recurring-posts",
+            enabled=True,
+            version="1.2.1",
+        )
+        self.assertTrue(await state.is_installed(guild_id=1, skill_id="recurring-posts"))
+        self.assertTrue(await state.is_enabled(guild_id=1, skill_id="recurring-posts"))
+
     async def test_skill_state_is_per_guild_and_persists_enabled_ids(self):
         state = GamerHQSkillStateStore()
         await state.set_enabled(guild_id=1, skill_id="recurring-posts", enabled=True, version="1.0.0")
