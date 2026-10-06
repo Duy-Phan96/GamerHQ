@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import discord
 
@@ -192,6 +193,34 @@ class GamerHQDiscordAdapter:
         except (TypeError, ValueError) as exc:
             raise InvalidHostOperationError("allowed_mentions is invalid.") from exc
 
+    @staticmethod
+    def _link_view(value: tuple[Mapping[str, str], ...] | None) -> discord.ui.View | None:
+        if value is None:
+            return None
+        if len(value) > 5:
+            raise InvalidHostOperationError("A Discord message supports at most 5 link buttons.")
+        view = discord.ui.View(timeout=None)
+        for item in value:
+            if not isinstance(item, Mapping):
+                raise InvalidHostOperationError("Link button payload is invalid.")
+            if set(item) != {"label", "url"}:
+                raise InvalidHostOperationError("Link button payload must contain label and url.")
+            label = str(item["label"]).strip()
+            url = str(item["url"]).strip()
+            parsed = urlsplit(url)
+            if not label or len(label) > 80:
+                raise InvalidHostOperationError("Link button label must be 1-80 characters.")
+            if parsed.scheme.lower() != "https" or not parsed.hostname:
+                raise InvalidHostOperationError("Link button URL must use HTTPS.")
+            view.add_item(
+                discord.ui.Button(
+                    style=discord.ButtonStyle.link,
+                    label=label,
+                    url=url,
+                )
+            )
+        return view
+
     async def send_message(
         self,
         *,
@@ -199,6 +228,7 @@ class GamerHQDiscordAdapter:
         content: str | None = None,
         embed: Mapping[str, Any] | None = None,
         allowed_mentions: Mapping[str, Any] | None = None,
+        link_buttons: tuple[Mapping[str, str], ...] | None = None,
     ) -> int:
         self.permissions.require(SkillCapability.DISCORD_MESSAGES_SEND.value)
         if embed is not None:
@@ -216,6 +246,7 @@ class GamerHQDiscordAdapter:
                 content=content,
                 embed=self._embed(embed),
                 allowed_mentions=self._allowed_mentions(allowed_mentions),
+                view=self._link_view(link_buttons),
             )
         except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
             raise _translate_discord_error(exc) from exc
