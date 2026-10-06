@@ -35,6 +35,63 @@ class ManagementFieldOption:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagementCollectionOperations:
+    list_contract: str
+    create_contract: str
+    get_contract: str | None = None
+    validate_contract: str | None = None
+    update_contract: str | None = None
+    set_active_contract: str | None = None
+    delete_preview_contract: str | None = None
+    delete_contract: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.list_contract or not self.create_contract:
+            raise ValueError("Management collection requires list and create contracts.")
+
+    def contract_ids(self) -> tuple[str, ...]:
+        return tuple(
+            value
+            for value in (
+                self.list_contract,
+                self.create_contract,
+                self.get_contract,
+                self.validate_contract,
+                self.update_contract,
+                self.set_active_contract,
+                self.delete_preview_contract,
+                self.delete_contract,
+            )
+            if value
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ManagementCollectionSchema:
+    operations: ManagementCollectionOperations
+    item_fields: tuple["ManagementField", ...]
+    item_id_path: str = "id"
+    title_path: str = "name"
+    status_path: str | None = None
+    summary_path: str | None = None
+    max_items: int | None = None
+
+    def __post_init__(self) -> None:
+        if not CONFIG_PATH.fullmatch(self.item_id_path):
+            raise ValueError("Management collection item_id_path must be a config path.")
+        if not CONFIG_PATH.fullmatch(self.title_path):
+            raise ValueError("Management collection title_path must be a config path.")
+        for optional in (self.status_path, self.summary_path):
+            if optional is not None and not CONFIG_PATH.fullmatch(optional):
+                raise ValueError("Management collection display paths must be config paths.")
+        if self.max_items is not None and self.max_items <= 0:
+            raise ValueError("Management collection max_items must be positive.")
+        keys = tuple(field.key for field in self.item_fields)
+        if len(keys) != len(set(keys)):
+            raise ValueError("Management collection item field keys must be unique.")
+
+
+@dataclass(frozen=True, slots=True)
 class ManagementField:
     key: str
     label: str
@@ -45,6 +102,7 @@ class ManagementField:
     minimum: int | None = None
     maximum: int | None = None
     options: tuple[ManagementFieldOption, ...] = ()
+    collection: ManagementCollectionSchema | None = None
 
     def __post_init__(self) -> None:
         if not FIELD_KEY.fullmatch(self.key):
@@ -61,6 +119,10 @@ class ManagementField:
             raise ValueError("Select Management fields require options.")
         if self.options and self.type not in {"select", "multi_select"}:
             raise ValueError("Only select Management fields may declare options.")
+        if self.type == "collection" and self.collection is None:
+            raise ValueError("Collection Management fields require a collection schema.")
+        if self.type != "collection" and self.collection is not None:
+            raise ValueError("Only collection Management fields may declare collection operations.")
         values = tuple(option.value for option in self.options)
         if len(values) != len(set(values)):
             raise ValueError("Management field option values must be unique.")
