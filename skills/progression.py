@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.lifecycle import SkillHealth
-from skill_runtime.contracts.management import ManagementApiContract
+from skill_runtime.contracts.management import ManagementApiContract, ManagementConflictError
 from skill_runtime.contracts.management_ui import ManagementDocumentBinding, ManagementField, ManagementSection, ManagementUiSchema
 from skill_runtime.contracts.manifest import SkillManagementApis, SkillManifest
 
@@ -446,7 +446,9 @@ class ProgressionSkill:
         current = await self._config(ctx)
         expected = payload.get("expectedRevision")
         if expected is not None and int(expected) != int(current["revision"]):
-            raise ValueError("Progression configuration changed. Reopen configuration and review again.")
+            raise ManagementConflictError(
+                "Progression configuration changed. Reopen configuration and review again."
+            )
         config = validate_config(payload["config"])
         config["revision"] = int(current["revision"]) + 1
         await ctx.storage.set(CONFIG_KEY, config)
