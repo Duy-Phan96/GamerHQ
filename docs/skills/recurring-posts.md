@@ -145,3 +145,13 @@ state.
 This allows Discord administration and gamerhq-web to build the management
 surface without importing private Skill classes or creating a Recurring
 Posts-specific frontend page.
+
+
+## Current reviewed deployment pin
+
+GamerHQ currently pins Recurring Posts 1.2.0 at:
+
+`d1b123db3425168d167ec589ea3135168ee11e8e`
+
+The production/development image should continue to use immutable reviewed
+commits rather than a moving branch.
