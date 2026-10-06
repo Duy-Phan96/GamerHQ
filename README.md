@@ -136,7 +136,7 @@ The intended bot stack is GamerHQ, **🤖 Gaming Bots** (Instant Gaming, DealGec
 - SQLite, included with Python; no separate database server is required.
 - A Discord bot application and a server you administer, only when running the bot against Discord.
 
-There is no Node/web component. Offline tests need no Discord credentials or live server.
+There is no Node-based web application in this repository. The optional internal HTTP transport for the separate trusted web BFF is documented in [docs/web-api.md](docs/web-api.md). Offline tests need no Discord credentials or live server.
 
 ## Local installation
 
