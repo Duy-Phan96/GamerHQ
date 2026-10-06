@@ -93,13 +93,15 @@ The main repository currently checks:
 - Python 3.12;
 - Python 3.14;
 - dependency integrity with `pip check`;
+- portable package compilation;
+- `gamerhq-skill-sdk` wheel build;
 - full pytest suite;
 - repository/history audit;
 - shell script syntax;
 - credential-free Docker Compose configuration;
 - production Docker image build.
 
-CI does not deploy.
+CI does not deploy. See [CI Quality Gates](CI.md) for the blocking-gate and tool-adoption policy.
 
 ## Formatting, linting and typing
 
