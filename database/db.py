@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS skill_guild_state (
     guild_id INTEGER NOT NULL,
     skill_id TEXT NOT NULL,
+    installed INTEGER NOT NULL DEFAULT 0 CHECK(installed IN (0,1)),
     enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
     version TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -373,6 +374,19 @@ def init_db():
         if version not in (0, SCHEMA_VERSION):
             raise ValueError('Unsupported GamerHQ database schema version; use the matching application release.')
         conn.executescript(SCHEMA)
+
+        # Additive Skill lifecycle migrations. Existing state rows represent
+        # Skills that were already present for that guild before explicit
+        # install/add semantics existed.
+        skill_state_cols = {row["name"] for row in conn.execute("PRAGMA table_info(skill_guild_state)").fetchall()}
+        if "installed" not in skill_state_cols:
+            conn.execute(
+                "ALTER TABLE skill_guild_state ADD COLUMN installed INTEGER NOT NULL DEFAULT 1"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS skill_guild_state_installed "
+            "ON skill_guild_state(guild_id, installed, skill_id)"
+        )
 
         # Additive Skill Scheduler migrations for development/forward-compatible
         # databases created by earlier Runtime slices. Existing jobs/state stay intact.
