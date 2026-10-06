@@ -38,10 +38,11 @@ def main() -> int:
             "(image rebuild required; runtime install disabled)"
         )
         for package in packages:
-            print(
-                f"- {package.distribution} "
-                f"{package.source_repository}@{package.reviewed_commit}"
-            )
+            if package.source_kind == "github-commit":
+                source = f"{package.source_repository}@{package.reviewed_commit}"
+            else:
+                source = f"{package.distribution}=={package.exact_version}"
+            print(f"- {package.distribution} {source}")
     return 0
 
 
