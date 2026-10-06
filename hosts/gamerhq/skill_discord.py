@@ -250,6 +250,8 @@ class GamerHQDiscordAdapter:
             )
         except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
             raise _translate_discord_error(exc) from exc
+        except InvalidHostOperationError:
+            raise
         except (TypeError, ValueError) as exc:
             raise InvalidHostOperationError("Discord message payload is invalid.") from exc
         return int(message.id)
