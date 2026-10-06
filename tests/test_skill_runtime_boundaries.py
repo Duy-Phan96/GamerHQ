@@ -93,7 +93,7 @@ class SkillRuntimeBoundaryTests(unittest.TestCase):
         self.assertIn(
             "gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/"
             "gamerhq-skill-recurring-posts/archive/"
-            "a2fd4f7f767301e08bfe8b1ea5a055500748b4cc.zip",
+            "7656616a3259d70bc09ac10446cb0965d9ec6a6c.zip",
             lock,
         )
 
