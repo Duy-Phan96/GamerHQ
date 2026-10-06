@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from release_info import get_version
 from skill_runtime.contracts.manifest import SEMVER
 
 
