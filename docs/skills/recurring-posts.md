@@ -142,16 +142,21 @@ validate, update, pause/resume, delete-preview and delete operations plus
 host-neutral item fields for name, Discord channel, message, schedule and active
 state.
 
-This allows Discord administration and gamerhq-web to build the management
-surface without importing private Skill classes or creating a Recurring
-Posts-specific frontend page.
+Version 1.2.1 additionally declares the collection item identity payload
+mapping: item IDs are read from `id` and sent back to public management
+operations through `postId`.
+
+This allows Discord administration and gamerhq-web to build create/edit,
+pause/resume and delete flows without importing private Skill classes, creating
+a Recurring Posts-specific frontend page, or hard-coding `postId` in the
+generic renderer.
 
 
 ## Current reviewed deployment pin
 
-GamerHQ currently pins Recurring Posts 1.2.0 at:
+GamerHQ currently pins Recurring Posts 1.2.1 at:
 
-`d1b123db3425168d167ec589ea3135168ee11e8e`
+`acbd05d287b1d4947f93a4da2d69fff2aa0fab0d`
 
 The production/development image should continue to use immutable reviewed
 commits rather than a moving branch.
