@@ -585,3 +585,36 @@ User signs in
 
 When that flow works for more than one unrelated Skill without custom frontend
 code, GamerHQ has validated the core Skill Platform architecture.
+
+## Marketplace to deployment boundary
+
+Marketplace discovery must not be confused with executable package deployment.
+
+The reviewed V1 flow is:
+
+```text
+Marketplace catalog
+        ↓
+review / approval
+        ↓
+requirements-skills.lock
+        ↓
+machine-readable reviewed deployment plan
+        ↓
+CI + production image rebuild
+        ↓
+Host discovers installed package
+        ↓
+Add to Server
+        ↓
+Configure
+        ↓
+Enable
+```
+
+The deployment plan is derived from the existing lock file and is not a second
+package registry. It never authorizes runtime `pip install`, Git clone or
+arbitrary Marketplace URLs.
+
+Future automation may consume this plan to propose or execute reviewed release
+workflows, but executable package changes remain a deployment/release boundary.
