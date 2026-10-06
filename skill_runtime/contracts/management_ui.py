@@ -119,8 +119,6 @@ class ManagementField:
             raise ValueError("Select Management fields require options.")
         if self.options and self.type not in {"select", "multi_select"}:
             raise ValueError("Only select Management fields may declare options.")
-        if self.type == "collection" and self.collection is None:
-            raise ValueError("Collection Management fields require a collection schema.")
         if self.type != "collection" and self.collection is not None:
             raise ValueError("Only collection Management fields may declare collection operations.")
         values = tuple(option.value for option in self.options)
