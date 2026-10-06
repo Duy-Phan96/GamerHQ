@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
+from skill_runtime.contracts.management import ManagementConflictError
+
 from .registry import SkillRegistry
 
 ManagementHandler = Callable[[int, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
@@ -13,6 +15,10 @@ AvailabilityCheck = Callable[[int, str], Awaitable[bool]]
 
 class SkillManagementError(RuntimeError):
     """Safe host-facing error raised at the management contract boundary."""
+
+
+class SkillManagementConflictError(SkillManagementError):
+    """Safe host-facing conflict raised for stale management state."""
 
 
 class SkillManagementRouter:
@@ -100,6 +106,12 @@ class SkillManagementRouter:
         except TimeoutError as exc:
             raise SkillManagementError(
                 "Target Skill management API timed out."
+            ) from exc
+        except SkillManagementConflictError:
+            raise
+        except ManagementConflictError as exc:
+            raise SkillManagementConflictError(
+                "Target Skill configuration changed. Reload and review your changes again."
             ) from exc
         except SkillManagementError:
             raise
