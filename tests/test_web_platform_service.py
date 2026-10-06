@@ -68,6 +68,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             name="Progression & Achievements",
             version="0.1.0",
             description="Progression",
+            installed=False,
             source_kind="built-in",
             source_distribution=None,
             enabled=True,
@@ -132,6 +133,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             call_management=AsyncMock(return_value={"config": {"revision": 2}}),
             enable_skill=AsyncMock(return_value=True),
             disable_skill=AsyncMock(return_value=True),
+            install_skill=AsyncMock(return_value=True),
         )
         self.service = GamerHQWebPlatformService(bot=self.bot, skill_runtime=self.runtime)
 
@@ -191,6 +193,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             authorized_guild_ids=(123,),
         )
         self.assertEqual(values[0]["id"], "progression")
+        self.assertFalse(values[0]["state"]["installed"])
         self.assertTrue(values[0]["state"]["enabled"])
         self.assertTrue(values[0]["managementSchemaAvailable"])
         self.assertEqual(values[0]["capabilities"], ["storage.skill"])
@@ -232,6 +235,27 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             contract_id="progression.get-config.v1",
             payload={},
         )
+
+    async def test_install_skill_reuses_authoritative_runtime_state(self):
+        result = await self.service.install_skill(
+            guild_id=123,
+            skill_id="progression",
+            authorized_guild_ids=(123,),
+        )
+        self.runtime.install_skill.assert_awaited_once_with(
+            guild_id=123,
+            skill_id="progression",
+        )
+        self.assertEqual(result["id"], "progression")
+
+    async def test_install_skill_rejects_unauthorized_guild(self):
+        with self.assertRaises(WebPlatformAuthorizationError):
+            await self.service.install_skill(
+                guild_id=123,
+                skill_id="progression",
+                authorized_guild_ids=(999,),
+            )
+        self.runtime.install_skill.assert_not_awaited()
 
     async def test_enable_disable_reuses_authoritative_runtime_state(self):
         await self.service.set_skill_enabled(
