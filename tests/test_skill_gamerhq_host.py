@@ -109,6 +109,26 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await state.is_installed(guild_id=1, skill_id="recurring-posts"))
         self.assertTrue(await state.is_enabled(guild_id=1, skill_id="recurring-posts"))
 
+    async def test_installed_disabled_skill_is_management_available(self):
+        state = GamerHQSkillStateStore()
+        await state.install(
+            guild_id=1,
+            skill_id="recurring-posts",
+            version="1.2.1",
+        )
+        self.assertTrue(
+            await state.is_installed(
+                guild_id=1,
+                skill_id="recurring-posts",
+            )
+        )
+        self.assertFalse(
+            await state.is_enabled(
+                guild_id=1,
+                skill_id="recurring-posts",
+            )
+        )
+
     async def test_skill_state_is_per_guild_and_persists_enabled_ids(self):
         state = GamerHQSkillStateStore()
         await state.set_enabled(guild_id=1, skill_id="recurring-posts", enabled=True, version="1.0.0")
