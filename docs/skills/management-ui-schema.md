@@ -296,3 +296,16 @@ For collection-driven screens, the schema's top-level `read_contract` and
 More specific edit, validation, activation and deletion behavior belongs in the
 collection operation metadata. This keeps one generic page entry contract while
 still supporting safe resource-level CRUD.
+
+
+### Collection item identity in operation payloads
+
+Collections distinguish between where an item's ID is read from a response and
+which payload key an operation expects.
+
+- `item_id_path` locates the ID in the returned item, for example `id`.
+- `item_id_payload_key` names the public Management API payload field used by
+  get/update/pause/delete operations, for example `postId`.
+
+Generic hosts must use this metadata instead of hard-coding Skill-specific ID
+parameter names.

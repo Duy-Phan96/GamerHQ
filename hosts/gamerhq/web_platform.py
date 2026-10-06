@@ -151,6 +151,7 @@ class GamerHQWebPlatformService:
                                         for item_field in field["collection"]["item_fields"]
                                     ],
                                     "itemIdPath": field["collection"]["item_id_path"],
+                                    "itemIdPayloadKey": field["collection"]["item_id_payload_key"],
                                     "titlePath": field["collection"]["title_path"],
                                     "statusPath": field["collection"]["status_path"],
                                     "summaryPath": field["collection"]["summary_path"],

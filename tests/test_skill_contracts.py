@@ -131,6 +131,7 @@ class SkillContractTests(unittest.TestCase):
                 ),
             ),
             item_id_path="id",
+            item_id_payload_key="postId",
             title_path="name",
             status_path="status",
             max_items=20,
@@ -143,7 +144,19 @@ class SkillContractTests(unittest.TestCase):
             collection=collection,
         )
         self.assertEqual(field.collection.operations.update_contract, "posts.update.v1")
+        self.assertEqual(field.collection.item_id_payload_key, "postId")
         self.assertEqual(field.collection.max_items, 20)
+
+    def test_collection_item_id_payload_key_must_be_stable(self):
+        with self.assertRaisesRegex(ValueError, "item_id_payload_key"):
+            ManagementCollectionSchema(
+                operations=ManagementCollectionOperations(
+                    list_contract="posts.list.v1",
+                    create_contract="posts.create.v1",
+                ),
+                item_fields=(),
+                item_id_payload_key="Bad key",
+            )
 
     def test_collection_contracts_must_be_declared_by_manifest(self):
         list_api = ManagementApiContract("posts.list.v1")
