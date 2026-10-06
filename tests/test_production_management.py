@@ -256,6 +256,65 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Fixture Skill', kwargs['content'])
         self.assertIn('Disabled', kwargs['content'])
 
+
+    def test_progression_skill_has_guided_admin_configuration_surface(self):
+        from cogs.server_management import (
+            ProgressionView,
+            ProgressionSourcesView,
+            ProgressionAnnouncementsView,
+            _progression_overview,
+            _progression_sources_text,
+        )
+        from skills.progression import DEFAULT_CONFIG
+
+        owner = self.actor()
+        config = dict(DEFAULT_CONFIG)
+
+        view = ProgressionView(self.guild, owner.id, config)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(
+            labels,
+            ['XP Sources', 'Level Curve', 'Achievements', 'Rewards', 'Announcements', 'Back to Skill'],
+        )
+        self.assertIn('future web dashboard', _progression_overview(config))
+
+        source_view = ProgressionSourcesView(self.guild, owner.id, config)
+        self.assertTrue(any(isinstance(child, discord.ui.Select) for child in source_view.children))
+        self.assertIn('Voice', _progression_sources_text(config))
+        self.assertIn('180/day', _progression_sources_text(config))
+
+        announcement_view = ProgressionAnnouncementsView(self.guild, owner.id, config)
+        announcement_labels = [
+            child.label for child in announcement_view.children
+            if isinstance(child, discord.ui.Button)
+        ]
+        self.assertEqual(
+            announcement_labels,
+            ['Enable', 'Edit Template / Triggers', 'Back'],
+        )
+
+    def test_progression_skill_details_offer_configure_when_enabled(self):
+        from cogs.server_management import SkillDetailsView
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        status = GuildSkillStatus(
+            skill_id='progression',
+            name='Progression & Achievements',
+            version='0.1.0',
+            description='Progression',
+            enabled=True,
+            running=True,
+            health='PASS',
+            health_detail='ok',
+            required_capabilities=(),
+            missing_capabilities=(),
+            management_available=True,
+        )
+        view = SkillDetailsView(self.guild, owner.id, status)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Configure', labels)
+
     def test_skill_details_show_external_package_provenance(self):
         from cogs.server_management import _skill_detail_text
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
