@@ -1,0 +1,69 @@
+name: Feature / Improvement
+description: Propose a GamerHQ, platform, Skill, web, infrastructure or architecture improvement.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep this lightweight. Describe the problem and desired outcome before implementation details.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem or limitation are we solving?
+      placeholder: Describe the current problem.
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What outcome should exist when this is complete?
+    validations:
+      required: true
+  - type: textarea
+    id: user
+    attributes:
+      label: User / Actor
+      description: Who benefits from or performs this flow?
+  - type: textarea
+    id: story
+    attributes:
+      label: User Story / Example
+      description: Optional concrete example of the desired experience.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: List observable conditions for completion.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: checkboxes
+    id: architecture
+    attributes:
+      label: Architecture Impact
+      description: Select every area that may be affected. Final ownership is confirmed during architecture review.
+      options:
+        - label: GamerHQ host / Discord application
+        - label: Skill Runtime / SDK
+        - label: External Skill repository
+        - label: gamerhq-web
+        - label: Marketplace / catalog / installation
+        - label: Database / migration
+        - label: Deployment / infrastructure
+        - label: Security / authorization / capabilities
+  - type: textarea
+    id: contracts
+    attributes:
+      label: Public Contract / Migration / Compatibility
+      description: Note known API, SDK, schema, DB, compatibility or migration impact. Write "None known" when appropriate.
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks / Non-goals
+      description: Important risks, constraints or things deliberately out of scope.
