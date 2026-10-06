@@ -6,7 +6,7 @@ Read [AGENTS.md](../AGENTS.md), then only the topic links needed for the task. T
 
 Use GitHub Issues as the lightweight requirement record for normal/architectural work and the Pull Request template for implementation review.
 
-Preferred branch prefixes:
+Preferred branch prefixes for new work (do not rename existing `feature/...` branches only for convention):
 - `feat/`
 - `fix/`
 - `refactor/`
