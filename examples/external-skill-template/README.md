@@ -36,6 +36,7 @@ Read the canonical authoring documents in the GamerHQ SDK repository:
 - `docs/skills/developer-guide.md`
 - `docs/skills/authoring-contract.md`
 - `docs/skills/review-checklist.md`
+- `docs/skills/governance.md`
 
 Your Skill should be reviewable against those rules without access to GamerHQ
 production, secrets or a live Discord token.
