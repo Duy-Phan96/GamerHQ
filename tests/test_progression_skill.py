@@ -34,6 +34,22 @@ class FakeAudit:
         self.calls.append(kwargs)
 
 
+class FakeDiscord:
+    def __init__(self):
+        self.sent = []
+
+    async def get_member(self, *, member_id):
+        return SimpleNamespace(id=member_id, display_name="Player One")
+
+    async def send_message(self, *, channel_id, content=None, embed=None, allowed_mentions=None):
+        self.sent.append({
+            "channel_id": channel_id,
+            "content": content,
+            "allowed_mentions": allowed_mentions,
+        })
+        return 9001
+
+
 class ProgressionMathTests(unittest.TestCase):
     def test_default_curve_matches_design(self):
         self.assertEqual(xp_to_next(1), 122)
@@ -105,9 +121,11 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
         self.skill = ProgressionSkill()
         self.storage = FakeStorage()
         self.audit = FakeAudit()
+        self.discord = FakeDiscord()
         self.ctx = SimpleNamespace(
             storage=self.storage,
             audit=self.audit,
+            discord=self.discord,
         )
 
     async def test_enable_seeds_default_configuration_once(self):
@@ -244,6 +262,100 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["awardedXp"], 0)
         self.assertEqual(result["reason"], "disabled")
+
+    async def test_badge_title_and_xp_bonus_rewards_execute_once(self):
+        await self.skill.enable(self.ctx)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["rewards"] = [{
+            "id": "starter-pack",
+            "name": "Starter Pack",
+            "trigger": {"type": "xp", "xp": 5},
+            "grants": [
+                {"type": "badge", "badgeId": "starter"},
+                {"type": "title", "title": "Rising Player"},
+                {"type": "xp_bonus", "xp": 20},
+            ],
+            "enabled": True,
+        }]
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        first = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 1, "occurredAt": 1_790_000_000},
+        )
+        second = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 1, "occurredAt": 1_790_000_100},
+        )
+        status = await self.skill.member_status(self.ctx, {"memberId": 7})
+
+        self.assertEqual(len(first["rewardEvents"]), 1)
+        self.assertEqual(second["rewardEvents"], ())
+        self.assertIn("starter", status["badges"])
+        self.assertIn("Rising Player", status["titles"])
+        self.assertIn("starter-pack", status["claimedRewards"])
+        self.assertEqual(status["sourceXp"]["reward"], 20)
+
+    async def test_unsupported_role_only_reward_is_not_claimed(self):
+        await self.skill.enable(self.ctx)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["rewards"] = [{
+            "id": "role-only",
+            "name": "Role Only",
+            "trigger": {"type": "xp", "xp": 5},
+            "grants": [{"type": "role", "roleId": 123}],
+            "enabled": True,
+        }]
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        response = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 1, "occurredAt": 1_790_000_000},
+        )
+        status = await self.skill.member_status(self.ctx, {"memberId": 7})
+
+        self.assertEqual(response["rewardEvents"], ())
+        self.assertNotIn("role-only", status["claimedRewards"])
+
+    async def test_achievement_announcement_uses_configured_channel_and_template(self):
+        await self.skill.enable(self.ctx)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["announcements"] = {
+            "enabled": True,
+            "channelId": 555,
+            "levelUp": False,
+            "achievement": True,
+            "reward": False,
+            "template": "{achievement_emoji} {member} unlocked {achievement_name} at level {level}! +{xp} XP",
+        }
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        response = await self.skill.record_activity(
+            self.ctx,
+            {
+                "memberId": 7,
+                "source": "lfgParticipation",
+                "units": 1,
+                "occurredAt": 1_790_000_000,
+                "dedupeKey": "lfg:1:lfgParticipation:7",
+            },
+        )
+
+        self.assertTrue(response["announcementSent"])
+        self.assertEqual(self.discord.sent[0]["channel_id"], 555)
+        self.assertIn("First Mate", self.discord.sent[0]["content"])
+        self.assertIn("Player One", self.discord.sent[0]["content"])
+
+    async def test_member_status_never_posts_announcement(self):
+        await self.skill.enable(self.ctx)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["announcements"]["enabled"] = True
+        config["announcements"]["channelId"] = 555
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        await self.skill.member_status(self.ctx, {"memberId": 7})
+
+        self.assertEqual(self.discord.sent, [])
 
     async def test_preview_level_is_deterministic(self):
         await self.skill.enable(self.ctx)

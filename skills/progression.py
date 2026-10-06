@@ -130,6 +130,14 @@ DEFAULT_CONFIG = {
         },
     ],
     "rewards": [],
+    "announcements": {
+        "enabled": False,
+        "channelId": None,
+        "levelUp": True,
+        "achievement": True,
+        "reward": True,
+        "template": "🏆 {member} unlocked **{achievement_name}**!\n{achievement_emoji} +{xp} XP · Level {level}",
+    },
 }
 
 
@@ -261,6 +269,21 @@ def validate_config(value: Mapping[str, Any]) -> dict[str, Any]:
         item["name"] = str(item.get("name", reward_id)).strip()[:80]
         rewards.append(item)
     config["rewards"] = rewards
+
+    announcements = dict(config.get("announcements") or {})
+    announcements["enabled"] = bool(announcements.get("enabled", False))
+    channel_id = announcements.get("channelId")
+    if channel_id in (None, "", 0):
+        announcements["channelId"] = None
+    else:
+        announcements["channelId"] = _positive_int(channel_id, "announcements.channelId")
+    for key in ("levelUp", "achievement", "reward"):
+        announcements[key] = bool(announcements.get(key, True))
+    template = str(announcements.get("template", "")).strip()
+    if len(template) > 1800:
+        raise ValueError("announcement template is too long")
+    announcements["template"] = template
+    config["announcements"] = announcements
     return config
 
 
@@ -273,7 +296,13 @@ class ProgressionSkill:
         runtime_api_version="1",
         description="Configurable XP, levels, achievements and rewards for GamerHQ communities.",
         author="GamerHQ",
-        permissions=(SkillCapability.STORAGE_SKILL.value, SkillCapability.AUDIT_WRITE.value),
+        permissions=(
+            SkillCapability.STORAGE_SKILL.value,
+            SkillCapability.AUDIT_WRITE.value,
+            SkillCapability.DISCORD_MESSAGES_SEND.value,
+            SkillCapability.DISCORD_CHANNELS_READ.value,
+            SkillCapability.DISCORD_MEMBERS_READ.value,
+        ),
         management_apis=SkillManagementApis(
             exposes=(
                 ManagementApiContract(STATUS_API),
@@ -352,6 +381,9 @@ class ProgressionSkill:
             "metrics": dict(state.get("metrics") or {}),
             "achievements": list(state.get("achievements") or []),
             "seenActivity": list(state.get("seenActivity") or []),
+            "badges": list(state.get("badges") or []),
+            "titles": list(state.get("titles") or []),
+            "claimedRewards": list(state.get("claimedRewards") or []),
         }
 
     async def member_status(self, ctx, payload) -> Mapping[str, Any]:
@@ -368,6 +400,9 @@ class ProgressionSkill:
             "sourceXp": state["sourceXp"],
             "metrics": state["metrics"],
             "achievements": tuple(state["achievements"]),
+            "badges": tuple(state["badges"]),
+            "titles": tuple(state["titles"]),
+            "claimedRewards": tuple(state["claimedRewards"]),
         }
 
     async def record_activity(self, ctx, payload) -> Mapping[str, Any]:
@@ -385,6 +420,7 @@ class ProgressionSkill:
             return {"memberId": member_id, "source": source_id, "awardedXp": 0, "reason": "disabled"}
 
         state = await self._member_state(ctx, member_id)
+        previous_level = level_for_xp(state["totalXp"], config["levelCurve"])[0]
         if dedupe_key and dedupe_key in state["seenActivity"]:
             level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
             return {
@@ -452,6 +488,48 @@ class ProgressionSkill:
             state["seenActivity"].append(dedupe_key)
             state["seenActivity"] = state["seenActivity"][-500:]
 
+        level_before_rewards = level_for_xp(state["totalXp"], config["levelCurve"])[0]
+        reward_events = []
+        claimed = set(state["claimedRewards"])
+        for reward in config["rewards"]:
+            if not reward.get("enabled") or reward["id"] in claimed:
+                continue
+            trigger = reward["trigger"]
+            matched = (
+                (trigger["type"] == "level" and level_before_rewards >= int(trigger["level"]))
+                or (trigger["type"] == "xp" and state["totalXp"] >= int(trigger["xp"]))
+                or (trigger["type"] == "achievement" and trigger["achievementId"] in state["achievements"])
+            )
+            if not matched:
+                continue
+            grants_applied = []
+            for grant in reward["grants"]:
+                kind = grant["type"]
+                if kind == "badge":
+                    badge_id = str(grant.get("badgeId", "")).strip()
+                    if badge_id and badge_id not in state["badges"]:
+                        state["badges"].append(badge_id)
+                        grants_applied.append({"type": "badge", "value": badge_id})
+                elif kind == "title":
+                    title = str(grant.get("title", "")).strip()[:80]
+                    if title and title not in state["titles"]:
+                        state["titles"].append(title)
+                        grants_applied.append({"type": "title", "value": title})
+                elif kind == "xp_bonus":
+                    bonus = _positive_int(grant.get("xp"), f"reward {reward['id']} xp bonus")
+                    state["totalXp"] += bonus
+                    state["sourceXp"]["reward"] = int(state["sourceXp"].get("reward", 0)) + bonus
+                    grants_applied.append({"type": "xp_bonus", "xp": bonus})
+                elif kind in {"role", "channel_access"}:
+                    # Modelled now, executed only after the host exposes safe owned-grant capabilities.
+                    continue
+                elif kind == "announcement":
+                    grants_applied.append({"type": "announcement"})
+            if grants_applied:
+                claimed.add(reward["id"])
+                state["claimedRewards"].append(reward["id"])
+                reward_events.append({"id": reward["id"], "name": reward["name"], "grants": tuple(grants_applied)})
+
         await ctx.storage.set(MEMBER_KEY_PREFIX + str(member_id), state)
         if awarded:
             await ctx.audit.write(
@@ -467,6 +545,44 @@ class ProgressionSkill:
             )
 
         level, current, needed = level_for_xp(state["totalXp"], config["levelCurve"])
+        announcements = config["announcements"]
+        announcement_sent = False
+        if announcements.get("enabled") and announcements.get("channelId"):
+            primary_achievement = unlocked[0] if unlocked else {}
+            primary_reward = reward_events[0] if reward_events else {}
+            should_send = (
+                (unlocked and announcements.get("achievement"))
+                or (reward_events and announcements.get("reward"))
+                or (level > previous_level and announcements.get("levelUp"))
+            )
+            if should_send:
+                member = await ctx.discord.get_member(member_id=member_id)
+                values = {
+                    "member": member.display_name,
+                    "member_id": str(member_id),
+                    "level": str(level),
+                    "xp": str(sum(int(item.get("xp", 0)) for item in unlocked) + awarded),
+                    "total_xp": str(state["totalXp"]),
+                    "achievement_name": str(primary_achievement.get("name", "")),
+                    "achievement_emoji": str(primary_achievement.get("emoji", "")),
+                    "reward_name": str(primary_reward.get("name", "")),
+                }
+                message = announcements.get("template", "")
+                for key, value in values.items():
+                    message = message.replace("{" + key + "}", value)
+                if message.strip():
+                    await ctx.discord.send_message(
+                        channel_id=int(announcements["channelId"]),
+                        content=message[:2000],
+                        allowed_mentions={
+                            "everyone": False,
+                            "users": False,
+                            "roles": False,
+                            "replied_user": False,
+                        },
+                    )
+                    announcement_sent = True
+
         return {
             "memberId": member_id,
             "source": source_id,
@@ -478,6 +594,8 @@ class ProgressionSkill:
             "dailySourceXp": int(daily.get(source_id, 0)),
             "dailyCapReached": bool(source.get("dailyCap") and daily.get(source_id, 0) >= int(source["dailyCap"])),
             "unlockedAchievements": tuple(unlocked),
+            "rewardEvents": tuple(reward_events),
+            "announcementSent": announcement_sent,
         }
 
     async def preview_level(self, ctx, payload) -> Mapping[str, Any]:
