@@ -289,3 +289,10 @@ metadata.
 Opaque collections remain valid for backward compatibility. Progression's
 Achievements/Rewards can continue to use an opaque collection until their
 generic item editor contract is designed from real requirements.
+
+
+For collection-driven screens, the schema's top-level `read_contract` and
+`write_contract` may point to the collection's primary list/create operations.
+More specific edit, validation, activation and deletion behavior belongs in the
+collection operation metadata. This keeps one generic page entry contract while
+still supporting safe resource-level CRUD.
