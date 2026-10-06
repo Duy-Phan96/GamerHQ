@@ -53,8 +53,10 @@ class GamerHQSkillStateStore:
                 return False
             conn.execute(
                 """
-                INSERT INTO skill_guild_state(guild_id,skill_id,installed,enabled,version,updated_at)
-                VALUES(?,?,1,0,?,?)
+                INSERT INTO skill_guild_state(
+                    guild_id,skill_id,installed,configured,enabled,version,updated_at
+                )
+                VALUES(?,?,1,0,0,?,?)
                 ON CONFLICT(guild_id,skill_id) DO UPDATE SET
                     installed=1,
                     version=excluded.version,
@@ -75,6 +77,48 @@ class GamerHQSkillStateStore:
             ).fetchall()
         return tuple(row["skill_id"] for row in rows)
 
+    async def is_configured(self, *, guild_id: int, skill_id: str) -> bool:
+        _valid_identity(guild_id, skill_id)
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT configured FROM skill_guild_state WHERE guild_id=? AND skill_id=?",
+                (guild_id, skill_id),
+            ).fetchone()
+        return bool(row and row["configured"])
+
+    async def set_configured(
+        self,
+        *,
+        guild_id: int,
+        skill_id: str,
+        configured: bool,
+        version: str,
+    ) -> None:
+        _valid_identity(guild_id, skill_id)
+        if not version:
+            raise ValueError("Skill version is required.")
+        with db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO skill_guild_state(
+                    guild_id,skill_id,installed,configured,enabled,version,updated_at
+                )
+                VALUES(?,?,1,?,0,?,?)
+                ON CONFLICT(guild_id,skill_id) DO UPDATE SET
+                    installed=1,
+                    configured=excluded.configured,
+                    version=excluded.version,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    guild_id,
+                    skill_id,
+                    int(bool(configured)),
+                    version,
+                    int(time.time()),
+                ),
+            )
+
     async def is_enabled(self, *, guild_id: int, skill_id: str) -> bool:
         _valid_identity(guild_id, skill_id)
         with db.connect() as conn:
@@ -91,8 +135,10 @@ class GamerHQSkillStateStore:
         with db.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO skill_guild_state(guild_id,skill_id,installed,enabled,version,updated_at)
-                VALUES(?,?,1,?,?,?)
+                INSERT INTO skill_guild_state(
+                    guild_id,skill_id,installed,configured,enabled,version,updated_at
+                )
+                VALUES(?,?,1,0,?,?,?)
                 ON CONFLICT(guild_id,skill_id) DO UPDATE SET
                     installed=1,
                     enabled=excluded.enabled,
