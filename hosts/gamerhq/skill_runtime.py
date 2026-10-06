@@ -44,6 +44,7 @@ class GuildSkillStatus:
     name: str
     version: str
     description: str
+    installed: bool
     enabled: bool
     running: bool
     health: str
@@ -118,6 +119,7 @@ class GamerHQSkillRuntime:
             name=skill_id.replace("-", " ").title(),
             version="unknown",
             description="Configured external Skill package is unavailable.",
+            installed=False,
             enabled=False,
             running=False,
             health="UNAVAILABLE",
@@ -226,6 +228,14 @@ class GamerHQSkillRuntime:
             payload=payload,
         )
 
+    async def install_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        skill = self.registry.get(skill_id)
+        return await self.state.install(
+            guild_id=guild_id,
+            skill_id=skill_id,
+            version=skill.manifest.version,
+        )
+
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
         # Context creation validates every required capability before lifecycle
         # code or persistent enabled state is touched.
@@ -301,6 +311,7 @@ class GamerHQSkillRuntime:
         skill = self.registry.get(skill_id)
         permissions = self.permissions(skill_id)
         missing = permissions.missing_declared()
+        installed = await self.state.is_installed(guild_id=guild_id, skill_id=skill_id)
         enabled = await self.state.is_enabled(guild_id=guild_id, skill_id=skill_id)
         running = self.manager.is_running(guild_id=guild_id, skill_id=skill_id)
 
@@ -329,6 +340,7 @@ class GamerHQSkillRuntime:
             name=skill.manifest.name,
             version=skill.manifest.version,
             description=skill.manifest.description,
+            installed=installed,
             enabled=enabled,
             running=running,
             health=health,
