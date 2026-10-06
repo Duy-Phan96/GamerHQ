@@ -232,15 +232,15 @@ Recommended pattern:
 
 Migration logic must be deterministic and backward compatible where practical.
 
-## 9. Secrets and external HTTP
+### Secret storage and external HTTP
 
-Use `secrets.skill` for credentials such as API tokens. Secret values are separate from ordinary Skill storage and must never be copied into logs, audit metadata, Management API responses or normal configuration payloads.
+Use `secrets.skill` for credentials such as provider API tokens. Secret values are separate from normal Skill storage and must never be copied into logs, audit metadata, Management API responses or ordinary configuration payloads.
 
-Use `http.external` for host-mediated external API calls. The GamerHQ host currently allows HTTPS only, blocks local/private targets, disables redirects, limits request/response size and caps request timeouts.
+Use `http.external` for host-mediated provider API calls. The GamerHQ host restricts this port to public HTTPS targets, disables redirects and bounds request/response sizes and timeouts.
 
-Skills should inject secrets into request headers only at call time and should expose masked connection status rather than the raw value.
+Inject secrets into request headers only when making the external call, and expose only masked connection status to users.
 
-## 10. Scheduler
+## 9. Scheduler
 
 Use `scheduler.jobs` for persisted future work.
 
@@ -269,7 +269,7 @@ The scheduler provides persistence, restart recovery, leases and stale-worker pr
 
 It does not guarantee exactly-once external side effects. A Skill must design its externally visible actions with retry/idempotency behavior appropriate to the operation.
 
-## 11. Discord
+## 10. Discord
 
 Portable Skills never receive Discord.py objects.
 
@@ -284,7 +284,7 @@ Default assumptions:
 
 Do not guess resources by name when an ID is required for ownership or identity.
 
-## 12. Events
+## 11. Events
 
 Use Events for:
 
@@ -308,7 +308,7 @@ An Event payload should be:
 
 Do not include message bodies, secrets or large private records unless consumers genuinely require them and the privacy contract explicitly allows it.
 
-## 13. Public Skill APIs
+## 12. Public Skill APIs
 
 Use a Public Skill API only for direct request/response behavior.
 
@@ -322,7 +322,7 @@ Cross-Skill communication is limited to:
 2. documented Events;
 3. documented Public Skill APIs.
 
-## 14. Host management APIs
+## 13. Host management APIs
 
 Use a versioned Management API when the trusted host administration UI needs
 to configure or inspect a Skill without importing its private implementation.
@@ -352,7 +352,7 @@ configuration screen.
 Management request/response payloads must be small, versioned, documented and
 host-neutral.
 
-## 15. Configuration UX
+## 14. Configuration UX
 
 A Skill should expose configuration through the host's normal management surface, not invent an unrelated admin system.
 
@@ -375,7 +375,7 @@ inspect current state
 
 Owner-only/destructive actions must recheck authorization at confirmation time.
 
-## 16. Security requirements
+## 15. Security requirements
 
 A Skill must never:
 
@@ -393,7 +393,7 @@ A Skill must never:
 
 External HTTP access, roles, voice management and other privileged behavior require corresponding host capabilities before use.
 
-## 17. Error handling
+## 16. Error handling
 
 Use safe SDK/host-neutral exceptions where available.
 
@@ -410,7 +410,7 @@ One failed scheduled job or event consumer must not intentionally crash unrelate
 
 Never put secrets, message content or arbitrary exception strings into generic error codes.
 
-## 18. Versioning
+## 17. Versioning
 
 Use semantic versioning for the Skill.
 
@@ -430,7 +430,7 @@ Do not increase the Runtime API version just because the Skill version changed.
 
 Events, Public APIs and scheduler handler IDs are separately versioned contracts.
 
-## 19. Backward compatibility
+## 18. Backward compatibility
 
 Released Skills should assume existing users may have:
 
@@ -442,7 +442,7 @@ Released Skills should assume existing users may have:
 
 Never require deleting production data simply to upgrade a normal Skill version.
 
-## 20. Testing requirements
+## 19. Testing requirements
 
 A Skill repository should run offline without a Discord token.
 
@@ -466,7 +466,7 @@ Live Discord access is acceptance testing, not the normal unit-test environment.
 
 External repositories should also use the [External Skill CI](external-ci.md) pattern to run the same offline checks on Python 3.12 and 3.14. Declare and validate the [Package Compatibility](package-compatibility.md) metadata so package identity, Runtime API and SDK range stay explicit.
 
-## 21. Documentation requirements
+## 20. Documentation requirements
 
 Every Skill repository should document:
 
@@ -489,7 +489,7 @@ Every Skill repository should document:
 - installation instructions;
 - test command.
 
-## 22. Definition of Done
+## 21. Definition of Done
 
 A Skill is ready for review only when:
 
@@ -509,3 +509,24 @@ A Skill is ready for review only when:
 - no secrets or production data are required for tests.
 
 Run the [SDK Conformance Check](conformance.md), including the static source audit, as a fast offline preflight, then use the [Skill Review Checklist](review-checklist.md) for full review.
+
+
+## 22. Marketplace and review governance
+
+A Skill being technically valid does not automatically make every future release
+Marketplace-approved.
+
+Review/publication applies to a specific immutable release artifact.
+
+Before Marketplace publication or production host deployment, follow:
+
+- [Skill Ecosystem Governance](governance.md);
+- [Skill Review Checklist](review-checklist.md);
+- [Package Compatibility](package-compatibility.md);
+- [External Skill CI](external-ci.md).
+
+Marketplace publication, host package deployment, guild installation and Runtime
+enablement are separate lifecycle states.
+
+An AI-generated Skill follows exactly the same review path as human-authored
+code.
