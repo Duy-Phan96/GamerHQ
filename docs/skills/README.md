@@ -143,3 +143,7 @@ Start here when building a new Skill:
 The Developer Guide is the primary human-facing reference. The Authoring
 Contract is intentionally stricter and may also be used as input for code
 generation or AI-assisted Skill creation.
+
+## Platform direction
+
+- [Platform Neutrality & GamerHQ Reference Customer Model](platform-neutrality.md)
