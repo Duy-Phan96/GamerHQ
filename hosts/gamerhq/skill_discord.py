@@ -28,6 +28,7 @@ DISCORD_HOST_CAPABILITIES = frozenset({
     SkillCapability.DISCORD_MEMBERS_READ.value,
     SkillCapability.DISCORD_MESSAGES_SEND.value,
     SkillCapability.DISCORD_EMBEDS_SEND.value,
+    SkillCapability.DISCORD_ROLES_MANAGE.value,
 })
 
 
@@ -97,6 +98,56 @@ class GamerHQDiscordAdapter:
             joined_at=joined_at.isoformat() if joined_at is not None else None,
             is_bot=bool(getattr(member, "bot", False)),
         )
+
+    def _reward_role(self, role_id: int):
+        self.permissions.require(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        if int(role_id) <= 0:
+            raise InvalidHostOperationError("role_id must be positive.")
+        role = self.guild.get_role(int(role_id))
+        me = getattr(self.guild, "me", None)
+        if role is None:
+            raise ResourceNotFoundError("Discord role was not found in this guild.")
+        if role.is_default() or role.managed:
+            raise InvalidHostOperationError("Managed/default roles cannot be Skill rewards.")
+        # Reward roles are cosmetic/access markers only. Never allow a Skill to
+        # grant Discord permission-bearing roles.
+        if int(getattr(role.permissions, "value", 0)) != 0:
+            raise InvalidHostOperationError("Permission-bearing roles cannot be Skill rewards.")
+        if me is None or not me.guild_permissions.manage_roles or not (role < me.top_role):
+            raise HostPermissionDeniedError("GamerHQ cannot safely manage this reward role.")
+        return role
+
+    async def grant_role(self, *, member_id: int, role_id: int) -> bool:
+        role = self._reward_role(role_id)
+        member = self.guild.get_member(int(member_id))
+        if member is None:
+            try:
+                member = await self.guild.fetch_member(int(member_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                raise _translate_discord_error(exc) from exc
+        if role in member.roles:
+            return False
+        try:
+            await member.add_roles(role, reason=f"Skill reward: {self.skill_id}")
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+            raise _translate_discord_error(exc) from exc
+        return True
+
+    async def remove_role(self, *, member_id: int, role_id: int) -> bool:
+        role = self._reward_role(role_id)
+        member = self.guild.get_member(int(member_id))
+        if member is None:
+            try:
+                member = await self.guild.fetch_member(int(member_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                raise _translate_discord_error(exc) from exc
+        if role not in member.roles:
+            return False
+        try:
+            await member.remove_roles(role, reason=f"Skill reward revoke: {self.skill_id}")
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+            raise _translate_discord_error(exc) from exc
+        return True
 
     def _channel(self, channel_id: int):
         if int(channel_id) <= 0:
