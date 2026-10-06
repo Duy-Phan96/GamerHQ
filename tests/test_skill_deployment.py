@@ -21,6 +21,7 @@ class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
 
         package = packages[0]
         self.assertEqual(package.distribution, "gamerhq-skill-recurring-posts")
+        self.assertEqual(package.source_kind, "github-commit")
         self.assertEqual(
             package.source_repository,
             "Duy-Phan96/gamerhq-skill-recurring-posts",
@@ -50,6 +51,24 @@ gamerhq-skill-example @ https://github.com/example/example/archive/0123456789abc
         )
         self.assertEqual(len(packages), 1)
 
+    def test_exact_package_version_is_supported_as_immutable_source(self):
+        packages = parse_reviewed_skill_lock(
+            "gamerhq-skill-example==1.2.3\n"
+        )
+        self.assertEqual(len(packages), 1)
+        package = packages[0]
+        self.assertEqual(package.source_kind, "exact-version")
+        self.assertEqual(package.exact_version, "1.2.3")
+        self.assertEqual(package.requirement, "gamerhq-skill-example==1.2.3")
+        self.assertEqual(
+            deployment_plan(packages)["packages"][0]["exactVersion"],
+            "1.2.3",
+        )
+
+    def test_version_range_fails_closed(self):
+        with self.assertRaisesRegex(SkillDeploymentPlanError, "immutable reviewed pin"):
+            parse_reviewed_skill_lock("gamerhq-skill-example>=1.2\n")
+
     def test_moving_branch_fails_closed(self):
         with self.assertRaisesRegex(SkillDeploymentPlanError, "non-immutable"):
             parse_reviewed_skill_lock(
@@ -69,7 +88,9 @@ gamerhq-skill-example @ https://github.com/example/example/archive/0123456789abc
             "0123456789abcdef0123456789abcdef01234567.zip"
         )
         with self.assertRaisesRegex(SkillDeploymentPlanError, "duplicate"):
-            parse_reviewed_skill_lock(f"{line}\n{line}\n")
+            parse_reviewed_skill_lock(
+                f"{line}\ngamerhq_skill_example==1.2.3\n"
+            )
 
     def test_missing_lock_has_safe_error(self):
         with tempfile.TemporaryDirectory() as temp:
