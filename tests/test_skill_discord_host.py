@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
@@ -23,7 +23,8 @@ class FakeGuild:
         self.channels = {}
         self.members = {}
         self.roles = {}
-        top_role = SimpleNamespace(id=999, __gt__=lambda self, other: True)
+        top_role = MagicMock(spec=discord.Role)
+        top_role.id = 999
         self.me = SimpleNamespace(
             top_role=top_role,
             guild_permissions=discord.Permissions(manage_roles=True),
@@ -142,13 +143,12 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
             await adapter.get_member(member_id=7)
 
     async def test_reward_role_grant_requires_safe_permissionless_role(self):
-        role = SimpleNamespace(
-            id=44,
-            managed=False,
-            permissions=discord.Permissions.none(),
-            is_default=lambda: False,
-            __lt__=lambda self, other: True,
-        )
+        role = MagicMock(spec=discord.Role)
+        role.id = 44
+        role.managed = False
+        role.permissions = discord.Permissions.none()
+        role.is_default.return_value = False
+        role.__lt__.return_value = True
         member = SimpleNamespace(
             id=7,
             guild=self.guild,
@@ -164,13 +164,12 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         member.add_roles.assert_awaited_once_with(role, reason="Skill reward: fixture-skill")
 
     async def test_reward_role_grant_refuses_permission_bearing_role(self):
-        role = SimpleNamespace(
-            id=45,
-            managed=False,
-            permissions=discord.Permissions(administrator=True),
-            is_default=lambda: False,
-            __lt__=lambda self, other: True,
-        )
+        role = MagicMock(spec=discord.Role)
+        role.id = 45
+        role.managed = False
+        role.permissions = discord.Permissions(administrator=True)
+        role.is_default.return_value = False
+        role.__lt__.return_value = True
         self.guild.roles[45] = role
         self.guild.members[7] = SimpleNamespace(id=7, guild=self.guild, roles=[], add_roles=AsyncMock())
 
@@ -179,13 +178,12 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
             await adapter.grant_role(member_id=7, role_id=45)
 
     async def test_preexisting_reward_role_is_not_regranted(self):
-        role = SimpleNamespace(
-            id=46,
-            managed=False,
-            permissions=discord.Permissions.none(),
-            is_default=lambda: False,
-            __lt__=lambda self, other: True,
-        )
+        role = MagicMock(spec=discord.Role)
+        role.id = 46
+        role.managed = False
+        role.permissions = discord.Permissions.none()
+        role.is_default.return_value = False
+        role.__lt__.return_value = True
         member = SimpleNamespace(
             id=7,
             guild=self.guild,
