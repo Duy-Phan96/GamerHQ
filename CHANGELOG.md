@@ -8,7 +8,7 @@
 - Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
 - Added portable platform compilation and `gamerhq-skill-sdk` wheel-build CI gates.
 - Added Skill ecosystem governance for immutable release review, Marketplace publication and host deployment boundaries.
-- Added a read-only release preflight for semantic version metadata, the active changelog section and immutable external Skill pins.
+- Added a read-only release preflight for semantic version metadata, the active changelog section and immutable external Skill pins.\n- Added a machine-readable release readiness report that composes preflight and reviewed Skill deployment metadata without automating release or deployment.
 
 ### Changed
 
