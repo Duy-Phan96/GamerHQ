@@ -1,4 +1,4 @@
 # Reviewed external GamerHQ Skills installed into development/production.
 # Pin immutable commits or released artifacts; never track a moving branch.
-# Recurring Posts 1.2.1 — generic collection identity mapping enabled.
-gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/gamerhq-skill-recurring-posts/archive/acbd05d287b1d4947f93a4da2d69fff2aa0fab0d.zip
+# Recurring Posts 1.2.2 — generic collection describe/item-read bindings enabled.
+gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/gamerhq-skill-recurring-posts/archive/a2fd4f7f767301e08bfe8b1ea5a055500748b4cc.zip
