@@ -99,6 +99,7 @@ class ManagementCollectionSchema:
     summary_path: str | None = None
     max_items: int | None = None
     item_read_path: str | None = None
+    schedule_hints_path: str | None = None
 
     def __post_init__(self) -> None:
         if not CONFIG_PATH.fullmatch(self.item_id_path):
@@ -107,6 +108,8 @@ class ManagementCollectionSchema:
             raise ValueError("Management collection item_id_payload_key must be a stable field key.")
         if self.item_read_path is not None and not CONFIG_PATH.fullmatch(self.item_read_path):
             raise ValueError("Management collection item_read_path must be a config path.")
+        if self.schedule_hints_path is not None and not CONFIG_PATH.fullmatch(self.schedule_hints_path):
+            raise ValueError("Management collection schedule_hints_path must be a config path.")
         if not CONFIG_PATH.fullmatch(self.title_path):
             raise ValueError("Management collection title_path must be a config path.")
         for optional in (self.status_path, self.summary_path):
