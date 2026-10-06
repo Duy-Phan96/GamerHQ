@@ -22,6 +22,9 @@ _RECURRING_SET_ACTIVE_API = "recurring-posts.set-active.v1"
 _RECURRING_DELETE_PREVIEW_API = "recurring-posts.delete-preview.v1"
 _RECURRING_DELETE_API = "recurring-posts.delete.v1"
 
+_PROGRESSION_GET_CONFIG_API = "progression.get-config.v1"
+_PROGRESSION_UPDATE_CONFIG_API = "progression.update-config.v1"
+
 
 def friendly_plan(view):
     from services.server_operations import needs_repair
@@ -910,11 +913,13 @@ class SkillDetailsView(Menu):
                 'Review Disable' if status.enabled else 'Review Enable',
                 self.review_toggle,
             )
-        if status.skill_id == 'recurring-posts' and status.enabled and status.management_available:
+        if status.skill_id in {'recurring-posts', 'progression'} and status.enabled and status.management_available:
             self.action('Configure', self.configure)
         self.action('Back to Skills', self.back)
 
     async def configure(self, interaction):
+        if self.skill_id == 'progression':
+            return await open_progression(interaction, self.guild, self.admin_id)
         await open_recurring_posts(interaction, self.guild, self.admin_id)
 
     async def review_toggle(self, interaction):
@@ -1000,6 +1005,454 @@ class SkillToggleConfirmView(Menu):
         await interaction.response.edit_message(
             content=_skill_detail_text(status),
             view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+
+
+async def _progression_call(interaction, guild, contract_id, payload):
+    runtime = getattr(interaction.client, 'skill_runtime', None)
+    if runtime is None:
+        raise RuntimeError('Skill Runtime is unavailable.')
+    return await runtime.call_management(
+        guild_id=guild.id,
+        skill_id='progression',
+        contract_id=contract_id,
+        payload=payload,
+    )
+
+
+def _progression_overview(config):
+    enabled_sources = [
+        key for key, value in (config.get('xpSources') or {}).items()
+        if value.get('enabled')
+    ]
+    announcements = config.get('announcements') or {}
+    return (
+        '# 🏆 Progression & Achievements\n'
+        'Configure XP, levels, achievements, rewards and announcements.\n\n'
+        f'**XP sources enabled:** {len(enabled_sources)}\n'
+        f'**Max level:** {config.get("levelCurve", {}).get("maxLevel", 100)}\n'
+        f'**Achievements:** {len(config.get("achievements") or [])}\n'
+        f'**Rewards:** {len(config.get("rewards") or [])}\n'
+        f'**Announcements:** {"Enabled" if announcements.get("enabled") else "Disabled"}\n\n'
+        'Discord and the future web dashboard use this same versioned configuration.'
+    )[:1950]
+
+
+async def open_progression(interaction, guild, actor_id):
+    try:
+        response = await _progression_call(interaction, guild, _PROGRESSION_GET_CONFIG_API, {})
+        config = dict(response['config'])
+    except Exception:
+        return await interaction.response.edit_message(
+            content='# 🏆 Progression & Achievements\nConfiguration is currently unavailable.',
+            view=ManagementView(guild, actor_id),
+        )
+    await interaction.response.edit_message(
+        content=_progression_overview(config),
+        view=ProgressionView(guild, actor_id, config),
+    )
+
+
+class ProgressionView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        self.action('XP Sources', self.xp_sources)
+        self.action('Level Curve', self.level_curve)
+        self.action('Achievements', self.achievements)
+        self.action('Rewards', self.rewards)
+        self.action('Announcements', self.announcements)
+        self.action('Back to Skill', self.back)
+
+    async def xp_sources(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_sources_text(self.config),
+            view=ProgressionSourcesView(self.guild, self.admin_id, self.config),
+        )
+
+    async def level_curve(self, interaction):
+        await interaction.response.send_modal(
+            ProgressionLevelCurveModal(self.guild, self.admin_id, self.config)
+        )
+
+    async def achievements(self, interaction):
+        lines = ['# 🏅 Achievements', 'Configured achievements:']
+        for item in self.config.get('achievements', ())[:20]:
+            lines.append(
+                f"• {item.get('emoji','')} **{discord.utils.escape_markdown(str(item.get('name','')))[:70]}** "
+                f"— {int(item.get('xp', 0))} XP — {'Enabled' if item.get('enabled') else 'Disabled'}"
+            )
+        lines.append('\nEditing individual achievements is the next UI slice; definitions are already web-ready configuration.')
+        await interaction.response.edit_message(
+            content='\n'.join(lines)[:1950],
+            view=ProgressionBackView(self.guild, self.admin_id, self.config),
+        )
+
+    async def rewards(self, interaction):
+        lines = ['# 🎁 Rewards']
+        rewards = self.config.get('rewards', ())
+        if not rewards:
+            lines.append('No rewards configured yet.')
+        else:
+            for item in rewards[:20]:
+                trigger = item.get('trigger') or {}
+                lines.append(
+                    f"• **{discord.utils.escape_markdown(str(item.get('name','')))[:70]}** "
+                    f"— {trigger.get('type','unknown')} — {len(item.get('grants') or [])} grant(s)"
+                )
+        lines.append('\nReward creation/editing will use the same config contract and Review → Confirm flow.')
+        await interaction.response.edit_message(
+            content='\n'.join(lines)[:1950],
+            view=ProgressionBackView(self.guild, self.admin_id, self.config),
+        )
+
+    async def announcements(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_announcements_text(self.config),
+            view=ProgressionAnnouncementsView(self.guild, self.admin_id, self.config),
+        )
+
+    async def back(self, interaction):
+        runtime = interaction.client.skill_runtime
+        status = await runtime.status(guild_id=self.guild.id, skill_id='progression')
+        await interaction.response.edit_message(
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+
+class ProgressionBackView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        self.action('Back', self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.config),
+            view=ProgressionView(self.guild, self.admin_id, self.config),
+        )
+
+
+def _progression_sources_text(config):
+    labels = {
+        'voice': '🎙️ Voice',
+        'chat': '💬 Chat',
+        'lfgParticipation': '🤝 LFG Participation',
+        'eventHost': '🎤 Event Host',
+        'communityEvent': '📅 Community Event',
+        'tournamentParticipation': '🏆 Tournament Participation',
+        'tournamentWin': '🥇 Tournament Win',
+    }
+    lines = ['# ⚡ XP Sources', 'Choose a source to edit or enable/disable it.', '']
+    for key, source in (config.get('xpSources') or {}).items():
+        state = '🟢' if source.get('enabled') else '⚪'
+        detail = f"{int(source.get('xp', 0))} XP"
+        if key == 'voice':
+            detail += f" / {int(source.get('windowMinutes', 10))} min · cap {int(source.get('dailyCap', 0))}/day"
+        elif key == 'chat':
+            detail += f" / {int(source.get('cooldownMinutes', 5))} min · cap {int(source.get('dailyCap', 0))}/day"
+        lines.append(f"{state} **{labels.get(key, key)}** — {detail}")
+    return '\n'.join(lines)[:1950]
+
+
+class ProgressionSourceSelect(discord.ui.Select):
+    def __init__(self, config):
+        options = []
+        for key, value in (config.get('xpSources') or {}).items():
+            options.append(discord.SelectOption(
+                label=key[:100],
+                value=key,
+                description=(('Enabled' if value.get('enabled') else 'Disabled') + f" · {value.get('xp',0)} XP")[:100],
+            ))
+        super().__init__(placeholder='Choose XP source', options=options[:25])
+
+    async def callback(self, interaction):
+        key = self.values[0]
+        await interaction.response.edit_message(
+            content=_progression_source_detail(self.view.config, key),
+            view=ProgressionSourceDetailView(self.view.guild, self.view.admin_id, self.view.config, key),
+        )
+
+
+def _progression_source_detail(config, key):
+    source = dict((config.get('xpSources') or {}).get(key) or {})
+    lines = [
+        f'# ⚡ {discord.utils.escape_markdown(key)}',
+        f'**Status:** {"Enabled" if source.get("enabled") else "Disabled"}',
+        f'**XP:** {source.get("xp", 0)}',
+    ]
+    for field, label in (('windowMinutes','Window'),('cooldownMinutes','Cooldown'),('dailyCap','Daily cap')):
+        if field in source:
+            suffix = ' minutes' if 'Minutes' in field else ' XP'
+            lines.append(f'**{label}:** {source[field]}{suffix}')
+    lines.append('\nChanges use the same revision-safe config that a future web dashboard will edit.')
+    return '\n'.join(lines)[:1950]
+
+
+class ProgressionSourcesView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        if self.config.get('xpSources'):
+            self.add_item(ProgressionSourceSelect(self.config))
+        self.action('Back', self.back, row=2)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.config),
+            view=ProgressionView(self.guild, self.admin_id, self.config),
+        )
+
+
+class ProgressionSourceDetailView(Menu):
+    def __init__(self, guild, actor_id, config, key):
+        super().__init__(guild, actor_id)
+        self.config, self.key = dict(config), key
+        source = (self.config.get('xpSources') or {}).get(key) or {}
+        self.action('Disable' if source.get('enabled') else 'Enable', self.toggle)
+        self.action('Edit Values', self.edit)
+        self.action('Back', self.back)
+
+    async def toggle(self, interaction):
+        draft = dict(self.config)
+        draft['xpSources'] = {k: dict(v) for k, v in self.config['xpSources'].items()}
+        draft['xpSources'][self.key]['enabled'] = not draft['xpSources'][self.key].get('enabled', True)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, f'Update XP source: {self.key}'),
+            view=ProgressionConfigConfirmView(self.guild, self.admin_id, self.config, draft),
+        )
+
+    async def edit(self, interaction):
+        await interaction.response.send_modal(
+            ProgressionSourceModal(self.guild, self.admin_id, self.config, self.key)
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_sources_text(self.config),
+            view=ProgressionSourcesView(self.guild, self.admin_id, self.config),
+        )
+
+
+class ProgressionSourceModal(discord.ui.Modal):
+    def __init__(self, guild, actor_id, config, key):
+        super().__init__(title='Edit XP Source')
+        self.guild, self.actor_id, self.config, self.key = guild, actor_id, dict(config), key
+        source = dict(self.config['xpSources'][key])
+        self.xp = discord.ui.TextInput(label='XP per activity unit', default=str(source.get('xp', 1)), max_length=8)
+        self.add_item(self.xp)
+        if key == 'voice':
+            self.timing = discord.ui.TextInput(label='Minutes per XP window', default=str(source.get('windowMinutes', 10)), max_length=5)
+            self.cap = discord.ui.TextInput(label='Daily XP cap', default=str(source.get('dailyCap', 180)), max_length=8)
+            self.add_item(self.timing); self.add_item(self.cap)
+        elif key == 'chat':
+            self.timing = discord.ui.TextInput(label='Cooldown minutes', default=str(source.get('cooldownMinutes', 5)), max_length=5)
+            self.cap = discord.ui.TextInput(label='Daily XP cap', default=str(source.get('dailyCap', 120)), max_length=8)
+            self.add_item(self.timing); self.add_item(self.cap)
+
+    async def on_submit(self, interaction):
+        try:
+            xp = int(str(self.xp))
+            if xp <= 0:
+                raise ValueError
+            draft = dict(self.config)
+            draft['xpSources'] = {k: dict(v) for k, v in self.config['xpSources'].items()}
+            draft['xpSources'][self.key]['xp'] = xp
+            if hasattr(self, 'timing'):
+                timing = int(str(self.timing)); cap = int(str(self.cap))
+                if timing <= 0 or cap <= 0:
+                    raise ValueError
+                field = 'windowMinutes' if self.key == 'voice' else 'cooldownMinutes'
+                draft['xpSources'][self.key][field] = timing
+                draft['xpSources'][self.key]['dailyCap'] = cap
+        except ValueError:
+            return await interaction.response.send_message('Use positive whole numbers.', ephemeral=True)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, f'Update XP source: {self.key}'),
+            view=ProgressionConfigConfirmView(self.guild, self.actor_id, self.config, draft),
+        )
+
+
+class ProgressionLevelCurveModal(discord.ui.Modal, title='Edit Level Curve'):
+    def __init__(self, guild, actor_id, config):
+        super().__init__()
+        self.guild, self.actor_id, self.config = guild, actor_id, dict(config)
+        curve = config.get('levelCurve') or {}
+        self.base = discord.ui.TextInput(label='Base XP', default=str(curve.get('base',100)), max_length=8)
+        self.linear = discord.ui.TextInput(label='Linear increase', default=str(curve.get('linear',20)), max_length=8)
+        self.quadratic = discord.ui.TextInput(label='Quadratic increase', default=str(curve.get('quadratic',2)), max_length=8)
+        self.max_level = discord.ui.TextInput(label='Maximum level', default=str(curve.get('maxLevel',100)), max_length=4)
+        for item in (self.base,self.linear,self.quadratic,self.max_level): self.add_item(item)
+
+    async def on_submit(self, interaction):
+        try:
+            values = [int(str(x)) for x in (self.base,self.linear,self.quadratic,self.max_level)]
+            if values[0] <= 0 or min(values[1:]) < 0 or values[3] <= 0:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message('Use valid whole numbers.', ephemeral=True)
+        draft = dict(self.config)
+        draft['levelCurve'] = {
+            'base': values[0], 'linear': values[1], 'quadratic': values[2], 'maxLevel': values[3],
+        }
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, 'Update Level Curve'),
+            view=ProgressionConfigConfirmView(self.guild, self.actor_id, self.config, draft),
+        )
+
+
+def _progression_announcements_text(config):
+    value = config.get('announcements') or {}
+    channel = f"<#{value['channelId']}>" if value.get('channelId') else 'Not selected'
+    return (
+        '# 📣 Progression Announcements\n'
+        f'**Status:** {"Enabled" if value.get("enabled") else "Disabled"}\n'
+        f'**Channel:** {channel}\n'
+        f'**Level ups:** {"On" if value.get("levelUp") else "Off"}\n'
+        f'**Achievements:** {"On" if value.get("achievement") else "Off"}\n'
+        f'**Rewards:** {"On" if value.get("reward") else "Off"}\n\n'
+        f'**Template:**\n{discord.utils.escape_markdown(str(value.get("template","")))[:900]}'
+    )[:1950]
+
+
+class ProgressionAnnouncementChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder='Choose announcement channel',
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            min_values=1, max_values=1,
+        )
+
+    async def callback(self, interaction):
+        draft = dict(self.view.config)
+        draft['announcements'] = dict(self.view.config.get('announcements') or {})
+        draft['announcements']['channelId'] = int(self.values[0].id)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.view.config, draft, 'Change Announcement Channel'),
+            view=ProgressionConfigConfirmView(self.view.guild, self.view.admin_id, self.view.config, draft),
+        )
+
+
+class ProgressionAnnouncementsView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        self.add_item(ProgressionAnnouncementChannelSelect())
+        value = self.config.get('announcements') or {}
+        self.action('Disable' if value.get('enabled') else 'Enable', self.toggle_enabled, row=2)
+        self.action('Edit Template / Triggers', self.edit, row=2)
+        self.action('Back', self.back, row=2)
+
+    async def toggle_enabled(self, interaction):
+        draft = dict(self.config)
+        draft['announcements'] = dict(self.config.get('announcements') or {})
+        draft['announcements']['enabled'] = not draft['announcements'].get('enabled', False)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, 'Toggle Announcements'),
+            view=ProgressionConfigConfirmView(self.guild, self.admin_id, self.config, draft),
+        )
+
+    async def edit(self, interaction):
+        await interaction.response.send_modal(
+            ProgressionAnnouncementsModal(self.guild, self.admin_id, self.config)
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.config),
+            view=ProgressionView(self.guild, self.admin_id, self.config),
+        )
+
+
+class ProgressionAnnouncementsModal(discord.ui.Modal, title='Edit Announcements'):
+    def __init__(self, guild, actor_id, config):
+        super().__init__()
+        self.guild, self.actor_id, self.config = guild, actor_id, dict(config)
+        value = config.get('announcements') or {}
+        self.triggers = discord.ui.TextInput(
+            label='Triggers (level,achievement,reward)',
+            default=','.join(key for key, field in (
+                ('level','levelUp'),('achievement','achievement'),('reward','reward')
+            ) if value.get(field)),
+            max_length=50,
+        )
+        self.template = discord.ui.TextInput(
+            label='Message template',
+            default=str(value.get('template','')),
+            max_length=1800,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.triggers); self.add_item(self.template)
+
+    async def on_submit(self, interaction):
+        selected = {x.strip().lower() for x in str(self.triggers).split(',') if x.strip()}
+        if not selected <= {'level','achievement','reward'}:
+            return await interaction.response.send_message('Use only: level, achievement, reward.', ephemeral=True)
+        draft = dict(self.config)
+        draft['announcements'] = dict(self.config.get('announcements') or {})
+        draft['announcements'].update({
+            'levelUp': 'level' in selected,
+            'achievement': 'achievement' in selected,
+            'reward': 'reward' in selected,
+            'template': str(self.template),
+        })
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, 'Update Announcement Rules'),
+            view=ProgressionConfigConfirmView(self.guild, self.actor_id, self.config, draft),
+        )
+
+
+def _progression_config_review_text(before, after, title):
+    return (
+        f'# Review {title}\n'
+        f'Current revision: **{before.get("revision", 1)}**\n\n'
+        'The complete Progression configuration will be validated by the Skill. '
+        'Nothing changes until you confirm.'
+    )[:1950]
+
+
+class ProgressionConfigConfirmView(Menu):
+    def __init__(self, guild, actor_id, before, draft):
+        super().__init__(guild, actor_id)
+        self.before, self.draft = dict(before), dict(draft)
+        self.used = False
+        self.action('Confirm Save', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message('This review was already used.', ephemeral=True)
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            response = await _progression_call(
+                interaction,
+                self.guild,
+                _PROGRESSION_UPDATE_CONFIG_API,
+                {
+                    'config': self.draft,
+                    'expectedRevision': int(self.before.get('revision', 1)),
+                },
+            )
+            config = dict(response['config'])
+            notice = '✅ Progression configuration saved.'
+        except Exception:
+            response = await _progression_call(
+                interaction, self.guild, _PROGRESSION_GET_CONFIG_API, {}
+            )
+            config = dict(response['config'])
+            notice = '❌ Configuration changed or could not be saved. Review the current settings again.'
+        await interaction.edit_original_response(
+            content=(notice + '\n\n' + _progression_overview(config))[:1950],
+            view=ProgressionView(self.guild, self.admin_id, config),
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.before),
+            view=ProgressionView(self.guild, self.admin_id, self.before),
         )
 
 
