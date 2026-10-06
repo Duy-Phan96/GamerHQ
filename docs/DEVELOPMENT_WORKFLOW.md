@@ -2,6 +2,23 @@
 
 Read [AGENTS.md](../AGENTS.md), then only the topic links needed for the task. This is the default workflow; [release promotion](../RELEASE_WORKFLOW.md) and [VPS deployment](../DEPLOY.md) remain separate owner operations.
 
+## GitHub workflow
+
+Use GitHub Issues as the lightweight requirement record for normal/architectural work and the Pull Request template for implementation review.
+
+Preferred branch prefixes:
+- `feat/`
+- `fix/`
+- `refactor/`
+- `docs/`
+- `test/`
+- `chore/`
+- `ci/`
+
+Use Conventional-Commit-style message prefixes (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`, `ci:`) without adding commit-lint tooling yet.
+
+A PR should reference its Issue when one exists and explain architecture, testing, security, migration/backward-compatibility and deployment impact.
+
 ## Inspect and implement
 
 1. Check git status --short, current branch and relevant diff, including untracked files. Preserve existing work; a dirty tree is not permission to reset it.
