@@ -313,3 +313,33 @@ execution, Scheduler delivery, events and lifecycle start behavior remain gated
 by Skill enablement.
 
 This separation allows safe configuration before a Skill begins operating.
+
+
+## Configured lifecycle state
+
+`configured` is a persistent per-guild Skill lifecycle state. It is not inferred
+from whether a Skill merely exposes Management APIs.
+
+New Add-to-Server installations begin with:
+
+- `installed=true`
+- `configured=false`
+- `enabled=false`
+
+Successful mutating Management UI contracts mark the Skill configured. Read-only
+contracts and validation/preview operations do not.
+
+For Management UI Schema V1, configuration mutations include:
+
+- the schema's top-level write contract;
+- collection create;
+- collection update;
+- collection pause/resume (`set-active`);
+- collection delete.
+
+Existing legacy lifecycle rows migrate as configured to preserve deployed server
+behavior.
+
+Enablement remains independent: a configured Skill can stay disabled, and a
+legacy direct-enable path can temporarily produce an enabled but unconfigured
+Skill until its configuration is reviewed.
