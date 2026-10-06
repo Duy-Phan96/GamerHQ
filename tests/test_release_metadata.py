@@ -22,6 +22,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         notes = release_notes()
         self.assertIn("Software Development Lifecycle", notes)
         self.assertNotIn("Recurring Posts 1.1 integration", notes)
+        self.assertNotIn("No release-specific", notes)
 
 
 if __name__ == "__main__":
