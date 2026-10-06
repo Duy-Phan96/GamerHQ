@@ -159,10 +159,34 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
         await self.skill.enable(self.ctx)
         config = deepcopy(DEFAULT_CONFIG)
         config["levelCurve"]["maxLevel"] = 75
-        response = await self.skill.update_config(self.ctx, {"config": config})
+        response = await self.skill.update_config(
+            self.ctx,
+            {"config": config, "expectedRevision": 1},
+        )
         self.assertEqual(response["config"]["levelCurve"]["maxLevel"], 75)
+        self.assertEqual(response["config"]["revision"], 2)
         self.assertEqual(self.storage.data["config.v1"]["levelCurve"]["maxLevel"], 75)
         self.assertEqual(self.audit.calls[0]["action"], "progression.config.updated")
+
+    async def test_stale_config_revision_is_rejected(self):
+        await self.skill.enable(self.ctx)
+        first = deepcopy(DEFAULT_CONFIG)
+        first["levelCurve"]["maxLevel"] = 75
+        await self.skill.update_config(
+            self.ctx,
+            {"config": first, "expectedRevision": 1},
+        )
+
+        stale = deepcopy(DEFAULT_CONFIG)
+        stale["levelCurve"]["maxLevel"] = 50
+        with self.assertRaisesRegex(ValueError, "changed"):
+            await self.skill.update_config(
+                self.ctx,
+                {"config": stale, "expectedRevision": 1},
+            )
+
+        current = await self.skill.get_config(self.ctx, {})
+        self.assertEqual(current["config"]["levelCurve"]["maxLevel"], 75)
 
     async def test_record_activity_awards_xp_and_enforces_daily_cap(self):
         await self.skill.enable(self.ctx)
