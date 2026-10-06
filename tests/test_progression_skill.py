@@ -3,6 +3,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+from skill_runtime.contracts.management import ManagementConflictError
 from skills.progression import (
     DEFAULT_CONFIG,
     ProgressionSkill,
@@ -218,7 +219,7 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
 
         stale = deepcopy(DEFAULT_CONFIG)
         stale["levelCurve"]["maxLevel"] = 50
-        with self.assertRaisesRegex(ValueError, "changed"):
+        with self.assertRaisesRegex(ManagementConflictError, "changed"):
             await self.skill.update_config(
                 self.ctx,
                 {"config": stale, "expectedRevision": 1},
