@@ -37,6 +37,10 @@ def secret_findings(text):
         found.add('potential credential assignment')
     return sorted(found)
 
+def history_commits():
+    """Return commits reachable from the checked-out review head only."""
+    return git('rev-list','HEAD').decode().splitlines()
+
 def private_path(name):
     path=Path(name);low=path.name.lower()
     # skill_runtime/runtime is intentional portable source code. Keep the
@@ -88,7 +92,7 @@ def main():
             for label in secret_findings(config.read_text(errors='replace')):findings.append(('local only','.git/config',label))
     if args.history:
         seen=set()
-        for commit in git('rev-list','--all').decode().splitlines():
+        for commit in history_commits():
             for entry in git('ls-tree','-r','-z',commit).split(b'\0'):
                 if not entry:continue
                 meta,name=entry.split(b'\t',1);kind,oid=meta.split()[1:]
