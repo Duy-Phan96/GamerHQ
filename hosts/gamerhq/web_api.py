@@ -101,6 +101,22 @@ async def list_servers(request: web.Request) -> web.Response:
     return web.json_response({"servers": result})
 
 
+async def list_discord_channels(request: web.Request) -> web.Response:
+    result = await _service(request).list_discord_channels(
+        guild_id=int(request.match_info["guild_id"]),
+        authorized_guild_ids=_authorized_guild_ids(request),
+    )
+    return web.json_response({"channels": result})
+
+
+async def list_discord_roles(request: web.Request) -> web.Response:
+    result = await _service(request).list_discord_roles(
+        guild_id=int(request.match_info["guild_id"]),
+        authorized_guild_ids=_authorized_guild_ids(request),
+    )
+    return web.json_response({"roles": result})
+
+
 async def list_skills(request: web.Request) -> web.Response:
     result = await _service(request).list_skills(
         guild_id=int(request.match_info["guild_id"]),
@@ -169,6 +185,14 @@ def create_web_api_app(
     app.add_routes(
         [
             web.get("/api/v1/me/servers", list_servers),
+            web.get(
+                "/api/v1/servers/{guild_id}/resources/channels",
+                list_discord_channels,
+            ),
+            web.get(
+                "/api/v1/servers/{guild_id}/resources/roles",
+                list_discord_roles,
+            ),
             web.get("/api/v1/servers/{guild_id}/skills", list_skills),
             web.get("/api/v1/servers/{guild_id}/skills/{skill_id}", get_skill),
             web.get(
