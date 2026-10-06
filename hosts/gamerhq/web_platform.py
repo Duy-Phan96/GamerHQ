@@ -98,6 +98,16 @@ class GamerHQWebPlatformService:
             "version": raw["version"],
             "readContract": raw["read_contract"],
             "writeContract": raw["write_contract"],
+            "document": (
+                {
+                    "readPath": raw["document"]["read_path"],
+                    "writePath": raw["document"]["write_path"],
+                    "revisionPath": raw["document"]["revision_path"],
+                    "expectedRevisionKey": raw["document"]["expected_revision_key"],
+                }
+                if raw["document"] is not None
+                else None
+            ),
             "sections": [
                 {
                     "id": section["id"],
