@@ -87,7 +87,7 @@ def parse_reviewed_skill_lock(text: str) -> tuple[ReviewedSkillPackage, ...]:
         if github is None and exact is None:
             raise SkillDeploymentPlanError(
                 f"requirements-skills.lock:{line_number}: external Skill dependency "
-                "is not an immutable reviewed pin."
+                "is non-immutable or is not an immutable reviewed pin."
             )
 
         match = github or exact
