@@ -29,6 +29,50 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
     def permissions(self, *capabilities):
         return CapabilityPermissions(capabilities)
 
+    async def test_existing_enablement_rows_migrate_as_installed(self):
+        legacy_path = Path(self.temp.name) / "legacy-skills.db"
+        self.db_patch.stop()
+        with patch.object(db, "DB_PATH", legacy_path):
+            import sqlite3
+
+            conn = sqlite3.connect(legacy_path)
+            conn.execute(
+                """
+                CREATE TABLE skill_guild_state (
+                    guild_id INTEGER NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    version TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, skill_id)
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO skill_guild_state(guild_id,skill_id,enabled,version,updated_at) "
+                "VALUES(1,'recurring-posts',0,'1.2.0',1)"
+            )
+            conn.execute("PRAGMA user_version=1")
+            conn.commit()
+            conn.close()
+
+            db.init_db()
+            state = GamerHQSkillStateStore()
+            self.assertTrue(
+                await state.is_installed(
+                    guild_id=1,
+                    skill_id="recurring-posts",
+                )
+            )
+            self.assertFalse(
+                await state.is_enabled(
+                    guild_id=1,
+                    skill_id="recurring-posts",
+                )
+            )
+
+        self.db_patch.start()
+
     async def test_skill_installation_is_separate_from_enablement(self):
         state = GamerHQSkillStateStore()
 
