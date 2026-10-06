@@ -223,3 +223,21 @@ implementation merely to configure it.
 
 Management APIs are not Skill-to-Skill APIs and do not grant another Skill
 access to administrative operations.
+
+
+## Web platform direction
+
+The Runtime is also the backend contract surface for a future user-based GamerHQ
+web platform.
+
+Authenticated Discord users will manage one or more authorized guilds, browse a
+Skill Marketplace, install Skills per guild, enable/disable them and configure
+them through the same versioned Management APIs used by Discord administration.
+
+The website must not become a parallel source of truth.
+
+Future generic web configuration should be schema-driven so newly installed
+Skills can appear in the dashboard without requiring arbitrary Skill-owned
+JavaScript or a custom frontend page per Skill.
+
+See [Web Platform & Skill Marketplace](web-platform-marketplace.md).
