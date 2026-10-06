@@ -3,6 +3,7 @@ import unittest
 from aiohttp.test_utils import TestClient, TestServer
 
 from hosts.gamerhq.web_api import create_web_api_app
+from skill_runtime.runtime.management_router import SkillManagementConflictError
 
 
 class FakePlatformService:
@@ -23,6 +24,10 @@ class FakePlatformService:
         return {"version": "1", "readContract": "demo.read.v1", "writeContract": "demo.write.v1", "sections": []}
 
     async def call_management(self, **kwargs):
+        if kwargs["payload"].get("forceConflict"):
+            raise SkillManagementConflictError(
+                "Target Skill configuration changed. Reload and review your changes again."
+            )
         return {"received": dict(kwargs["payload"])}
 
     async def set_skill_enabled(self, **kwargs):
@@ -90,6 +95,16 @@ class WebApiTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         payload = await response.json()
         self.assertEqual(payload["received"]["expectedRevision"], 7)
+
+    async def test_management_conflict_maps_to_http_409(self):
+        response = await self.client.post(
+            "/api/v1/servers/123/skills/demo/management/demo.write.v1",
+            headers=self.headers(),
+            json={"payload": {"forceConflict": True}},
+        )
+        self.assertEqual(response.status, 409)
+        payload = await response.json()
+        self.assertEqual(payload["code"], "management_conflict")
 
     async def test_enablement_requires_boolean(self):
         response = await self.client.put(
