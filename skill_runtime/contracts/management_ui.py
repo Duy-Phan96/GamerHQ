@@ -23,6 +23,26 @@ FIELD_TYPES = frozenset({
 
 
 @dataclass(frozen=True, slots=True)
+class ManagementDocumentBinding:
+    """Portable mapping between a document-style form and Management API payloads."""
+
+    read_path: str | None = None
+    write_path: str | None = None
+    revision_path: str | None = None
+    expected_revision_key: str | None = None
+
+    def __post_init__(self) -> None:
+        for value in (self.read_path, self.write_path, self.revision_path):
+            if value is not None and not CONFIG_PATH.fullmatch(value):
+                raise ValueError("Management document paths must be valid config paths.")
+        if (
+            self.expected_revision_key is not None
+            and not FIELD_KEY.fullmatch(self.expected_revision_key)
+        ):
+            raise ValueError("Management expected revision key must be a stable field key.")
+
+
+@dataclass(frozen=True, slots=True)
 class ManagementFieldOption:
     value: str
     label: str
@@ -155,6 +175,7 @@ class ManagementUiSchema:
     read_contract: str
     write_contract: str
     sections: tuple[ManagementSection, ...] = ()
+    document: ManagementDocumentBinding | None = None
 
     def __post_init__(self) -> None:
         if self.version != "1":

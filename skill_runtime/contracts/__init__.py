@@ -5,7 +5,7 @@ from .errors import CapabilityUnavailableError, HostCapabilityError, HostPermiss
 from .events import EventContract, EventDeliveryReport, EventEnvelope
 from .lifecycle import Skill, SkillHealth
 from .management import ManagementApiContract
-from .management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
+from .management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementDocumentBinding, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
 from .manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from .public_api import PublicApiContract
 
@@ -32,6 +32,7 @@ __all__ = [
     "ManagementApiContract",
     "ManagementCollectionOperations",
     "ManagementCollectionSchema",
+    "ManagementDocumentBinding",
     "ManagementField",
     "ManagementFieldOption",
     "ManagementSection",

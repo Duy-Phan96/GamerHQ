@@ -10,7 +10,7 @@ from .contracts.errors import CapabilityUnavailableError, HostCapabilityError, H
 from .contracts.events import EventContract, EventDeliveryReport, EventEnvelope
 from .contracts.lifecycle import Skill, SkillHealth
 from .contracts.management import ManagementApiContract
-from .contracts.management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
+from .contracts.management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementDocumentBinding, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
 from .contracts.manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from .contracts.public_api import PublicApiContract
 from .contracts.schedule import DailySchedule, IntervalSchedule, OnceSchedule, ScheduleSpec, WeeklySchedule, next_run_at
@@ -57,6 +57,7 @@ __all__ = [
     "ManagementApiContract",
     "ManagementCollectionOperations",
     "ManagementCollectionSchema",
+    "ManagementDocumentBinding",
     "ManagementField",
     "ManagementFieldOption",
     "ManagementSection",

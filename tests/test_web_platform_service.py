@@ -9,6 +9,7 @@ from hosts.gamerhq.web_platform import (
 from skill_runtime.contracts.management_ui import (
     ManagementCollectionOperations,
     ManagementCollectionSchema,
+    ManagementDocumentBinding,
     ManagementField,
     ManagementSection,
     ManagementUiSchema,
@@ -41,6 +42,12 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             version="1",
             read_contract="progression.get-config.v1",
             write_contract="progression.update-config.v1",
+            document=ManagementDocumentBinding(
+                read_path="config",
+                write_path="config",
+                revision_path="revision",
+                expected_revision_key="expectedRevision",
+            ),
             sections=(
                 ManagementSection(
                     id="general",
@@ -123,6 +130,10 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(schema["readContract"], "progression.get-config.v1")
         self.assertEqual(schema["writeContract"], "progression.update-config.v1")
+        self.assertEqual(schema["document"]["readPath"], "config")
+        self.assertEqual(schema["document"]["writePath"], "config")
+        self.assertEqual(schema["document"]["revisionPath"], "revision")
+        self.assertEqual(schema["document"]["expectedRevisionKey"], "expectedRevision")
         field = schema["sections"][0]["fields"][0]
         self.assertEqual(field["configPath"], "settings.enabled")
         self.assertEqual(field["type"], "boolean")
