@@ -232,3 +232,67 @@ Possible later additions include:
 - Marketplace-specific metadata.
 
 These should be added only when real Skills require them.
+
+
+## Collection schemas
+
+A `collection` field may remain opaque/read-only to generic clients, or it may
+declare a reusable CRUD description through `ManagementCollectionSchema`.
+
+This extension exists for Skills such as Recurring Posts, where management is
+not one configuration document but a list of independently managed resources.
+
+A collection may declare:
+
+- list contract;
+- create contract;
+- optional get contract;
+- optional validate/preview contract;
+- optional update contract;
+- optional pause/resume (set-active) contract;
+- optional delete-preview contract;
+- optional delete contract;
+- item fields;
+- item ID path;
+- title/status/summary display paths;
+- maximum item count.
+
+Example conceptually:
+
+```python
+ManagementField(
+    key="posts",
+    label="Recurring Posts",
+    type="collection",
+    config_path="posts",
+    collection=ManagementCollectionSchema(
+        operations=ManagementCollectionOperations(
+            list_contract="recurring-posts.list.v1",
+            create_contract="recurring-posts.create.v1",
+            get_contract="recurring-posts.get.v1",
+            validate_contract="recurring-posts.validate.v1",
+            update_contract="recurring-posts.update.v1",
+            set_active_contract="recurring-posts.set-active.v1",
+            delete_preview_contract="recurring-posts.delete-preview.v1",
+            delete_contract="recurring-posts.delete.v1",
+        ),
+        item_fields=(...),
+        max_items=20,
+    ),
+)
+```
+
+Every referenced operation must also be declared by the same Skill manifest.
+The host therefore never discovers hidden/private CRUD entry points through UI
+metadata.
+
+Opaque collections remain valid for backward compatibility. Progression's
+Achievements/Rewards can continue to use an opaque collection until their
+generic item editor contract is designed from real requirements.
+
+
+For collection-driven screens, the schema's top-level `read_contract` and
+`write_contract` may point to the collection's primary list/create operations.
+More specific edit, validation, activation and deletion behavior belongs in the
+collection operation metadata. This keeps one generic page entry contract while
+still supporting safe resource-level CRUD.

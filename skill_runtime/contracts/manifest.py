@@ -96,6 +96,10 @@ def validate_manifest(manifest: SkillManifest, *, supported_api_versions: frozen
     if management_ui is not None:
         declared = set(management)
         required = {management_ui.read_contract, management_ui.write_contract}
+        for section in management_ui.sections:
+            for field in section.fields:
+                if field.collection is not None:
+                    required.update(field.collection.operations.contract_ids())
         missing = sorted(required - declared)
         if missing:
             raise ValueError(
