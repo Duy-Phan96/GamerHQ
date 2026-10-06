@@ -1,7 +1,8 @@
 # Contributing
 
-Start with [AGENTS.md](AGENTS.md) and the selective [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
+Start with [AGENTS.md](AGENTS.md), the [Software Development Lifecycle](docs/development/SDLC.md), and the selective [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
 The root instructions link feature contracts; historical reports are optional background.
+AI-assisted development follows [SOP-008](docs/sop/SOP-008-ai-assisted-development.md), including architecture checks, diff self-review and an explicit handoff summary.
 
 Create a focused branch from the agreed base, for example `git switch -c codex/fix-description`. Keep changes small, preserve current behavior and keep GamerHQ separate from GamerConnect.
 
