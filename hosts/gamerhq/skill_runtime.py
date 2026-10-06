@@ -17,6 +17,8 @@ from skill_runtime.runtime.scheduler import SchedulerEngine, ScopedScheduler
 from skill_runtime.runtime.scoped import ScopedEventBus, ScopedSkillApi
 from skill_runtime.runtime.registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration, ScopedSkillManagementRegistration
 
+from config import GAMERHQ_SKILL_SECRET_KEY
+
 from .skill_discord import DISCORD_HOST_CAPABILITIES, GamerHQDiscordAdapter
 from .skill_host import (
     CapabilityPermissions,
@@ -25,6 +27,8 @@ from .skill_host import (
     GamerHQSkillStorage,
 )
 from .skill_scheduler import GamerHQSchedulerStore
+from .skill_http import GamerHQExternalHttp
+from .skill_secrets import GamerHQSkillSecrets
 
 
 HOST_CAPABILITIES = frozenset({
@@ -35,6 +39,7 @@ HOST_CAPABILITIES = frozenset({
     SkillCapability.EVENTS_SUBSCRIBE.value,
     SkillCapability.SKILL_API_CALL.value,
     SkillCapability.AUDIT_WRITE.value,
+    SkillCapability.HTTP_EXTERNAL.value,
 })
 
 
@@ -84,6 +89,9 @@ class GamerHQSkillRuntime:
             self.registration_context,
         )
         self.log = logging.getLogger("gamerhq.skills")
+        self.host_capabilities = set(HOST_CAPABILITIES)
+        if GAMERHQ_SKILL_SECRET_KEY:
+            self.host_capabilities.add(SkillCapability.SKILL_SECURE_STORAGE.value)
         self._scheduler_stop = asyncio.Event()
         self._scheduler_task: asyncio.Task | None = None
         self._sources: dict[str, tuple[str, str | None]] = {}
@@ -167,7 +175,7 @@ class GamerHQSkillRuntime:
 
     def permissions(self, skill_id: str) -> CapabilityPermissions:
         skill = self.registry.get(skill_id)
-        return CapabilityPermissions(skill.manifest.permissions, available=HOST_CAPABILITIES)
+        return CapabilityPermissions(skill.manifest.permissions, available=self.host_capabilities)
 
     async def context(self, guild_id: int, skill_id: str) -> SkillContext:
         guild = self._guild(guild_id)
@@ -194,6 +202,15 @@ class GamerHQSkillRuntime:
             storage=GamerHQSkillStorage(
                 guild_id=guild.id,
                 skill_id=skill_id,
+                permissions=permissions,
+            ),
+            secrets=GamerHQSkillSecrets(
+                guild_id=guild.id,
+                skill_id=skill_id,
+                permissions=permissions,
+                encryption_key=GAMERHQ_SKILL_SECRET_KEY,
+            ),
+            http=GamerHQExternalHttp(
                 permissions=permissions,
             ),
             audit=GamerHQSkillAudit(

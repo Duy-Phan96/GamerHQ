@@ -181,6 +181,15 @@ CREATE TABLE IF NOT EXISTS skill_storage (
     PRIMARY KEY (guild_id, skill_id, storage_key)
 );
 
+CREATE TABLE IF NOT EXISTS skill_secrets (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    secret_key TEXT NOT NULL,
+    value_encrypted TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id, secret_key)
+);
+
 CREATE TABLE IF NOT EXISTS skill_jobs (
     guild_id INTEGER NOT NULL,
     skill_id TEXT NOT NULL,

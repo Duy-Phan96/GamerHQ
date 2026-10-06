@@ -25,6 +25,7 @@ class SkillCapability(StrEnum):
     SKILL_API_CALL = "skills.api.call"
     AUDIT_WRITE = "audit.write"
     HTTP_EXTERNAL = "http.external"
+    SKILL_SECURE_STORAGE = "secrets.skill"
 
 
 KNOWN_CAPABILITIES = frozenset(item.value for item in SkillCapability)

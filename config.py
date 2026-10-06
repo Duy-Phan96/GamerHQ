@@ -65,6 +65,9 @@ if not _web_api_port.isdigit() or not 1 <= int(_web_api_port) <= 65535:
     raise ConfigurationError("GAMERHQ_WEB_API_PORT must be an integer between 1 and 65535.")
 GAMERHQ_WEB_API_PORT = int(_web_api_port)
 GAMERHQ_WEB_API_SECRET = os.getenv("GAMERHQ_WEB_API_SECRET", "").strip()
+# Optional host encryption key for per-Skill secrets. When unset, the
+# secrets.skill capability is unavailable and Skills requiring it fail closed.
+GAMERHQ_SKILL_SECRET_KEY = os.getenv("GAMERHQ_SKILL_SECRET_KEY", "").strip()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")

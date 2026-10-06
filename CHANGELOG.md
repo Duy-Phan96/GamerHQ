@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added public `http.external` and `secrets.skill` Skill capabilities with host-mediated HTTPS access and encrypted, guild-and-Skill-scoped secret storage.
 - Introduced the lightweight GamerHQ Software Development Lifecycle, Definition of Done, AI-assisted development SOP and architecture decision guidance.
 - Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
 - Added portable platform compilation and `gamerhq-skill-sdk` wheel-build CI gates.
@@ -21,7 +22,7 @@ _No entries yet._
 
 ### Security
 
-_No entries yet._
+- Restricted external Skill HTTP to public HTTPS targets with bounded timeouts/request sizes/responses; Skill secret storage fails closed unless the host encryption key is configured.
 
 > Older dated `[Unreleased]` headings below are retained as historical development snapshots. New work belongs only in this top section until it is promoted to a versioned release.
 

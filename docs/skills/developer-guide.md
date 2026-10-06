@@ -107,6 +107,8 @@ Examples:
 - `events.subscribe`
 - `skills.api.call`
 - `audit.write`
+- `http.external`
+- `secrets.skill`
 
 A capability must be:
 
@@ -190,6 +192,8 @@ Typical usage:
 
 ```python
 await ctx.storage.set("config", data)
+await ctx.secrets.set("api-token", token)
+response = await ctx.http.request(method="GET", url="https://api.example.com/data")
 await ctx.scheduler.upsert_job(...)
 await ctx.discord.send_message(...)
 await ctx.events.emit(...)
@@ -227,6 +231,14 @@ Recommended pattern:
 ```
 
 Migration logic must be deterministic and backward compatible where practical.
+
+### Secret storage and external HTTP
+
+Use `secrets.skill` for credentials such as provider API tokens. Secret values are separate from normal Skill storage and must never be copied into logs, audit metadata, Management API responses or ordinary configuration payloads.
+
+Use `http.external` for host-mediated provider API calls. The GamerHQ host restricts this port to public HTTPS targets, disables redirects and bounds request/response sizes and timeouts.
+
+Inject secrets into request headers only when making the external call, and expose only masked connection status to users.
 
 ## 9. Scheduler
 
