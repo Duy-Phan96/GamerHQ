@@ -203,6 +203,7 @@ class GamerHQWebPlatformService:
                                     "itemIdPath": field["collection"]["item_id_path"],
                                     "itemIdPayloadKey": field["collection"]["item_id_payload_key"],
                                     "itemReadPath": field["collection"]["item_read_path"],
+                                    "scheduleHintsPath": field["collection"]["schedule_hints_path"],
                                     "titlePath": field["collection"]["title_path"],
                                     "statusPath": field["collection"]["status_path"],
                                     "summaryPath": field["collection"]["summary_path"],
