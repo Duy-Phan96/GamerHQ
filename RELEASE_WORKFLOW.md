@@ -4,7 +4,7 @@
 
 - `main` — last known-good deployable release.
 - `develop` — integration branch for the next release.
-- `feat/<name>` — one feature or focused change.
+- `feat/<name>` — one feature or focused change. Existing `feature/...` branches/history remain valid; use `feat/...` for new work.
 - `fix/<name>` — one bug fix.
 - `refactor/<name>` — focused internal restructuring.
 - `docs/<name>` — documentation-only change.
