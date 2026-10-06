@@ -20,17 +20,16 @@ A generated or manually written Skill MUST:
 10. use `SkillRegistrationContext` only for process-level handler registration;
 11. use `SkillContext` for guild-scoped work;
 12. use `storage.skill` instead of raw database access;
-13. use `secrets.skill` for provider credentials instead of normal storage or environment access;
-14. use `scheduler.jobs` instead of a private persistent scheduling loop;
-15. use versioned Event/API/handler IDs;
-16. remain testable without a Discord token;
-17. fail closed when required capability/resource access is unavailable;
-18. keep health checks read-only;
-19. keep disable non-destructive by default;
-20. avoid leaking private exception text or secrets;
-21. document every public dependency surface;
-22. declare the same capability list in external package metadata and the executable SkillManifest;
-23. expose host configuration through versioned Management APIs instead of private host imports when custom administration is required.
+13. use `scheduler.jobs` instead of a private persistent scheduling loop;
+14. use versioned Event/API/handler IDs;
+15. remain testable without a Discord token;
+16. fail closed when required capability/resource access is unavailable;
+17. keep health checks read-only;
+18. keep disable non-destructive by default;
+19. avoid leaking private exception text or secrets;
+20. document every public dependency surface;
+21. declare the same capability list in external package metadata and the executable SkillManifest;
+22. expose host configuration through versioned Management APIs instead of private host imports when custom administration is required.
 
 
 ## Member reads
@@ -127,11 +126,7 @@ Use a Management API when:
 
 Use Skill Storage when:
 
-> Non-secret state belongs privately to this Skill.
-
-Use Skill Secret Storage when:
-
-> A credential or provider secret belongs privately to this Skill and guild.
+> State belongs privately to this Skill.
 
 Use Scheduler Jobs when:
 
@@ -211,7 +206,7 @@ Before declaring completion, verify:
 - all declared capabilities are used/justified;
 - all IDs are stable/versioned as required;
 - no raw host access;
-- no direct environment/host secret access; provider credentials use `secrets.skill`;
+- no secret access;
 - no private scheduler;
 - no cross-Skill private imports;
 - health is read-only;
