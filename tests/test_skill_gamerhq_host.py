@@ -64,6 +64,12 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
                     skill_id="recurring-posts",
                 )
             )
+            self.assertTrue(
+                await state.is_configured(
+                    guild_id=1,
+                    skill_id="recurring-posts",
+                )
+            )
             self.assertFalse(
                 await state.is_enabled(
                     guild_id=1,
@@ -92,7 +98,15 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertTrue(await state.is_installed(guild_id=1, skill_id="recurring-posts"))
+        self.assertFalse(await state.is_configured(guild_id=1, skill_id="recurring-posts"))
         self.assertFalse(await state.is_enabled(guild_id=1, skill_id="recurring-posts"))
+        await state.set_configured(
+            guild_id=1,
+            skill_id="recurring-posts",
+            configured=True,
+            version="1.2.1",
+        )
+        self.assertTrue(await state.is_configured(guild_id=1, skill_id="recurring-posts"))
         self.assertEqual(
             await state.installed_skill_ids(guild_id=1),
             ("recurring-posts",),
@@ -128,6 +142,18 @@ class GamerHQSkillHostTests(unittest.IsolatedAsyncioTestCase):
                 skill_id="recurring-posts",
             )
         )
+
+    async def test_direct_enable_does_not_fake_configured_state(self):
+        state = GamerHQSkillStateStore()
+        await state.set_enabled(
+            guild_id=7,
+            skill_id="new-skill",
+            enabled=True,
+            version="1.0.0",
+        )
+        self.assertTrue(await state.is_installed(guild_id=7, skill_id="new-skill"))
+        self.assertFalse(await state.is_configured(guild_id=7, skill_id="new-skill"))
+        self.assertTrue(await state.is_enabled(guild_id=7, skill_id="new-skill"))
 
     async def test_skill_state_is_per_guild_and_persists_enabled_ids(self):
         state = GamerHQSkillStateStore()
