@@ -60,6 +60,55 @@ class GamerHQWebPlatformService:
             })
         return sorted(result, key=lambda item: item["name"].lower())
 
+    async def list_discord_channels(
+        self,
+        *,
+        guild_id: int,
+        authorized_guild_ids: Iterable[int],
+    ) -> list[dict[str, Any]]:
+        guild = self._require_guild(guild_id, authorized_guild_ids)
+        result = []
+        for channel in tuple(getattr(guild, "channels", ())):
+            category = getattr(channel, "category", None)
+            result.append({
+                "id": str(channel.id),
+                "name": str(channel.name),
+                "kind": str(getattr(channel, "type", "unknown")),
+                "position": int(getattr(channel, "position", 0) or 0),
+                "categoryId": str(category.id) if category is not None else None,
+                "categoryName": str(category.name) if category is not None else None,
+            })
+        return sorted(
+            result,
+            key=lambda item: (
+                item["categoryName"] or "",
+                item["position"],
+                item["name"].lower(),
+            ),
+        )
+
+    async def list_discord_roles(
+        self,
+        *,
+        guild_id: int,
+        authorized_guild_ids: Iterable[int],
+    ) -> list[dict[str, Any]]:
+        guild = self._require_guild(guild_id, authorized_guild_ids)
+        result = []
+        default_role = getattr(guild, "default_role", None)
+        for role in tuple(getattr(guild, "roles", ())):
+            result.append({
+                "id": str(role.id),
+                "name": str(role.name),
+                "position": int(getattr(role, "position", 0) or 0),
+                "managed": bool(getattr(role, "managed", False)),
+                "isDefault": bool(default_role is not None and role.id == default_role.id),
+            })
+        return sorted(
+            result,
+            key=lambda item: (-item["position"], item["name"].lower()),
+        )
+
     async def list_skills(
         self,
         *,

@@ -11,6 +11,18 @@ class FakePlatformService:
         return [{"id": str(value), "name": f"Guild {value}", "memberCount": 1, "manageable": True}
                 for value in authorized_guild_ids]
 
+    async def list_discord_channels(self, *, guild_id, authorized_guild_ids):
+        if guild_id not in set(authorized_guild_ids):
+            from hosts.gamerhq.web_platform import WebPlatformAuthorizationError
+            raise WebPlatformAuthorizationError()
+        return [{"id": "10", "name": "general", "kind": "text"}]
+
+    async def list_discord_roles(self, *, guild_id, authorized_guild_ids):
+        if guild_id not in set(authorized_guild_ids):
+            from hosts.gamerhq.web_platform import WebPlatformAuthorizationError
+            raise WebPlatformAuthorizationError()
+        return [{"id": "20", "name": "Member", "managed": False, "isDefault": False}]
+
     async def list_skills(self, *, guild_id, authorized_guild_ids):
         if guild_id not in set(authorized_guild_ids):
             from hosts.gamerhq.web_platform import WebPlatformAuthorizationError
@@ -67,6 +79,29 @@ class WebApiTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         payload = await response.json()
         self.assertEqual([item["id"] for item in payload["servers"]], ["123", "456"])
+
+    async def test_discord_resource_routes_require_guild_authorization(self):
+        channels = await self.client.get(
+            "/api/v1/servers/123/resources/channels",
+            headers=self.headers("123"),
+        )
+        self.assertEqual(channels.status, 200)
+        channel_payload = await channels.json()
+        self.assertEqual(channel_payload["channels"][0]["id"], "10")
+
+        roles = await self.client.get(
+            "/api/v1/servers/123/resources/roles",
+            headers=self.headers("123"),
+        )
+        self.assertEqual(roles.status, 200)
+        role_payload = await roles.json()
+        self.assertEqual(role_payload["roles"][0]["id"], "20")
+
+        forbidden = await self.client.get(
+            "/api/v1/servers/999/resources/channels",
+            headers=self.headers("123"),
+        )
+        self.assertEqual(forbidden.status, 403)
 
     async def test_invalid_authorized_guild_header_is_rejected(self):
         response = await self.client.get(

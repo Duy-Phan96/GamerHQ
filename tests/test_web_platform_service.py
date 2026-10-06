@@ -18,7 +18,47 @@ from skill_runtime.contracts.management_ui import (
 
 class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.guild = SimpleNamespace(id=123, name="GamerHQ", member_count=42)
+        category = SimpleNamespace(id=50, name="Community")
+        channel_general = SimpleNamespace(
+            id=10,
+            name="general",
+            type="text",
+            position=2,
+            category=category,
+        )
+        channel_news = SimpleNamespace(
+            id=11,
+            name="announcements",
+            type="news",
+            position=1,
+            category=category,
+        )
+        default_role = SimpleNamespace(
+            id=123,
+            name="@everyone",
+            position=0,
+            managed=False,
+        )
+        member_role = SimpleNamespace(
+            id=200,
+            name="Member",
+            position=2,
+            managed=False,
+        )
+        bot_role = SimpleNamespace(
+            id=201,
+            name="Bot",
+            position=3,
+            managed=True,
+        )
+        self.guild = SimpleNamespace(
+            id=123,
+            name="GamerHQ",
+            member_count=42,
+            channels=[channel_general, channel_news],
+            roles=[default_role, member_role, bot_role],
+            default_role=default_role,
+        )
         self.bot = SimpleNamespace(
             guilds=[self.guild],
             get_guild=lambda guild_id: self.guild if int(guild_id) == 123 else None,
@@ -107,6 +147,38 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.list_servers(authorized_guild_ids=(999,)),
             [],
         )
+
+    async def test_lists_authorized_discord_resources(self):
+        channels = await self.service.list_discord_channels(
+            guild_id=123,
+            authorized_guild_ids=(123,),
+        )
+        self.assertEqual(
+            [channel["id"] for channel in channels],
+            ["11", "10"],
+        )
+        self.assertEqual(channels[0]["categoryName"], "Community")
+        self.assertEqual(channels[0]["kind"], "news")
+
+        roles = await self.service.list_discord_roles(
+            guild_id=123,
+            authorized_guild_ids=(123,),
+        )
+        self.assertEqual([role["id"] for role in roles], ["201", "200", "123"])
+        self.assertTrue(roles[0]["managed"])
+        self.assertTrue(roles[-1]["isDefault"])
+
+    async def test_resource_lookup_rejects_unauthorized_guild(self):
+        with self.assertRaises(WebPlatformAuthorizationError):
+            await self.service.list_discord_channels(
+                guild_id=123,
+                authorized_guild_ids=(999,),
+            )
+        with self.assertRaises(WebPlatformAuthorizationError):
+            await self.service.list_discord_roles(
+                guild_id=123,
+                authorized_guild_ids=(999,),
+            )
 
     async def test_rejects_unauthorized_guild_before_runtime_call(self):
         with self.assertRaises(WebPlatformAuthorizationError):
