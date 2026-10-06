@@ -108,6 +108,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
                                 operations=ManagementCollectionOperations(
                                     list_contract="progression.get-config.v1",
                                     create_contract="progression.update-config.v1",
+                                    describe_contract="progression.get-config.v1",
                                 ),
                                 item_fields=(
                                     ManagementField(
@@ -118,6 +119,7 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
                                     ),
                                 ),
                                 item_id_payload_key="postId",
+                                item_read_path="item",
                                 max_items=20,
                             ),
                         ),
@@ -213,8 +215,10 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
         collection = schema["sections"][0]["fields"][1]["collection"]
         self.assertEqual(collection["operations"]["listContract"], "progression.get-config.v1")
         self.assertEqual(collection["operations"]["createContract"], "progression.update-config.v1")
+        self.assertEqual(collection["operations"]["describeContract"], "progression.get-config.v1")
         self.assertEqual(collection["itemFields"][0]["configPath"], "name")
         self.assertEqual(collection["itemIdPayloadKey"], "postId")
+        self.assertEqual(collection["itemReadPath"], "item")
         self.assertEqual(collection["maxItems"], 20)
 
     async def test_management_call_stays_on_versioned_runtime_router(self):

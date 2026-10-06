@@ -64,6 +64,7 @@ class ManagementCollectionOperations:
     set_active_contract: str | None = None
     delete_preview_contract: str | None = None
     delete_contract: str | None = None
+    describe_contract: str | None = None
 
     def __post_init__(self) -> None:
         if not self.list_contract or not self.create_contract:
@@ -76,6 +77,7 @@ class ManagementCollectionOperations:
                 self.list_contract,
                 self.create_contract,
                 self.get_contract,
+                self.describe_contract,
                 self.validate_contract,
                 self.update_contract,
                 self.set_active_contract,
@@ -96,12 +98,15 @@ class ManagementCollectionSchema:
     status_path: str | None = None
     summary_path: str | None = None
     max_items: int | None = None
+    item_read_path: str | None = None
 
     def __post_init__(self) -> None:
         if not CONFIG_PATH.fullmatch(self.item_id_path):
             raise ValueError("Management collection item_id_path must be a config path.")
         if not FIELD_KEY.fullmatch(self.item_id_payload_key):
             raise ValueError("Management collection item_id_payload_key must be a stable field key.")
+        if self.item_read_path is not None and not CONFIG_PATH.fullmatch(self.item_read_path):
+            raise ValueError("Management collection item_read_path must be a config path.")
         if not CONFIG_PATH.fullmatch(self.title_path):
             raise ValueError("Management collection title_path must be a config path.")
         for optional in (self.status_path, self.summary_path):
