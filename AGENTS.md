@@ -17,19 +17,28 @@
 - Never read/expose real `.env` values. Back up before DB/schema work; no local + VPS bot against the live guild, force-push, `reset --hard`, automatic deploy or uncontrolled Discord deletion.
 - Normal administration starts at `/server manage`; first-time setup is `/server setup`, technical tools belong under owner-only `/server dev`. Preserve the existing confirmed operation services.
 
+## Development lifecycle
+- Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.
+- AI-assisted work follows [SOP-008](docs/sop/SOP-008-ai-assisted-development.md): inspect → restate → architecture check → plan → smallest coherent change → test → diff self-review → human summary → PR.
+- Use the central Definition of Done proportionally; do not add bureaucracy to trivial changes.
+- For cross-repository changes merge in dependency order: public Runtime/SDK contract → external Skill/provider → GamerHQ integration/pin → web client.
+- Use ADRs only for durable architectural decisions; see [ADR guidance](docs/architecture/decisions/README.md).
+
 ## Validation and handoff
 - Run relevant offline tests for behavior changes; add regression coverage for bugs, authorization, retries and persistence where affected.
 - Use pytest or tools.test, never raw unittest discovery that bypasses isolation. See the workflow and tests/AGENTS.md.
 - Do not hide existing failures. Report what ran, results, limitations and any tests not run.
 - Run git diff --check and git status --short before completion. Check affected documentation links.
 - Do not commit or push unless explicitly requested. Do not deploy or connect a live bot as routine validation.
-- Report changed files, implementation summary, tests/results, material assumptions/risks and owner actions.
+- Report changed files, implementation summary, tests/results, architecture/security/migration impact, material assumptions/risks, follow-ups and owner actions.
 - End with OWNER ACTION REQUIRED and exact applicable commands.
 
 ## Read selectively
 Start with the relevant row; do not load every document or historical report.
 | Task | Reference |
 | --- | --- |
+| SDLC / Definition of Done | [Software Development Lifecycle](docs/development/SDLC.md) |
+| AI-assisted development | [AI Development SOP](docs/sop/SOP-008-ai-assisted-development.md) |
 | Workflow, validation, prompt examples | [Development workflow](docs/DEVELOPMENT_WORKFLOW.md) |
 | Module ownership and startup | [Architecture](docs/ARCHITECTURE.md) |
 | Channels, roles, IDs and repair | [Server structure](docs/SERVER_STRUCTURE.md) |
