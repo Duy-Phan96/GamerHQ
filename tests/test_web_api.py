@@ -43,6 +43,9 @@ class FakePlatformService:
         return {"received": dict(kwargs["payload"])}
 
     async def install_skill(self, **kwargs):
+        if kwargs["guild_id"] not in set(kwargs["authorized_guild_ids"]):
+            from hosts.gamerhq.web_platform import WebPlatformAuthorizationError
+            raise WebPlatformAuthorizationError()
         return {
             "id": kwargs["skill_id"],
             "state": {"installed": True, "enabled": False},
