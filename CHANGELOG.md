@@ -15,11 +15,11 @@
 
 ### Fixed
 
-- No release-specific fixes recorded yet.
+_No entries yet._
 
 ### Security
 
-- No release-specific security changes recorded yet.
+_No entries yet._
 
 > Older dated `[Unreleased]` headings below are retained as historical development snapshots. New work belongs only in this top section until it is promoted to a versioned release.
 
