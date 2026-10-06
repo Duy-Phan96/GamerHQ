@@ -258,10 +258,10 @@ class GamerHQSkillRuntimeTests(unittest.IsolatedAsyncioTestCase):
         guild = FakeGuild()
         bot = SimpleNamespace(get_guild=lambda guild_id: guild if guild_id == guild.id else None)
         runtime = GamerHQSkillRuntime(bot)
-        skill = FakeSkill((SkillCapability.DISCORD_ROLES_MANAGE.value,))
+        skill = FakeSkill((SkillCapability.DISCORD_VOICE_MANAGE.value,))
         runtime.register(skill)
 
-        with self.assertRaisesRegex(CapabilityUnavailableError, "discord.roles.manage"):
+        with self.assertRaisesRegex(CapabilityUnavailableError, "discord.voice.manage"):
             await runtime.enable_skill(guild_id=1, skill_id="fixture-skill")
         self.assertEqual(skill.calls, [])
 
