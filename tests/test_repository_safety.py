@@ -50,6 +50,7 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertFalse(secret_findings('https://www.instant-gaming.com/?igr=gamer-0a9671a'))
         self.assertFalse(secret_findings('secret = "private-value-must-not-appear"'))
         self.assertFalse(secret_findings('shared_secret = "test-secret"'))
+        self.assertFalse(secret_findings('SECRETS_SKILL = "secrets.skill"'))
         self.assertTrue(secret_findings('secret = "literal-production-credential-value"'))
         self.assertTrue(private_path('transcripts/private.txt'))
         self.assertFalse(private_path('.env.example'))
