@@ -10,7 +10,7 @@ Canonical sources:
 ## Procedure
 
 1. Confirm the intended release scope on develop.
-2. Confirm required PR/CI gates are green.
+2. Run `python -m tools.release_preflight` and confirm required PR/CI gates are green.
 3. Review version changes across Host, SDK and external Skills independently.
 4. Update CHANGELOG/release notes for user-visible, operational and compatibility changes.
 5. Verify external Skill pins are immutable reviewed commits/releases.
