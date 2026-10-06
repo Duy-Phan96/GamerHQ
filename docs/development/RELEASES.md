@@ -86,3 +86,15 @@ live until the owner executes the production deployment process and completes
 post-deployment verification.
 
 Never claim production deployment from CI alone.
+
+
+## Automated release metadata checks
+
+Release metadata is regression-tested:
+
+- `VERSION` must match the existing semantic-version syntax;
+- the first changelog section must be the canonical `[Unreleased]` section;
+- generated release notes must read from that current section.
+
+This keeps release metadata consistent without adding a separate release
+framework.
