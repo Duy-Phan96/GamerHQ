@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from tools.release_preflight import validate_skill_lock
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,15 +25,10 @@ class SkillProductionPackagingTests(unittest.TestCase):
             self.assertIn(required, dockerignore)
         self.assertNotIn("!packages/gamerhq-skill-recurring-posts/", dockerignore)
 
-    def test_external_skill_lock_pins_immutable_github_commit(self):
+    def test_external_skill_lock_uses_only_immutable_pins(self):
         lock = (ROOT / "requirements-skills.lock").read_text(encoding="utf-8")
-        self.assertIn(
-            "gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/"
-            "gamerhq-skill-recurring-posts/archive/"
-            "7656616a3259d70bc09ac10446cb0965d9ec6a6c.zip",
-            lock,
-        )
-        self.assertNotIn("/main.zip", lock)
+        self.assertEqual(validate_skill_lock(lock), ())
+        self.assertIn("gamerhq-skill-recurring-posts", lock)
 
     def test_ci_keeps_packaging_checks_running_after_independent_audit_failure(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(
