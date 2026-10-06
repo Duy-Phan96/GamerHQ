@@ -22,6 +22,12 @@ class FakeGuild:
         self.id = guild_id
         self.channels = {}
         self.members = {}
+        self.roles = {}
+        top_role = SimpleNamespace(id=999, __gt__=lambda self, other: True)
+        self.me = SimpleNamespace(
+            top_role=top_role,
+            guild_permissions=discord.Permissions(manage_roles=True),
+        )
 
     def get_channel_or_thread(self, channel_id):
         return self.channels.get(channel_id)
@@ -31,6 +37,9 @@ class FakeGuild:
 
     def get_member(self, member_id):
         return self.members.get(member_id)
+
+    def get_role(self, role_id):
+        return self.roles.get(role_id)
 
     async def fetch_member(self, member_id):
         member = self.members.get(member_id)
@@ -131,6 +140,65 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         adapter = self.adapter()
         with self.assertRaisesRegex(PermissionError, "discord.members.read"):
             await adapter.get_member(member_id=7)
+
+    async def test_reward_role_grant_requires_safe_permissionless_role(self):
+        role = SimpleNamespace(
+            id=44,
+            managed=False,
+            permissions=discord.Permissions.none(),
+            is_default=lambda: False,
+            __lt__=lambda self, other: True,
+        )
+        member = SimpleNamespace(
+            id=7,
+            guild=self.guild,
+            roles=[],
+            add_roles=AsyncMock(),
+            remove_roles=AsyncMock(),
+        )
+        self.guild.roles[44] = role
+        self.guild.members[7] = member
+
+        adapter = self.adapter(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        self.assertTrue(await adapter.grant_role(member_id=7, role_id=44))
+        member.add_roles.assert_awaited_once_with(role, reason="Skill reward: fixture-skill")
+
+    async def test_reward_role_grant_refuses_permission_bearing_role(self):
+        role = SimpleNamespace(
+            id=45,
+            managed=False,
+            permissions=discord.Permissions(administrator=True),
+            is_default=lambda: False,
+            __lt__=lambda self, other: True,
+        )
+        self.guild.roles[45] = role
+        self.guild.members[7] = SimpleNamespace(id=7, guild=self.guild, roles=[], add_roles=AsyncMock())
+
+        adapter = self.adapter(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        with self.assertRaisesRegex(Exception, "Permission-bearing"):
+            await adapter.grant_role(member_id=7, role_id=45)
+
+    async def test_preexisting_reward_role_is_not_regranted(self):
+        role = SimpleNamespace(
+            id=46,
+            managed=False,
+            permissions=discord.Permissions.none(),
+            is_default=lambda: False,
+            __lt__=lambda self, other: True,
+        )
+        member = SimpleNamespace(
+            id=7,
+            guild=self.guild,
+            roles=[role],
+            add_roles=AsyncMock(),
+            remove_roles=AsyncMock(),
+        )
+        self.guild.roles[46] = role
+        self.guild.members[7] = member
+
+        adapter = self.adapter(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        self.assertFalse(await adapter.grant_role(member_id=7, role_id=46))
+        member.add_roles.assert_not_awaited()
 
     async def test_channel_lookup_is_guild_scoped_and_host_neutral(self):
         adapter = self.adapter(SkillCapability.DISCORD_CHANNELS_READ.value)
