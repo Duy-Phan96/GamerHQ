@@ -58,6 +58,14 @@ def skill_ids(name):
 
 EXTERNAL_SKILLS = skill_ids("GAMERHQ_EXTERNAL_SKILLS")
 
+GAMERHQ_WEB_API_ENABLED = os.getenv("GAMERHQ_WEB_API_ENABLED", "false").lower() == "true"
+GAMERHQ_WEB_API_HOST = os.getenv("GAMERHQ_WEB_API_HOST", "127.0.0.1").strip() or "127.0.0.1"
+_web_api_port = os.getenv("GAMERHQ_WEB_API_PORT", "8080").strip()
+if not _web_api_port.isdigit() or not 1 <= int(_web_api_port) <= 65535:
+    raise ConfigurationError("GAMERHQ_WEB_API_PORT must be an integer between 1 and 65535.")
+GAMERHQ_WEB_API_PORT = int(_web_api_port)
+GAMERHQ_WEB_API_SECRET = os.getenv("GAMERHQ_WEB_API_SECRET", "").strip()
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = discord_id("GUILD_ID")
 CHOOSE_GAMES_CHANNEL_ID = discord_id("CHOOSE_GAMES_CHANNEL_ID")
@@ -72,6 +80,10 @@ def validate_startup():
         raise ConfigurationError("TWITCH_CLIENT_ID is required when STREAMER_HUB_ENABLED is true.")
     if GUILD_ID <= 0:
         raise ConfigurationError("GUILD_ID is required and must be a positive Discord server ID.")
+    if GAMERHQ_WEB_API_ENABLED and len(GAMERHQ_WEB_API_SECRET) < 32:
+        raise ConfigurationError(
+            "GAMERHQ_WEB_API_SECRET must be at least 32 characters when the web API is enabled."
+        )
 
 
 DISPLAY_GROUP_ORDER = [
