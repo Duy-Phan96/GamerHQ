@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS skill_guild_state (
     guild_id INTEGER NOT NULL,
     skill_id TEXT NOT NULL,
     installed INTEGER NOT NULL DEFAULT 0 CHECK(installed IN (0,1)),
+    configured INTEGER NOT NULL DEFAULT 0 CHECK(configured IN (0,1)),
     enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
     version TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -391,6 +392,10 @@ def init_db():
         if "installed" not in skill_state_cols:
             conn.execute(
                 "ALTER TABLE skill_guild_state ADD COLUMN installed INTEGER NOT NULL DEFAULT 1"
+            )
+        if "configured" not in skill_state_cols:
+            conn.execute(
+                "ALTER TABLE skill_guild_state ADD COLUMN configured INTEGER NOT NULL DEFAULT 1"
             )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS skill_guild_state_installed "
