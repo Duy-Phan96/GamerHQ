@@ -585,3 +585,24 @@ User signs in
 
 When that flow works for more than one unrelated Skill without custom frontend
 code, GamerHQ has validated the core Skill Platform architecture.
+
+
+## Marketplace governance
+
+Marketplace discovery and executable package deployment are deliberately
+separate.
+
+A catalog entry may be Draft, Review Candidate, Approved, Published, Deprecated
+or Blocked according to the [Skill Ecosystem Governance](governance.md).
+
+Approval applies to a specific immutable Skill release.
+
+Publishing a catalog entry does not authorize the GamerHQ Host to clone, install
+or execute arbitrary remote code. Host package deployment remains a reviewed
+deployment concern.
+
+The current Add-to-Server flow therefore operates only on Skill packages already
+available in the host deployment.
+
+A future automated package-deployment service requires a separate trust,
+provenance/signing, compatibility and rollback design.

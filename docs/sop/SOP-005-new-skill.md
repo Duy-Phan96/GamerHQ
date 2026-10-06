@@ -9,6 +9,7 @@ Canonical sources:
 - ../skills/conformance.md
 - ../skills/review-checklist.md
 - ../skills/package-compatibility.md
+- ../skills/governance.md
 
 ## Procedure
 
@@ -25,7 +26,9 @@ Canonical sources:
 11. Run conformance/independent-install checks.
 12. Document configuration, storage schema, capabilities, APIs/events, migration and security behavior.
 13. Release/version the Skill independently.
-14. Pin a reviewed immutable Skill artifact/commit in the host integration.
+14. Submit/review the specific immutable release under the Skill Governance rules.
+15. Publish approved catalog metadata separately from executable host package deployment.
+16. Pin a reviewed immutable Skill artifact/commit in the host integration.
 
 ## Forbidden coupling
 

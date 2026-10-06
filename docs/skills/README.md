@@ -139,6 +139,7 @@ Start here when building a new Skill:
 10. [Web Platform & Skill Marketplace](web-platform-marketplace.md)
 11. [Management UI Schema V1](management-ui-schema.md)
 12. [Host Web API Contract V1](web-host-api-v1.md)
+13. [Skill Ecosystem Governance](governance.md)
 
 The Developer Guide is the primary human-facing reference. The Authoring
 Contract is intentionally stricter and may also be used as input for code

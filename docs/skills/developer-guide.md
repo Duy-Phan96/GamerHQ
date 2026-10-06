@@ -497,3 +497,24 @@ A Skill is ready for review only when:
 - no secrets or production data are required for tests.
 
 Run the [SDK Conformance Check](conformance.md), including the static source audit, as a fast offline preflight, then use the [Skill Review Checklist](review-checklist.md) for full review.
+
+
+## 22. Marketplace and review governance
+
+A Skill being technically valid does not automatically make every future release
+Marketplace-approved.
+
+Review/publication applies to a specific immutable release artifact.
+
+Before Marketplace publication or production host deployment, follow:
+
+- [Skill Ecosystem Governance](governance.md);
+- [Skill Review Checklist](review-checklist.md);
+- [Package Compatibility](package-compatibility.md);
+- [External Skill CI](external-ci.md).
+
+Marketplace publication, host package deployment, guild installation and Runtime
+enablement are separate lifecycle states.
+
+An AI-generated Skill follows exactly the same review path as human-authored
+code.
