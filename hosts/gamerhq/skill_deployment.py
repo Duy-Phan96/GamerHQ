@@ -66,7 +66,7 @@ def parse_reviewed_skill_lock(text: str) -> tuple[ReviewedSkillPackage, ...]:
             )
 
         distribution = match.group("distribution")
-        key = distribution.lower().replace("_", "-")
+        key = re.sub(r"[-_.]+", "-", distribution).lower()
         if key in seen:
             raise SkillDeploymentPlanError(
                 "External Skill lock contains a duplicate distribution."
