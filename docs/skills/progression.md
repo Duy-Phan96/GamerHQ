@@ -231,3 +231,33 @@ This prevents a future host upgrade from losing rewards that were configured
 before role/channel execution became available.
 
 Member status reads are side-effect free and never emit announcements.
+
+
+## Owned role rewards
+
+GamerHQ now exposes a narrow `discord.roles.manage` Skill capability for reward
+roles.
+
+The host accepts only roles that are:
+
+- not `@everyone`;
+- not Discord-managed;
+- below the GamerHQ bot's top role;
+- manageable by the bot;
+- completely permissionless.
+
+This deliberately prevents a portable Skill from granting administrator,
+moderation or other permission-bearing roles.
+
+Progression records ownership only when it actually adds the reward role. If a
+member already had the configured role before the reward fired, the reward may
+be considered satisfied, but that role is **not** recorded as
+Progression-owned.
+
+Channel-access rewards use a configured permissionless reward role. The channel
+itself remains normal server configuration: staff can grant that role access to
+the desired lounge/category. Progression does not create per-member permission
+overrides.
+
+This ownership boundary is what allows future revoke/reset behavior to remove
+only grants Progression itself created.

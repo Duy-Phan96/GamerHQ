@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
@@ -22,6 +22,13 @@ class FakeGuild:
         self.id = guild_id
         self.channels = {}
         self.members = {}
+        self.roles = {}
+        top_role = MagicMock(spec=discord.Role)
+        top_role.id = 999
+        self.me = SimpleNamespace(
+            top_role=top_role,
+            guild_permissions=discord.Permissions(manage_roles=True),
+        )
 
     def get_channel_or_thread(self, channel_id):
         return self.channels.get(channel_id)
@@ -31,6 +38,9 @@ class FakeGuild:
 
     def get_member(self, member_id):
         return self.members.get(member_id)
+
+    def get_role(self, role_id):
+        return self.roles.get(role_id)
 
     async def fetch_member(self, member_id):
         member = self.members.get(member_id)
@@ -132,6 +142,62 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(PermissionError, "discord.members.read"):
             await adapter.get_member(member_id=7)
 
+    async def test_reward_role_grant_requires_safe_permissionless_role(self):
+        role = MagicMock(spec=discord.Role)
+        role.id = 44
+        role.managed = False
+        role.permissions = discord.Permissions.none()
+        role.is_default.return_value = False
+        role.__lt__.return_value = True
+        member = SimpleNamespace(
+            id=7,
+            guild=self.guild,
+            roles=[],
+            add_roles=AsyncMock(),
+            remove_roles=AsyncMock(),
+        )
+        self.guild.roles[44] = role
+        self.guild.members[7] = member
+
+        adapter = self.adapter(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        self.assertTrue(await adapter.grant_role(member_id=7, role_id=44))
+        member.add_roles.assert_awaited_once_with(role, reason="Skill reward: fixture-skill")
+
+    async def test_reward_role_grant_refuses_permission_bearing_role(self):
+        role = MagicMock(spec=discord.Role)
+        role.id = 45
+        role.managed = False
+        role.permissions = discord.Permissions(administrator=True)
+        role.is_default.return_value = False
+        role.__lt__.return_value = True
+        self.guild.roles[45] = role
+        self.guild.members[7] = SimpleNamespace(id=7, guild=self.guild, roles=[], add_roles=AsyncMock())
+
+        adapter = self.adapter(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        with self.assertRaisesRegex(Exception, "Permission-bearing"):
+            await adapter.grant_role(member_id=7, role_id=45)
+
+    async def test_preexisting_reward_role_is_not_regranted(self):
+        role = MagicMock(spec=discord.Role)
+        role.id = 46
+        role.managed = False
+        role.permissions = discord.Permissions.none()
+        role.is_default.return_value = False
+        role.__lt__.return_value = True
+        member = SimpleNamespace(
+            id=7,
+            guild=self.guild,
+            roles=[role],
+            add_roles=AsyncMock(),
+            remove_roles=AsyncMock(),
+        )
+        self.guild.roles[46] = role
+        self.guild.members[7] = member
+
+        adapter = self.adapter(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        self.assertFalse(await adapter.grant_role(member_id=7, role_id=46))
+        member.add_roles.assert_not_awaited()
+
     async def test_channel_lookup_is_guild_scoped_and_host_neutral(self):
         adapter = self.adapter(SkillCapability.DISCORD_CHANNELS_READ.value)
         info = await adapter.get_channel(channel_id=self.channel.id)
@@ -192,10 +258,10 @@ class GamerHQSkillRuntimeTests(unittest.IsolatedAsyncioTestCase):
         guild = FakeGuild()
         bot = SimpleNamespace(get_guild=lambda guild_id: guild if guild_id == guild.id else None)
         runtime = GamerHQSkillRuntime(bot)
-        skill = FakeSkill((SkillCapability.DISCORD_ROLES_MANAGE.value,))
+        skill = FakeSkill((SkillCapability.DISCORD_VOICE_MANAGE.value,))
         runtime.register(skill)
 
-        with self.assertRaisesRegex(CapabilityUnavailableError, "discord.roles.manage"):
+        with self.assertRaisesRegex(CapabilityUnavailableError, "discord.voice.manage"):
             await runtime.enable_skill(guild_id=1, skill_id="fixture-skill")
         self.assertEqual(skill.calls, [])
 

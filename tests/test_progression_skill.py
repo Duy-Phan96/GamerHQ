@@ -37,9 +37,22 @@ class FakeAudit:
 class FakeDiscord:
     def __init__(self):
         self.sent = []
+        self.roles = set()
 
     async def get_member(self, *, member_id):
         return SimpleNamespace(id=member_id, display_name="Player One")
+
+    async def grant_role(self, *, member_id, role_id):
+        if role_id in self.roles:
+            return False
+        self.roles.add(role_id)
+        return True
+
+    async def remove_role(self, *, member_id, role_id):
+        if role_id not in self.roles:
+            return False
+        self.roles.remove(role_id)
+        return True
 
     async def send_message(self, *, channel_id, content=None, embed=None, allowed_mentions=None):
         self.sent.append({
@@ -296,12 +309,12 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("starter-pack", status["claimedRewards"])
         self.assertEqual(status["sourceXp"]["reward"], 20)
 
-    async def test_unsupported_role_only_reward_is_not_claimed(self):
+    async def test_role_reward_tracks_only_skill_owned_grant(self):
         await self.skill.enable(self.ctx)
         config = deepcopy(DEFAULT_CONFIG)
         config["rewards"] = [{
-            "id": "role-only",
-            "name": "Role Only",
+            "id": "veteran-role",
+            "name": "Veteran Role",
             "trigger": {"type": "xp", "xp": 5},
             "grants": [{"type": "role", "roleId": 123}],
             "enabled": True,
@@ -314,8 +327,32 @@ class ProgressionSkillTests(unittest.IsolatedAsyncioTestCase):
         )
         status = await self.skill.member_status(self.ctx, {"memberId": 7})
 
-        self.assertEqual(response["rewardEvents"], ())
-        self.assertNotIn("role-only", status["claimedRewards"])
+        self.assertEqual(response["rewardEvents"][0]["grants"][0]["owned"], True)
+        self.assertIn("veteran-role:123", status["ownedRoleGrants"])
+        self.assertIn("veteran-role", status["claimedRewards"])
+
+    async def test_preexisting_role_reward_is_not_owned(self):
+        await self.skill.enable(self.ctx)
+        self.discord.roles.add(123)
+        config = deepcopy(DEFAULT_CONFIG)
+        config["rewards"] = [{
+            "id": "existing-role",
+            "name": "Existing Role",
+            "trigger": {"type": "xp", "xp": 5},
+            "grants": [{"type": "role", "roleId": 123}],
+            "enabled": True,
+        }]
+        await self.skill.update_config(self.ctx, {"config": config})
+
+        response = await self.skill.record_activity(
+            self.ctx,
+            {"memberId": 7, "source": "voice", "units": 1, "occurredAt": 1_790_000_000},
+        )
+        status = await self.skill.member_status(self.ctx, {"memberId": 7})
+
+        self.assertFalse(response["rewardEvents"][0]["grants"][0]["owned"])
+        self.assertNotIn("existing-role:123", status["ownedRoleGrants"])
+        self.assertIn("existing-role", status["claimedRewards"])
 
     async def test_achievement_announcement_uses_configured_channel_and_template(self):
         await self.skill.enable(self.ctx)
