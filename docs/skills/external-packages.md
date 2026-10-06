@@ -153,3 +153,30 @@ already merged a newer version.
 
 This deliberately prevents a moving `main` branch in a Skill repository from
 changing production behavior without host-side review.
+
+## Reviewed deployment plan
+
+`requirements-skills.lock` remains the single reviewed source of truth for
+external Skill package dependencies.
+
+GamerHQ can project that lock into a machine-readable deployment plan without
+installing or executing anything:
+
+```bash
+python -m tools.skill_package_plan --json
+```
+
+The V1 plan reports:
+
+- schema version;
+- immutable package source repository;
+- reviewed full commit SHA;
+- distribution name;
+- that an image rebuild/redeploy is required;
+- that runtime package installation is not allowed.
+
+The parser fails closed when a lock entry uses a moving branch, short commit,
+unsupported source form, duplicate distribution or malformed requirement.
+
+This provides a stable input for future CI/deployment orchestration while
+preserving the current reviewed Docker build boundary.
