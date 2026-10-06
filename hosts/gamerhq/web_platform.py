@@ -114,6 +114,41 @@ class GamerHQWebPlatformService:
                             "minimum": field["minimum"],
                             "maximum": field["maximum"],
                             "options": field["options"],
+                            "collection": (
+                                {
+                                    "operations": {
+                                        "listContract": field["collection"]["operations"]["list_contract"],
+                                        "createContract": field["collection"]["operations"]["create_contract"],
+                                        "getContract": field["collection"]["operations"]["get_contract"],
+                                        "validateContract": field["collection"]["operations"]["validate_contract"],
+                                        "updateContract": field["collection"]["operations"]["update_contract"],
+                                        "setActiveContract": field["collection"]["operations"]["set_active_contract"],
+                                        "deletePreviewContract": field["collection"]["operations"]["delete_preview_contract"],
+                                        "deleteContract": field["collection"]["operations"]["delete_contract"],
+                                    },
+                                    "itemFields": [
+                                        {
+                                            "key": item_field["key"],
+                                            "label": item_field["label"],
+                                            "type": item_field["type"],
+                                            "configPath": item_field["config_path"],
+                                            "description": item_field["description"],
+                                            "required": item_field["required"],
+                                            "minimum": item_field["minimum"],
+                                            "maximum": item_field["maximum"],
+                                            "options": item_field["options"],
+                                        }
+                                        for item_field in field["collection"]["item_fields"]
+                                    ],
+                                    "itemIdPath": field["collection"]["item_id_path"],
+                                    "titlePath": field["collection"]["title_path"],
+                                    "statusPath": field["collection"]["status_path"],
+                                    "summaryPath": field["collection"]["summary_path"],
+                                    "maxItems": field["collection"]["max_items"],
+                                }
+                                if field["collection"] is not None
+                                else None
+                            ),
                         }
                         for field in section["fields"]
                     ],
