@@ -4,7 +4,7 @@
 
 - `main` — last known-good deployable release.
 - `develop` — integration branch for the next release.
-- `feat/<name>` — one feature or focused change. Existing `feature/...` branches/history remain valid; use `feat/...` for new work. Existing `feature/...` branches/history remain valid; use `feat/...` for new work.
+- `feat/<name>` — one feature or focused change. Existing `feature/...` branches/history remain valid; use `feat/...` for new work.
 - `fix/<name>` — one bug fix.
 - `refactor/<name>` — focused internal restructuring.
 - `docs/<name>` — documentation-only change.
@@ -22,6 +22,16 @@
 7. Create a release candidate and run `RELEASE_CHECKLIST.md`.
 8. Merge/tag on `main` only after the release candidate passes.
 9. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
+
+## Changelog discipline
+
+Use the top `## [Unreleased]` section of `CHANGELOG.md` for current development.
+Prefer `Added`, `Changed`, `Fixed`, `Deprecated`, `Removed` and `Security`
+subsections when relevant. Historical dated Unreleased snapshots remain read-only
+history; do not append new work to them.
+
+At release time, promote the reviewed top Unreleased content into a versioned
+section matching `VERSION`, then create a fresh empty top Unreleased section.
 
 ## Versioning
 
