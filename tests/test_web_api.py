@@ -42,6 +42,12 @@ class FakePlatformService:
             )
         return {"received": dict(kwargs["payload"])}
 
+    async def install_skill(self, **kwargs):
+        return {
+            "id": kwargs["skill_id"],
+            "state": {"installed": True, "enabled": False},
+        }
+
     async def set_skill_enabled(self, **kwargs):
         return {"id": kwargs["skill_id"], "state": {"enabled": kwargs["enabled"]}}
 
@@ -140,6 +146,22 @@ class WebApiTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 409)
         payload = await response.json()
         self.assertEqual(payload["code"], "management_conflict")
+
+    async def test_install_skill_route_is_authorized(self):
+        response = await self.client.post(
+            "/api/v1/servers/123/skills/demo/install",
+            headers=self.headers(),
+        )
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertTrue(payload["state"]["installed"])
+        self.assertFalse(payload["state"]["enabled"])
+
+        forbidden = await self.client.post(
+            "/api/v1/servers/999/skills/demo/install",
+            headers=self.headers("123"),
+        )
+        self.assertEqual(forbidden.status, 403)
 
     async def test_enablement_requires_boolean(self):
         response = await self.client.put(
