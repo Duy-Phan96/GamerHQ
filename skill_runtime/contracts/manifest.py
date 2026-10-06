@@ -92,9 +92,10 @@ def validate_manifest(manifest: SkillManifest, *, supported_api_versions: frozen
     duplicate_management = _duplicates(management)
     if duplicate_management:
         raise ValueError("Duplicate management API declarations are not allowed: " + ", ".join(sorted(duplicate_management)))
-    if manifest.management_ui is not None:
+    management_ui = getattr(manifest, "management_ui", None)
+    if management_ui is not None:
         declared = set(management)
-        required = {manifest.management_ui.read_contract, manifest.management_ui.write_contract}
+        required = {management_ui.read_contract, management_ui.write_contract}
         missing = sorted(required - declared)
         if missing:
             raise ValueError(
