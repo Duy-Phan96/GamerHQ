@@ -104,3 +104,30 @@ names fail closed.
 
 The preflight never downloads packages, reads production configuration, changes
 files, tags a release or deploys.
+
+
+## Release readiness report
+
+Run:
+
+`python -m tools.release_readiness`
+
+or for machine-readable output:
+
+`python -m tools.release_readiness --json`
+
+The report composes the existing release preflight and reviewed external Skill
+deployment plan. It does not create a second release policy or source of truth.
+
+It reports:
+
+- the candidate version;
+- automated release-preflight status;
+- reviewed external Skill deployment metadata;
+- whether the reviewed Skill set requires an image rebuild;
+- whether the repository state is ready to proceed to manual acceptance.
+
+`readyForManualAcceptance` does **not** mean released, deployed or live-tested.
+Discord/VPS acceptance from `RELEASE_CHECKLIST.md` remains an explicit owner
+step. The command does not download packages, create tags/releases, mutate
+release metadata, read production secrets or deploy.
