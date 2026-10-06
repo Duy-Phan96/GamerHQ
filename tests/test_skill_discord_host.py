@@ -226,6 +226,40 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(kwargs["allowed_mentions"].users)
         self.assertFalse(kwargs["allowed_mentions"].roles)
 
+    async def test_send_renders_safe_link_buttons(self):
+        adapter = self.adapter(SkillCapability.DISCORD_MESSAGES_SEND.value)
+        await adapter.send_message(
+            channel_id=self.channel.id,
+            content="offer",
+            link_buttons=({"label": "View offer", "url": "https://example.com/deal"},),
+        )
+
+        view = self.channel.send.await_args.kwargs["view"]
+        self.assertIsInstance(view, discord.ui.View)
+        self.assertEqual(len(view.children), 1)
+        button = view.children[0]
+        self.assertEqual(button.label, "View offer")
+        self.assertEqual(button.url, "https://example.com/deal")
+        self.assertEqual(button.style, discord.ButtonStyle.link)
+
+    async def test_link_buttons_reject_unsafe_urls_and_too_many_buttons(self):
+        adapter = self.adapter(SkillCapability.DISCORD_MESSAGES_SEND.value)
+        with self.assertRaisesRegex(Exception, "must use HTTPS"):
+            await adapter.send_message(
+                channel_id=self.channel.id,
+                content="offer",
+                link_buttons=({"label": "Bad", "url": "javascript:alert(1)"},),
+            )
+        with self.assertRaisesRegex(Exception, "at most 5"):
+            await adapter.send_message(
+                channel_id=self.channel.id,
+                content="offer",
+                link_buttons=tuple(
+                    {"label": f"Link {index}", "url": "https://example.com"}
+                    for index in range(6)
+                ),
+            )
+
     async def test_embed_requires_separate_embed_capability(self):
         adapter = self.adapter(SkillCapability.DISCORD_MESSAGES_SEND.value)
         with self.assertRaisesRegex(PermissionError, "discord.embeds.send"):
