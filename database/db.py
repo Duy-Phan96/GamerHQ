@@ -163,7 +163,6 @@ CREATE TABLE IF NOT EXISTS skill_guild_state (
     guild_id INTEGER NOT NULL,
     skill_id TEXT NOT NULL,
     installed INTEGER NOT NULL DEFAULT 0 CHECK(installed IN (0,1)),
-    configured INTEGER NOT NULL DEFAULT 0 CHECK(configured IN (0,1)),
     enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
     version TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -179,6 +178,15 @@ CREATE TABLE IF NOT EXISTS skill_storage (
     value_json TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (guild_id, skill_id, storage_key)
+);
+
+CREATE TABLE IF NOT EXISTS skill_secrets (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    secret_key TEXT NOT NULL,
+    value_encrypted TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, skill_id, secret_key)
 );
 
 CREATE TABLE IF NOT EXISTS skill_jobs (
@@ -383,10 +391,6 @@ def init_db():
         if "installed" not in skill_state_cols:
             conn.execute(
                 "ALTER TABLE skill_guild_state ADD COLUMN installed INTEGER NOT NULL DEFAULT 1"
-            )
-        if "configured" not in skill_state_cols:
-            conn.execute(
-                "ALTER TABLE skill_guild_state ADD COLUMN configured INTEGER NOT NULL DEFAULT 1"
             )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS skill_guild_state_installed "
