@@ -289,7 +289,7 @@ class GamerHQWebPlatformService:
                 "available": True,
                 "installed": bool(status.installed),
                 "enabled": bool(status.enabled),
-                "configured": bool(status.management_available),
+                "configured": bool(status.installed and status.management_available),
                 "healthy": status.health == "PASS",
             },
             "health": {
