@@ -1,5 +1,29 @@
 # GamerHQ Changelog
 
+## [Unreleased]
+
+### Added
+
+- Introduced the lightweight GamerHQ Software Development Lifecycle, Definition of Done, AI-assisted development SOP and architecture decision guidance.
+- Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
+- Added portable platform compilation and `gamerhq-skill-sdk` wheel-build CI gates.
+
+### Changed
+
+- Standardized new branch and commit naming guidance while preserving existing branch history.
+- Documented independent Host, SDK, Runtime API, external Skill and web versioning/release responsibilities.
+
+### Fixed
+
+- No release-specific fixes recorded yet.
+
+### Security
+
+- No release-specific security changes recorded yet.
+
+> Older dated `[Unreleased]` headings below are retained as historical development snapshots. New work belongs only in this top section until it is promoted to a versioned release.
+
+
 ## Recurring Posts 1.1 integration
 
 - Pin the standalone Recurring Posts Skill to reviewed immutable commit `8317d854f0a39811804b9f28eff9b7061a5417e8`.
