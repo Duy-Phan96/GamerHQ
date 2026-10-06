@@ -42,6 +42,21 @@ class RepositorySafetyTests(unittest.TestCase):
             result=subprocess.run(['git','check-ignore',path],capture_output=True)
             self.assertEqual(result.returncode,1,path)
 
+    def test_history_audit_is_scoped_to_checked_out_head(self):
+        from tools import repository_audit
+        from unittest.mock import patch
+
+        with patch.object(
+            repository_audit,
+            "git",
+            return_value=b"abc123\ndef456\n",
+        ) as git:
+            self.assertEqual(
+                repository_audit.history_commits(),
+                ["abc123", "def456"],
+            )
+        git.assert_called_once_with("rev-list", "HEAD")
+
     def test_audit_detects_secret_classes_without_emitting_values(self):
         samples=['DISCORD_TOKEN='+'.'.join(['a'*24,'b'*6,'c'*28]),'https://discord.com/api/webhooks/'+'123/'+'a'*30,'-----BEGIN '+'PRIVATE KEY-----','postgresql://'+'user:credential@host/db']
         for sample in samples:self.assertTrue(secret_findings(sample))
