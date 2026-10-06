@@ -82,7 +82,7 @@ print(report.skill_id)
 
     def test_pinned_recurring_posts_distribution_is_installed_and_discoverable(self):
         distribution = importlib.metadata.distribution("gamerhq-skill-recurring-posts")
-        self.assertEqual(distribution.version, "1.2.2")
+        self.assertEqual(distribution.version, "1.2.3")
 
         loaded = discover_installed_skills(("recurring-posts",))
         self.assertEqual(len(loaded), 1)
