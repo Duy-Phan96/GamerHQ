@@ -175,8 +175,17 @@ The V1 plan reports:
 - that an image rebuild/redeploy is required;
 - that runtime package installation is not allowed.
 
-The parser fails closed when a lock entry uses a moving branch, short commit,
-unsupported source form, duplicate distribution or malformed requirement.
+The parser accepts two immutable V1 source forms:
+
+- GitHub archive URLs pinned to a full lowercase 40-character commit SHA;
+- exact package-version pins using `distribution==version`.
+
+It fails closed on moving branches/tags, short commits, version ranges,
+duplicate normalized distribution names, unsupported source forms or malformed
+requirements.
+
+Release preflight consumes this same parser, so CI and the machine-readable
+deployment plan cannot silently drift to different pinning policies.
 
 This provides a stable input for future CI/deployment orchestration while
 preserving the current reviewed Docker build boundary.

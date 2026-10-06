@@ -3,16 +3,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
+from hosts.gamerhq.skill_deployment import (
+    SkillDeploymentPlanError,
+    parse_reviewed_skill_lock,
+)
 from skill_runtime.contracts.manifest import SEMVER
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GITHUB_ARCHIVE = re.compile(
-    r"^https://github\.com/[^/]+/[^/]+/archive/([0-9a-f]{40})\.zip$"
-)
-EXACT_REQUIREMENT = re.compile(r"^[A-Za-z0-9_.-]+==[^=<>!~*\s]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,36 +32,11 @@ def _first_changelog_section(text: str) -> str | None:
 
 
 def validate_skill_lock(text: str) -> tuple[str, ...]:
-    errors: list[str] = []
-    entries = 0
-
-    for line_number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        entries += 1
-
-        if " @ " in line:
-            package, url = line.split(" @ ", 1)
-            if not package.strip():
-                errors.append(f"requirements-skills.lock:{line_number}: missing package name")
-                continue
-            if not GITHUB_ARCHIVE.fullmatch(url.strip()):
-                errors.append(
-                    f"requirements-skills.lock:{line_number}: external Skill URL must pin a full 40-character Git commit archive"
-                )
-            continue
-
-        if EXACT_REQUIREMENT.fullmatch(line):
-            continue
-
-        errors.append(
-            f"requirements-skills.lock:{line_number}: external Skill dependency is not an immutable exact pin"
-        )
-
-    if entries == 0:
-        return ()
-    return tuple(errors)
+    try:
+        parse_reviewed_skill_lock(text)
+    except SkillDeploymentPlanError as exc:
+        return (str(exc),)
+    return ()
 
 
 def check(
@@ -106,7 +80,7 @@ def check(
         lock_errors = validate_skill_lock(skill_lock)
         errors.extend(lock_errors)
         if not lock_errors:
-            notices.append("External Skill lock uses immutable exact pins")
+            notices.append("External Skill lock passed reviewed deployment validation")
 
     return ReleasePreflightResult(tuple(errors), tuple(notices))
 
