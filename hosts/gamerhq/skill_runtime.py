@@ -69,7 +69,7 @@ class GamerHQSkillRuntime:
         self.apis = SkillApiRouter(self.registry, availability=self.state.is_enabled)
         self.management = SkillManagementRouter(
             self.registry,
-            availability=self.state.is_enabled,
+            availability=self.state.is_installed,
         )
         self.scheduler = SchedulerEngine(
             self.registry,
