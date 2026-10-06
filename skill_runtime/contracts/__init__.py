@@ -4,7 +4,7 @@ from .context import DiscordChannelInfo, DiscordMemberInfo, SkillContext, SkillR
 from .errors import CapabilityUnavailableError, HostCapabilityError, HostPermissionDeniedError, InvalidHostOperationError, ResourceNotFoundError, TransientHostError
 from .events import EventContract, EventDeliveryReport, EventEnvelope
 from .lifecycle import Skill, SkillHealth
-from .management import ManagementApiContract
+from .management import ManagementApiContract, ManagementConflictError
 from .management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementDocumentBinding, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
 from .manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from .public_api import PublicApiContract
@@ -30,6 +30,7 @@ __all__ = [
     "EventDeliveryReport",
     "EventEnvelope",
     "ManagementApiContract",
+    "ManagementConflictError",
     "ManagementCollectionOperations",
     "ManagementCollectionSchema",
     "ManagementDocumentBinding",

@@ -9,7 +9,7 @@ from .contracts.context import DiscordChannelInfo, SkillContext, SkillRegistrati
 from .contracts.errors import CapabilityUnavailableError, HostCapabilityError, HostPermissionDeniedError, InvalidHostOperationError, ResourceNotFoundError, TransientHostError
 from .contracts.events import EventContract, EventDeliveryReport, EventEnvelope
 from .contracts.lifecycle import Skill, SkillHealth
-from .contracts.management import ManagementApiContract
+from .contracts.management import ManagementApiContract, ManagementConflictError
 from .contracts.management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementDocumentBinding, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
 from .contracts.manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from .contracts.public_api import PublicApiContract
@@ -20,6 +20,7 @@ from .runtime import (
     ScopedSkillApi,
     SkillApiError,
     SkillApiRouter,
+    SkillManagementConflictError,
     SkillManagementError,
     SkillManagementRouter,
     SkillManager,
@@ -55,6 +56,7 @@ __all__ = [
     "EventDeliveryReport",
     "EventEnvelope",
     "ManagementApiContract",
+    "ManagementConflictError",
     "ManagementCollectionOperations",
     "ManagementCollectionSchema",
     "ManagementDocumentBinding",
@@ -68,6 +70,7 @@ __all__ = [
     "Skill",
     "SkillApiError",
     "SkillApiRouter",
+    "SkillManagementConflictError",
     "SkillManagementError",
     "SkillManagementRouter",
     "SkillCapability",

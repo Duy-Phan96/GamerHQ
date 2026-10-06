@@ -8,6 +8,12 @@ MANAGEMENT_API_ID = re.compile(
 )
 
 
+class ManagementConflictError(RuntimeError):
+    """Portable conflict raised when a management write uses stale state."""
+
+    code = "management_conflict"
+
+
 @dataclass(frozen=True, slots=True)
 class ManagementApiContract:
     """Versioned host-to-Skill management operation.

@@ -16,7 +16,10 @@ from hosts.gamerhq.web_platform import (
     GamerHQWebPlatformService,
     WebPlatformAuthorizationError,
 )
-from skill_runtime.runtime.management_router import SkillManagementError
+from skill_runtime.runtime.management_router import (
+    SkillManagementConflictError,
+    SkillManagementError,
+)
 
 _AUTHORIZED_GUILDS_HEADER = "X-GamerHQ-Authorized-Guild-Ids"
 
@@ -71,6 +74,8 @@ async def _safe_errors(request: web.Request, handler):
         return _error(403, "guild_forbidden", "This server is not authorized for the current web session.")
     except (LookupError, KeyError):
         return _error(404, "not_found", "The requested GamerHQ resource was not found.")
+    except SkillManagementConflictError as exc:
+        return _error(409, "management_conflict", str(exc))
     except SkillManagementError as exc:
         return _error(400, "management_rejected", str(exc))
     except ValueError as exc:
