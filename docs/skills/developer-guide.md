@@ -278,6 +278,8 @@ Use host-neutral IDs and returned SDK metadata.
 Default assumptions:
 
 - mentions should be disabled unless explicitly needed;
+- outbound link buttons use `link_buttons=({"label": "...", "url": "https://..."},)`;
+- the GamerHQ host accepts at most five HTTPS-only link buttons per message;
 - validate channel availability before saving configuration;
 - handle host-neutral missing-resource and permission errors;
 - never persist raw Discord.py exception text.
