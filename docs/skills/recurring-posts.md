@@ -146,17 +146,22 @@ Version 1.2.1 additionally declares the collection item identity payload
 mapping: item IDs are read from `id` and sent back to public management
 operations through `postId`.
 
-This allows Discord administration and gamerhq-web to build create/edit,
-pause/resume and delete flows without importing private Skill classes, creating
-a Recurring Posts-specific frontend page, or hard-coding `postId` in the
-generic renderer.
+Version 1.2.2 additionally declares the collection describe contract and the
+single-item response path. Generic hosts can discover the existing
+`recurring-posts.describe.v1` UX/schedule hints and normalize
+`recurring-posts.get.v1` responses from `post` without Skill-specific code.
+
+Together with the existing `postId` identity payload mapping, this allows
+Discord administration and gamerhq-web to build create/edit, pause/resume and
+delete flows without importing private Skill classes or hard-coding Recurring
+Posts payload conventions in the generic renderer.
 
 
 ## Current reviewed deployment pin
 
-GamerHQ currently pins Recurring Posts 1.2.1 at:
+GamerHQ currently pins Recurring Posts 1.2.2 at:
 
-`acbd05d287b1d4947f93a4da2d69fff2aa0fab0d`
+`a2fd4f7f767301e08bfe8b1ea5a055500748b4cc`
 
 The production/development image should continue to use immutable reviewed
 commits rather than a moving branch.
