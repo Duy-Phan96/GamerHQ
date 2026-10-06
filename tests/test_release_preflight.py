@@ -23,12 +23,22 @@ class ReleasePreflightTests(unittest.TestCase):
     def test_skill_lock_rejects_moving_or_unpinned_dependencies(self):
         cases = (
             "gamerhq-skill-example @ https://github.com/example/repo/archive/main.zip\n",
+            "gamerhq-skill-example @ https://github.com/example/repo/archive/01234567.zip\n",
             "gamerhq-skill-example>=1.2\n",
             "gamerhq-skill-example\n",
         )
         for body in cases:
             with self.subTest(body=body):
                 self.assertTrue(validate_skill_lock(body))
+
+    def test_skill_lock_rejects_normalized_duplicate_distributions(self):
+        errors = validate_skill_lock(
+            "gamerhq-skill-example==1.2.3\n"
+            "gamerhq_skill_example==1.2.4\n"
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("duplicate", errors[0])
+        self.assertNotIn("1.2.4", errors[0])
 
     def test_check_validates_release_metadata_without_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
