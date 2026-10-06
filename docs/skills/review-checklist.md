@@ -112,6 +112,21 @@ Use this checklist for every first-party or external GamerHQ Skill before allowi
 - [ ] Upgrade/migration behavior documented.
 - [ ] Security/privacy behavior documented.
 
+## Marketplace / publication readiness
+
+- [ ] Publisher/source repository is clear.
+- [ ] License status is documented.
+- [ ] Runtime API and SDK compatibility metadata are explicit.
+- [ ] Capability list is suitable for user-facing review.
+- [ ] Changelog/release notes exist for the reviewed version.
+- [ ] Security/privacy behavior is summarized.
+- [ ] Upgrade/migration behavior is documented when persisted structures changed.
+- [ ] Marketplace listing does not imply runtime installation or execution.
+- [ ] Host deployment uses a reviewed immutable artifact/commit.
+- [ ] Deprecated/removed versions have an explicit data-preservation/migration plan.
+
+See [Skill Ecosystem Governance](governance.md).
+
 ## Release decision
 
 - [ ] All required CI checks pass, excluding explicitly documented repository-wide unrelated gates.
