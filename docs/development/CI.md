@@ -10,6 +10,7 @@ The main repository currently requires:
 - `pip check` dependency integrity;
 - Python compilation of portable platform packages;
 - buildability of the `gamerhq-skill-sdk` wheel;
+- release metadata / external Skill pin preflight;
 - full pytest suite on Python 3.12 and 3.14;
 - repository/history safety audit;
 - shell syntax validation for production scripts;
@@ -76,3 +77,22 @@ Changes to CI should themselves use normal PR review and must not:
 
 Temporary informational experiments should be clearly marked and removed or
 promoted to a documented gate after evaluation.
+
+
+## Release preflight automation
+
+Run:
+
+`python -m tools.release_preflight`
+
+The command is read-only and verifies:
+
+- `VERSION` uses the supported semantic-version syntax;
+- the active changelog section is `[Unreleased]`;
+- every dependency in `requirements-skills.lock` is an immutable exact pin.
+
+For GitHub archive dependencies, a full 40-character commit archive is required.
+Exact package-version pins are also accepted.
+
+The preflight never downloads packages, reads production configuration, changes
+files, tags a release or deploys.
