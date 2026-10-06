@@ -136,6 +136,7 @@ Start here when building a new Skill:
 7. [Package Compatibility](package-compatibility.md)
 8. [Extracting a Skill](extracting-a-skill.md)
 9. [Creating a Skill](creating-a-skill.md)
+10. [Web Platform & Skill Marketplace](web-platform-marketplace.md)
 
 The Developer Guide is the primary human-facing reference. The Authoring
 Contract is intentionally stricter and may also be used as input for code
