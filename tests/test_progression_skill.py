@@ -2,6 +2,7 @@ import unittest
 from copy import deepcopy
 from types import SimpleNamespace
 
+from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
 from skills.progression import (
     DEFAULT_CONFIG,
     ProgressionSkill,
@@ -61,6 +62,39 @@ class FakeDiscord:
             "allowed_mentions": allowed_mentions,
         })
         return 9001
+
+
+class ProgressionManagementSchemaTests(unittest.TestCase):
+    def test_progression_declares_generic_management_ui_schema(self):
+        schema = ProgressionSkill.manifest.management_ui
+        self.assertIsNotNone(schema)
+        self.assertEqual(schema.version, "1")
+        self.assertEqual(schema.read_contract, "progression.get-config.v1")
+        self.assertEqual(schema.write_contract, "progression.update-config.v1")
+        self.assertEqual(
+            tuple(section.id for section in schema.sections),
+            ("xp-sources", "level-curve", "achievements", "rewards", "announcements"),
+        )
+
+    def test_host_runtime_exposes_schema_without_private_ui_imports(self):
+        bot = SimpleNamespace()
+        runtime = GamerHQSkillRuntime(bot)
+        runtime.register(ProgressionSkill())
+        schema = runtime.management_ui_schema("progression")
+        self.assertIs(schema, ProgressionSkill.manifest.management_ui)
+
+    def test_schema_uses_host_neutral_field_types(self):
+        schema = ProgressionSkill.manifest.management_ui
+        fields = {
+            field.config_path: field
+            for section in schema.sections
+            for field in section.fields
+        }
+        self.assertEqual(fields["xpSources.voice.enabled"].type, "boolean")
+        self.assertEqual(fields["xpSources.voice.dailyCap"].type, "integer")
+        self.assertEqual(fields["announcements.channelId"].type, "discord_channel")
+        self.assertEqual(fields["achievements"].type, "collection")
+        self.assertEqual(fields["rewards"].type, "collection")
 
 
 class ProgressionMathTests(unittest.TestCase):

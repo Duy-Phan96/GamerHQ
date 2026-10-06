@@ -53,6 +53,7 @@ class GuildSkillStatus:
     source_kind: str = "built-in"
     source_distribution: str | None = None
     management_available: bool = False
+    management_schema_available: bool = False
 
 
 class GamerHQSkillRuntime:
@@ -126,6 +127,7 @@ class GamerHQSkillRuntime:
             source_kind="external",
             source_distribution=None,
             management_available=False,
+            management_schema_available=False,
         )
 
     async def register_all(self) -> None:
@@ -203,6 +205,11 @@ class GamerHQSkillRuntime:
             ),
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
         )
+
+    def management_ui_schema(self, skill_id: str):
+        """Return only the portable declarative UI contract for one registered Skill."""
+        skill = self.registry.get(skill_id)
+        return skill.manifest.management_ui
 
     async def call_management(
         self,
@@ -331,6 +338,7 @@ class GamerHQSkillRuntime:
             source_kind=source_kind,
             source_distribution=source_distribution,
             management_available=bool(skill.manifest.management_apis.exposes),
+            management_schema_available=skill.manifest.management_ui is not None,
         )
 
     async def statuses(self, *, guild_id: int) -> tuple[GuildSkillStatus, ...]:

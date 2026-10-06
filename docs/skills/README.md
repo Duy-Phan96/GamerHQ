@@ -137,6 +137,7 @@ Start here when building a new Skill:
 8. [Extracting a Skill](extracting-a-skill.md)
 9. [Creating a Skill](creating-a-skill.md)
 10. [Web Platform & Skill Marketplace](web-platform-marketplace.md)
+11. [Management UI Schema V1](management-ui-schema.md)
 
 The Developer Guide is the primary human-facing reference. The Authoring
 Contract is intentionally stricter and may also be used as input for code

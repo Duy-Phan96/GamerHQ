@@ -5,6 +5,7 @@ from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.events import EventContract, EventEnvelope
 from skill_runtime.contracts.manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from skill_runtime.contracts.management import ManagementApiContract
+from skill_runtime.contracts.management_ui import ManagementField, ManagementSection, ManagementUiSchema
 from skill_runtime.contracts.public_api import PublicApiContract
 
 
@@ -71,6 +72,82 @@ class SkillContractTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "versioned"):
             ManagementApiContract("recurring-posts.list")
+
+    def test_management_ui_schema_uses_safe_declarative_fields(self):
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract="recurring-posts.list.v1",
+            write_contract="recurring-posts.update.v1",
+            sections=(
+                ManagementSection(
+                    id="general",
+                    title="General",
+                    fields=(
+                        ManagementField(
+                            key="enabled",
+                            label="Enabled",
+                            type="boolean",
+                            config_path="settings.enabled",
+                        ),
+                        ManagementField(
+                            key="dailyCap",
+                            label="Daily cap",
+                            type="integer",
+                            config_path="settings.dailyCap",
+                            minimum=0,
+                            maximum=1000,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        self.assertEqual(schema.sections[0].fields[1].type, "integer")
+
+    def test_management_ui_rejects_unknown_field_type(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported Management field type"):
+            ManagementField(
+                key="unsafe",
+                label="Unsafe",
+                type="javascript",
+                config_path="settings.unsafe",
+            )
+
+    def test_manifest_rejects_management_ui_contract_not_declared(self):
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract="fixture.get-config.v1",
+            write_contract="fixture.update-config.v1",
+        )
+        with self.assertRaisesRegex(ValueError, "undeclared management API"):
+            self.manifest(management_ui=schema)
+
+    def test_manifest_accepts_declared_management_ui_contracts(self):
+        get_contract = ManagementApiContract("recurring-posts.get-config.v1")
+        update_contract = ManagementApiContract("recurring-posts.update-config.v1")
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract=get_contract.id,
+            write_contract=update_contract.id,
+            sections=(
+                ManagementSection(
+                    id="general",
+                    title="General",
+                    fields=(
+                        ManagementField(
+                            key="enabled",
+                            label="Enabled",
+                            type="boolean",
+                            config_path="enabled",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        manifest = self.manifest(
+            management_apis=SkillManagementApis(exposes=(get_contract, update_contract)),
+            management_ui=schema,
+        )
+        self.assertIs(manifest.management_ui, schema)
 
     def test_duplicate_management_api_is_rejected(self):
         contract = ManagementApiContract("recurring-posts.list.v1")

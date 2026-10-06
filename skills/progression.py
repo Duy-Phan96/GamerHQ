@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.lifecycle import SkillHealth
 from skill_runtime.contracts.management import ManagementApiContract
+from skill_runtime.contracts.management_ui import ManagementField, ManagementSection, ManagementUiSchema
 from skill_runtime.contracts.manifest import SkillManagementApis, SkillManifest
 
 
@@ -26,6 +27,74 @@ UPDATE_CONFIG_API = "progression.update-config.v1"
 PREVIEW_LEVEL_API = "progression.preview-level.v1"
 RECORD_ACTIVITY_API = "progression.record-activity.v1"
 MEMBER_STATUS_API = "progression.member-status.v1"
+
+PROGRESSION_MANAGEMENT_UI = ManagementUiSchema(
+    version="1",
+    read_contract=GET_CONFIG_API,
+    write_contract=UPDATE_CONFIG_API,
+    sections=(
+        ManagementSection(
+            id="xp-sources",
+            title="XP Sources",
+            description="Enable activity sources and tune their XP values.",
+            fields=(
+                ManagementField("voiceEnabled", "Voice XP", "boolean", "xpSources.voice.enabled"),
+                ManagementField("voiceXp", "Voice XP per window", "integer", "xpSources.voice.xp", minimum=1),
+                ManagementField("voiceWindowMinutes", "Voice window minutes", "integer", "xpSources.voice.windowMinutes", minimum=1),
+                ManagementField("voiceDailyCap", "Voice daily XP cap", "integer", "xpSources.voice.dailyCap", minimum=1),
+                ManagementField("chatEnabled", "Chat XP", "boolean", "xpSources.chat.enabled"),
+                ManagementField("chatXp", "Chat XP per activity window", "integer", "xpSources.chat.xp", minimum=1),
+                ManagementField("chatCooldownMinutes", "Chat cooldown minutes", "integer", "xpSources.chat.cooldownMinutes", minimum=1),
+                ManagementField("chatDailyCap", "Chat daily XP cap", "integer", "xpSources.chat.dailyCap", minimum=1),
+                ManagementField("lfgEnabled", "LFG participation XP", "boolean", "xpSources.lfgParticipation.enabled"),
+                ManagementField("lfgXp", "LFG participation XP", "integer", "xpSources.lfgParticipation.xp", minimum=1),
+                ManagementField("eventHostEnabled", "Event host XP", "boolean", "xpSources.eventHost.enabled"),
+                ManagementField("eventHostXp", "Event host XP", "integer", "xpSources.eventHost.xp", minimum=1),
+            ),
+        ),
+        ManagementSection(
+            id="level-curve",
+            title="Level Curve",
+            description="Control how XP requirements grow over time.",
+            fields=(
+                ManagementField("baseXp", "Base XP", "integer", "levelCurve.base", minimum=1),
+                ManagementField("linearGrowth", "Linear growth", "integer", "levelCurve.linear", minimum=0),
+                ManagementField("quadraticGrowth", "Quadratic growth", "integer", "levelCurve.quadratic", minimum=0),
+                ManagementField("maxLevel", "Maximum level", "integer", "levelCurve.maxLevel", minimum=1, maximum=1000),
+            ),
+        ),
+        ManagementSection(
+            id="achievements",
+            title="Achievements",
+            description="Achievement definitions and milestone rewards.",
+            fields=(
+                ManagementField("achievements", "Achievements", "collection", "achievements"),
+            ),
+        ),
+        ManagementSection(
+            id="rewards",
+            title="Rewards",
+            description="Level, XP and achievement-triggered reward bundles.",
+            fields=(
+                ManagementField("rewards", "Rewards", "collection", "rewards"),
+            ),
+        ),
+        ManagementSection(
+            id="announcements",
+            title="Announcements",
+            description="Choose when and where Progression posts member milestones.",
+            fields=(
+                ManagementField("announcementsEnabled", "Enable announcements", "boolean", "announcements.enabled"),
+                ManagementField("announcementChannel", "Announcement channel", "discord_channel", "announcements.channelId"),
+                ManagementField("announceLevelUps", "Post level ups", "boolean", "announcements.levelUp"),
+                ManagementField("announceAchievements", "Post achievements", "boolean", "announcements.achievement"),
+                ManagementField("announceRewards", "Post rewards", "boolean", "announcements.reward"),
+                ManagementField("announcementTemplate", "Message template", "long_text", "announcements.template"),
+            ),
+        ),
+    ),
+)
+
 
 DEFAULT_CONFIG = {
     "revision": 1,
@@ -316,6 +385,7 @@ class ProgressionSkill:
                 ManagementApiContract(MEMBER_STATUS_API),
             )
         ),
+        management_ui=PROGRESSION_MANAGEMENT_UI,
     )
 
     async def register(self, ctx) -> None:
