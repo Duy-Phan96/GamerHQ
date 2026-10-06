@@ -13,7 +13,7 @@ PATTERNS = {
     'provider token': re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,})\b'),
 }
 ASSIGNMENT = re.compile(r'''(?im)^[ \t]*["']?([\w.-]*(?:token|password|passwd|secret|api_key|apikey|credential)[\w.-]*)["']?[ \t]*[:=][ \t]*["']?([^\s"'#,}\r\n]+)''')
-PLACEHOLDERS = {'', 'none','null','false','true','0','your_token_here','changeme','example','placeholder','test','test-secret','secrets.skill','fake','dummy'}
+PLACEHOLDERS = {'', 'none','null','false','true','0','your_token_here','changeme','example','placeholder','test','test-secret','fake','dummy'}
 PRIVATE_PARTS = {'runtime','backups','logs','transcripts','tickets','exports','uploads','storage','node_modules','.venv','venv','env','__pycache__','.pytest_cache','.mypy_cache','.ruff_cache','.idea','.vscode','htmlcov','dist','build'}
 
 def git(*args):
