@@ -158,6 +158,15 @@ async def call_management(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def install_skill(request: web.Request) -> web.Response:
+    result = await _service(request).install_skill(
+        guild_id=int(request.match_info["guild_id"]),
+        skill_id=request.match_info["skill_id"],
+        authorized_guild_ids=_authorized_guild_ids(request),
+    )
+    return web.json_response(result)
+
+
 async def set_skill_enabled(request: web.Request) -> web.Response:
     body = await _json_object(request)
     enabled = body.get("enabled")
@@ -202,6 +211,10 @@ def create_web_api_app(
             web.post(
                 "/api/v1/servers/{guild_id}/skills/{skill_id}/management/{contract_id}",
                 call_management,
+            ),
+            web.post(
+                "/api/v1/servers/{guild_id}/skills/{skill_id}/install",
+                install_skill,
             ),
             web.put(
                 "/api/v1/servers/{guild_id}/skills/{skill_id}/enabled",
