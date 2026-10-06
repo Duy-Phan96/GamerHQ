@@ -151,17 +151,21 @@ single-item response path. Generic hosts can discover the existing
 `recurring-posts.describe.v1` UX/schedule hints and normalize
 `recurring-posts.get.v1` responses from `post` without Skill-specific code.
 
-Together with the existing `postId` identity payload mapping, this allows
-Discord administration and gamerhq-web to build create/edit, pause/resume and
-delete flows without importing private Skill classes or hard-coding Recurring
-Posts payload conventions in the generic renderer.
+Version 1.2.3 additionally declares `scheduleHintsPath = schedules`. Generic
+hosts can call the declared describe contract and locate interval/daily/weekly
+schedule presets and constraints without hard-coding the response property name.
+
+Together with the existing identity, describe and item-read bindings, this
+allows Discord administration and gamerhq-web to build create/edit,
+pause/resume and delete flows without importing private Skill classes or
+hard-coding Recurring Posts payload conventions in the generic renderer.
 
 
 ## Current reviewed deployment pin
 
-GamerHQ currently pins Recurring Posts 1.2.2 at:
+GamerHQ currently pins Recurring Posts 1.2.3 at:
 
-`a2fd4f7f767301e08bfe8b1ea5a055500748b4cc`
+`7656616a3259d70bc09ac10446cb0965d9ec6a6c`
 
 The production/development image should continue to use immutable reviewed
 commits rather than a moving branch.
