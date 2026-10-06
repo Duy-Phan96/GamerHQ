@@ -302,6 +302,7 @@ class ProgressionSkill:
             SkillCapability.DISCORD_MESSAGES_SEND.value,
             SkillCapability.DISCORD_CHANNELS_READ.value,
             SkillCapability.DISCORD_MEMBERS_READ.value,
+            SkillCapability.DISCORD_ROLES_MANAGE.value,
         ),
         management_apis=SkillManagementApis(
             exposes=(
@@ -384,6 +385,7 @@ class ProgressionSkill:
             "badges": list(state.get("badges") or []),
             "titles": list(state.get("titles") or []),
             "claimedRewards": list(state.get("claimedRewards") or []),
+            "ownedRoleGrants": list(state.get("ownedRoleGrants") or []),
         }
 
     async def member_status(self, ctx, payload) -> Mapping[str, Any]:
@@ -403,6 +405,7 @@ class ProgressionSkill:
             "badges": tuple(state["badges"]),
             "titles": tuple(state["titles"]),
             "claimedRewards": tuple(state["claimedRewards"]),
+            "ownedRoleGrants": tuple(state["ownedRoleGrants"]),
         }
 
     async def record_activity(self, ctx, payload) -> Mapping[str, Any]:
@@ -521,8 +524,16 @@ class ProgressionSkill:
                     state["sourceXp"]["reward"] = int(state["sourceXp"].get("reward", 0)) + bonus
                     grants_applied.append({"type": "xp_bonus", "xp": bonus})
                 elif kind in {"role", "channel_access"}:
-                    # Modelled now, executed only after the host exposes safe owned-grant capabilities.
-                    continue
+                    role_id = _positive_int(grant.get("roleId"), f"reward {reward['id']} roleId")
+                    added = await ctx.discord.grant_role(member_id=member_id, role_id=role_id)
+                    if added:
+                        ownership = f"{reward['id']}:{role_id}"
+                        if ownership not in state["ownedRoleGrants"]:
+                            state["ownedRoleGrants"].append(ownership)
+                        grants_applied.append({"type": kind, "roleId": role_id, "owned": True})
+                    else:
+                        # Pre-existing roles are never claimed as Progression-owned.
+                        grants_applied.append({"type": kind, "roleId": role_id, "owned": False})
                 elif kind == "announcement":
                     grants_applied.append({"type": "announcement"})
             if grants_applied:
