@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.lifecycle import SkillHealth
 from skill_runtime.contracts.management import ManagementApiContract
-from skill_runtime.contracts.management_ui import ManagementField, ManagementSection, ManagementUiSchema
+from skill_runtime.contracts.management_ui import ManagementDocumentBinding, ManagementField, ManagementSection, ManagementUiSchema
 from skill_runtime.contracts.manifest import SkillManagementApis, SkillManifest
 
 
@@ -32,6 +32,12 @@ PROGRESSION_MANAGEMENT_UI = ManagementUiSchema(
     version="1",
     read_contract=GET_CONFIG_API,
     write_contract=UPDATE_CONFIG_API,
+    document=ManagementDocumentBinding(
+        read_path="config",
+        write_path="config",
+        revision_path="revision",
+        expected_revision_key="expectedRevision",
+    ),
     sections=(
         ManagementSection(
             id="xp-sources",
