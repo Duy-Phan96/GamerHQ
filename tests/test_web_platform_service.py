@@ -7,6 +7,8 @@ from hosts.gamerhq.web_platform import (
     WebPlatformAuthorizationError,
 )
 from skill_runtime.contracts.management_ui import (
+    ManagementCollectionOperations,
+    ManagementCollectionSchema,
     ManagementField,
     ManagementSection,
     ManagementUiSchema,
@@ -49,6 +51,27 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
                             label="Enabled",
                             type="boolean",
                             config_path="settings.enabled",
+                        ),
+                        ManagementField(
+                            key="posts",
+                            label="Posts",
+                            type="collection",
+                            config_path="posts",
+                            collection=ManagementCollectionSchema(
+                                operations=ManagementCollectionOperations(
+                                    list_contract="progression.get-config.v1",
+                                    create_contract="progression.update-config.v1",
+                                ),
+                                item_fields=(
+                                    ManagementField(
+                                        key="name",
+                                        label="Name",
+                                        type="string",
+                                        config_path="name",
+                                    ),
+                                ),
+                                max_items=20,
+                            ),
                         ),
                     ),
                 ),
@@ -103,6 +126,11 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
         field = schema["sections"][0]["fields"][0]
         self.assertEqual(field["configPath"], "settings.enabled")
         self.assertEqual(field["type"], "boolean")
+        collection = schema["sections"][0]["fields"][1]["collection"]
+        self.assertEqual(collection["operations"]["listContract"], "progression.get-config.v1")
+        self.assertEqual(collection["operations"]["createContract"], "progression.update-config.v1")
+        self.assertEqual(collection["itemFields"][0]["configPath"], "name")
+        self.assertEqual(collection["maxItems"], 20)
 
     async def test_management_call_stays_on_versioned_runtime_router(self):
         response = await self.service.call_management(
