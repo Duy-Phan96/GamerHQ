@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
     def test_current_lock_parses_to_immutable_reviewed_plan(self):
         packages = load_reviewed_skill_lock(ROOT / "requirements-skills.lock")
-        self.assertEqual(len(packages), 2)
+        self.assertEqual(len(packages), 3)
 
         by_distribution = {package.distribution: package for package in packages}
         recurring = by_distribution["gamerhq-skill-recurring-posts"]
