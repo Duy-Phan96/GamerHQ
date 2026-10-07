@@ -1,12 +1,13 @@
 import unittest
 from types import SimpleNamespace
 
-from skill_runtime.contracts.management import ManagementApiContract
+from skill_runtime.contracts.management import ManagementApiContract, ManagementConflictError
 from skill_runtime.contracts.manifest import (
     SkillManagementApis,
     SkillManifest,
 )
 from skill_runtime.runtime.management_router import (
+    SkillManagementConflictError,
     SkillManagementError,
     SkillManagementRouter,
 )
@@ -107,6 +108,25 @@ class SkillManagementRouterTests(unittest.IsolatedAsyncioTestCase):
                 payload={},
             )
         self.assertNotIn(marker, str(caught.exception))
+
+    async def test_management_conflict_is_preserved_as_safe_conflict(self):
+        async def handler(guild_id, payload):
+            raise ManagementConflictError("private stale detail")
+
+        self.router.register_handler(
+            skill_id="managed-skill",
+            contract_id="managed-skill.list.v1",
+            handler=handler,
+        )
+        with self.assertRaises(SkillManagementConflictError) as caught:
+            await self.router.call(
+                guild_id=123,
+                skill_id="managed-skill",
+                contract_id="managed-skill.list.v1",
+                payload={},
+            )
+        self.assertNotIn("private stale detail", str(caught.exception))
+        self.assertIn("Reload", str(caught.exception))
 
     async def test_invalid_skill_response_is_rejected(self):
         async def handler(guild_id, payload):

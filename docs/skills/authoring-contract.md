@@ -31,6 +31,13 @@ A generated or manually written Skill MUST:
 21. declare the same capability list in external package metadata and the executable SkillManifest;
 22. expose host configuration through versioned Management APIs instead of private host imports when custom administration is required.
 
+
+## Member reads
+
+Portable Skills that need current Discord member identity or role membership must declare the `discord.members.read` capability and use `ctx.discord.get_member(member_id=...)`.
+
+The host returns only a narrow, host-neutral snapshot: member ID, display name, non-default role IDs, join timestamp and bot flag. Skills do not receive a `discord.Member`, Guild object or Discord client. Member reads remain guild-scoped and fail closed when the member cannot be resolved.
+
 ## Forbidden dependencies
 
 Portable Skill code MUST NOT import or access:

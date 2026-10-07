@@ -7,7 +7,7 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 [server_setup_service.py](../services/server_setup_service.py) defines SERVER_BLUEPRINT. [server_operations.py](../services/server_operations.py) separates confirmed creation, ID reconciliation and known-resource repair using existing policies and mapping keys. The older combined repair helper remains internal compatibility code; slash commands use the [production operations workflow](PRODUCTION_OPERATIONS.md).
 
 - START HERE: public onboarding, selectors and LFG/guide/support entries.
-- COMMUNITY: general conversation, newbies, introductions, suggestions and bot commands.
+- COMMUNITY: general conversation, newbies, introductions, suggestions and bot commands. The optional `💎・booster-lounge` is created only through explicit Server Boosters management and uses Discord's native Server Booster role as its access source of truth.
 - MARKETPLACE: public read-only boards in managed order: Gaming News, Gaming Deals, Free Games, Amazon, AI Tools, Electricity. The support-gamerhq overview links to useful Marketplace offers; the former direct-support channel is retained for separate owner review.
 - STAFF: private staff conversation, suggestion inbox, ticket/bot/mod logs, `📜・server-log` operational notices and commands. Server Log uses the existing managed-channel key; only reviewed setup creates it.
 - AFFILIATE STATS: private purchases/buyer-ranking using existing IG channel IDs and explicit Instant Gaming access.
@@ -27,6 +27,7 @@ Text channels commonly use emoji + ・ + kebab-case; category labels commonly us
 | External bot identities | bot_member:<guild>:<name> settings via Setup/Manage; legacy/environment fallback |
 | Core channels/categories | settings keys managed_channel:<guild>:<name> and managed_category:<guild>:<name>, plus existing onboarding/legacy keys |
 | Base profile roles | services/role_service.py; managed_roles stores kind/key/group and role ID |
+| Server Booster lounge | services/server_booster_service.py; Discord native premium subscriber role owns membership, GamerHQ stores only the managed lounge channel ID |
 | Game roles and optional channels | games.role_id / games.channel_id; legacy fields are migration hints; [Game system](GAME_SYSTEM.md) |
 | Temporary game/common voice | temp_voice_channels; cogs/voice.py and temp_voice_service.py |
 | LFG private text/voice/cards | lfg_events and related tables; [LFG](LFG_EVENTS.md) |
@@ -123,3 +124,33 @@ Fallback adoption must be unambiguous and scoped to the feature. Missing mapped 
 onboarding_service preserves migrated welcome/newbies identity. Community repair adds guide/suggestions and reuses core boards. Partner migration journals known old resources; legacy_finance_service allows carefully verified retirement only during explicit owner repair. Startup and health never invoke that deletion.
 
 For new managed channels: extend the existing owning service and inventory, persist identity, define initial visibility at creation, hook authorized repair and read-only health, register its fixed message if needed, and test repeat execution/deletion/ambiguity. Do not create channels solely in a one-off command callback.
+
+
+## Server Booster experience
+
+The Server Booster experience is optional and is not part of automatic core
+server setup.
+
+Use:
+
+`/server manage → Server Boosters`
+
+GamerHQ never creates a duplicate booster role. Discord's native Server Booster
+role is authoritative.
+
+Confirmed setup creates or adopts `💎・booster-lounge` under COMMUNITY and
+applies a private allowlist for:
+
+- current Discord Server Boosters;
+- staff roles;
+- GamerHQ bot.
+
+Unknown/custom grants are removed during confirmed repair so a private booster
+channel cannot remain accidentally exposed.
+
+If Discord's native booster role is unavailable, setup fails closed and no
+replacement role is created.
+
+Future Progression/Achievement Skills may consume booster status for cosmetic
+badges or milestones, but must not become the source of truth for booster
+membership.

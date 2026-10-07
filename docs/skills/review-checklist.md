@@ -112,6 +112,16 @@ Use this checklist for every first-party or external GamerHQ Skill before allowi
 - [ ] Upgrade/migration behavior documented.
 - [ ] Security/privacy behavior documented.
 
+## Marketplace / publication
+
+- [ ] Review applies to one specific immutable Skill release/artifact.
+- [ ] Publisher/provenance is identified.
+- [ ] Catalog status is explicit (review candidate / approved / published / deprecated / blocked).
+- [ ] Marketplace metadata does not contain executable dashboard code.
+- [ ] Catalog publication is not treated as host package installation.
+- [ ] Host package deployment uses a reviewed immutable artifact/commit.
+- [ ] Capability changes are reflected in administrator review metadata.
+
 ## Release decision
 
 - [ ] All required CI checks pass, excluding explicitly documented repository-wide unrelated gates.

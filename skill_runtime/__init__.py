@@ -5,11 +5,12 @@ be extracted into an independent SDK/runtime package.
 """
 
 from .contracts.capabilities import SkillCapability
-from .contracts.context import DiscordChannelInfo, SkillContext, SkillRegistrationContext
+from .contracts.context import DiscordChannelInfo, ExternalHttpResponse, SkillContext, SkillRegistrationContext
 from .contracts.errors import CapabilityUnavailableError, HostCapabilityError, HostPermissionDeniedError, InvalidHostOperationError, ResourceNotFoundError, TransientHostError
 from .contracts.events import EventContract, EventDeliveryReport, EventEnvelope
 from .contracts.lifecycle import Skill, SkillHealth
-from .contracts.management import ManagementApiContract
+from .contracts.management import ManagementApiContract, ManagementConflictError
+from .contracts.management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementDocumentBinding, ManagementField, ManagementFieldOption, ManagementSection, ManagementUiSchema
 from .contracts.manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from .contracts.public_api import PublicApiContract
 from .contracts.schedule import DailySchedule, IntervalSchedule, OnceSchedule, ScheduleSpec, WeeklySchedule, next_run_at
@@ -19,6 +20,7 @@ from .runtime import (
     ScopedSkillApi,
     SkillApiError,
     SkillApiRouter,
+    SkillManagementConflictError,
     SkillManagementError,
     SkillManagementRouter,
     SkillManager,
@@ -38,6 +40,7 @@ from .runtime import (
 __all__ = [
     "CapabilityUnavailableError",
     "DiscordChannelInfo",
+    "ExternalHttpResponse",
     "HostCapabilityError",
     "HostPermissionDeniedError",
     "InvalidHostOperationError",
@@ -54,12 +57,21 @@ __all__ = [
     "EventDeliveryReport",
     "EventEnvelope",
     "ManagementApiContract",
+    "ManagementConflictError",
+    "ManagementCollectionOperations",
+    "ManagementCollectionSchema",
+    "ManagementDocumentBinding",
+    "ManagementField",
+    "ManagementFieldOption",
+    "ManagementSection",
+    "ManagementUiSchema",
     "PublicApiContract",
     "ScopedEventBus",
     "ScopedSkillApi",
     "Skill",
     "SkillApiError",
     "SkillApiRouter",
+    "SkillManagementConflictError",
     "SkillManagementError",
     "SkillManagementRouter",
     "SkillCapability",

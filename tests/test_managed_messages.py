@@ -223,6 +223,24 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ServerMessageError):
             managed.validate(self.guild, self.key, draft['content'], [link()] * 26)
 
+    async def test_community_events_allows_only_existing_create_event_action(self):
+        state = self.draft(f'community_events:{self.guild.id}')
+        self.assertEqual(
+            [b['target'] for b in state['buttons'] if b['type'] == 'ACTION'],
+            ['CREATE_EVENT'],
+        )
+        managed.validate(self.guild, state['key'], state['content'], state['buttons'])
+        rendered = managed.render(state['buttons'])
+        self.assertEqual(len(rendered.children), 1)
+        self.assertEqual(rendered.children[0].custom_id, 'gamerhq:lfg:create')
+        with self.assertRaises(ServerMessageError):
+            managed.validate(
+                self.guild,
+                state['key'],
+                state['content'],
+                [dict(label='Support', emoji='', type='ACTION', target='CREATE_SUPPORT_TICKET', enabled=True)],
+            )
+
     async def test_link_add_edit_remove_reorder_and_enabled(self):
         draft = self.draft()
         before = self.draft()
@@ -254,9 +272,10 @@ class ManagedMessageTests(unittest.IsolatedAsyncioTestCase):
     async def test_registered_callbacks_and_restart_custom_ids(self):
         from cogs.tickets import SupportOffers, TicketEntry
         from cogs.suggestions import SuggestionEntryView
+        from cogs.lfg import LFGHubView
         from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView
         from services.role_panel_service import SECTIONS
-        views = [SupportOffers(), TicketEntry(), SuggestionEntryView(), OnboardingEntry(), ChooseRolesHubView()]
+        views = [SupportOffers(), TicketEntry(), SuggestionEntryView(), LFGHubView(), OnboardingEntry(), ChooseRolesHubView()]
         views.extend(RoleToggleView(group) for _, group, _ in SECTIONS)
         registered = {b.custom_id for view in views for b in view.children if b.custom_id}
         for state in await managed.available(self.guild):

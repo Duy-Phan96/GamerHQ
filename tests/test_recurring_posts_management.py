@@ -1,13 +1,20 @@
 import inspect
 import unittest
+from types import SimpleNamespace
 
 from cogs import server_management as management
 
 
 class RecurringPostsManagementIntegrationTests(unittest.TestCase):
     def test_host_uses_versioned_recurring_posts_1_1_contracts(self):
-        self.assertEqual(management._RECURRING_VALIDATE_API, "recurring-posts.validate.v1")
-        self.assertEqual(management._RECURRING_UPDATE_API, "recurring-posts.update.v1")
+        self.assertEqual(
+            management._RECURRING_VALIDATE_API,
+            "recurring-posts.validate.v1",
+        )
+        self.assertEqual(
+            management._RECURRING_UPDATE_API,
+            "recurring-posts.update.v1",
+        )
         self.assertEqual(
             management._RECURRING_DELETE_PREVIEW_API,
             "recurring-posts.delete-preview.v1",
@@ -32,7 +39,10 @@ class RecurringPostsManagementIntegrationTests(unittest.TestCase):
         self.assertEqual(post.id, "post-1")
         self.assertEqual(post.channel_id, 10)
         self.assertTrue(post.active)
-        self.assertEqual(management._recurring_schedule_label(post.schedule), "Every 3 hours")
+        self.assertEqual(
+            management._recurring_schedule_label(post.schedule),
+            "Every 3 hours",
+        )
 
     def test_review_text_is_clear_and_non_mutating(self):
         text = management._recurring_review_text(

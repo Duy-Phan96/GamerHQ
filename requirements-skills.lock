@@ -1,3 +1,6 @@
 # Reviewed external GamerHQ Skills installed into development/production.
 # Pin immutable commits or released artifacts; never track a moving branch.
-gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/gamerhq-skill-recurring-posts/archive/8317d854f0a39811804b9f28eff9b7061a5417e8.zip
+# Recurring Posts 1.2.3 — generic schedule hints binding enabled.
+gamerhq-skill-recurring-posts @ https://github.com/Duy-Phan96/gamerhq-skill-recurring-posts/archive/7656616a3259d70bc09ac10446cb0965d9ec6a6c.zip
+# XP & Progression 0.1.0 — standalone extracted baseline.
+gamerhq-skill-xp-progression @ https://github.com/Duy-Phan96/gamerhq-skill-xp-progression/archive/565ee8379cdd22cb00c18db188eeaddd058e626d.zip

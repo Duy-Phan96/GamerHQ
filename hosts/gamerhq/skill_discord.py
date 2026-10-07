@@ -7,11 +7,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import discord
 
 from skill_runtime.contracts.capabilities import SkillCapability
-from skill_runtime.contracts.context import DiscordChannelInfo
+from skill_runtime.contracts.context import DiscordChannelInfo, DiscordMemberInfo
 from skill_runtime.contracts.errors import (
     CapabilityUnavailableError,
     HostPermissionDeniedError,
@@ -25,8 +26,10 @@ from .skill_host import CapabilityPermissions, _valid_identity
 
 DISCORD_HOST_CAPABILITIES = frozenset({
     SkillCapability.DISCORD_CHANNELS_READ.value,
+    SkillCapability.DISCORD_MEMBERS_READ.value,
     SkillCapability.DISCORD_MESSAGES_SEND.value,
     SkillCapability.DISCORD_EMBEDS_SEND.value,
+    SkillCapability.DISCORD_ROLES_MANAGE.value,
 })
 
 
@@ -73,6 +76,80 @@ class GamerHQDiscordAdapter:
         self.skill_id = skill_id
         self.permissions = permissions
 
+    async def get_member(self, *, member_id: int) -> DiscordMemberInfo:
+        self.permissions.require(SkillCapability.DISCORD_MEMBERS_READ.value)
+        if int(member_id) <= 0:
+            raise InvalidHostOperationError("member_id must be positive.")
+        member = self.guild.get_member(int(member_id))
+        if member is None:
+            try:
+                member = await self.guild.fetch_member(int(member_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                translated = _translate_discord_error(exc)
+                if isinstance(translated, TransientHostError):
+                    raise translated from exc
+                raise ResourceNotFoundError("Discord member was not found in this guild.") from exc
+        if int(getattr(getattr(member, "guild", None), "id", 0)) != self.guild_id:
+            raise ResourceNotFoundError("Discord member was not found in this guild.")
+        joined_at = getattr(member, "joined_at", None)
+        return DiscordMemberInfo(
+            id=int(member.id),
+            display_name=str(getattr(member, "display_name", getattr(member, "name", "")))[:100],
+            role_ids=tuple(sorted(int(role.id) for role in getattr(member, "roles", ()) if not role.is_default())),
+            joined_at=joined_at.isoformat() if joined_at is not None else None,
+            is_bot=bool(getattr(member, "bot", False)),
+        )
+
+    def _reward_role(self, role_id: int):
+        self.permissions.require(SkillCapability.DISCORD_ROLES_MANAGE.value)
+        if int(role_id) <= 0:
+            raise InvalidHostOperationError("role_id must be positive.")
+        role = self.guild.get_role(int(role_id))
+        me = getattr(self.guild, "me", None)
+        if role is None:
+            raise ResourceNotFoundError("Discord role was not found in this guild.")
+        if role.is_default() or role.managed:
+            raise InvalidHostOperationError("Managed/default roles cannot be Skill rewards.")
+        # Reward roles are cosmetic/access markers only. Never allow a Skill to
+        # grant Discord permission-bearing roles.
+        if int(getattr(role.permissions, "value", 0)) != 0:
+            raise InvalidHostOperationError("Permission-bearing roles cannot be Skill rewards.")
+        if me is None or not me.guild_permissions.manage_roles or not (role < me.top_role):
+            raise HostPermissionDeniedError("GamerHQ cannot safely manage this reward role.")
+        return role
+
+    async def grant_role(self, *, member_id: int, role_id: int) -> bool:
+        role = self._reward_role(role_id)
+        member = self.guild.get_member(int(member_id))
+        if member is None:
+            try:
+                member = await self.guild.fetch_member(int(member_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                raise _translate_discord_error(exc) from exc
+        if role in member.roles:
+            return False
+        try:
+            await member.add_roles(role, reason=f"Skill reward: {self.skill_id}")
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+            raise _translate_discord_error(exc) from exc
+        return True
+
+    async def remove_role(self, *, member_id: int, role_id: int) -> bool:
+        role = self._reward_role(role_id)
+        member = self.guild.get_member(int(member_id))
+        if member is None:
+            try:
+                member = await self.guild.fetch_member(int(member_id))
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+                raise _translate_discord_error(exc) from exc
+        if role not in member.roles:
+            return False
+        try:
+            await member.remove_roles(role, reason=f"Skill reward revoke: {self.skill_id}")
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
+            raise _translate_discord_error(exc) from exc
+        return True
+
     def _channel(self, channel_id: int):
         if int(channel_id) <= 0:
             raise InvalidHostOperationError("channel_id must be positive.")
@@ -116,6 +193,34 @@ class GamerHQDiscordAdapter:
         except (TypeError, ValueError) as exc:
             raise InvalidHostOperationError("allowed_mentions is invalid.") from exc
 
+    @staticmethod
+    def _link_view(value: tuple[Mapping[str, str], ...] | None) -> discord.ui.View | None:
+        if value is None:
+            return None
+        if len(value) > 5:
+            raise InvalidHostOperationError("A Discord message supports at most 5 link buttons.")
+        view = discord.ui.View(timeout=None)
+        for item in value:
+            if not isinstance(item, Mapping):
+                raise InvalidHostOperationError("Link button payload is invalid.")
+            if set(item) != {"label", "url"}:
+                raise InvalidHostOperationError("Link button payload must contain label and url.")
+            label = str(item["label"]).strip()
+            url = str(item["url"]).strip()
+            parsed = urlsplit(url)
+            if not label or len(label) > 80:
+                raise InvalidHostOperationError("Link button label must be 1-80 characters.")
+            if parsed.scheme.lower() != "https" or not parsed.hostname:
+                raise InvalidHostOperationError("Link button URL must use HTTPS.")
+            view.add_item(
+                discord.ui.Button(
+                    style=discord.ButtonStyle.link,
+                    label=label,
+                    url=url,
+                )
+            )
+        return view
+
     async def send_message(
         self,
         *,
@@ -123,6 +228,7 @@ class GamerHQDiscordAdapter:
         content: str | None = None,
         embed: Mapping[str, Any] | None = None,
         allowed_mentions: Mapping[str, Any] | None = None,
+        link_buttons: tuple[Mapping[str, str], ...] | None = None,
     ) -> int:
         self.permissions.require(SkillCapability.DISCORD_MESSAGES_SEND.value)
         if embed is not None:
@@ -140,9 +246,12 @@ class GamerHQDiscordAdapter:
                 content=content,
                 embed=self._embed(embed),
                 allowed_mentions=self._allowed_mentions(allowed_mentions),
+                view=self._link_view(link_buttons),
             )
         except (discord.Forbidden, discord.NotFound, discord.HTTPException) as exc:
             raise _translate_discord_error(exc) from exc
+        except InvalidHostOperationError:
+            raise
         except (TypeError, ValueError) as exc:
             raise InvalidHostOperationError("Discord message payload is invalid.") from exc
         return int(message.id)

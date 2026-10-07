@@ -73,6 +73,16 @@ guild_id + skill_id + storage_key
 
 A Skill never receives a raw database connection. It receives a storage port already scoped to its own namespace.
 
+### `skill_secrets`
+
+Stores encrypted per-Skill secret values under:
+
+```text
+guild_id + skill_id + secret_key
+```
+
+The encryption key is host configuration and is never available to portable Skills. When no host encryption key is configured, `secrets.skill` is unavailable and Skills requiring it fail closed.
+
 ### `skill_jobs`
 
 Stores host-owned persistent scheduler jobs. Portable Skill code never queries this table directly.
@@ -175,6 +185,11 @@ Discord Guild/client into portable Skill code.
 
 See [Recurring Posts](recurring-posts.md).
 
+### Slice H
+Host-mediated external HTTP and encrypted Skill secrets.
+
+Portable Skills can request `http.external` and `secrets.skill` without receiving the host's HTTP client, environment or database. GamerHQ constrains HTTP to public HTTPS targets with bounded responses/timeouts and stores Skill secrets encrypted in a namespace scoped by guild and Skill.
+
 
 ## External Skill package boundary
 
@@ -223,3 +238,21 @@ implementation merely to configure it.
 
 Management APIs are not Skill-to-Skill APIs and do not grant another Skill
 access to administrative operations.
+
+
+## Web platform direction
+
+The Runtime is also the backend contract surface for a future user-based GamerHQ
+web platform.
+
+Authenticated Discord users will manage one or more authorized guilds, browse a
+Skill Marketplace, install Skills per guild, enable/disable them and configure
+them through the same versioned Management APIs used by Discord administration.
+
+The website must not become a parallel source of truth.
+
+Future generic web configuration should be schema-driven so newly installed
+Skills can appear in the dashboard without requiring arbitrary Skill-owned
+JavaScript or a custom frontend page per Skill.
+
+See [Web Platform & Skill Marketplace](web-platform-marketplace.md).

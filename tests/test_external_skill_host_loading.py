@@ -25,7 +25,7 @@ class ExternalSkillHostLoadingTests(unittest.TestCase):
         self.assertIn("recurring-posts", BUNDLED_SKILL_IDS)
         self.assertEqual(
             configured_skill_ids(("recurring-posts", "other-skill")),
-            ("recurring-posts", "other-skill"),
+            ("recurring-posts", "progression", "other-skill"),
         )
 
     def test_one_broken_package_does_not_block_healthy_package(self):

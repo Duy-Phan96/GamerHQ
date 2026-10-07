@@ -124,6 +124,107 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)
 
+    def test_member_onboarding_is_in_main_admin_flow_and_explains_current_limits(self):
+        from cogs.server_management import (
+            ManagementView,
+            MemberOnboardingView,
+            _member_onboarding_text,
+            _member_questions_text,
+        )
+
+        owner = self.actor()
+        manage = ManagementView(self.guild, owner.id)
+        labels = [child.label for child in manage.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Member Onboarding', labels)
+
+        text = _member_onboarding_text(self.guild)
+        self.assertIn('Under 18 · 18–20 · 21–22 · 23–24 · 25+', text)
+        self.assertIn('not applied automatically', text)
+
+        preview = _member_questions_text(self.guild)
+        self.assertIn("What's your age group?", preview)
+        self.assertIn('What games do you play?', preview)
+        self.assertIn('Nothing changes in Discord', preview)
+
+        view = MemberOnboardingView(self.guild, owner.id)
+        actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(actions, ['Manage Questions', 'Preview Questions', 'Review Profile Repair', 'Discord Setup Guide', 'Back to Management'])
+
+    async def test_member_onboarding_question_management_supports_edit_and_flags(self):
+        from cogs.server_management import (
+            MemberOnboardingView,
+            OnboardingQuestionDetailView,
+            OnboardingQuestionsView,
+            _onboarding_question_detail_text,
+        )
+        from services.member_onboarding_service import (
+            load_config,
+            questions_for_guild,
+        )
+
+        owner = self.actor()
+        questions = questions_for_guild(self.guild, include_disabled=True)
+        view = OnboardingQuestionsView(self.guild, owner.id, questions)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(labels, ['Reset Defaults', 'Back'])
+
+        age = next(q for q in questions if q.key == 'age')
+        detail = OnboardingQuestionDetailView(
+            self.guild,
+            owner.id,
+            age,
+            load_config(self.guild.id)['revision'],
+        )
+        labels = [child.label for child in detail.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Edit Question', labels)
+        self.assertIn('Disable', labels)
+        self.assertIn('Make Required', labels)
+        self.assertIn('Move to Channels & Roles', labels)
+        self.assertIn('Allow Multiple', labels)
+        self.assertIn('Back', labels)
+        text = _onboarding_question_detail_text(age)
+        self.assertIn("What's your age group?", text)
+        self.assertIn('Optional', text)
+        self.assertIn('Single answer', text)
+
+        landing = MemberOnboardingView(self.guild, owner.id)
+        landing_labels = [child.label for child in landing.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(
+            landing_labels,
+            ['Manage Questions', 'Preview Questions', 'Review Profile Repair', 'Discord Setup Guide', 'Back to Management'],
+        )
+
+    async def test_server_boosters_are_in_main_admin_flow_and_require_native_role(self):
+        from cogs.server_management import (
+            ManagementView,
+            ServerBoostersView,
+            _server_booster_text,
+        )
+
+        owner = self.actor()
+        booster = self.guild.role(5000)
+        booster.name = 'Server Booster'
+        booster.managed = True
+        self.guild.roles.append(booster)
+        self.guild.premium_subscriber_role = booster
+        db.set_setting(f'managed_category:{self.guild.id}:community', self.community.id)
+
+        manage = ManagementView(self.guild, owner.id)
+        labels = [child.label for child in manage.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Server Boosters', labels)
+
+        text = _server_booster_text(self.guild)
+        self.assertIn('Discord owns booster membership', text)
+        self.assertIn('Setup available', text)
+
+        view = ServerBoostersView(self.guild, owner.id)
+        actions = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(actions, ['Review Setup / Repair', 'Back to Management'])
+
+        self.guild.premium_subscriber_role = None
+        unavailable = _server_booster_text(self.guild)
+        self.assertIn('will never create a replacement booster role', unavailable)
+
     async def test_skills_management_is_in_main_admin_flow_and_uses_runtime_state(self):
         from cogs.server_management import ManagementView, SkillsView, open_skills
         from hosts.gamerhq.skill_runtime import GuildSkillStatus
@@ -154,6 +255,73 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(kwargs['view'], SkillsView)
         self.assertIn('Fixture Skill', kwargs['content'])
         self.assertIn('Disabled', kwargs['content'])
+
+
+    def test_progression_skill_has_guided_admin_configuration_surface(self):
+        from cogs.server_management import (
+            ProgressionView,
+            ProgressionSourcesView,
+            ProgressionAnnouncementsView,
+            _progression_overview,
+            _progression_sources_text,
+        )
+        owner = self.actor()
+        config = {
+            'revision': 1,
+            'xpSources': {
+                'voice': {'enabled': True, 'xp': 5, 'windowMinutes': 10, 'dailyCap': 180},
+                'chat': {'enabled': True, 'xp': 2, 'cooldownMinutes': 5, 'dailyCap': 100},
+            },
+            'levelCurve': {'maxLevel': 100},
+            'achievements': [],
+            'rewards': [],
+            'announcements': {'enabled': False},
+        }
+
+        view = ProgressionView(self.guild, owner.id, config)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertEqual(
+            labels,
+            ['XP Sources', 'Level Curve', 'Achievements', 'Rewards', 'Announcements', 'Back to Skill'],
+        )
+        self.assertIn('future web dashboard', _progression_overview(config))
+
+        source_view = ProgressionSourcesView(self.guild, owner.id, config)
+        self.assertTrue(any(isinstance(child, discord.ui.Select) for child in source_view.children))
+        self.assertIn('Voice', _progression_sources_text(config))
+        self.assertIn('180/day', _progression_sources_text(config))
+
+        announcement_view = ProgressionAnnouncementsView(self.guild, owner.id, config)
+        announcement_labels = [
+            child.label for child in announcement_view.children
+            if isinstance(child, discord.ui.Button)
+        ]
+        self.assertEqual(
+            announcement_labels,
+            ['Enable', 'Edit Template / Triggers', 'Back'],
+        )
+
+    def test_progression_skill_details_offer_configure_when_enabled(self):
+        from cogs.server_management import SkillDetailsView
+        from hosts.gamerhq.skill_runtime import GuildSkillStatus
+
+        owner = self.actor()
+        status = GuildSkillStatus(
+            skill_id='progression',
+            name='Progression & Achievements',
+            version='0.1.0',
+            description='Progression',
+            enabled=True,
+            running=True,
+            health='PASS',
+            health_detail='ok',
+            required_capabilities=(),
+            missing_capabilities=(),
+            management_available=True,
+        )
+        view = SkillDetailsView(self.guild, owner.id, status)
+        labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]
+        self.assertIn('Configure', labels)
 
     def test_skill_details_show_external_package_provenance(self):
         from cogs.server_management import _skill_detail_text

@@ -91,7 +91,7 @@ async def sync(guild, *, repair=False):
 async def retire_obsolete(guild):
     """Explicit Repair: retire only proven managed About You and language controls."""
     from services import managed_message_service as managed
-    from services.role_service import retire_language_mappings
+    from services.role_service import retire_legacy_profile_mappings
     board = channel(guild)
     if not board:
         raise ServerMessageError('Profile channel unavailable; legacy cleanup needs review.')
@@ -133,7 +133,7 @@ async def retire_obsolete(guild):
                 raise ServerMessageError('Legacy language controls need manual ownership review.')
             state.update(buttons=filtered, pending=True, version=state['version'] + 1)
             managed.store(state)
-    retire_language_mappings()
+    retire_legacy_profile_mappings()
 
 
 async def diagnostics(guild, *, messages=False):
@@ -147,9 +147,11 @@ async def diagnostics(guild, *, messages=False):
     old_key = f'role_message:{guild.id}:notifications'
     if db.get_setting(old_key):
         issues.append('Legacy About You panel awaits explicit Repair.')
-    from services.role_service import LEGACY_LANGUAGES
+    from services.role_service import LEGACY_AGE_KEYS, LEGACY_LANGUAGES
     if any(db.get_managed_role_by_key('base', key) for key in LEGACY_LANGUAGES):
         issues.append('Legacy language role mappings await explicit Repair.')
+    if any(db.get_managed_role_by_key('base', key) for key in LEGACY_AGE_KEYS):
+        issues.append('Legacy age-group mappings await explicit Repair; member roles are preserved.')
     seen = set()
     for options in ROLE_GROUPS.values():
         for option in options:
