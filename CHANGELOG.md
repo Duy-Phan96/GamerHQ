@@ -4,6 +4,7 @@
 
 ### Added
 
+- Integrated the reviewed standalone Awin Affiliate 0.9.0 Skill as an immutable bundled external package with host-side setup, Creative Library, preview-confirmed Post Now, campaign management/history and safe diagnostics through public Management contracts only.
 - Added public `http.external` and `secrets.skill` Skill capabilities with host-mediated HTTPS access and encrypted, guild-and-Skill-scoped secret storage.
 - Introduced the lightweight GamerHQ Software Development Lifecycle, Definition of Done, AI-assisted development SOP and architecture decision guidance.
 - Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
