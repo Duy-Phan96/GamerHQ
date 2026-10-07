@@ -15,6 +15,8 @@ from services import structure_adoption_service as structure
 
 log = logging.getLogger(__name__)
 BATCH_SIZE = 10
+GROUP_LOOKAHEAD = BATCH_SIZE * 2
+GROUP_WINDOW_SECONDS = 4
 _locks = {}
 
 
@@ -57,6 +59,113 @@ def load_notice(guild_id, change_id):
 
 def _store(guild_id, change_id, value):
     db.set_setting(notice_key(guild_id, change_id), json.dumps(value, sort_keys=True))
+
+
+def _changed_fields(change):
+    before, after = change.get("before") or {}, change.get("after") or {}
+    explicit = set(after.get("_fields", ()))
+    if explicit:
+        return explicit
+    ignored = {"_fields"}
+    return {
+        key for key in (set(before) | set(after))
+        if key not in ignored and before.get(key) != after.get(key)
+    }
+
+
+def _is_category_delete(change):
+    return bool(
+        change
+        and change.get("resource_type") == "category"
+        and change.get("action") in {"category_delete", "observed_category_delete"}
+        and change.get("status") == "APPLIED"
+    )
+
+
+def _is_related_channel_move(change, category_id):
+    if not change or change.get("resource_type") != "channel":
+        return False
+    if change.get("action") not in {"channel_update", "observed_channel_update"}:
+        return False
+    if change.get("status") != "APPLIED":
+        return False
+    before, after = change.get("before") or {}, change.get("after") or {}
+    if before.get("category_id") != category_id or after.get("category_id") == category_id:
+        return False
+    fields = _changed_fields(change)
+    return bool("category_id" in fields and fields <= {"category_id", "position"})
+
+
+def _group_plan(guild, changes):
+    """Return ordered delivery units without rewriting authoritative history."""
+    used = set()
+    groups = {}
+    for category in changes:
+        if not _is_category_delete(category) or category["id"] in used:
+            continue
+        category_id = category.get("resource_id")
+        nearby_deletes = [
+            item for item in changes
+            if item["id"] != category["id"]
+            and _is_category_delete(item)
+            and abs(int(item["created_at"]) - int(category["created_at"])) <= GROUP_WINDOW_SECONDS
+        ]
+        if nearby_deletes:
+            continue
+        related = [
+            item for item in changes
+            if _is_related_channel_move(item, category_id)
+            and abs(int(item["created_at"]) - int(category["created_at"])) <= GROUP_WINDOW_SECONDS
+        ]
+        if len(related) < 2:
+            continue
+        ids = {category["id"], *(item["id"] for item in related)}
+        low, high = min(ids), max(ids)
+        between = [item for item in changes if low <= item["id"] <= high]
+        if any(item["id"] not in ids for item in between):
+            continue
+
+        leader_notice = load_notice(guild.id, category["id"])
+        if leader_notice and leader_notice.get("state") not in {"PENDING"}:
+            continue
+        allowed = True
+        for child in related:
+            state = load_notice(guild.id, child["id"])
+            if state is None:
+                continue
+            if state.get("state") == "GROUPED" and state.get("parent_change_id") == category["id"]:
+                continue
+            allowed = False
+            break
+        if not allowed:
+            continue
+
+        groups[category["id"]] = tuple(sorted(related, key=lambda item: item["id"]))
+        used.update(ids)
+
+    units = []
+    emitted_groups = set()
+    for change in changes:
+        if change["id"] not in used:
+            units.append(("single", change, ()))
+            continue
+        category = next((item for item in changes if item["id"] in groups and change["id"] in {item["id"], *(child["id"] for child in groups[item["id"]])}), None)
+        if category is None or category["id"] in emitted_groups:
+            continue
+        emitted_groups.add(category["id"])
+        units.append(("group", category, groups[category["id"]]))
+    return units
+
+
+def render_group_notice(category_change, child_changes):
+    count = len(child_changes)
+    return (
+        f"## 🕘 Change #{int(category_change['id'])} · Category removed\n"
+        f"<t:{int(category_change['created_at'])}:f> · **Recorded**\n\n"
+        f"**Category removed · {count} related channel moves.**\n\n"
+        "Deleted history is not recoverable automatically.\n"
+        "Use **Details** to review the affected resources."
+    )
 
 
 def can_undo(change):
@@ -191,7 +300,102 @@ def change_for_message(guild, channel_id, message_id):
         return None
     if (notice.get("channel_id"), notice.get("message_id")) != (channel_id, message_id):
         return None
-    return structure.get_change(guild, int(raw))
+    change = structure.get_change(guild, int(raw))
+    grouped_ids = notice.get("grouped_change_ids") or []
+    if change and grouped_ids:
+        grouped = []
+        for change_id in grouped_ids:
+            child = structure.get_change(guild, int(change_id))
+            if child is not None:
+                grouped.append(child)
+        change = dict(change)
+        change["grouped_changes"] = tuple(grouped)
+    return change
+
+
+async def _send_group(guild, channel, category_change, child_changes):
+    old = load_notice(guild.id, category_change["id"])
+    if old and old.get("state") != "PENDING":
+        if old.get("state") == "SENDING":
+            _store(guild.id, category_change["id"], dict(old, state="UNCERTAIN"))
+            log.warning(
+                "Grouped owner notice delivery uncertain; retained history, no resend guild=%s change=%s",
+                guild.id, category_change["id"],
+            )
+        return True
+
+    value = {
+        "state": "SENDING",
+        "channel_id": channel.id,
+        "status": category_change["status"],
+        "grouped_change_ids": [child["id"] for child in child_changes],
+    }
+    with db.connect() as conn:
+        if old is None:
+            claimed = conn.execute(
+                "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",
+                (notice_key(guild.id, category_change["id"]), json.dumps(value, sort_keys=True)),
+            ).rowcount
+        else:
+            claimed = conn.execute(
+                "UPDATE settings SET value=? WHERE key=? AND value=?",
+                (
+                    json.dumps(value, sort_keys=True),
+                    notice_key(guild.id, category_change["id"]),
+                    json.dumps(old, sort_keys=True),
+                ),
+            ).rowcount
+        if not claimed:
+            return True
+        for child in child_changes:
+            child_value = {
+                "state": "GROUPED",
+                "parent_change_id": category_change["id"],
+                "status": child["status"],
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                (notice_key(guild.id, child["id"]), json.dumps(child_value, sort_keys=True)),
+            )
+
+    from cogs.owner_changelog import ChangeNotice
+    try:
+        message = await channel.send(
+            content=render_group_notice(category_change, child_changes),
+            view=ChangeNotice(category_change),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+    except discord.HTTPException as exc:
+        definite = exc.status in (400, 403, 404, 429)
+        _store(
+            guild.id,
+            category_change["id"],
+            dict(value, state="PENDING" if definite else "UNCERTAIN"),
+        )
+        log.warning(
+            "Grouped owner notice delivery incomplete guild=%s change=%s http=%s",
+            guild.id, category_change["id"], exc.status,
+        )
+        return not definite
+    except Exception:
+        _store(guild.id, category_change["id"], dict(value, state="UNCERTAIN"))
+        log.warning(
+            "Grouped owner notice delivery uncertain guild=%s change=%s; no automatic resend",
+            guild.id, category_change["id"],
+        )
+        return True
+
+    value.update(state="SENT", message_id=message.id)
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE settings SET value=? WHERE key=?",
+            (json.dumps(value, sort_keys=True), notice_key(guild.id, category_change["id"])),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+            (message_key(guild.id, channel.id, message.id), str(category_change["id"])),
+        )
+    return True
 
 
 async def _send(guild, channel, change):
@@ -268,16 +472,29 @@ async def flush(guild, *, include_latest=False):
         with db.connect() as conn:
             rows = conn.execute(
                 "SELECT id FROM structure_change_log WHERE guild_id=? AND id>? ORDER BY id LIMIT ?",
-                (guild.id, cursor, BATCH_SIZE),
+                (guild.id, cursor, GROUP_LOOKAHEAD),
             ).fetchall()
-        for row in rows:
+        changes = [
+            change for row in rows
+            if (change := structure.get_change(guild, row["id"])) is not None
+        ]
+        delivered = 0
+        for kind, change, grouped in _group_plan(guild, changes):
+            if delivered >= BATCH_SIZE:
+                break
             channel = destination(guild)  # Recheck privacy after awaits, never cache an unsafe destination.
             if channel is None:
                 return
-            change = structure.get_change(guild, row["id"])
-            if not await _send(guild, channel, change):
+            if kind == "group":
+                success = await _send_group(guild, channel, change, grouped)
+                cursor_change_id = max([change["id"], *(child["id"] for child in grouped)])
+            else:
+                success = await _send(guild, channel, change)
+                cursor_change_id = change["id"]
+            if not success:
                 break
-            db.set_setting(cursor_key(guild.id), change["id"])
+            db.set_setting(cursor_key(guild.id), cursor_change_id)
+            delivered += 1
         # Reconcile only terminal entries whose sent notice still has the previous status.
         # SQLite settings keys are indexed; message reads are targeted by saved ID.
         with db.connect() as conn:
