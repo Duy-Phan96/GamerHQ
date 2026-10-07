@@ -59,6 +59,8 @@ important architectural changes.
 
 ## Release readiness
 
+A green feature branch or Skill repository is not, by itself, evidence that the combined GamerHQ server is deployable. Before any server update recommendation, prepare a [Server Release Snapshot](SERVER_RELEASE_SNAPSHOT.md) for one immutable release candidate. The snapshot is the integration decision record and must distinguish included work from newer/unmerged work.
+
 Before promotion:
 - required PR checks are green;
 - database migration implications are known;
@@ -66,7 +68,9 @@ Before promotion:
 - configuration/environment changes are documented;
 - changelog/release notes are current;
 - manual Discord/VPS acceptance steps are identified;
-- rollback implications are known.
+- rollback implications are known;
+- the exact release version and commit/tag are recorded;
+- excluded newer/unmerged work is explicit.
 
 ## Cross-repository releases
 
