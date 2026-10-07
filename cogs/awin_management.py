@@ -25,6 +25,17 @@ CREATIVE_PREVIEW_API = "awin-affiliate.creatives.preview.v1"
 CREATIVES_SET_ENABLED_API = "awin-affiliate.creatives.set-enabled.v1"
 CREATIVES_SET_ADVERTISER_ENABLED_API = "awin-affiliate.creatives.set-advertiser-enabled.v1"
 IMPORT_SAVED_HTML_API = "awin-affiliate.creatives.import-saved-html.v1"
+POST_PREVIEW_API = "awin-affiliate.post.preview.v1"
+POST_SEND_API = "awin-affiliate.post.send.v1"
+CAMPAIGN_LIST_API = "awin-affiliate.campaigns.list.v1"
+CAMPAIGN_GET_API = "awin-affiliate.campaigns.get.v1"
+CAMPAIGN_CREATE_API = "awin-affiliate.campaigns.create.v1"
+CAMPAIGN_UPDATE_API = "awin-affiliate.campaigns.update.v1"
+CAMPAIGN_SET_ACTIVE_API = "awin-affiliate.campaigns.set-active.v1"
+CAMPAIGN_DELETE_API = "awin-affiliate.campaigns.delete.v1"
+CAMPAIGN_RUN_NOW_API = "awin-affiliate.campaigns.run-now.v1"
+CAMPAIGN_PREVIEW_NEXT_API = "awin-affiliate.campaigns.preview-next.v1"
+CAMPAIGN_HISTORY_API = "awin-affiliate.campaigns.history.v1"
 
 
 async def _call(interaction, guild, contract_id, payload):
@@ -123,6 +134,9 @@ class AwinOverviewView(AwinMenu):
             self.action("Publisher", self.publisher)
             self.action("Advertisers", self.advertisers)
             self.action("Creative Library", self.creatives)
+            self.action("Post Now", self.post_now, style=discord.ButtonStyle.primary)
+            self.action("Campaigns", self.campaigns)
+            self.action("Import Saved HTML", self.import_saved_html)
             self.action("Disconnect", self.disconnect)
         self.action("Refresh", self.refresh)
         self.action("Back to Skill", self.back)
@@ -143,6 +157,20 @@ class AwinOverviewView(AwinMenu):
 
     async def creatives(self, interaction):
         await open_creatives(interaction, self.guild, self.admin_id)
+
+    async def post_now(self, interaction):
+        await open_post_now(interaction, self.guild, self.admin_id)
+
+    async def campaigns(self, interaction):
+        await open_campaigns(interaction, self.guild, self.admin_id)
+
+    async def import_saved_html(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can import Awin Creative HTML.",
+                ephemeral=True,
+            )
+        await interaction.response.send_modal(AwinSavedHtmlModal(self.guild, self.admin_id))
 
     async def disconnect(self, interaction):
         if interaction.user.id != self.guild.owner_id:
@@ -642,4 +670,431 @@ class AwinCreativeDetailView(AwinMenu):
             self.admin_id,
             offset=self.offset,
             advertiser_id=self.advertiser_id,
+        )
+
+
+
+class AwinSavedHtmlModal(discord.ui.Modal, title="Import Saved Awin HTML"):
+    html = discord.ui.TextInput(
+        label="Saved My Creative HTML",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=4000,
+        placeholder="Paste saved/rendered My Creative HTML (Discord modal limit: 4000 characters)",
+    )
+    complete_advertiser_id = discord.ui.TextInput(
+        label="Complete advertiser ID (optional)",
+        required=False,
+        max_length=64,
+        placeholder="Only set after confirming this advertiser export is complete",
+    )
+
+    def __init__(self, guild, actor_id):
+        super().__init__(timeout=300)
+        self.guild = guild
+        self.actor_id = actor_id
+
+    async def on_submit(self, interaction):
+        if interaction.user.id != self.actor_id:
+            return await interaction.response.send_message(
+                "This import form belongs to another admin session.",
+                ephemeral=True,
+            )
+        payload = {"html": str(self.html.value)}
+        complete = str(self.complete_advertiser_id.value or "").strip()
+        if complete:
+            payload["completeAdvertiserId"] = complete
+        await interaction.response.defer(ephemeral=True)
+        try:
+            response = await _call(interaction, self.guild, IMPORT_SAVED_HTML_API, payload)
+            result = dict(response.get("import") or {})
+        except Exception:
+            return await interaction.edit_original_response(
+                content=(
+                    "❌ Saved Awin HTML could not be imported. Nothing was inferred as complete. "
+                    "Review the saved HTML and try again."
+                ),
+                view=AwinBackToOverviewView(self.guild, self.actor_id),
+            )
+        text = (
+            "✅ Saved Awin HTML imported.\n"
+            f"Groups: {int(result.get('groups', 0))} · Found: {int(result.get('found', 0))} · "
+            f"New: {int(result.get('new', 0))} · Updated: {int(result.get('updated', 0))} · "
+            f"Missing: {int(result.get('missing', 0))} · Restored: {int(result.get('restored', 0))}"
+        )
+        if complete:
+            text += f"\nAuthoritative missing detection was explicitly enabled only for advertiser ID {_escape(complete, 64)}."
+        await interaction.edit_original_response(
+            content=text[:1950],
+            view=AwinBackToOverviewView(self.guild, self.actor_id),
+        )
+
+
+async def _joined_advertisers(interaction, guild):
+    response = await _call(
+        interaction,
+        guild,
+        ADVERTISERS_LIST_API,
+        {"relationship": "joined"},
+    )
+    return tuple(response.get("advertisers") or ())
+
+
+async def open_post_now(interaction, guild, actor_id):
+    try:
+        advertisers = await _joined_advertisers(interaction, guild)
+    except Exception:
+        return await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nJoined advertisers are currently unavailable.",
+            view=AwinBackToOverviewView(guild, actor_id),
+        )
+    if not advertisers:
+        return await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nNo joined advertisers are available.",
+            view=AwinBackToOverviewView(guild, actor_id),
+        )
+    await interaction.response.edit_message(
+        content="# 📣 Awin Post Now\nChoose the advertiser for this post.",
+        view=AwinPostAdvertiserView(guild, actor_id, advertisers),
+    )
+
+
+class AwinPostAdvertiserSelect(discord.ui.Select):
+    def __init__(self, advertisers):
+        options = []
+        for item in advertisers[:25]:
+            advertiser_id = str(item.get("id", "")).strip()
+            if not advertiser_id:
+                continue
+            options.append(
+                discord.SelectOption(
+                    label=str(item.get("name") or f"Advertiser {advertiser_id}")[:100],
+                    value=advertiser_id,
+                    description=(f"ID {advertiser_id}")[:100],
+                )
+            )
+        super().__init__(
+            placeholder="Choose advertiser",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose how the Creative should be selected.",
+            view=AwinPostModeView(
+                self.view.guild,
+                self.view.admin_id,
+                advertiser_id=self.values[0],
+            ),
+        )
+
+
+class AwinPostAdvertiserView(AwinMenu):
+    def __init__(self, guild, actor_id, advertisers):
+        super().__init__(guild, actor_id)
+        self.add_item(AwinPostAdvertiserSelect(advertisers))
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await open_awin(interaction, self.guild, self.admin_id)
+
+
+class AwinPostModeView(AwinMenu):
+    def __init__(self, guild, actor_id, *, advertiser_id):
+        super().__init__(guild, actor_id)
+        self.advertiser_id = advertiser_id
+        self.action("Specific", self.specific)
+        self.action("Random", self.random)
+        self.action("Next", self.next)
+        self.action("Back", self.back)
+
+    async def specific(self, interaction):
+        try:
+            response = await _call(
+                interaction,
+                self.guild,
+                CREATIVES_LIST_API,
+                {
+                    "advertiserId": self.advertiser_id,
+                    "enabledOnly": True,
+                    "activeOnly": True,
+                    "offset": 0,
+                    "limit": 25,
+                },
+            )
+            items = tuple((response.get("creatives") or {}).get("items") or ())
+        except Exception:
+            items = ()
+        if not items:
+            return await interaction.response.edit_message(
+                content="# 📣 Awin Post Now\nNo enabled active Creative is available for this advertiser.",
+                view=AwinPostModeView(
+                    self.guild,
+                    self.admin_id,
+                    advertiser_id=self.advertiser_id,
+                ),
+            )
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose the exact Creative.",
+            view=AwinPostCreativeView(
+                self.guild,
+                self.admin_id,
+                advertiser_id=self.advertiser_id,
+                items=items,
+            ),
+        )
+
+    async def random(self, interaction):
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose the destination channel.",
+            view=AwinPostChannelView(
+                self.guild,
+                self.admin_id,
+                selection_mode="random",
+                advertiser_id=self.advertiser_id,
+            ),
+        )
+
+    async def next(self, interaction):
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose the destination channel.",
+            view=AwinPostChannelView(
+                self.guild,
+                self.admin_id,
+                selection_mode="next",
+                advertiser_id=self.advertiser_id,
+            ),
+        )
+
+    async def back(self, interaction):
+        await open_post_now(interaction, self.guild, self.admin_id)
+
+
+class AwinPostCreativeSelect(discord.ui.Select):
+    def __init__(self, items):
+        options = []
+        for item in items[:25]:
+            creative_id = str(item.get("id", "")).strip()
+            if not creative_id:
+                continue
+            options.append(
+                discord.SelectOption(
+                    label=str(item.get("title") or item.get("dimensions") or "Awin Creative")[:100],
+                    value=creative_id,
+                    description=(f"{item.get('state') or 'unknown'} · {item.get('dimensions') or 'size unknown'}")[:100],
+                )
+            )
+        super().__init__(
+            placeholder="Choose Creative",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose the destination channel.",
+            view=AwinPostChannelView(
+                self.view.guild,
+                self.view.admin_id,
+                selection_mode="specific",
+                advertiser_id=self.view.advertiser_id,
+                creative_id=self.values[0],
+            ),
+        )
+
+
+class AwinPostCreativeView(AwinMenu):
+    def __init__(self, guild, actor_id, *, advertiser_id, items):
+        super().__init__(guild, actor_id)
+        self.advertiser_id = advertiser_id
+        self.add_item(AwinPostCreativeSelect(items))
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose how the Creative should be selected.",
+            view=AwinPostModeView(
+                self.guild,
+                self.admin_id,
+                advertiser_id=self.advertiser_id,
+            ),
+        )
+
+
+class AwinPostChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Choose destination channel",
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.text],
+        )
+
+    async def callback(self, interaction):
+        channel_id = int(self.values[0].id)
+        await interaction.response.send_modal(
+            AwinPostCopyModal(
+                self.view.guild,
+                self.view.admin_id,
+                selection_mode=self.view.selection_mode,
+                advertiser_id=self.view.advertiser_id,
+                creative_id=self.view.creative_id,
+                channel_id=channel_id,
+            )
+        )
+
+
+class AwinPostChannelView(AwinMenu):
+    def __init__(self, guild, actor_id, *, selection_mode, advertiser_id, creative_id=None):
+        super().__init__(guild, actor_id)
+        self.selection_mode = selection_mode
+        self.advertiser_id = advertiser_id
+        self.creative_id = creative_id
+        self.add_item(AwinPostChannelSelect())
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content="# 📣 Awin Post Now\nChoose how the Creative should be selected.",
+            view=AwinPostModeView(
+                self.guild,
+                self.admin_id,
+                advertiser_id=self.advertiser_id,
+            ),
+        )
+
+
+class AwinPostCopyModal(discord.ui.Modal, title="Review Awin Post"):
+    post_title = discord.ui.TextInput(
+        label="Title (optional)",
+        required=False,
+        max_length=256,
+    )
+    post_text = discord.ui.TextInput(
+        label="Text (optional)",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=2000,
+    )
+
+    def __init__(
+        self,
+        guild,
+        actor_id,
+        *,
+        selection_mode,
+        advertiser_id,
+        channel_id,
+        creative_id=None,
+    ):
+        super().__init__(timeout=300)
+        self.guild = guild
+        self.actor_id = actor_id
+        self.selection_mode = selection_mode
+        self.advertiser_id = advertiser_id
+        self.channel_id = channel_id
+        self.creative_id = creative_id
+
+    async def on_submit(self, interaction):
+        payload = {
+            "channelId": self.channel_id,
+            "selectionMode": self.selection_mode,
+            "advertiserId": self.advertiser_id,
+            "title": str(self.post_title.value or "").strip() or None,
+            "text": str(self.post_text.value or "").strip() or None,
+        }
+        if self.creative_id:
+            payload["creativeId"] = self.creative_id
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            response = await _call(
+                interaction,
+                self.guild,
+                POST_PREVIEW_API,
+                payload,
+            )
+            preview = dict(response.get("preview") or {})
+            confirm_payload = dict(response.get("confirmPayload") or {})
+        except Exception:
+            return await interaction.edit_original_response(
+                content=(
+                    "❌ Awin could not build this preview. "
+                    "The Creative may no longer be eligible or the channel may be unavailable."
+                ),
+                view=AwinBackToOverviewView(self.guild, self.actor_id),
+            )
+
+        embed_data = preview.get("embed") if isinstance(preview.get("embed"), dict) else {}
+        embed = discord.Embed.from_dict(embed_data) if embed_data else None
+        content = str(preview.get("content") or "Awin post preview")[:2000]
+        await interaction.edit_original_response(
+            content=content,
+            embed=embed,
+            view=AwinPostConfirmView(
+                self.guild,
+                self.actor_id,
+                confirm_payload=confirm_payload,
+                preview=preview,
+            ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+class AwinPostConfirmView(AwinMenu):
+    def __init__(self, guild, actor_id, *, confirm_payload, preview):
+        super().__init__(guild, actor_id)
+        self.confirm_payload = dict(confirm_payload)
+        self.preview = dict(preview)
+        buttons = self.preview.get("linkButtons")
+        if isinstance(buttons, (list, tuple)):
+            for item in buttons[:1]:
+                if isinstance(item, dict):
+                    url = str(item.get("url") or "")
+                    label = str(item.get("label") or "View offer")[:80]
+                    if url.startswith("https://"):
+                        self.add_item(discord.ui.Button(label=label, url=url))
+        self.action("Confirm Send", self.confirm, style=discord.ButtonStyle.success)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can confirm Awin affiliate posts.",
+                ephemeral=True,
+            )
+        await interaction.response.defer(ephemeral=True)
+        try:
+            result = await _call(
+                interaction,
+                self.guild,
+                POST_SEND_API,
+                dict(self.confirm_payload),
+            )
+        except Exception:
+            return await interaction.edit_original_response(
+                content=(
+                    "❌ Awin did not send the post. "
+                    "The preview may have become stale or Discord rejected the destination."
+                ),
+                view=AwinBackToOverviewView(self.guild, self.admin_id),
+            )
+        await interaction.edit_original_response(
+            content=(
+                "✅ Awin affiliate post sent.\n"
+                f"Channel ID: {int(result.get('channelId', 0))} · "
+                f"Message ID: {int(result.get('messageId', 0))}"
+            ),
+            embed=None,
+            view=AwinBackToOverviewView(self.guild, self.admin_id),
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content="Post cancelled. Nothing was sent.",
+            embed=None,
+            view=AwinBackToOverviewView(self.guild, self.admin_id),
         )
