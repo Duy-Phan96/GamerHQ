@@ -265,10 +265,18 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
             _progression_overview,
             _progression_sources_text,
         )
-        from skills.progression import DEFAULT_CONFIG
-
         owner = self.actor()
-        config = dict(DEFAULT_CONFIG)
+        config = {
+            'revision': 1,
+            'xpSources': {
+                'voice': {'enabled': True, 'xp': 5, 'windowMinutes': 10, 'dailyCap': 180},
+                'chat': {'enabled': True, 'xp': 2, 'cooldownMinutes': 5, 'dailyCap': 100},
+            },
+            'levelCurve': {'maxLevel': 100},
+            'achievements': [],
+            'rewards': [],
+            'announcements': {'enabled': False},
+        }
 
         view = ProgressionView(self.guild, owner.id, config)
         labels = [child.label for child in view.children if isinstance(child, discord.ui.Button)]

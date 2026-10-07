@@ -17,28 +17,38 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
     def test_current_lock_parses_to_immutable_reviewed_plan(self):
         packages = load_reviewed_skill_lock(ROOT / "requirements-skills.lock")
-        self.assertEqual(len(packages), 1)
+        self.assertEqual(len(packages), 2)
 
-        package = packages[0]
-        self.assertEqual(package.distribution, "gamerhq-skill-recurring-posts")
-        self.assertEqual(package.source_kind, "github-commit")
+        by_distribution = {package.distribution: package for package in packages}
+        recurring = by_distribution["gamerhq-skill-recurring-posts"]
+        progression = by_distribution["gamerhq-skill-xp-progression"]
+
+        self.assertEqual(recurring.source_kind, "github-commit")
         self.assertEqual(
-            package.source_repository,
+            recurring.source_repository,
             "Duy-Phan96/gamerhq-skill-recurring-posts",
         )
         self.assertEqual(
-            package.reviewed_commit,
+            recurring.reviewed_commit,
             "7656616a3259d70bc09ac10446cb0965d9ec6a6c",
+        )
+        self.assertEqual(progression.source_kind, "github-commit")
+        self.assertEqual(
+            progression.source_repository,
+            "Duy-Phan96/gamerhq-skill-xp-progression",
+        )
+        self.assertEqual(
+            progression.reviewed_commit,
+            "565ee8379cdd22cb00c18db188eeaddd058e626d",
         )
 
         plan = deployment_plan(packages)
         self.assertEqual(plan["schemaVersion"], "1")
         self.assertTrue(plan["requiresImageRebuild"])
         self.assertFalse(plan["runtimeInstallAllowed"])
-        self.assertEqual(
-            plan["packages"][0]["reviewedCommit"],
-            package.reviewed_commit,
-        )
+        reviewed = {item["distribution"]: item["reviewedCommit"] for item in plan["packages"]}
+        self.assertEqual(reviewed["gamerhq-skill-recurring-posts"], recurring.reviewed_commit)
+        self.assertEqual(reviewed["gamerhq-skill-xp-progression"], progression.reviewed_commit)
         json.dumps(plan)
 
     def test_comments_and_blank_lines_are_ignored(self):
