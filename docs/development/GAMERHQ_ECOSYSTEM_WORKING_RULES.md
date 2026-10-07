@@ -214,3 +214,54 @@ For deployment decisions:
 - production DB/runtime state remains authoritative for live persisted state.
 
 Do not use raw commit count as evidence of deployability.
+
+
+## 11. GamerHQ Host owns server-update decisions
+
+Only the main `Duy-Phan96/GamerHQ` project may decide that a server update is
+appropriate, prepare the integrated release candidate, produce the Server Release
+Snapshot, and guide the owner through production deployment.
+
+Other GamerHQ repositories must stop at integration handoff. They may report:
+
+- `READY FOR GAMERHQ INTEGRATION`;
+- the immutable commit/version to pin;
+- compatibility requirements;
+- migration/configuration/deployment impact.
+
+They must not independently tell the owner to update the production GamerHQ
+server.
+
+### When the main project should proactively consider a server update
+
+The GamerHQ Host project should evaluate whether to cut a release candidate when
+one or more of these conditions are true:
+
+- a coherent user-facing milestone is complete;
+- several server-relevant PRs have accumulated since the last accepted release;
+- a reviewed external Skill pin has changed;
+- a built-in Skill was externalized or an integration boundary changed;
+- Runtime/SDK/Host compatibility changed;
+- database, configuration, permissions or Discord-resource behavior changed;
+- an important bug/security/reliability fix is ready;
+- live acceptance is needed before continuing dependent development;
+- `develop` has materially diverged from the last accepted production release.
+
+Do not cut a release candidate for every documentation typo or isolated internal
+change. Prefer meaningful, testable deployment checkpoints.
+
+### Required behavior when a trigger is reached
+
+The main project should proactively say that a server update checkpoint is
+recommended and then:
+
+1. inspect the complete current integrated state;
+2. identify unfinished/conflicting parallel work;
+3. decide what is included and explicitly excluded;
+4. cut one immutable release candidate;
+5. run all automated release gates;
+6. produce/update the Server Release Snapshot;
+7. report one of: BLOCKED, READY FOR MANUAL ACCEPTANCE, ACCEPTED FOR DEPLOYMENT;
+8. ask for owner approval before any production action.
+
+This is the only project that should provide the final production update commands.
