@@ -700,33 +700,100 @@ class AwinSavedHtmlModal(discord.ui.Modal, title="Import Saved Awin HTML"):
                 "This import form belongs to another admin session.",
                 ephemeral=True,
             )
-        payload = {"html": str(self.html.value)}
+        html = str(self.html.value)
         complete = str(self.complete_advertiser_id.value or "").strip()
         if complete:
-            payload["completeAdvertiserId"] = complete
-        await interaction.response.defer(ephemeral=True)
-        try:
-            response = await _call(interaction, self.guild, IMPORT_SAVED_HTML_API, payload)
-            result = dict(response.get("import") or {})
-        except Exception:
-            return await interaction.edit_original_response(
+            return await interaction.response.edit_message(
                 content=(
-                    "❌ Saved Awin HTML could not be imported. Nothing was inferred as complete. "
-                    "Review the saved HTML and try again."
+                    "# ⚠️ Confirm authoritative Awin import\n"
+                    f"You marked advertiser ID **{_escape(complete, 64)}** as a complete export.\n\n"
+                    "Only for this advertiser, Creatives previously owned by the saved-page source "
+                    "but absent from this import may become **MISSING**. Other advertisers remain UPSERT_ONLY.\n\n"
+                    "Confirm only if the saved HTML contains the complete Creative set for this advertiser."
                 ),
-                view=AwinBackToOverviewView(self.guild, self.actor_id),
+                view=AwinSavedHtmlAuthorityConfirmView(
+                    self.guild,
+                    self.actor_id,
+                    html=html,
+                    complete_advertiser_id=complete,
+                ),
             )
-        text = (
-            "✅ Saved Awin HTML imported.\n"
-            f"Groups: {int(result.get('groups', 0))} · Found: {int(result.get('found', 0))} · "
-            f"New: {int(result.get('new', 0))} · Updated: {int(result.get('updated', 0))} · "
-            f"Missing: {int(result.get('missing', 0))} · Restored: {int(result.get('restored', 0))}"
+        await _run_saved_html_import(
+            interaction,
+            self.guild,
+            self.actor_id,
+            html=html,
+            complete_advertiser_id=None,
         )
-        if complete:
-            text += f"\nAuthoritative missing detection was explicitly enabled only for advertiser ID {_escape(complete, 64)}."
-        await interaction.edit_original_response(
-            content=text[:1950],
-            view=AwinBackToOverviewView(self.guild, self.actor_id),
+
+
+async def _run_saved_html_import(
+    interaction,
+    guild,
+    actor_id,
+    *,
+    html,
+    complete_advertiser_id,
+):
+    payload = {"html": str(html)}
+    if complete_advertiser_id:
+        payload["completeAdvertiserId"] = str(complete_advertiser_id)
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+    try:
+        response = await _call(interaction, guild, IMPORT_SAVED_HTML_API, payload)
+        result = dict(response.get("import") or {})
+    except Exception:
+        return await interaction.edit_original_response(
+            content=(
+                "❌ Saved Awin HTML could not be imported. Nothing was inferred as complete. "
+                "Review the saved HTML and try again."
+            ),
+            view=AwinBackToOverviewView(guild, actor_id),
+        )
+    text = (
+        "✅ Saved Awin HTML imported.\n"
+        f"Groups: {int(result.get('groups', 0))} · Found: {int(result.get('found', 0))} · "
+        f"New: {int(result.get('new', 0))} · Updated: {int(result.get('updated', 0))} · "
+        f"Missing: {int(result.get('missing', 0))} · Restored: {int(result.get('restored', 0))}"
+    )
+    if complete_advertiser_id:
+        text += (
+            "\nAuthoritative missing detection was explicitly confirmed only for advertiser ID "
+            f"{_escape(complete_advertiser_id, 64)}."
+        )
+    await interaction.edit_original_response(
+        content=text[:1950],
+        view=AwinBackToOverviewView(guild, actor_id),
+    )
+
+
+class AwinSavedHtmlAuthorityConfirmView(AwinMenu):
+    def __init__(self, guild, actor_id, *, html, complete_advertiser_id):
+        super().__init__(guild, actor_id)
+        self.html = str(html)
+        self.complete_advertiser_id = str(complete_advertiser_id)
+        self.action("Confirm Complete Export", self.confirm, style=discord.ButtonStyle.danger)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can confirm authoritative Awin imports.",
+                ephemeral=True,
+            )
+        await _run_saved_html_import(
+            interaction,
+            self.guild,
+            self.admin_id,
+            html=self.html,
+            complete_advertiser_id=self.complete_advertiser_id,
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content="Import cancelled. No Creative state was changed.",
+            view=AwinBackToOverviewView(self.guild, self.admin_id),
         )
 
 
