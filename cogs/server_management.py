@@ -22,6 +22,9 @@ _RECURRING_SET_ACTIVE_API = "recurring-posts.set-active.v1"
 _RECURRING_DELETE_PREVIEW_API = "recurring-posts.delete-preview.v1"
 _RECURRING_DELETE_API = "recurring-posts.delete.v1"
 
+_PROGRESSION_GET_CONFIG_API = "progression.get-config.v1"
+_PROGRESSION_UPDATE_CONFIG_API = "progression.update-config.v1"
+
 
 def friendly_plan(view):
     from services.server_operations import needs_repair
@@ -108,7 +111,7 @@ class ManagementView(Menu):
         super().__init__(guild, actor_id)
         actions = [('Server Check', self.server_check), ('Server Structure', self.structure),
                    ('Roles & Permissions', self.roles), ('Integrations', self.integrations),
-                   ('Managed Messages', self.messages), ('Games', self.games), ('Skills', self.skills),
+                   ('Managed Messages', self.messages), ('Games', self.games), ('Member Onboarding', self.member_onboarding), ('Server Boosters', self.server_boosters), ('Skills', self.skills),
                    ('Features', self.features),
                    ('Server Log', self.server_log), ('Lobby Admin', self.lobby_admin)]
         if actor_id == guild.owner_id:
@@ -156,6 +159,12 @@ class ManagementView(Menu):
         from cogs.managed_messages import open_editor
         await open_editor(interaction)
 
+    async def member_onboarding(self, interaction):
+        await open_member_onboarding(interaction, self.guild, self.admin_id)
+
+    async def server_boosters(self, interaction):
+        await open_server_boosters(interaction, self.guild, self.admin_id)
+
     async def skills(self, interaction):
         await open_skills(interaction, self.guild, self.admin_id)
 
@@ -175,6 +184,616 @@ class ManagementView(Menu):
         destination = channel(self.guild)
         text = f'Private operational updates: {destination.mention}' if destination else 'The private STAFF log needs attention. Review existing channels, then preview fixes; the owner can add missing resources.'
         await interaction.response.edit_message(content='# 📜 Server Log\n' + text, view=StructureView(self.guild, self.admin_id))
+
+
+
+def _member_onboarding_text(guild):
+    from services.member_onboarding_service import profile_status
+
+    status = profile_status(guild)
+    missing = status["missing"]
+    legacy = status["legacy"]
+    questions = status["questions"]
+
+    lines = [
+        "# 👤 Member Profile & Onboarding",
+        "Manage the profile roles and onboarding design members use to personalize GamerHQ.",
+        "",
+        f"**Profile roles:** {len(status['present'])} ready · {len(missing)} missing",
+        f"**Legacy mappings:** {len(legacy)}",
+        f"**Default questions:** {len(questions)}",
+        "",
+        "**Age groups:** Under 18 · 18–20 · 21–22 · 23–24 · 25+",
+        "Gender and age remain optional profile choices.",
+        "Games onboarding uses a small popular subset; the full library stays in Choose Your Games.",
+        "",
+        "Discord onboarding sync is not applied automatically from this screen yet. "
+        "Use Preview Questions to review GamerHQ's desired state first.",
+    ]
+    if legacy:
+        lines.append(
+            "\n⚠️ Legacy age/language mappings are retained until explicit Repair. "
+            "Existing member role assignments are never guessed or silently migrated."
+        )
+    return "\n".join(lines)[:1950]
+
+
+def _member_questions_text(guild):
+    from services.member_onboarding_service import questions_for_guild
+
+    lines = [
+        "# 👋 Onboarding Questions Preview",
+        "This is GamerHQ's desired onboarding design. Nothing changes in Discord from this preview.",
+        "",
+    ]
+    for index, question in enumerate(questions_for_guild(guild), start=1):
+        flags = []
+        flags.append("Required" if question.required else "Optional")
+        flags.append("Multiple answers" if question.multiple else "Single answer")
+        flags.append("Before join" if question.before_join else "Channels & Roles")
+        lines.append(f"**{index}. {question.prompt}**")
+        lines.append(" · ".join(flags))
+        if question.answers:
+            labels = [answer.label for answer in question.answers[:10]]
+            lines.append("Answers: " + " · ".join(labels))
+            if len(question.answers) > 10:
+                lines.append(f"+ {len(question.answers) - 10} more")
+        else:
+            lines.append("Answers: no selectable games are currently available.")
+        lines.append("")
+    return "\n".join(lines)[:1950]
+
+
+async def open_member_onboarding(interaction, guild, actor_id):
+    await interaction.response.edit_message(
+        content=_member_onboarding_text(guild),
+        view=MemberOnboardingView(guild, actor_id),
+    )
+
+
+class MemberOnboardingView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.action("Manage Questions", self.manage_questions)
+        self.action("Preview Questions", self.preview_questions)
+        self.action("Review Profile Repair", self.review_repair)
+        self.action("Discord Setup Guide", self.discord_guide)
+        self.action("Back to Management", self.back)
+
+    async def manage_questions(self, interaction):
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
+
+    async def preview_questions(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_questions_text(self.guild),
+            view=MemberOnboardingPreviewView(self.guild, self.admin_id),
+        )
+
+    async def discord_guide(self, interaction):
+        await interaction.response.edit_message(
+            content=(
+                "# 🔗 Discord Community Onboarding\n"
+                "GamerHQ stores the desired question design, but Discord does not currently expose "
+                "a documented bot API that GamerHQ can safely use to publish these native onboarding questions.\n\n"
+                "**Apply manually in Discord Desktop:**\n"
+                "Server Settings → Onboarding → Questions\n\n"
+                "Use **Preview Questions** as the source for prompts and flags. "
+                "Age/profile answers map to GamerHQ-managed roles; Games uses a small popular subset.\n\n"
+                "Do not use unofficial/private Discord endpoints. A native Sync action can be added later "
+                "if Discord publishes a supported API."
+            )[:1950],
+            view=MemberOnboardingPreviewView(self.guild, self.admin_id),
+        )
+
+    async def review_repair(self, interaction):
+        from services.member_onboarding_service import profile_status
+
+        status = profile_status(self.guild)
+        missing = status["missing"]
+        legacy = status["legacy"]
+        lines = [
+            "# Review Profile Role Repair",
+            "This repair only creates/adopts the current GamerHQ profile roles and retires proven legacy mappings.",
+            "",
+            f"**Missing current roles:** {len(missing)}",
+            f"**Legacy mappings to retire:** {len(legacy)}",
+            "",
+        ]
+        if missing:
+            lines.extend(
+                f"• {group}: {option.emoji} {option.label}"
+                for group, option in missing[:15]
+            )
+        if legacy:
+            lines.append("\nLegacy Discord roles and existing member assignments are preserved.")
+            lines.append("Only their old GamerHQ profile mappings are retired.")
+        if not missing and not legacy:
+            lines.append("✅ No profile-role repair is currently needed.")
+        lines.append("\nNothing changes until you confirm.")
+        await interaction.response.edit_message(
+            content="\n".join(lines)[:1950],
+            view=MemberOnboardingRepairConfirmView(
+                self.guild,
+                self.admin_id,
+                expected_missing=tuple(option.key for _, option in missing),
+                expected_legacy=tuple(legacy),
+            ),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=TITLE,
+            view=ManagementView(self.guild, self.admin_id),
+        )
+
+
+
+def _onboarding_question_detail_text(question):
+    state = "Enabled" if question.enabled else "Disabled"
+    flags = [
+        "Required" if question.required else "Optional",
+        "Multiple answers" if question.multiple else "Single answer",
+        "Before join" if question.before_join else "Channels & Roles",
+    ]
+    lines = [
+        f"# ❓ {discord.utils.escape_markdown(question.prompt)[:100]}",
+        f"**Status:** {state}",
+        f"**Mode:** {' · '.join(flags)}",
+        f"**Answers:** {len(question.answers)}",
+        "",
+    ]
+    if question.answers:
+        lines.extend(
+            f"• {discord.utils.escape_markdown(answer.label)[:100]}"
+            for answer in question.answers[:12]
+        )
+        if len(question.answers) > 12:
+            lines.append(f"• + {len(question.answers) - 12} more")
+    else:
+        lines.append("No answers are currently available.")
+    lines.extend([
+        "",
+        "Answer lists are generated from GamerHQ-managed roles or the current popular-game subset, "
+        "so role/game changes do not require duplicating the list here.",
+    ])
+    return "\n".join(lines)[:1950]
+
+
+async def open_onboarding_questions(interaction, guild, actor_id):
+    from services.member_onboarding_service import questions_for_guild
+    questions = questions_for_guild(guild, include_disabled=True)
+    await interaction.response.edit_message(
+        content=(
+            "# ❓ Manage Onboarding Questions\n"
+            "Edit GamerHQ's desired question settings. Answers stay linked to managed roles/games.\n\n"
+            "Choose a question below. Changes affect GamerHQ's saved desired state; native Discord Onboarding "
+            "must still be applied manually until Discord exposes a supported bot API."
+        ),
+        view=OnboardingQuestionsView(guild, actor_id, questions),
+    )
+
+
+class OnboardingQuestionPicker(discord.ui.Select):
+    def __init__(self, questions):
+        super().__init__(
+            placeholder="Choose a question",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=question.prompt[:100],
+                    value=question.key,
+                    description=(
+                        ("Enabled" if question.enabled else "Disabled")
+                        + " · "
+                        + ("Required" if question.required else "Optional")
+                    )[:100],
+                )
+                for question in questions[:25]
+            ],
+        )
+
+    async def callback(self, interaction):
+        from services.member_onboarding_service import load_config, questions_for_guild
+        question = next(
+            q for q in questions_for_guild(self.view.guild, include_disabled=True)
+            if q.key == self.values[0]
+        )
+        revision = load_config(self.view.guild.id)["revision"]
+        await interaction.response.edit_message(
+            content=_onboarding_question_detail_text(question),
+            view=OnboardingQuestionDetailView(
+                self.view.guild,
+                self.view.admin_id,
+                question,
+                revision,
+            ),
+        )
+
+
+class OnboardingQuestionsView(Menu):
+    def __init__(self, guild, actor_id, questions):
+        super().__init__(guild, actor_id)
+        self.questions = tuple(questions)
+        if self.questions:
+            self.add_item(OnboardingQuestionPicker(self.questions))
+        self.action("Reset Defaults", self.review_reset)
+        self.action("Back", self.back)
+
+    async def review_reset(self, interaction):
+        from services.member_onboarding_service import load_config
+        revision = load_config(self.guild.id)["revision"]
+        await interaction.response.edit_message(
+            content=(
+                "# Reset Onboarding Questions?\n"
+                "This removes GamerHQ question overrides and restores the built-in prompts/flags. "
+                "Managed roles, member roles and games are not deleted.\n\n"
+                "Nothing changes until you confirm."
+            ),
+            view=OnboardingResetConfirmView(self.guild, self.admin_id, revision),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_onboarding_text(self.guild),
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+class OnboardingQuestionEditModal(discord.ui.Modal, title="Edit Onboarding Question"):
+    prompt = discord.ui.TextInput(
+        label="Question",
+        placeholder="Short, clear question shown to members",
+        required=True,
+        min_length=3,
+        max_length=100,
+    )
+
+    def __init__(self, guild, actor_id, question, revision):
+        super().__init__()
+        self.guild_id = guild.id
+        self.actor_id = actor_id
+        self.question_key = question.key
+        self.revision = revision
+        self.prompt.default = question.prompt
+
+    async def on_submit(self, interaction):
+        if (
+            not interaction.guild
+            or interaction.guild.id != self.guild_id
+            or interaction.user.id != self.actor_id
+            or not interaction.user.guild_permissions.administrator
+        ):
+            return await interaction.response.send_message(
+                "This editor is no longer authorized. Reopen Member Onboarding.",
+                ephemeral=True,
+            )
+        from services.member_onboarding_service import (
+            load_config,
+            questions_for_guild,
+            save_question_override,
+        )
+        try:
+            save_question_override(
+                self.guild_id,
+                self.question_key,
+                prompt=str(self.prompt.value),
+                expected_revision=self.revision,
+            )
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        question = next(
+            q for q in questions_for_guild(interaction.guild, include_disabled=True)
+            if q.key == self.question_key
+        )
+        revision = load_config(self.guild_id)["revision"]
+        await interaction.response.edit_message(
+            content=_onboarding_question_detail_text(question),
+            view=OnboardingQuestionDetailView(
+                interaction.guild,
+                self.actor_id,
+                question,
+                revision,
+            ),
+        )
+
+
+class OnboardingQuestionDetailView(Menu):
+    def __init__(self, guild, actor_id, question, revision):
+        super().__init__(guild, actor_id)
+        self.question = question
+        self.revision = revision
+        self.action("Edit Question", self.edit)
+        self.action("Disable" if question.enabled else "Enable", self.toggle_enabled)
+        self.action("Make Optional" if question.required else "Make Required", self.toggle_required)
+        self.action(
+            "Move to Channels & Roles" if question.before_join else "Ask Before Join",
+            self.toggle_before_join,
+        )
+        self.action(
+            "Single Answer" if question.multiple else "Allow Multiple",
+            self.toggle_multiple,
+        )
+        self.action("Back", self.back)
+
+    async def _toggle(self, interaction, **change):
+        from services.member_onboarding_service import (
+            load_config,
+            questions_for_guild,
+            save_question_override,
+        )
+        try:
+            save_question_override(
+                self.guild.id,
+                self.question.key,
+                expected_revision=self.revision,
+                **change,
+            )
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        question = next(
+            q for q in questions_for_guild(self.guild, include_disabled=True)
+            if q.key == self.question.key
+        )
+        revision = load_config(self.guild.id)["revision"]
+        await interaction.response.edit_message(
+            content=_onboarding_question_detail_text(question),
+            view=OnboardingQuestionDetailView(
+                self.guild,
+                self.admin_id,
+                question,
+                revision,
+            ),
+        )
+
+    async def edit(self, interaction):
+        await interaction.response.send_modal(
+            OnboardingQuestionEditModal(
+                self.guild,
+                self.admin_id,
+                self.question,
+                self.revision,
+            )
+        )
+
+    async def toggle_enabled(self, interaction):
+        await self._toggle(interaction, enabled=not self.question.enabled)
+
+    async def toggle_required(self, interaction):
+        await self._toggle(interaction, required=not self.question.required)
+
+    async def toggle_before_join(self, interaction):
+        await self._toggle(interaction, before_join=not self.question.before_join)
+
+    async def toggle_multiple(self, interaction):
+        await self._toggle(interaction, multiple=not self.question.multiple)
+
+    async def back(self, interaction):
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
+
+
+class OnboardingResetConfirmView(Menu):
+    def __init__(self, guild, actor_id, revision):
+        super().__init__(guild, actor_id)
+        self.revision = revision
+        self.used = False
+        self.action("Confirm Reset", self.confirm)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This reset review was already used.",
+                ephemeral=True,
+            )
+        self.used = True
+        from services.member_onboarding_service import reset_config
+        try:
+            reset_config(self.guild.id, expected_revision=self.revision)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
+
+    async def cancel(self, interaction):
+        await open_onboarding_questions(interaction, self.guild, self.admin_id)
+
+
+class MemberOnboardingPreviewView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_onboarding_text(self.guild),
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+class MemberOnboardingRepairConfirmView(Menu):
+    def __init__(self, guild, actor_id, *, expected_missing, expected_legacy):
+        super().__init__(guild, actor_id)
+        self.expected_missing = tuple(expected_missing)
+        self.expected_legacy = tuple(expected_legacy)
+        self.used = False
+        self.action("Confirm Repair", self.confirm)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This repair review was already used. Reopen Member Onboarding.",
+                ephemeral=True,
+            )
+        from services.member_onboarding_service import profile_status
+        current = profile_status(self.guild)
+        current_missing = tuple(option.key for _, option in current["missing"])
+        current_legacy = tuple(current["legacy"])
+        if current_missing != self.expected_missing or current_legacy != self.expected_legacy:
+            return await interaction.response.edit_message(
+                content="Profile-role state changed while this review was open. Reopen Member Onboarding before repairing.",
+                view=MemberOnboardingView(self.guild, self.admin_id),
+            )
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            from services.role_panel_service import sync
+            await sync(self.guild, repair=True)
+            notice = "✅ Profile roles repaired. Existing member roles were preserved."
+        except (ValueError, ServerMessageError, discord.HTTPException):
+            notice = "❌ Profile role repair could not be completed safely. Review Roles & Permissions and try again."
+        await interaction.edit_original_response(
+            content=(notice + "\n\n" + _member_onboarding_text(self.guild))[:1950],
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content=_member_onboarding_text(self.guild),
+            view=MemberOnboardingView(self.guild, self.admin_id),
+        )
+
+
+
+def _server_booster_text(guild):
+    from services.server_booster_service import status
+
+    try:
+        current = status(guild)
+    except (ValueError, ServerMessageError) as exc:
+        return (
+            "# 💎 Server Boosters\n"
+            f"⚠️ {discord.utils.escape_markdown(str(exc))[:500]}\n\n"
+            "GamerHQ uses Discord's native Server Booster role as the source of truth "
+            "and will never create a replacement booster role."
+        )
+
+    channel = current["channel"]
+    action = current["action"]
+    state = {
+        "create": "Setup available",
+        "adopt": "Existing lounge can be adopted",
+        "repair": "Lounge needs repair",
+        "ready": "Ready",
+    }[action]
+    lines = [
+        "# 💎 Server Boosters",
+        "Reward current Server Boosters with a private community lounge.",
+        "",
+        f"**Discord Booster role:** {current['role'].mention}",
+        f"**Booster lounge:** {channel.mention if channel else 'Not created yet'}",
+        f"**Status:** {state}",
+        "",
+        "Discord owns booster membership. GamerHQ only manages the optional lounge and its access policy.",
+        "Future Progression/Achievement Skills may read booster status for badges, but they must not replace Discord's native role.",
+    ]
+    return "\n".join(lines)[:1950]
+
+
+async def open_server_boosters(interaction, guild, actor_id):
+    await interaction.response.edit_message(
+        content=_server_booster_text(guild),
+        view=ServerBoostersView(guild, actor_id),
+    )
+
+
+class ServerBoostersView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        self.action("Review Setup / Repair", self.review)
+        self.action("Back to Management", self.back)
+
+    async def review(self, interaction):
+        from services.server_booster_service import review_snapshot, status
+
+        try:
+            current = status(self.guild)
+            snapshot = review_snapshot(self.guild)
+        except (ValueError, ServerMessageError) as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+
+        action = current["action"]
+        if action == "ready":
+            text = (
+                "# 💎 Server Booster Lounge\n"
+                "✅ The lounge already matches GamerHQ's managed booster policy.\n\n"
+                "Nothing needs to change."
+            )
+        elif action == "create":
+            text = (
+                "# Review Booster Lounge Setup\n"
+                "Create **💎・booster-lounge** in COMMUNITY.\n\n"
+                "Access will be limited to the native Discord Server Booster role, Staff and GamerHQ."
+            )
+        elif action == "adopt":
+            text = (
+                "# Review Booster Lounge Adoption\n"
+                f"Adopt {current['channel'].mention} as GamerHQ's booster lounge and apply the managed private access policy."
+            )
+        else:
+            text = (
+                "# Review Booster Lounge Repair\n"
+                f"Repair {current['channel'].mention} to the managed name, COMMUNITY placement and private Booster/Staff/Bot access policy."
+            )
+        if action != "ready":
+            text += "\n\nUnknown/custom channel grants are removed so a private lounge cannot remain accidentally exposed."
+        text += "\n\nNothing changes until you confirm."
+        await interaction.response.edit_message(
+            content=text[:1950],
+            view=ServerBoosterConfirmView(
+                self.guild,
+                self.admin_id,
+                snapshot,
+                actionable=action != "ready",
+            ),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=TITLE,
+            view=ManagementView(self.guild, self.admin_id),
+        )
+
+
+class ServerBoosterConfirmView(Menu):
+    def __init__(self, guild, actor_id, snapshot, *, actionable):
+        super().__init__(guild, actor_id)
+        self.snapshot = dict(snapshot)
+        self.used = False
+        if actionable:
+            self.action("Confirm Setup / Repair", self.confirm)
+        self.action("Back", self.back)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message(
+                "This Booster review was already used. Reopen Server Boosters.",
+                ephemeral=True,
+            )
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        from services.server_booster_service import apply
+
+        try:
+            channel, changed = await apply(self.guild, self.snapshot)
+            notice = (
+                f"✅ Booster lounge {'updated' if changed else 'already ready'}: {channel.mention}"
+            )
+        except (ValueError, ServerMessageError, discord.HTTPException):
+            notice = (
+                "❌ Booster lounge setup could not be completed safely. "
+                "Reopen Server Boosters and review the current state."
+            )
+        await interaction.edit_original_response(
+            content=(notice + "\n\n" + _server_booster_text(self.guild))[:1950],
+            view=ServerBoostersView(self.guild, self.admin_id),
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_server_booster_text(self.guild),
+            view=ServerBoostersView(self.guild, self.admin_id),
+        )
 
 
 def _skill_status_label(status):
@@ -294,11 +913,13 @@ class SkillDetailsView(Menu):
                 'Review Disable' if status.enabled else 'Review Enable',
                 self.review_toggle,
             )
-        if status.skill_id == 'recurring-posts' and status.enabled and status.management_available:
+        if status.skill_id in {'recurring-posts', 'progression'} and status.enabled and status.management_available:
             self.action('Configure', self.configure)
         self.action('Back to Skills', self.back)
 
     async def configure(self, interaction):
+        if self.skill_id == 'progression':
+            return await open_progression(interaction, self.guild, self.admin_id)
         await open_recurring_posts(interaction, self.guild, self.admin_id)
 
     async def review_toggle(self, interaction):
@@ -384,6 +1005,454 @@ class SkillToggleConfirmView(Menu):
         await interaction.response.edit_message(
             content=_skill_detail_text(status),
             view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+
+
+async def _progression_call(interaction, guild, contract_id, payload):
+    runtime = getattr(interaction.client, 'skill_runtime', None)
+    if runtime is None:
+        raise RuntimeError('Skill Runtime is unavailable.')
+    return await runtime.call_management(
+        guild_id=guild.id,
+        skill_id='progression',
+        contract_id=contract_id,
+        payload=payload,
+    )
+
+
+def _progression_overview(config):
+    enabled_sources = [
+        key for key, value in (config.get('xpSources') or {}).items()
+        if value.get('enabled')
+    ]
+    announcements = config.get('announcements') or {}
+    return (
+        '# 🏆 Progression & Achievements\n'
+        'Configure XP, levels, achievements, rewards and announcements.\n\n'
+        f'**XP sources enabled:** {len(enabled_sources)}\n'
+        f'**Max level:** {config.get("levelCurve", {}).get("maxLevel", 100)}\n'
+        f'**Achievements:** {len(config.get("achievements") or [])}\n'
+        f'**Rewards:** {len(config.get("rewards") or [])}\n'
+        f'**Announcements:** {"Enabled" if announcements.get("enabled") else "Disabled"}\n\n'
+        'Discord and the future web dashboard use this same versioned configuration.'
+    )[:1950]
+
+
+async def open_progression(interaction, guild, actor_id):
+    try:
+        response = await _progression_call(interaction, guild, _PROGRESSION_GET_CONFIG_API, {})
+        config = dict(response['config'])
+    except Exception:
+        return await interaction.response.edit_message(
+            content='# 🏆 Progression & Achievements\nConfiguration is currently unavailable.',
+            view=ManagementView(guild, actor_id),
+        )
+    await interaction.response.edit_message(
+        content=_progression_overview(config),
+        view=ProgressionView(guild, actor_id, config),
+    )
+
+
+class ProgressionView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        self.action('XP Sources', self.xp_sources)
+        self.action('Level Curve', self.level_curve)
+        self.action('Achievements', self.achievements)
+        self.action('Rewards', self.rewards)
+        self.action('Announcements', self.announcements)
+        self.action('Back to Skill', self.back)
+
+    async def xp_sources(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_sources_text(self.config),
+            view=ProgressionSourcesView(self.guild, self.admin_id, self.config),
+        )
+
+    async def level_curve(self, interaction):
+        await interaction.response.send_modal(
+            ProgressionLevelCurveModal(self.guild, self.admin_id, self.config)
+        )
+
+    async def achievements(self, interaction):
+        lines = ['# 🏅 Achievements', 'Configured achievements:']
+        for item in self.config.get('achievements', ())[:20]:
+            lines.append(
+                f"• {item.get('emoji','')} **{discord.utils.escape_markdown(str(item.get('name','')))[:70]}** "
+                f"— {int(item.get('xp', 0))} XP — {'Enabled' if item.get('enabled') else 'Disabled'}"
+            )
+        lines.append('\nEditing individual achievements is the next UI slice; definitions are already web-ready configuration.')
+        await interaction.response.edit_message(
+            content='\n'.join(lines)[:1950],
+            view=ProgressionBackView(self.guild, self.admin_id, self.config),
+        )
+
+    async def rewards(self, interaction):
+        lines = ['# 🎁 Rewards']
+        rewards = self.config.get('rewards', ())
+        if not rewards:
+            lines.append('No rewards configured yet.')
+        else:
+            for item in rewards[:20]:
+                trigger = item.get('trigger') or {}
+                lines.append(
+                    f"• **{discord.utils.escape_markdown(str(item.get('name','')))[:70]}** "
+                    f"— {trigger.get('type','unknown')} — {len(item.get('grants') or [])} grant(s)"
+                )
+        lines.append('\nReward creation/editing will use the same config contract and Review → Confirm flow.')
+        await interaction.response.edit_message(
+            content='\n'.join(lines)[:1950],
+            view=ProgressionBackView(self.guild, self.admin_id, self.config),
+        )
+
+    async def announcements(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_announcements_text(self.config),
+            view=ProgressionAnnouncementsView(self.guild, self.admin_id, self.config),
+        )
+
+    async def back(self, interaction):
+        runtime = interaction.client.skill_runtime
+        status = await runtime.status(guild_id=self.guild.id, skill_id='progression')
+        await interaction.response.edit_message(
+            content=_skill_detail_text(status),
+            view=SkillDetailsView(self.guild, self.admin_id, status),
+        )
+
+
+class ProgressionBackView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        self.action('Back', self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.config),
+            view=ProgressionView(self.guild, self.admin_id, self.config),
+        )
+
+
+def _progression_sources_text(config):
+    labels = {
+        'voice': '🎙️ Voice',
+        'chat': '💬 Chat',
+        'lfgParticipation': '🤝 LFG Participation',
+        'eventHost': '🎤 Event Host',
+        'communityEvent': '📅 Community Event',
+        'tournamentParticipation': '🏆 Tournament Participation',
+        'tournamentWin': '🥇 Tournament Win',
+    }
+    lines = ['# ⚡ XP Sources', 'Choose a source to edit or enable/disable it.', '']
+    for key, source in (config.get('xpSources') or {}).items():
+        state = '🟢' if source.get('enabled') else '⚪'
+        detail = f"{int(source.get('xp', 0))} XP"
+        if key == 'voice':
+            detail += f" / {int(source.get('windowMinutes', 10))} min · cap {int(source.get('dailyCap', 0))}/day"
+        elif key == 'chat':
+            detail += f" / {int(source.get('cooldownMinutes', 5))} min · cap {int(source.get('dailyCap', 0))}/day"
+        lines.append(f"{state} **{labels.get(key, key)}** — {detail}")
+    return '\n'.join(lines)[:1950]
+
+
+class ProgressionSourceSelect(discord.ui.Select):
+    def __init__(self, config):
+        options = []
+        for key, value in (config.get('xpSources') or {}).items():
+            options.append(discord.SelectOption(
+                label=key[:100],
+                value=key,
+                description=(('Enabled' if value.get('enabled') else 'Disabled') + f" · {value.get('xp',0)} XP")[:100],
+            ))
+        super().__init__(placeholder='Choose XP source', options=options[:25])
+
+    async def callback(self, interaction):
+        key = self.values[0]
+        await interaction.response.edit_message(
+            content=_progression_source_detail(self.view.config, key),
+            view=ProgressionSourceDetailView(self.view.guild, self.view.admin_id, self.view.config, key),
+        )
+
+
+def _progression_source_detail(config, key):
+    source = dict((config.get('xpSources') or {}).get(key) or {})
+    lines = [
+        f'# ⚡ {discord.utils.escape_markdown(key)}',
+        f'**Status:** {"Enabled" if source.get("enabled") else "Disabled"}',
+        f'**XP:** {source.get("xp", 0)}',
+    ]
+    for field, label in (('windowMinutes','Window'),('cooldownMinutes','Cooldown'),('dailyCap','Daily cap')):
+        if field in source:
+            suffix = ' minutes' if 'Minutes' in field else ' XP'
+            lines.append(f'**{label}:** {source[field]}{suffix}')
+    lines.append('\nChanges use the same revision-safe config that a future web dashboard will edit.')
+    return '\n'.join(lines)[:1950]
+
+
+class ProgressionSourcesView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        if self.config.get('xpSources'):
+            self.add_item(ProgressionSourceSelect(self.config))
+        self.action('Back', self.back, row=2)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.config),
+            view=ProgressionView(self.guild, self.admin_id, self.config),
+        )
+
+
+class ProgressionSourceDetailView(Menu):
+    def __init__(self, guild, actor_id, config, key):
+        super().__init__(guild, actor_id)
+        self.config, self.key = dict(config), key
+        source = (self.config.get('xpSources') or {}).get(key) or {}
+        self.action('Disable' if source.get('enabled') else 'Enable', self.toggle)
+        self.action('Edit Values', self.edit)
+        self.action('Back', self.back)
+
+    async def toggle(self, interaction):
+        draft = dict(self.config)
+        draft['xpSources'] = {k: dict(v) for k, v in self.config['xpSources'].items()}
+        draft['xpSources'][self.key]['enabled'] = not draft['xpSources'][self.key].get('enabled', True)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, f'Update XP source: {self.key}'),
+            view=ProgressionConfigConfirmView(self.guild, self.admin_id, self.config, draft),
+        )
+
+    async def edit(self, interaction):
+        await interaction.response.send_modal(
+            ProgressionSourceModal(self.guild, self.admin_id, self.config, self.key)
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_sources_text(self.config),
+            view=ProgressionSourcesView(self.guild, self.admin_id, self.config),
+        )
+
+
+class ProgressionSourceModal(discord.ui.Modal):
+    def __init__(self, guild, actor_id, config, key):
+        super().__init__(title='Edit XP Source')
+        self.guild, self.actor_id, self.config, self.key = guild, actor_id, dict(config), key
+        source = dict(self.config['xpSources'][key])
+        self.xp = discord.ui.TextInput(label='XP per activity unit', default=str(source.get('xp', 1)), max_length=8)
+        self.add_item(self.xp)
+        if key == 'voice':
+            self.timing = discord.ui.TextInput(label='Minutes per XP window', default=str(source.get('windowMinutes', 10)), max_length=5)
+            self.cap = discord.ui.TextInput(label='Daily XP cap', default=str(source.get('dailyCap', 180)), max_length=8)
+            self.add_item(self.timing); self.add_item(self.cap)
+        elif key == 'chat':
+            self.timing = discord.ui.TextInput(label='Cooldown minutes', default=str(source.get('cooldownMinutes', 5)), max_length=5)
+            self.cap = discord.ui.TextInput(label='Daily XP cap', default=str(source.get('dailyCap', 120)), max_length=8)
+            self.add_item(self.timing); self.add_item(self.cap)
+
+    async def on_submit(self, interaction):
+        try:
+            xp = int(str(self.xp))
+            if xp <= 0:
+                raise ValueError
+            draft = dict(self.config)
+            draft['xpSources'] = {k: dict(v) for k, v in self.config['xpSources'].items()}
+            draft['xpSources'][self.key]['xp'] = xp
+            if hasattr(self, 'timing'):
+                timing = int(str(self.timing)); cap = int(str(self.cap))
+                if timing <= 0 or cap <= 0:
+                    raise ValueError
+                field = 'windowMinutes' if self.key == 'voice' else 'cooldownMinutes'
+                draft['xpSources'][self.key][field] = timing
+                draft['xpSources'][self.key]['dailyCap'] = cap
+        except ValueError:
+            return await interaction.response.send_message('Use positive whole numbers.', ephemeral=True)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, f'Update XP source: {self.key}'),
+            view=ProgressionConfigConfirmView(self.guild, self.actor_id, self.config, draft),
+        )
+
+
+class ProgressionLevelCurveModal(discord.ui.Modal, title='Edit Level Curve'):
+    def __init__(self, guild, actor_id, config):
+        super().__init__()
+        self.guild, self.actor_id, self.config = guild, actor_id, dict(config)
+        curve = config.get('levelCurve') or {}
+        self.base = discord.ui.TextInput(label='Base XP', default=str(curve.get('base',100)), max_length=8)
+        self.linear = discord.ui.TextInput(label='Linear increase', default=str(curve.get('linear',20)), max_length=8)
+        self.quadratic = discord.ui.TextInput(label='Quadratic increase', default=str(curve.get('quadratic',2)), max_length=8)
+        self.max_level = discord.ui.TextInput(label='Maximum level', default=str(curve.get('maxLevel',100)), max_length=4)
+        for item in (self.base,self.linear,self.quadratic,self.max_level): self.add_item(item)
+
+    async def on_submit(self, interaction):
+        try:
+            values = [int(str(x)) for x in (self.base,self.linear,self.quadratic,self.max_level)]
+            if values[0] <= 0 or min(values[1:]) < 0 or values[3] <= 0:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message('Use valid whole numbers.', ephemeral=True)
+        draft = dict(self.config)
+        draft['levelCurve'] = {
+            'base': values[0], 'linear': values[1], 'quadratic': values[2], 'maxLevel': values[3],
+        }
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, 'Update Level Curve'),
+            view=ProgressionConfigConfirmView(self.guild, self.actor_id, self.config, draft),
+        )
+
+
+def _progression_announcements_text(config):
+    value = config.get('announcements') or {}
+    channel = f"<#{value['channelId']}>" if value.get('channelId') else 'Not selected'
+    return (
+        '# 📣 Progression Announcements\n'
+        f'**Status:** {"Enabled" if value.get("enabled") else "Disabled"}\n'
+        f'**Channel:** {channel}\n'
+        f'**Level ups:** {"On" if value.get("levelUp") else "Off"}\n'
+        f'**Achievements:** {"On" if value.get("achievement") else "Off"}\n'
+        f'**Rewards:** {"On" if value.get("reward") else "Off"}\n\n'
+        f'**Template:**\n{discord.utils.escape_markdown(str(value.get("template","")))[:900]}'
+    )[:1950]
+
+
+class ProgressionAnnouncementChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder='Choose announcement channel',
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            min_values=1, max_values=1,
+        )
+
+    async def callback(self, interaction):
+        draft = dict(self.view.config)
+        draft['announcements'] = dict(self.view.config.get('announcements') or {})
+        draft['announcements']['channelId'] = int(self.values[0].id)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.view.config, draft, 'Change Announcement Channel'),
+            view=ProgressionConfigConfirmView(self.view.guild, self.view.admin_id, self.view.config, draft),
+        )
+
+
+class ProgressionAnnouncementsView(Menu):
+    def __init__(self, guild, actor_id, config):
+        super().__init__(guild, actor_id)
+        self.config = dict(config)
+        self.add_item(ProgressionAnnouncementChannelSelect())
+        value = self.config.get('announcements') or {}
+        self.action('Disable' if value.get('enabled') else 'Enable', self.toggle_enabled, row=2)
+        self.action('Edit Template / Triggers', self.edit, row=2)
+        self.action('Back', self.back, row=2)
+
+    async def toggle_enabled(self, interaction):
+        draft = dict(self.config)
+        draft['announcements'] = dict(self.config.get('announcements') or {})
+        draft['announcements']['enabled'] = not draft['announcements'].get('enabled', False)
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, 'Toggle Announcements'),
+            view=ProgressionConfigConfirmView(self.guild, self.admin_id, self.config, draft),
+        )
+
+    async def edit(self, interaction):
+        await interaction.response.send_modal(
+            ProgressionAnnouncementsModal(self.guild, self.admin_id, self.config)
+        )
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.config),
+            view=ProgressionView(self.guild, self.admin_id, self.config),
+        )
+
+
+class ProgressionAnnouncementsModal(discord.ui.Modal, title='Edit Announcements'):
+    def __init__(self, guild, actor_id, config):
+        super().__init__()
+        self.guild, self.actor_id, self.config = guild, actor_id, dict(config)
+        value = config.get('announcements') or {}
+        self.triggers = discord.ui.TextInput(
+            label='Triggers (level,achievement,reward)',
+            default=','.join(key for key, field in (
+                ('level','levelUp'),('achievement','achievement'),('reward','reward')
+            ) if value.get(field)),
+            max_length=50,
+        )
+        self.template = discord.ui.TextInput(
+            label='Message template',
+            default=str(value.get('template','')),
+            max_length=1800,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.triggers); self.add_item(self.template)
+
+    async def on_submit(self, interaction):
+        selected = {x.strip().lower() for x in str(self.triggers).split(',') if x.strip()}
+        if not selected <= {'level','achievement','reward'}:
+            return await interaction.response.send_message('Use only: level, achievement, reward.', ephemeral=True)
+        draft = dict(self.config)
+        draft['announcements'] = dict(self.config.get('announcements') or {})
+        draft['announcements'].update({
+            'levelUp': 'level' in selected,
+            'achievement': 'achievement' in selected,
+            'reward': 'reward' in selected,
+            'template': str(self.template),
+        })
+        await interaction.response.edit_message(
+            content=_progression_config_review_text(self.config, draft, 'Update Announcement Rules'),
+            view=ProgressionConfigConfirmView(self.guild, self.actor_id, self.config, draft),
+        )
+
+
+def _progression_config_review_text(before, after, title):
+    return (
+        f'# Review {title}\n'
+        f'Current revision: **{before.get("revision", 1)}**\n\n'
+        'The complete Progression configuration will be validated by the Skill. '
+        'Nothing changes until you confirm.'
+    )[:1950]
+
+
+class ProgressionConfigConfirmView(Menu):
+    def __init__(self, guild, actor_id, before, draft):
+        super().__init__(guild, actor_id)
+        self.before, self.draft = dict(before), dict(draft)
+        self.used = False
+        self.action('Confirm Save', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if self.used:
+            return await interaction.response.send_message('This review was already used.', ephemeral=True)
+        self.used = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            response = await _progression_call(
+                interaction,
+                self.guild,
+                _PROGRESSION_UPDATE_CONFIG_API,
+                {
+                    'config': self.draft,
+                    'expectedRevision': int(self.before.get('revision', 1)),
+                },
+            )
+            config = dict(response['config'])
+            notice = '✅ Progression configuration saved.'
+        except Exception:
+            response = await _progression_call(
+                interaction, self.guild, _PROGRESSION_GET_CONFIG_API, {}
+            )
+            config = dict(response['config'])
+            notice = '❌ Configuration changed or could not be saved. Review the current settings again.'
+        await interaction.edit_original_response(
+            content=(notice + '\n\n' + _progression_overview(config))[:1950],
+            view=ProgressionView(self.guild, self.admin_id, config),
+        )
+
+    async def cancel(self, interaction):
+        await interaction.response.edit_message(
+            content=_progression_overview(self.before),
+            view=ProgressionView(self.guild, self.admin_id, self.before),
         )
 
 

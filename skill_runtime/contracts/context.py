@@ -3,7 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
+import json
+
 from .events import EventDeliveryReport, EventEnvelope
+
+
+@dataclass(frozen=True, slots=True)
+class DiscordMemberInfo:
+    id: int
+    display_name: str
+    role_ids: tuple[int, ...]
+    joined_at: str | None
+    is_bot: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,9 +25,13 @@ class DiscordChannelInfo:
 
 
 class DiscordPort(Protocol):
+    async def get_member(self, *, member_id: int) -> DiscordMemberInfo: ...
     async def get_channel(self, *, channel_id: int) -> DiscordChannelInfo: ...
+    async def grant_role(self, *, member_id: int, role_id: int) -> bool: ...
+    async def remove_role(self, *, member_id: int, role_id: int) -> bool: ...
     async def send_message(self, *, channel_id: int, content: str | None = None, embed: Mapping[str, Any] | None = None,
-                           allowed_mentions: Mapping[str, Any] | None = None) -> int: ...
+                           allowed_mentions: Mapping[str, Any] | None = None,
+                           link_buttons: tuple[Mapping[str, str], ...] | None = None) -> int: ...
     async def edit_own_message(self, *, channel_id: int, message_id: int, content: str | None = None,
                                embed: Mapping[str, Any] | None = None) -> None: ...
     async def delete_own_message(self, *, channel_id: int, message_id: int) -> None: ...
@@ -42,6 +57,35 @@ class SchedulerPort(Protocol):
 class SkillStoragePort(Protocol):
     async def get(self, key: str) -> Any | None: ...
     async def set(self, key: str, value: Any) -> None: ...
+    async def delete(self, key: str) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalHttpResponse:
+    status: int
+    headers: Mapping[str, str]
+    body: str
+
+    def json(self) -> Any:
+        return json.loads(self.body)
+
+
+class ExternalHttpPort(Protocol):
+    async def request(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        query: Mapping[str, str | int | float | bool] | None = None,
+        json_body: Any | None = None,
+        timeout_seconds: float = 15.0,
+    ) -> ExternalHttpResponse: ...
+
+
+class SkillSecretStorePort(Protocol):
+    async def get(self, key: str) -> str | None: ...
+    async def set(self, key: str, value: str) -> None: ...
     async def delete(self, key: str) -> None: ...
 
 
@@ -98,6 +142,8 @@ class SkillContext:
     events: EventBusPort
     scheduler: SchedulerPort
     storage: SkillStoragePort
+    secrets: SkillSecretStorePort
+    http: ExternalHttpPort
     audit: AuditPort
     permissions: PermissionPort
     skills: SkillApiPort

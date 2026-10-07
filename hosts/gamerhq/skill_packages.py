@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from skill_runtime.runtime.packages import SkillPackageError, discover_installed_skills
 
-BUNDLED_SKILL_IDS = ("recurring-posts",)
+BUNDLED_SKILL_IDS = ("recurring-posts", "progression")
 
 
 def configured_skill_ids(external_ids: Iterable[str]) -> tuple[str, ...]:

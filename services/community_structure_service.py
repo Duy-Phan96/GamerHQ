@@ -4,8 +4,15 @@ from services.onboarding_service import alias, unique, set_read_only, set_writab
 from services.server_service import ServerMessageError, upsert_fixed_message
 
 EVENT_BOARDS = ('community-events', 'tournaments', 'giveaways')
-EVENTS_INTRO = ('# 🎉 Community Events\n\n'
-                'Join upcoming GamerHQ community events, game nights and special sessions here.')
+EVENTS_INTRO = (
+    '# 🎉 Community Events\n\n'
+    'Join or create GamerHQ game nights, community sessions and casual events here. '
+    'Events can be tied to a game, but they do not have to be.\n\n'
+    '## 🚀 CREATE AN EVENT\n'
+    'Use **Create Event** below or `/lfg create`. You will use the same GamerHQ '
+    'event builder for title, date, time, player limit, visibility and voice reminder.\n\n'
+    '🏆 Tournaments and 🎁 giveaways remain separate upcoming features.'
+)
 
 
 def core_category(guild, name):
@@ -85,6 +92,7 @@ def guide_text(guild):
 
 
 async def refresh_boards(guild):
+    from cogs.lfg import build_lfg_hub_view
     from cogs.suggestions import refresh_entry
     guide = core_channel(guild, 'guide')
     if guide:
@@ -95,8 +103,14 @@ async def refresh_boards(guild):
         await refresh_entry(suggestions)
     events = core_channel(guild, 'community-events') if db.get_setting(resource_key(guild, 'community-events')) else None
     if events:
-        await upsert_fixed_message(events, setting_key=f'community_events:{guild.id}', content=EVENTS_INTRO, pin=True,
-            recover_match=lambda m: (m.content or '').startswith('# 🎉 Community Events'))
+        await upsert_fixed_message(
+            events,
+            setting_key=f'community_events:{guild.id}',
+            content=EVENTS_INTRO,
+            pin=True,
+            view=build_lfg_hub_view(),
+            recover_match=lambda m: (m.content or '').startswith('# 🎉 Community Events'),
+        )
 
 
 async def migrate_boards(guild, changed, failed):

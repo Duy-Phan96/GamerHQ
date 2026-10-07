@@ -8,7 +8,14 @@ from database import db
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.lifecycle import SkillHealth
-from skill_runtime.contracts.manifest import SkillManifest
+from skill_runtime.contracts.management import ManagementApiContract
+from skill_runtime.contracts.management_ui import (
+    ManagementDocumentBinding,
+    ManagementField,
+    ManagementSection,
+    ManagementUiSchema,
+)
+from skill_runtime.contracts.manifest import SkillManagementApis, SkillManifest
 from skill_runtime.contracts.schedule import OnceSchedule
 
 
@@ -32,6 +39,65 @@ class RegistrationFixtureSkill:
 
     async def execute(self, ctx, job):
         self.calls.append(("execute", ctx.guild_id, ctx.skill_id, job.key))
+
+    async def enable(self, ctx): pass
+    async def disable(self, ctx): pass
+    async def start(self, ctx): pass
+    async def stop(self, ctx): pass
+    async def health_check(self, ctx): return SkillHealth("PASS", "ok")
+
+
+class ManagementFixtureSkill:
+    READ_API = "management-fixture.read.v1"
+    WRITE_API = "management-fixture.write.v1"
+
+    manifest = SkillManifest(
+        id="management-fixture",
+        name="Management Fixture",
+        version="1.0.0",
+        runtime_api_version="1",
+        description="fixture",
+        author="test",
+        management_apis=SkillManagementApis(
+            exposes=(
+                ManagementApiContract(READ_API, "Read fixture config."),
+                ManagementApiContract(WRITE_API, "Write fixture config."),
+            ),
+        ),
+        management_ui=ManagementUiSchema(
+            version="1",
+            read_contract=READ_API,
+            write_contract=WRITE_API,
+            document=ManagementDocumentBinding(
+                read_path="config",
+                write_path="config",
+            ),
+            sections=(
+                ManagementSection(
+                    id="general",
+                    title="General",
+                    fields=(
+                        ManagementField(
+                            key="enabled",
+                            label="Enabled",
+                            type="boolean",
+                            config_path="enabled",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    async def register(self, ctx):
+        ctx.management.expose(self.READ_API, self.read_config)
+        ctx.management.expose(self.WRITE_API, self.write_config)
+
+    async def read_config(self, ctx, payload):
+        return {"config": {"enabled": False}}
+
+    async def write_config(self, ctx, payload):
+        return {"config": dict(payload.get("config") or {})}
 
     async def enable(self, ctx): pass
     async def disable(self, ctx): pass
@@ -141,7 +207,8 @@ class SkillRuntimeRegistrationTests(unittest.IsolatedAsyncioTestCase):
             guild_id=self.guild.id,
             skill_id="missing-external",
         )
-        self.assertEqual(recovered.health, "DISABLED")
+        self.assertEqual(recovered.health, "NOT_INSTALLED")
+        self.assertFalse(recovered.installed)
         self.assertEqual(recovered.source_distribution, "gamerhq-skill-recovered")
 
     async def test_statuses_include_configured_unavailable_external_skill(self):
@@ -150,6 +217,48 @@ class SkillRuntimeRegistrationTests(unittest.IsolatedAsyncioTestCase):
         ids = [status.skill_id for status in statuses]
         self.assertIn("registration-fixture", ids)
         self.assertIn("missing-external", ids)
+
+    async def test_management_write_marks_installed_skill_configured(self):
+        skill = ManagementFixtureSkill()
+        self.runtime.register(skill)
+        await self.runtime.register_all()
+        await self.runtime.install_skill(
+            guild_id=self.guild.id,
+            skill_id=skill.manifest.id,
+        )
+
+        status = await self.runtime.status(
+            guild_id=self.guild.id,
+            skill_id=skill.manifest.id,
+        )
+        self.assertTrue(status.installed)
+        self.assertFalse(status.configured)
+        self.assertFalse(status.enabled)
+
+        await self.runtime.call_management(
+            guild_id=self.guild.id,
+            skill_id=skill.manifest.id,
+            contract_id=skill.READ_API,
+            payload={},
+        )
+        after_read = await self.runtime.status(
+            guild_id=self.guild.id,
+            skill_id=skill.manifest.id,
+        )
+        self.assertFalse(after_read.configured)
+
+        await self.runtime.call_management(
+            guild_id=self.guild.id,
+            skill_id=skill.manifest.id,
+            contract_id=skill.WRITE_API,
+            payload={"config": {"enabled": True}},
+        )
+        after_write = await self.runtime.status(
+            guild_id=self.guild.id,
+            skill_id=skill.manifest.id,
+        )
+        self.assertTrue(after_write.configured)
+        self.assertFalse(after_write.enabled)
 
     async def test_registration_runs_once_and_handler_receives_guild_context(self):
         await self.runtime.register_all()

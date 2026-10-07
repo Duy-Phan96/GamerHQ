@@ -17,6 +17,8 @@ from skill_runtime.runtime.scheduler import SchedulerEngine, ScopedScheduler
 from skill_runtime.runtime.scoped import ScopedEventBus, ScopedSkillApi
 from skill_runtime.runtime.registration import ScopedSchedulerRegistration, ScopedSkillApiRegistration, ScopedSkillManagementRegistration
 
+from config import GAMERHQ_SKILL_SECRET_KEY
+
 from .skill_discord import DISCORD_HOST_CAPABILITIES, GamerHQDiscordAdapter
 from .skill_host import (
     CapabilityPermissions,
@@ -25,6 +27,8 @@ from .skill_host import (
     GamerHQSkillStorage,
 )
 from .skill_scheduler import GamerHQSchedulerStore
+from .skill_http import GamerHQExternalHttp
+from .skill_secrets import GamerHQSkillSecrets
 
 
 HOST_CAPABILITIES = frozenset({
@@ -35,6 +39,7 @@ HOST_CAPABILITIES = frozenset({
     SkillCapability.EVENTS_SUBSCRIBE.value,
     SkillCapability.SKILL_API_CALL.value,
     SkillCapability.AUDIT_WRITE.value,
+    SkillCapability.HTTP_EXTERNAL.value,
 })
 
 
@@ -50,9 +55,12 @@ class GuildSkillStatus:
     health_detail: str
     required_capabilities: tuple[str, ...]
     missing_capabilities: tuple[str, ...]
+    installed: bool = True
+    configured: bool = True
     source_kind: str = "built-in"
     source_distribution: str | None = None
     management_available: bool = False
+    management_schema_available: bool = False
 
 
 class GamerHQSkillRuntime:
@@ -67,7 +75,7 @@ class GamerHQSkillRuntime:
         self.apis = SkillApiRouter(self.registry, availability=self.state.is_enabled)
         self.management = SkillManagementRouter(
             self.registry,
-            availability=self.state.is_enabled,
+            availability=self.state.is_installed,
         )
         self.scheduler = SchedulerEngine(
             self.registry,
@@ -81,6 +89,9 @@ class GamerHQSkillRuntime:
             self.registration_context,
         )
         self.log = logging.getLogger("gamerhq.skills")
+        self.host_capabilities = set(HOST_CAPABILITIES)
+        if GAMERHQ_SKILL_SECRET_KEY:
+            self.host_capabilities.add(SkillCapability.SKILL_SECURE_STORAGE.value)
         self._scheduler_stop = asyncio.Event()
         self._scheduler_task: asyncio.Task | None = None
         self._sources: dict[str, tuple[str, str | None]] = {}
@@ -117,6 +128,8 @@ class GamerHQSkillRuntime:
             name=skill_id.replace("-", " ").title(),
             version="unknown",
             description="Configured external Skill package is unavailable.",
+            installed=False,
+            configured=False,
             enabled=False,
             running=False,
             health="UNAVAILABLE",
@@ -126,6 +139,7 @@ class GamerHQSkillRuntime:
             source_kind="external",
             source_distribution=None,
             management_available=False,
+            management_schema_available=False,
         )
 
     async def register_all(self) -> None:
@@ -161,7 +175,7 @@ class GamerHQSkillRuntime:
 
     def permissions(self, skill_id: str) -> CapabilityPermissions:
         skill = self.registry.get(skill_id)
-        return CapabilityPermissions(skill.manifest.permissions, available=HOST_CAPABILITIES)
+        return CapabilityPermissions(skill.manifest.permissions, available=self.host_capabilities)
 
     async def context(self, guild_id: int, skill_id: str) -> SkillContext:
         guild = self._guild(guild_id)
@@ -190,6 +204,15 @@ class GamerHQSkillRuntime:
                 skill_id=skill_id,
                 permissions=permissions,
             ),
+            secrets=GamerHQSkillSecrets(
+                guild_id=guild.id,
+                skill_id=skill_id,
+                permissions=permissions,
+                encryption_key=GAMERHQ_SKILL_SECRET_KEY,
+            ),
+            http=GamerHQExternalHttp(
+                permissions=permissions,
+            ),
             audit=GamerHQSkillAudit(
                 guild=guild,
                 skill_id=skill_id,
@@ -204,6 +227,34 @@ class GamerHQSkillRuntime:
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
         )
 
+    def management_ui_schema(self, skill_id: str):
+        """Return only the portable declarative UI contract for one registered Skill."""
+        skill = self.registry.get(skill_id)
+        return skill.manifest.management_ui
+
+    def _configuration_mutation_contracts(self, skill_id: str) -> frozenset[str]:
+        skill = self.registry.get(skill_id)
+        schema = skill.manifest.management_ui
+        if schema is None:
+            return frozenset()
+
+        contracts = {schema.write_contract}
+        for section in schema.sections:
+            for field in section.fields:
+                collection = field.collection
+                if collection is None:
+                    continue
+                operations = collection.operations
+                for contract_id in (
+                    operations.create_contract,
+                    operations.update_contract,
+                    operations.set_active_contract,
+                    operations.delete_contract,
+                ):
+                    if contract_id:
+                        contracts.add(contract_id)
+        return frozenset(contracts)
+
     async def call_management(
         self,
         *,
@@ -212,11 +263,28 @@ class GamerHQSkillRuntime:
         contract_id: str,
         payload,
     ):
-        return await self.management.call(
+        result = await self.management.call(
             guild_id=guild_id,
             skill_id=skill_id,
             contract_id=contract_id,
             payload=payload,
+        )
+        if contract_id in self._configuration_mutation_contracts(skill_id):
+            skill = self.registry.get(skill_id)
+            await self.state.set_configured(
+                guild_id=guild_id,
+                skill_id=skill_id,
+                configured=True,
+                version=skill.manifest.version,
+            )
+        return result
+
+    async def install_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        skill = self.registry.get(skill_id)
+        return await self.state.install(
+            guild_id=guild_id,
+            skill_id=skill_id,
+            version=skill.manifest.version,
         )
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
@@ -294,10 +362,15 @@ class GamerHQSkillRuntime:
         skill = self.registry.get(skill_id)
         permissions = self.permissions(skill_id)
         missing = permissions.missing_declared()
+        installed = await self.state.is_installed(guild_id=guild_id, skill_id=skill_id)
+        configured = await self.state.is_configured(guild_id=guild_id, skill_id=skill_id)
         enabled = await self.state.is_enabled(guild_id=guild_id, skill_id=skill_id)
         running = self.manager.is_running(guild_id=guild_id, skill_id=skill_id)
 
-        if missing:
+        if not installed:
+            health = "NOT_INSTALLED"
+            detail = "Skill package is available in the host but has not been added to this guild."
+        elif missing:
             health = "UNAVAILABLE"
             detail = "Required host capabilities are unavailable."
         elif not enabled:
@@ -322,6 +395,8 @@ class GamerHQSkillRuntime:
             name=skill.manifest.name,
             version=skill.manifest.version,
             description=skill.manifest.description,
+            installed=installed,
+            configured=configured,
             enabled=enabled,
             running=running,
             health=health,
@@ -331,6 +406,7 @@ class GamerHQSkillRuntime:
             source_kind=source_kind,
             source_distribution=source_distribution,
             management_available=bool(skill.manifest.management_apis.exposes),
+            management_schema_available=skill.manifest.management_ui is not None,
         )
 
     async def statuses(self, *, guild_id: int) -> tuple[GuildSkillStatus, ...]:

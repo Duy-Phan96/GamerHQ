@@ -26,6 +26,7 @@ class GamerHQBot(commands.Bot):
         self.health_task = None
         self.operational_log_started = set()
         self.skill_runtime = None
+        self.web_api_server = None
 
     async def setup_hook(self):
         # Container-only, ephemeral heartbeat. Local development needs no /tmp.
@@ -51,6 +52,27 @@ class GamerHQBot(commands.Bot):
         )
         await self.skill_runtime.register_all()
 
+        from config import (
+            GAMERHQ_WEB_API_ENABLED,
+            GAMERHQ_WEB_API_HOST,
+            GAMERHQ_WEB_API_PORT,
+            GAMERHQ_WEB_API_SECRET,
+        )
+        if GAMERHQ_WEB_API_ENABLED:
+            from hosts.gamerhq.web_api import GamerHQWebApiServer
+            self.web_api_server = GamerHQWebApiServer(
+                bot=self,
+                skill_runtime=self.skill_runtime,
+                shared_secret=GAMERHQ_WEB_API_SECRET,
+                host=GAMERHQ_WEB_API_HOST,
+                port=GAMERHQ_WEB_API_PORT,
+            )
+            await self.web_api_server.start()
+            print(
+                f"[GamerHQ] Internal Web API listening on "
+                f"{GAMERHQ_WEB_API_HOST}:{GAMERHQ_WEB_API_PORT}"
+            )
+
         await self.load_extension("cogs.games")
         await self.load_extension("cogs.voice")
         await self.load_extension("cogs.voice_controls")
@@ -60,6 +82,8 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.owner_changelog")
         await self.load_extension("cogs.gocdkeys")
         await self.load_extension("cogs.roles")
+        await self.load_extension("cogs.profile")
+        await self.load_extension("cogs.progression_activity")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
         await self.load_extension("cogs.lfg")
@@ -94,11 +118,16 @@ class GamerHQBot(commands.Bot):
                     await self.twitch_hub.close()
         finally:
             try:
-                skill_runtime = getattr(self, 'skill_runtime', None)
-                if skill_runtime is not None:
-                    await skill_runtime.close()
+                web_api_server = getattr(self, "web_api_server", None)
+                if web_api_server is not None:
+                    await web_api_server.close()
             finally:
-                await super().close()
+                try:
+                    skill_runtime = getattr(self, 'skill_runtime', None)
+                    if skill_runtime is not None:
+                        await skill_runtime.close()
+                finally:
+                    await super().close()
 
 
 bot = GamerHQBot()

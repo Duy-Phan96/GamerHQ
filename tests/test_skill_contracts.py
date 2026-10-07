@@ -5,6 +5,7 @@ from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.events import EventContract, EventEnvelope
 from skill_runtime.contracts.manifest import SkillEvents, SkillManagementApis, SkillManifest, SkillPublicApis, validate_manifest
 from skill_runtime.contracts.management import ManagementApiContract
+from skill_runtime.contracts.management_ui import ManagementCollectionOperations, ManagementCollectionSchema, ManagementField, ManagementSection, ManagementUiSchema
 from skill_runtime.contracts.public_api import PublicApiContract
 
 
@@ -71,6 +72,182 @@ class SkillContractTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "versioned"):
             ManagementApiContract("recurring-posts.list")
+
+    def test_management_ui_schema_uses_safe_declarative_fields(self):
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract="recurring-posts.list.v1",
+            write_contract="recurring-posts.update.v1",
+            sections=(
+                ManagementSection(
+                    id="general",
+                    title="General",
+                    fields=(
+                        ManagementField(
+                            key="enabled",
+                            label="Enabled",
+                            type="boolean",
+                            config_path="settings.enabled",
+                        ),
+                        ManagementField(
+                            key="dailyCap",
+                            label="Daily cap",
+                            type="integer",
+                            config_path="settings.dailyCap",
+                            minimum=0,
+                            maximum=1000,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        self.assertEqual(schema.sections[0].fields[1].type, "integer")
+
+    def test_collection_schema_declares_generic_crud_operations(self):
+        collection = ManagementCollectionSchema(
+            operations=ManagementCollectionOperations(
+                list_contract="posts.list.v1",
+                create_contract="posts.create.v1",
+                get_contract="posts.get.v1",
+                validate_contract="posts.validate.v1",
+                update_contract="posts.update.v1",
+                delete_preview_contract="posts.delete-preview.v1",
+                delete_contract="posts.delete.v1",
+            ),
+            item_fields=(
+                ManagementField(
+                    key="name",
+                    label="Name",
+                    type="string",
+                    config_path="name",
+                    required=True,
+                ),
+                ManagementField(
+                    key="channel",
+                    label="Channel",
+                    type="discord_channel",
+                    config_path="channelId",
+                    required=True,
+                ),
+            ),
+            item_id_path="id",
+            item_id_payload_key="postId",
+            title_path="name",
+            status_path="status",
+            max_items=20,
+        )
+        field = ManagementField(
+            key="posts",
+            label="Posts",
+            type="collection",
+            config_path="posts",
+            collection=collection,
+        )
+        self.assertEqual(field.collection.operations.update_contract, "posts.update.v1")
+        self.assertEqual(field.collection.item_id_payload_key, "postId")
+        self.assertEqual(field.collection.max_items, 20)
+
+    def test_collection_item_id_payload_key_must_be_stable(self):
+        with self.assertRaisesRegex(ValueError, "item_id_payload_key"):
+            ManagementCollectionSchema(
+                operations=ManagementCollectionOperations(
+                    list_contract="posts.list.v1",
+                    create_contract="posts.create.v1",
+                ),
+                item_fields=(),
+                item_id_payload_key="Bad key",
+            )
+
+    def test_collection_contracts_must_be_declared_by_manifest(self):
+        list_api = ManagementApiContract("posts.list.v1")
+        create_api = ManagementApiContract("posts.create.v1")
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract=list_api.id,
+            write_contract=create_api.id,
+            sections=(
+                ManagementSection(
+                    id="posts",
+                    title="Posts",
+                    fields=(
+                        ManagementField(
+                            key="posts",
+                            label="Posts",
+                            type="collection",
+                            config_path="posts",
+                            collection=ManagementCollectionSchema(
+                                operations=ManagementCollectionOperations(
+                                    list_contract=list_api.id,
+                                    create_contract=create_api.id,
+                                    update_contract="posts.update.v1",
+                                ),
+                                item_fields=(),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "posts.update.v1"):
+            self.manifest(
+                management_apis=SkillManagementApis(exposes=(list_api, create_api)),
+                management_ui=schema,
+            )
+
+    def test_opaque_collection_remains_backward_compatible(self):
+        field = ManagementField(
+            key="items",
+            label="Items",
+            type="collection",
+            config_path="items",
+        )
+        self.assertIsNone(field.collection)
+
+    def test_management_ui_rejects_unknown_field_type(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported Management field type"):
+            ManagementField(
+                key="unsafe",
+                label="Unsafe",
+                type="javascript",
+                config_path="settings.unsafe",
+            )
+
+    def test_manifest_rejects_management_ui_contract_not_declared(self):
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract="fixture.get-config.v1",
+            write_contract="fixture.update-config.v1",
+        )
+        with self.assertRaisesRegex(ValueError, "undeclared management API"):
+            self.manifest(management_ui=schema)
+
+    def test_manifest_accepts_declared_management_ui_contracts(self):
+        get_contract = ManagementApiContract("recurring-posts.get-config.v1")
+        update_contract = ManagementApiContract("recurring-posts.update-config.v1")
+        schema = ManagementUiSchema(
+            version="1",
+            read_contract=get_contract.id,
+            write_contract=update_contract.id,
+            sections=(
+                ManagementSection(
+                    id="general",
+                    title="General",
+                    fields=(
+                        ManagementField(
+                            key="enabled",
+                            label="Enabled",
+                            type="boolean",
+                            config_path="enabled",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        manifest = self.manifest(
+            management_apis=SkillManagementApis(exposes=(get_contract, update_contract)),
+            management_ui=schema,
+        )
+        self.assertIs(manifest.management_ui, schema)
 
     def test_duplicate_management_api_is_rejected(self):
         contract = ManagementApiContract("recurring-posts.list.v1")

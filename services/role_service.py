@@ -178,10 +178,11 @@ ROLE_GROUPS: dict[str, tuple[RoleOption, ...]] = {
         RoleOption("gender-diverse", "Non-binary / Diverse", "🏳️‍🌈"),
     ),
     "Age group": (
-        RoleOption("age-under18", "Under 18", "🔞"),
-        RoleOption("age-18-24", "18–24", "🔹"),
-        RoleOption("age-25-34", "25–34", "🔹"),
-        RoleOption("age-35plus", "35+", "🔹"),
+        RoleOption("age-under18", "Under 18", "🔹"),
+        RoleOption("age-18-20", "18–20", "🔹"),
+        RoleOption("age-21-22", "21–22", "🔹"),
+        RoleOption("age-23-24", "23–24", "🔹"),
+        RoleOption("age-25plus", "25+", "🔹"),
     ),
     "🔔 Notifications": (
         RoleOption("community-events", "Community Events", "🏆", ("events", "event notifications")),
@@ -195,6 +196,7 @@ ROLE_GROUPS: dict[str, tuple[RoleOption, ...]] = {
 PROFILE_STEPS = (('Gender', ('Gender',)), ('Age', ('Age group',)))
 PERSONAL_GROUPS = ('Gender', 'Age group')
 LEGACY_LANGUAGES = ('english', 'german')
+LEGACY_AGE_KEYS = ('age-18-24', 'age-25-34', 'age-35plus')
 # No active playstyles are configured; retired Casual/Competitive stay retired.
 PLAYSTYLE_GROUP = '🎯 Playstyle'
 
@@ -203,12 +205,31 @@ def personal_keys():
     return {o.key for group in PERSONAL_GROUPS for o in ROLE_GROUPS[group]}
 
 
-def retire_language_mappings():
-    """Explicit Repair only. Retain Discord roles/memberships and their legacy IDs."""
+def retire_legacy_profile_mappings():
+    """Explicit Repair only; never guess replacement profile choices.
+
+    Retain Discord roles, role IDs and member assignments. Only remove obsolete
+    mappings from the active GamerHQ profile registry so new profile sessions
+    cannot silently interpret a broad legacy age band as a narrower age.
+    """
     with db.connect() as conn:
         for key in LEGACY_LANGUAGES:
-            conn.execute("UPDATE managed_roles SET role_kind='legacy-profile', role_group='Legacy language' "
-                         "WHERE role_kind='base' AND role_key=?", (key,))
+            conn.execute(
+                "UPDATE managed_roles SET role_kind='legacy-profile', role_group='Legacy language' "
+                "WHERE role_kind='base' AND role_key=?",
+                (key,),
+            )
+        for key in LEGACY_AGE_KEYS:
+            conn.execute(
+                "UPDATE managed_roles SET role_kind='legacy-profile', role_group='Legacy age group' "
+                "WHERE role_kind='base' AND role_key=?",
+                (key,),
+            )
+
+
+def retire_language_mappings():
+    """Backward-compatible alias for older repair callers."""
+    retire_legacy_profile_mappings()
 
 
 def profile_roles(guild):

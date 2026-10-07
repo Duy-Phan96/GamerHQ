@@ -6,10 +6,13 @@ Its purpose is both practical and architectural: it proves that a real feature
 can be implemented, packaged and discovered independently without importing
 GamerHQ business logic, Discord.py or raw database helpers.
 
-The package currently lives at
-`packages/gamerhq-skill-recurring-posts/` as an extraction-ready staging
-location. That directory is intentionally structured so it can move into its own
-GitHub repository without changing the Skill ID or host management contracts.
+The package now lives in the independent repository:
+
+`Duy-Phan96/gamerhq-skill-recurring-posts`
+
+GamerHQ installs a reviewed immutable commit through
+`requirements-skills.lock`. The Skill ID, storage namespace and management
+contracts remain stable across repository extraction.
 
 ## User flow
 
@@ -131,7 +134,38 @@ through the same external package discovery path used by third-party Skills.
 The host UI does not import the package implementation. Configuration is routed
 only through the versioned Recurring Posts Management APIs.
 
-Version 1.1 adds review-first create/edit flows, host-neutral validation
-previews, quick interval presets, compact management summaries and a
-delete-preview contract. GamerHQ consumes those contracts through the public
-Skill Runtime boundary rather than importing private Skill classes.
+Version 1.2 adds Management UI Schema V1 on top of the existing public
+management contracts.
+
+Recurring Posts now declares a generic collection schema with list/create/get,
+validate, update, pause/resume, delete-preview and delete operations plus
+host-neutral item fields for name, Discord channel, message, schedule and active
+state.
+
+Version 1.2.1 additionally declares the collection item identity payload
+mapping: item IDs are read from `id` and sent back to public management
+operations through `postId`.
+
+Version 1.2.2 additionally declares the collection describe contract and the
+single-item response path. Generic hosts can discover the existing
+`recurring-posts.describe.v1` UX/schedule hints and normalize
+`recurring-posts.get.v1` responses from `post` without Skill-specific code.
+
+Version 1.2.3 additionally declares `scheduleHintsPath = schedules`. Generic
+hosts can call the declared describe contract and locate interval/daily/weekly
+schedule presets and constraints without hard-coding the response property name.
+
+Together with the existing identity, describe and item-read bindings, this
+allows Discord administration and gamerhq-web to build create/edit,
+pause/resume and delete flows without importing private Skill classes or
+hard-coding Recurring Posts payload conventions in the generic renderer.
+
+
+## Current reviewed deployment pin
+
+GamerHQ currently pins Recurring Posts 1.2.3 at:
+
+`7656616a3259d70bc09ac10446cb0965d9ec6a6c`
+
+The production/development image should continue to use immutable reviewed
+commits rather than a moving branch.

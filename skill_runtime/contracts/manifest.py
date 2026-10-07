@@ -7,6 +7,7 @@ import re
 from .capabilities import KNOWN_CAPABILITIES
 from .events import EventContract
 from .management import ManagementApiContract
+from .management_ui import ManagementUiSchema
 from .public_api import PublicApiContract
 
 SKILL_ID = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -43,6 +44,7 @@ class SkillManifest:
     events: SkillEvents = field(default_factory=SkillEvents)
     public_apis: SkillPublicApis = field(default_factory=SkillPublicApis)
     management_apis: SkillManagementApis = field(default_factory=SkillManagementApis)
+    management_ui: ManagementUiSchema | None = None
 
     def __post_init__(self) -> None:
         validate_manifest(self)
@@ -90,3 +92,17 @@ def validate_manifest(manifest: SkillManifest, *, supported_api_versions: frozen
     duplicate_management = _duplicates(management)
     if duplicate_management:
         raise ValueError("Duplicate management API declarations are not allowed: " + ", ".join(sorted(duplicate_management)))
+    management_ui = getattr(manifest, "management_ui", None)
+    if management_ui is not None:
+        declared = set(management)
+        required = {management_ui.read_contract, management_ui.write_contract}
+        for section in management_ui.sections:
+            for field in section.fields:
+                if field.collection is not None:
+                    required.update(field.collection.operations.contract_ids())
+        missing = sorted(required - declared)
+        if missing:
+            raise ValueError(
+                "Management UI schema references undeclared management API: "
+                + ", ".join(missing)
+            )
