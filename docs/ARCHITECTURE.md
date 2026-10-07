@@ -24,6 +24,40 @@ Several services and cogs contain direct SQL and Discord effects: the layers are
 an orientation, not an enforced purity boundary. Extend the existing owner before
 introducing abstractions.
 
+## Long-term thin Host direction
+
+GamerHQ is the first/reference customer of the Skill Platform, not the platform
+boundary.
+
+The current application still contains historical domain features in
+`cogs/`, `services/` and `database/`. Those should not automatically become
+permanent Host responsibilities.
+
+As contracts stabilize, mature domain capabilities should be extracted into
+independent Skill repositories. The GamerHQ application should progressively
+converge on a thinner Host that primarily owns:
+
+- Discord connection, Gateway/server observation and host lifecycle;
+- authorization, permissions and capability enforcement;
+- public Runtime/SDK contracts and safe Host adapters;
+- Skill discovery, enablement and lifecycle;
+- Skill storage, secret and scheduler primitives;
+- generic Discord/resource capabilities;
+- generic management/API surfaces;
+- diagnostics, backup, deployment and recovery.
+
+Product/domain behavior should remain in the Host only while its boundary is
+still unstable or because it is truly a Host primitive.
+
+An extracted Skill is independently versioned and released. GamerHQ may choose
+to install/pin it as a customer.
+
+Repository boundaries are strict: if extracting or consuming a Skill reveals a
+missing public Host/SDK capability, the Skill project produces a handoff request.
+It does not edit the GamerHQ repository itself.
+
+See [Repository Ownership and Handoffs](development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md).
+
 ## Startup and bootstrap
 
 1. config loads the repo .env with process-environment precedence; DB_PATH is

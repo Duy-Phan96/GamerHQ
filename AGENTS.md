@@ -19,11 +19,10 @@
 
 ## Development lifecycle
 - Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.
-- All GamerHQ ecosystem repositories (Host, web and standalone Skills) follow [GamerHQ Ecosystem Cross-Project Release Rules](docs/development/GAMERHQ_ECOSYSTEM_WORKING_RULES.md). Feature/Skill CI may make work integration-ready, but only one immutable GamerHQ release candidate + Server Release Snapshot may recommend a production server update.
-- This GamerHQ Host project is the sole owner of server-update decisions. Proactively evaluate a release checkpoint after coherent server-relevant milestones, accumulated deployable PRs, external Skill pin changes, Runtime/SDK integration changes, important fixes, or material divergence from the last accepted release. Other repositories stop at integration handoff.
+- Follow [Repository Ownership and Handoffs](docs/development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md): this project modifies only the GamerHQ repository. Inspect other repositories read-only when needed; request changes through an explicit handoff prompt instead of editing them.
 - AI-assisted work follows [SOP-008](docs/sop/SOP-008-ai-assisted-development.md): inspect → restate → architecture check → plan → smallest coherent change → test → diff self-review → human summary → PR.
 - Use the central Definition of Done proportionally; do not add bureaucracy to trivial changes.
-- For cross-repository changes merge in dependency order: public Runtime/SDK contract → external Skill/provider → GamerHQ integration/pin → web client.
+- When another repository is required, finish the GamerHQ-owned portion, document the blocker and produce a handoff. The target repository owns its implementation and release.
 - Use ADRs only for durable architectural decisions; see [ADR guidance](docs/architecture/decisions/README.md).
 
 ## Validation and handoff
@@ -40,7 +39,8 @@ Start with the relevant row; do not load every document or historical report.
 | Task | Reference |
 | --- | --- |
 | SDLC / Definition of Done | [Software Development Lifecycle](docs/development/SDLC.md) |
-| Cross-project release/deployment rules | [GamerHQ Ecosystem Working Rules](docs/development/GAMERHQ_ECOSYSTEM_WORKING_RULES.md), [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md) |
+| Repository ownership / handoffs | [Repository Ownership and Handoffs](docs/development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md) |
+| GamerHQ server release snapshot | [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md) |
 | AI-assisted development | [AI Development SOP](docs/sop/SOP-008-ai-assisted-development.md) |
 | Workflow, validation, prompt examples | [Development workflow](docs/DEVELOPMENT_WORKFLOW.md) |
 | Module ownership and startup | [Architecture](docs/ARCHITECTURE.md) |

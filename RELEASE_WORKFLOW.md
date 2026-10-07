@@ -19,11 +19,10 @@
 4. Update tests/checklist and `CHANGELOG.md`.
 5. Test locally/test-server against a backed-up database.
 6. Merge into `develop` only after the feature works.
-7. Create a release candidate, fill the [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md), and run `RELEASE_CHECKLIST.md`.
-8. Recommend a server update only for that exact release candidate after its automated gates are green; never recommend `latest develop`.
-9. Complete the required manual Discord/VPS acceptance for that exact candidate.
-10. Merge/tag on `main` only after the release candidate passes.
-11. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
+7. Create a GamerHQ release candidate when a coherent GamerHQ server milestone is ready; use the [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md) and run `RELEASE_CHECKLIST.md`.
+8. Complete the required GamerHQ Discord/VPS acceptance for that exact candidate.
+9. Merge/tag on `main` only after the release candidate passes.
+10. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
 
 ## Changelog discipline
 
@@ -66,31 +65,3 @@ before merging, and never force-push release tags. Before every commit, inspect
 `git status` and confirm that `.env`, databases, `runtime/`, `backups/` and logs
 are absent. Tags use the exact `VERSION` value prefixed with `v`, for example
 `v1.0.0-beta.1-rc4`.
-
-
-## Cross-project deployment rule
-
-External Skill, web and feature projects may finish and merge independently, but they do not decide that the production server should update. Each project records its deployment impact and compatibility requirements. GamerHQ integrates those reviewed outputs into a release candidate.
-
-The release candidate is the only server-update decision boundary. Its snapshot must record the exact GamerHQ SHA/version, external Skill pins, data/config impact, CI/readiness evidence, manual acceptance, rollback target and newer work that is intentionally excluded.
-
-This prevents concurrent project work from turning a moving integration branch into an ambiguous deployment target.
-
-
-## Server-update ownership and trigger
-
-Only the GamerHQ Host project creates production server-update recommendations
-and final update commands. External Skills and gamerhq-web report integration
-readiness and deployment impact only.
-
-The Host should proactively consider cutting a release candidate after a coherent
-server milestone, a set of accumulated server-relevant merges, a reviewed external
-Skill pin change, Host/Runtime compatibility work, important fixes, or material
-distance from the last accepted release.
-
-This should be a judgment call based on deployment value and risk, not a fixed
-number of commits.
-
-When triggered, freeze the intended state into one release candidate, run the
-complete release gates, fill the Server Release Snapshot, and keep newer work
-explicitly outside that candidate unless intentionally re-cut and retested.
