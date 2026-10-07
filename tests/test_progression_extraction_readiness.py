@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 
 from skill_runtime.devtools import require_clean_skill_source, validate_skill_factory
+from cogs import progression_activity as host_adapter
 from skills.progression import (
     CONFIG_KEY,
     MEMBER_KEY_PREFIX,
@@ -94,6 +95,13 @@ class ProgressionExtractionReadinessTests(unittest.IsolatedAsyncioTestCase):
     def test_storage_namespace_is_stable_for_extraction(self):
         self.assertEqual(CONFIG_KEY, "config.v1")
         self.assertEqual(MEMBER_KEY_PREFIX, "member.v1:")
+
+    def test_host_adapter_uses_public_contract_ids_without_private_skill_import(self):
+        source = (ROOT / "cogs" / "progression_activity.py").read_text(encoding="utf-8")
+        self.assertNotIn("skills.progression", source)
+        self.assertNotIn("from skills", source)
+        self.assertEqual(host_adapter.GET_CONFIG_API, "progression.get-config.v1")
+        self.assertEqual(host_adapter.RECORD_ACTIVITY_API, "progression.record-activity.v1")
 
     async def test_partial_legacy_member_state_is_read_additively_without_rewrite(self):
         storage = FakeStorage({
