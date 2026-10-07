@@ -1098,3 +1098,766 @@ class AwinPostConfirmView(AwinMenu):
             embed=None,
             view=AwinBackToOverviewView(self.guild, self.admin_id),
         )
+
+
+
+async def open_campaigns(interaction, guild, actor_id):
+    try:
+        response = await _call(interaction, guild, CAMPAIGN_LIST_API, {})
+        campaigns = tuple(response.get("campaigns") or ())
+    except Exception:
+        return await interaction.response.edit_message(
+            content="# 🔁 Awin Campaigns\nCampaigns are currently unavailable.",
+            view=AwinBackToOverviewView(guild, actor_id),
+        )
+
+    lines = ["# 🔁 Awin Campaigns", ""]
+    if campaigns:
+        for campaign in campaigns[:15]:
+            status = (
+                "Paused"
+                if not campaign.get("enabled")
+                else "Blocked"
+                if campaign.get("blockedReason")
+                else "Active"
+            )
+            interval = int(campaign.get("intervalSeconds", 0))
+            lines.append(
+                f"• **{_escape(campaign.get('name') or 'Campaign', 70)}** · "
+                f"{status} · {_escape(campaign.get('rotation') or 'unknown', 20)} · "
+                f"every {max(1, interval // 60)} min"
+            )
+        if len(campaigns) > 15:
+            lines.append(f"• + {len(campaigns) - 15} more")
+    else:
+        lines.append("No Awin campaigns configured yet.")
+
+    await interaction.response.edit_message(
+        content="\n".join(lines)[:1950],
+        view=AwinCampaignListView(guild, actor_id, campaigns),
+    )
+
+
+class AwinCampaignSelect(discord.ui.Select):
+    def __init__(self, campaigns):
+        options = []
+        for campaign in campaigns[:25]:
+            campaign_id = str(campaign.get("id", "")).strip()
+            if not campaign_id:
+                continue
+            status = (
+                "Paused"
+                if not campaign.get("enabled")
+                else "Blocked"
+                if campaign.get("blockedReason")
+                else "Active"
+            )
+            options.append(
+                discord.SelectOption(
+                    label=str(campaign.get("name") or "Awin Campaign")[:100],
+                    value=campaign_id,
+                    description=(f"{status} · {campaign.get('rotation') or 'unknown'}")[:100],
+                )
+            )
+        super().__init__(
+            placeholder="Choose campaign",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        await open_campaign_detail(
+            interaction,
+            self.view.guild,
+            self.view.admin_id,
+            campaign_id=self.values[0],
+        )
+
+
+class AwinCampaignListView(AwinMenu):
+    def __init__(self, guild, actor_id, campaigns):
+        super().__init__(guild, actor_id)
+        if campaigns:
+            self.add_item(AwinCampaignSelect(campaigns))
+        self.action("Create Campaign", self.create, style=discord.ButtonStyle.primary)
+        self.action("Back", self.back)
+
+    async def create(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can create Awin campaigns.",
+                ephemeral=True,
+            )
+        await open_campaign_create_advertiser(interaction, self.guild, self.admin_id)
+
+    async def back(self, interaction):
+        await open_awin(interaction, self.guild, self.admin_id)
+
+
+async def open_campaign_detail(interaction, guild, actor_id, *, campaign_id):
+    try:
+        response = await _call(
+            interaction,
+            guild,
+            CAMPAIGN_GET_API,
+            {"campaignId": campaign_id},
+        )
+        campaign = dict(response.get("campaign") or {})
+    except Exception:
+        return await interaction.response.send_message(
+            "Campaign details are currently unavailable.",
+            ephemeral=True,
+        )
+
+    status = str(campaign.get("status") or ("active" if campaign.get("enabled") else "paused")).title()
+    interval = int(campaign.get("intervalSeconds", 0))
+    lines = [
+        f"# 🔁 {_escape(campaign.get('name') or 'Awin Campaign', 80)}",
+        f"**Status:** {status}",
+        f"**Advertiser ID:** {_escape(campaign.get('advertiserId'), 40)}",
+        f"**Channel:** <#{int(campaign.get('channelId', 0))}>",
+        f"**Rotation:** {_escape(campaign.get('rotation'), 30)}",
+        f"**Interval:** every {max(1, interval // 60)} minutes",
+        f"**Creatives:** {int(campaign.get('eligibleCreativeCount', 0))} eligible / "
+        f"{int(campaign.get('configuredCreativeCount', len(campaign.get('selectedCreativeIds') or ())))} configured",
+        f"**Avoid immediate repeat:** {'Yes' if campaign.get('avoidImmediateRepeat') else 'No'}",
+    ]
+    if campaign.get("blockedReason"):
+        lines.extend(["", f"⚠️ {_escape(campaign.get('blockedReason'), 300)}"])
+
+    await interaction.response.edit_message(
+        content="\n".join(lines)[:1950],
+        view=AwinCampaignDetailView(guild, actor_id, campaign),
+    )
+
+
+class AwinCampaignDetailView(AwinMenu):
+    def __init__(self, guild, actor_id, campaign):
+        super().__init__(guild, actor_id)
+        self.campaign = dict(campaign)
+        self.campaign_id = str(campaign.get("id"))
+        self.action("Preview Next", self.preview_next, style=discord.ButtonStyle.primary)
+        self.action("Run Now", self.run_now)
+        self.action("Edit", self.edit)
+        self.action("Pause" if campaign.get("enabled") else "Resume", self.toggle)
+        self.action("History", self.history)
+        self.action("Delete", self.delete, style=discord.ButtonStyle.danger)
+        self.action("Back", self.back)
+
+    async def preview_next(self, interaction):
+        try:
+            response = await _call(
+                interaction,
+                self.guild,
+                CAMPAIGN_PREVIEW_NEXT_API,
+                {"campaignId": self.campaign_id},
+            )
+        except Exception:
+            return await interaction.response.send_message(
+                "Campaign preview is currently unavailable.",
+                ephemeral=True,
+            )
+        if response.get("blocked"):
+            return await interaction.response.send_message(
+                f"⚠️ Campaign is blocked: {_escape(response.get('reason') or 'no eligible Creative', 300)}",
+                ephemeral=True,
+            )
+        preview = dict(response.get("preview") or {})
+        embed_data = preview.get("embed") if isinstance(preview.get("embed"), dict) else {}
+        embed = discord.Embed.from_dict(embed_data) if embed_data else None
+        await interaction.response.send_message(
+            str(preview.get("content") or "Awin campaign preview")[:2000],
+            embed=embed,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    async def run_now(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can run Awin campaigns.",
+                ephemeral=True,
+            )
+        await interaction.response.defer(ephemeral=True)
+        try:
+            result = await _call(
+                interaction,
+                self.guild,
+                CAMPAIGN_RUN_NOW_API,
+                {"campaignId": self.campaign_id},
+            )
+        except Exception:
+            return await interaction.edit_original_response(
+                content="❌ Campaign execution failed. No host-side rotation state was changed."
+            )
+        if result.get("blocked"):
+            text = f"⚠️ Campaign is blocked: {_escape(result.get('reason') or 'no eligible Creative', 300)}"
+        else:
+            text = (
+                "✅ Campaign post sent. "
+                f"Message ID {int(result.get('messageId', 0))}."
+            )
+        await interaction.edit_original_response(content=text)
+
+    async def edit(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can edit Awin campaigns.",
+                ephemeral=True,
+            )
+        await open_campaign_edit_creatives(
+            interaction,
+            self.guild,
+            self.admin_id,
+            campaign=self.campaign,
+        )
+
+    async def toggle(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can pause or resume Awin campaigns.",
+                ephemeral=True,
+            )
+        try:
+            response = await _call(
+                interaction,
+                self.guild,
+                CAMPAIGN_SET_ACTIVE_API,
+                {
+                    "campaignId": self.campaign_id,
+                    "active": not bool(self.campaign.get("enabled")),
+                },
+            )
+            campaign = dict(response.get("campaign") or {})
+        except Exception:
+            return await interaction.response.send_message(
+                "Campaign state could not be changed.",
+                ephemeral=True,
+            )
+        await open_campaign_detail(
+            interaction,
+            self.guild,
+            self.admin_id,
+            campaign_id=str(campaign.get("id") or self.campaign_id),
+        )
+
+    async def history(self, interaction):
+        try:
+            response = await _call(
+                interaction,
+                self.guild,
+                CAMPAIGN_HISTORY_API,
+                {"campaignId": self.campaign_id, "limit": 20},
+            )
+            rows = tuple(response.get("history") or ())
+        except Exception:
+            rows = ()
+        lines = [f"# 🕘 {_escape(self.campaign.get('name') or 'Campaign', 80)} History", ""]
+        if not rows:
+            lines.append("No retained delivery history.")
+        for row in rows[:20]:
+            outcome = _escape(row.get("outcome") or "unknown", 20)
+            occurred = int(row.get("occurredAt", 0))
+            creative = _escape(row.get("creativeId") or "—", 45)
+            reason = _escape(row.get("reason") or "", 80)
+            suffix = f" · {reason}" if reason else ""
+            lines.append(f"• {outcome} · t={occurred} · Creative {creative}{suffix}")
+        await interaction.response.edit_message(
+            content="\n".join(lines)[:1950],
+            view=AwinCampaignHistoryView(
+                self.guild,
+                self.admin_id,
+                campaign_id=self.campaign_id,
+            ),
+        )
+
+    async def delete(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can delete Awin campaigns.",
+                ephemeral=True,
+            )
+        await interaction.response.edit_message(
+            content=(
+                f"# 🗑️ Delete {_escape(self.campaign.get('name') or 'Awin Campaign', 80)}?\n"
+                "The campaign configuration and scheduler job will be removed. "
+                "Previously sent Discord messages are not deleted.\n\n"
+                "Nothing changes until you confirm."
+            ),
+            view=AwinCampaignDeleteConfirmView(
+                self.guild,
+                self.admin_id,
+                campaign_id=self.campaign_id,
+            ),
+        )
+
+    async def back(self, interaction):
+        await open_campaigns(interaction, self.guild, self.admin_id)
+
+
+class AwinCampaignHistoryView(AwinMenu):
+    def __init__(self, guild, actor_id, *, campaign_id):
+        super().__init__(guild, actor_id)
+        self.campaign_id = campaign_id
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await open_campaign_detail(
+            interaction,
+            self.guild,
+            self.admin_id,
+            campaign_id=self.campaign_id,
+        )
+
+
+class AwinCampaignDeleteConfirmView(AwinMenu):
+    def __init__(self, guild, actor_id, *, campaign_id):
+        super().__init__(guild, actor_id)
+        self.campaign_id = campaign_id
+        self.action("Confirm Delete", self.confirm, style=discord.ButtonStyle.danger)
+        self.action("Cancel", self.cancel)
+
+    async def confirm(self, interaction):
+        if interaction.user.id != self.guild.owner_id:
+            return await interaction.response.send_message(
+                "Only the server owner can delete Awin campaigns.",
+                ephemeral=True,
+            )
+        try:
+            await _call(
+                interaction,
+                self.guild,
+                CAMPAIGN_DELETE_API,
+                {"campaignId": self.campaign_id},
+            )
+        except Exception:
+            return await interaction.response.send_message(
+                "Campaign deletion failed. Reopen the campaign and try again.",
+                ephemeral=True,
+            )
+        await open_campaigns(interaction, self.guild, self.admin_id)
+
+    async def cancel(self, interaction):
+        await open_campaign_detail(
+            interaction,
+            self.guild,
+            self.admin_id,
+            campaign_id=self.campaign_id,
+        )
+
+
+async def open_campaign_create_advertiser(interaction, guild, actor_id):
+    try:
+        advertisers = await _joined_advertisers(interaction, guild)
+    except Exception:
+        advertisers = ()
+    if not advertisers:
+        return await interaction.response.edit_message(
+            content="# 🔁 Create Awin Campaign\nNo joined advertiser is available.",
+            view=AwinBackToOverviewView(guild, actor_id),
+        )
+    await interaction.response.edit_message(
+        content="# 🔁 Create Awin Campaign\nChoose the advertiser.",
+        view=AwinCampaignAdvertiserView(guild, actor_id, advertisers),
+    )
+
+
+class AwinCampaignAdvertiserSelect(discord.ui.Select):
+    def __init__(self, advertisers):
+        options = []
+        for item in advertisers[:25]:
+            advertiser_id = str(item.get("id", "")).strip()
+            if advertiser_id:
+                options.append(
+                    discord.SelectOption(
+                        label=str(item.get("name") or f"Advertiser {advertiser_id}")[:100],
+                        value=advertiser_id,
+                    )
+                )
+        super().__init__(
+            placeholder="Choose advertiser",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        await open_campaign_create_creatives(
+            interaction,
+            self.view.guild,
+            self.view.admin_id,
+            advertiser_id=self.values[0],
+        )
+
+
+class AwinCampaignAdvertiserView(AwinMenu):
+    def __init__(self, guild, actor_id, advertisers):
+        super().__init__(guild, actor_id)
+        self.add_item(AwinCampaignAdvertiserSelect(advertisers))
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await open_campaigns(interaction, self.guild, self.admin_id)
+
+
+async def _campaign_creative_items(interaction, guild, advertiser_id):
+    response = await _call(
+        interaction,
+        guild,
+        CREATIVES_LIST_API,
+        {
+            "advertiserId": advertiser_id,
+            "enabledOnly": True,
+            "activeOnly": True,
+            "offset": 0,
+            "limit": 25,
+        },
+    )
+    return tuple((response.get("creatives") or {}).get("items") or ())
+
+
+async def open_campaign_create_creatives(interaction, guild, actor_id, *, advertiser_id):
+    try:
+        items = await _campaign_creative_items(interaction, guild, advertiser_id)
+    except Exception:
+        items = ()
+    if not items:
+        return await interaction.response.edit_message(
+            content="# 🔁 Create Awin Campaign\nNo enabled active Creative is available for this advertiser.",
+            view=AwinBackToOverviewView(guild, actor_id),
+        )
+    await interaction.response.edit_message(
+        content="# 🔁 Create Awin Campaign\nSelect one or more Creatives.",
+        view=AwinCampaignCreativeView(
+            guild,
+            actor_id,
+            advertiser_id=advertiser_id,
+            items=items,
+            editing_campaign=None,
+        ),
+    )
+
+
+class AwinCampaignCreativeSelect(discord.ui.Select):
+    def __init__(self, items, defaults=()):
+        default_ids = set(defaults)
+        options = []
+        for item in items[:25]:
+            creative_id = str(item.get("id", "")).strip()
+            if not creative_id:
+                continue
+            options.append(
+                discord.SelectOption(
+                    label=str(item.get("title") or item.get("dimensions") or "Awin Creative")[:100],
+                    value=creative_id,
+                    description=(f"{item.get('state') or 'unknown'} · {item.get('dimensions') or 'size unknown'}")[:100],
+                    default=creative_id in default_ids,
+                )
+            )
+        super().__init__(
+            placeholder="Choose campaign Creatives",
+            min_values=1,
+            max_values=max(1, min(25, len(options))),
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        await interaction.response.edit_message(
+            content="# 🔁 Awin Campaign\nChoose the destination channel.",
+            view=AwinCampaignChannelView(
+                self.view.guild,
+                self.view.admin_id,
+                advertiser_id=self.view.advertiser_id,
+                creative_ids=tuple(self.values),
+                editing_campaign=self.view.editing_campaign,
+            ),
+        )
+
+
+class AwinCampaignCreativeView(AwinMenu):
+    def __init__(self, guild, actor_id, *, advertiser_id, items, editing_campaign):
+        super().__init__(guild, actor_id)
+        self.advertiser_id = advertiser_id
+        self.editing_campaign = dict(editing_campaign) if editing_campaign else None
+        defaults = (
+            tuple(self.editing_campaign.get("selectedCreativeIds") or ())
+            if self.editing_campaign
+            else ()
+        )
+        self.add_item(AwinCampaignCreativeSelect(items, defaults))
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        if self.editing_campaign:
+            await open_campaign_detail(
+                interaction,
+                self.guild,
+                self.admin_id,
+                campaign_id=str(self.editing_campaign.get("id")),
+            )
+        else:
+            await open_campaign_create_advertiser(interaction, self.guild, self.admin_id)
+
+
+class AwinCampaignChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Choose campaign channel",
+            min_values=1,
+            max_values=1,
+            channel_types=[discord.ChannelType.text],
+        )
+
+    async def callback(self, interaction):
+        await interaction.response.edit_message(
+            content="# 🔁 Awin Campaign\nChoose the rotation strategy.",
+            view=AwinCampaignRotationView(
+                self.view.guild,
+                self.view.admin_id,
+                advertiser_id=self.view.advertiser_id,
+                creative_ids=self.view.creative_ids,
+                channel_id=int(self.values[0].id),
+                editing_campaign=self.view.editing_campaign,
+            ),
+        )
+
+
+class AwinCampaignChannelView(AwinMenu):
+    def __init__(self, guild, actor_id, *, advertiser_id, creative_ids, editing_campaign):
+        super().__init__(guild, actor_id)
+        self.advertiser_id = advertiser_id
+        self.creative_ids = tuple(creative_ids)
+        self.editing_campaign = dict(editing_campaign) if editing_campaign else None
+        self.add_item(AwinCampaignChannelSelect())
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        try:
+            items = await _campaign_creative_items(
+                interaction,
+                self.guild,
+                self.advertiser_id,
+            )
+        except Exception:
+            items = ()
+        await interaction.response.edit_message(
+            content="# 🔁 Awin Campaign\nSelect one or more Creatives.",
+            view=AwinCampaignCreativeView(
+                self.guild,
+                self.admin_id,
+                advertiser_id=self.advertiser_id,
+                items=items,
+                editing_campaign=self.editing_campaign,
+            ),
+        )
+
+
+class AwinCampaignRotationSelect(discord.ui.Select):
+    def __init__(self, selected=None):
+        values = ("fixed", "sequential", "random", "shuffle")
+        super().__init__(
+            placeholder="Choose rotation",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=value.title(),
+                    value=value,
+                    default=value == selected,
+                )
+                for value in values
+            ],
+        )
+
+    async def callback(self, interaction):
+        rotation = self.values[0]
+        if rotation == "fixed" and len(self.view.creative_ids) != 1:
+            return await interaction.response.send_message(
+                "Fixed rotation requires exactly one selected Creative.",
+                ephemeral=True,
+            )
+        await interaction.response.send_modal(
+            AwinCampaignDetailsModal(
+                self.view.guild,
+                self.view.admin_id,
+                advertiser_id=self.view.advertiser_id,
+                creative_ids=self.view.creative_ids,
+                channel_id=self.view.channel_id,
+                rotation=rotation,
+                editing_campaign=self.view.editing_campaign,
+            )
+        )
+
+
+class AwinCampaignRotationView(AwinMenu):
+    def __init__(
+        self,
+        guild,
+        actor_id,
+        *,
+        advertiser_id,
+        creative_ids,
+        channel_id,
+        editing_campaign,
+    ):
+        super().__init__(guild, actor_id)
+        self.advertiser_id = advertiser_id
+        self.creative_ids = tuple(creative_ids)
+        self.channel_id = channel_id
+        self.editing_campaign = dict(editing_campaign) if editing_campaign else None
+        current_rotation = self.editing_campaign.get("rotation") if self.editing_campaign else None
+        self.add_item(AwinCampaignRotationSelect(current_rotation))
+        self.action("Back", self.back)
+
+    async def back(self, interaction):
+        await interaction.response.edit_message(
+            content="# 🔁 Awin Campaign\nChoose the destination channel.",
+            view=AwinCampaignChannelView(
+                self.guild,
+                self.admin_id,
+                advertiser_id=self.advertiser_id,
+                creative_ids=self.creative_ids,
+                editing_campaign=self.editing_campaign,
+            ),
+        )
+
+
+class AwinCampaignDetailsModal(discord.ui.Modal, title="Awin Campaign Details"):
+    name = discord.ui.TextInput(label="Name", required=True, max_length=80)
+    interval_minutes = discord.ui.TextInput(
+        label="Interval minutes (min. 15)",
+        required=True,
+        max_length=8,
+    )
+    avoid_repeat = discord.ui.TextInput(
+        label="Avoid immediate repeat? yes/no",
+        required=True,
+        max_length=3,
+        default="yes",
+    )
+
+    def __init__(
+        self,
+        guild,
+        actor_id,
+        *,
+        advertiser_id,
+        creative_ids,
+        channel_id,
+        rotation,
+        editing_campaign,
+    ):
+        super().__init__(timeout=300)
+        self.guild = guild
+        self.actor_id = actor_id
+        self.advertiser_id = advertiser_id
+        self.creative_ids = tuple(creative_ids)
+        self.channel_id = channel_id
+        self.rotation = rotation
+        self.editing_campaign = dict(editing_campaign) if editing_campaign else None
+        if self.editing_campaign:
+            self.name.default = str(self.editing_campaign.get("name") or "")[:80]
+            interval_seconds = int(self.editing_campaign.get("intervalSeconds", 900))
+            self.interval_minutes.default = str(max(15, interval_seconds // 60))
+            self.avoid_repeat.default = (
+                "yes" if self.editing_campaign.get("avoidImmediateRepeat", True) else "no"
+            )
+
+    async def on_submit(self, interaction):
+        try:
+            interval_minutes = int(str(self.interval_minutes.value).strip())
+        except ValueError:
+            return await interaction.response.send_message(
+                "Interval must be a whole number of minutes.",
+                ephemeral=True,
+            )
+        if interval_minutes < 15:
+            return await interaction.response.send_message(
+                "Awin campaigns require an interval of at least 15 minutes.",
+                ephemeral=True,
+            )
+        avoid_text = str(self.avoid_repeat.value).strip().lower()
+        if avoid_text not in {"yes", "no"}:
+            return await interaction.response.send_message(
+                "Use yes or no for immediate-repeat avoidance.",
+                ephemeral=True,
+            )
+        payload = {
+            "name": str(self.name.value).strip(),
+            "advertiserId": self.advertiser_id,
+            "channelId": self.channel_id,
+            "selectedCreativeIds": list(self.creative_ids),
+            "rotation": self.rotation,
+            "intervalSeconds": interval_minutes * 60,
+            "avoidImmediateRepeat": avoid_text == "yes",
+        }
+        contract_id = CAMPAIGN_CREATE_API
+        if self.editing_campaign:
+            contract_id = CAMPAIGN_UPDATE_API
+            payload["campaignId"] = str(self.editing_campaign.get("id"))
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            response = await _call(interaction, self.guild, contract_id, payload)
+            campaign = dict(response.get("campaign") or {})
+        except Exception:
+            return await interaction.edit_original_response(
+                content=(
+                    "❌ Campaign could not be saved. "
+                    "Review the selected advertiser, Creatives, channel and interval."
+                )
+            )
+        await interaction.edit_original_response(
+            content="✅ Awin campaign saved.",
+            view=AwinCampaignSavedView(
+                self.guild,
+                self.actor_id,
+                campaign_id=str(campaign.get("id")),
+            ),
+        )
+
+
+class AwinCampaignSavedView(AwinMenu):
+    def __init__(self, guild, actor_id, *, campaign_id):
+        super().__init__(guild, actor_id)
+        self.campaign_id = campaign_id
+        self.action("Open Campaign", self.open_campaign)
+        self.action("Back to Campaigns", self.back)
+
+    async def open_campaign(self, interaction):
+        await open_campaign_detail(
+            interaction,
+            self.guild,
+            self.admin_id,
+            campaign_id=self.campaign_id,
+        )
+
+    async def back(self, interaction):
+        await open_campaigns(interaction, self.guild, self.admin_id)
+
+
+async def open_campaign_edit_creatives(interaction, guild, actor_id, *, campaign):
+    advertiser_id = str(campaign.get("advertiserId", "")).strip()
+    try:
+        items = await _campaign_creative_items(interaction, guild, advertiser_id)
+    except Exception:
+        items = ()
+    if not items:
+        return await interaction.response.edit_message(
+            content="# 🔁 Edit Awin Campaign\nNo eligible Creative is currently available for this advertiser.",
+            view=AwinCampaignDetailView(guild, actor_id, campaign),
+        )
+    await interaction.response.edit_message(
+        content=(
+            "# 🔁 Edit Awin Campaign\n"
+            "Select the Creatives to keep/use. Changing this selection resets rotation state."
+        ),
+        view=AwinCampaignCreativeView(
+            guild,
+            actor_id,
+            advertiser_id=advertiser_id,
+            items=items,
+            editing_campaign=campaign,
+        ),
+    )
