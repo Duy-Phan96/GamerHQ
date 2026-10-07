@@ -81,6 +81,40 @@ class AwinSkillIntegrationTests(unittest.TestCase):
         self.assertNotIn("self.access_token.value}", source)
         self.assertNotIn("repr(self.access_token", source)
 
+    def test_saved_html_authority_is_only_forwarded_when_explicit(self):
+        source = inspect.getsource(awin_management.AwinSavedHtmlModal.on_submit)
+        self.assertIn('if complete:', source)
+        self.assertIn('payload["completeAdvertiserId"] = complete', source)
+        self.assertIn('IMPORT_SAVED_HTML_API', source)
+
+    def test_post_confirmation_forwards_skill_confirm_payload_unchanged(self):
+        init_source = inspect.getsource(awin_management.AwinPostConfirmView.__init__)
+        confirm_source = inspect.getsource(awin_management.AwinPostConfirmView.confirm)
+        preview_source = inspect.getsource(awin_management.AwinPostCopyModal.on_submit)
+
+        self.assertIn('response.get("confirmPayload")', preview_source)
+        self.assertIn("self.confirm_payload = dict(confirm_payload)", init_source)
+        self.assertIn("POST_SEND_API", confirm_source)
+        self.assertIn("dict(self.confirm_payload)", confirm_source)
+        self.assertNotIn("CREATIVES_LIST_API", confirm_source)
+
+    def test_campaign_ui_uses_only_public_campaign_contracts(self):
+        source = inspect.getsource(awin_management)
+        for contract in (
+            "awin-affiliate.campaigns.list.v1",
+            "awin-affiliate.campaigns.get.v1",
+            "awin-affiliate.campaigns.create.v1",
+            "awin-affiliate.campaigns.update.v1",
+            "awin-affiliate.campaigns.set-active.v1",
+            "awin-affiliate.campaigns.delete.v1",
+            "awin-affiliate.campaigns.run-now.v1",
+            "awin-affiliate.campaigns.preview-next.v1",
+            "awin-affiliate.campaigns.history.v1",
+        ):
+            self.assertIn(contract, source)
+        self.assertNotIn("scheduler.upsert", source)
+        self.assertNotIn("campaigns.v1", source)
+
 
 if __name__ == "__main__":
     unittest.main()
