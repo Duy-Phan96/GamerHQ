@@ -11,7 +11,7 @@ from services import onboarding_service as onboarding
 from services import server_setup_service as setup
 from services.lfg_service import find_lfg_channel
 from services.server_service import ServerMessageError
-from cogs import suggestions
+from cogs import lfg, suggestions
 
 
 class StructureTests(unittest.IsolatedAsyncioTestCase):
@@ -111,6 +111,26 @@ class StructureTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(ch.overwrites[self.guild.default_role].send_messages)
             self.assertTrue(ch.overwrites[self.guild.default_role].view_channel)
         self.assertTrue(self.intro.overwrites[self.guild.default_role].send_messages)
+
+    async def test_community_events_reuses_lfg_builder_and_refresh_is_idempotent(self):
+        await setup.repair_server(self.guild, self.bot)
+        events = structure.core_channel(self.guild, 'community-events')
+        self.assertIsNotNone(events)
+
+        message_id = int(db.get_setting(f'community_events:{self.guild.id}'))
+        message = events.messages[message_id]
+        self.assertTrue(message.pinned)
+        self.assertIsInstance(message.view, lfg.LFGHubView)
+        self.assertTrue(message.view.is_persistent())
+        self.assertEqual(message.view.children[0].custom_id, 'gamerhq:lfg:create')
+        self.assertIn('Events can be tied to a game, but they do not have to be.', message.content)
+
+        sends = events.sends
+        await structure.refresh_boards(self.guild)
+        self.assertEqual(events.sends, sends)
+        self.assertEqual(int(db.get_setting(f'community_events:{self.guild.id}')), message_id)
+        refreshed = events.messages[message_id]
+        self.assertIsInstance(refreshed.view, lfg.LFGHubView)
 
     async def test_staff_inbox_private_from_creation_and_existing_exposure_repaired(self):
         await setup.repair_server(self.guild, self.bot)
