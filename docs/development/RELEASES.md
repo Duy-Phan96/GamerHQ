@@ -59,7 +59,7 @@ important architectural changes.
 
 ## Release readiness
 
-A green feature branch or Skill repository is not, by itself, evidence that the combined GamerHQ server is deployable. Before any server update recommendation, prepare a [Server Release Snapshot](SERVER_RELEASE_SNAPSHOT.md) for one immutable release candidate. The snapshot is the integration decision record and must distinguish included work from newer/unmerged work.
+For GamerHQ server releases, prepare a [Server Release Snapshot](SERVER_RELEASE_SNAPSHOT.md) for the exact GamerHQ candidate being considered. This snapshot is local to the GamerHQ repository and must not be used as a release manager for independent Skill/web repositories.
 
 Before promotion:
 - required PR checks are green;
@@ -72,16 +72,15 @@ Before promotion:
 - the exact release version and commit/tag are recorded;
 - excluded newer/unmerged work is explicit.
 
-## Cross-repository releases
+## Independent repository releases
 
-For coordinated changes merge in dependency order:
-1. public Runtime/SDK contract;
-2. external Skill/provider using the contract;
-3. GamerHQ reviewed Skill pin/integration;
-4. gamerhq-web client consuming the host contract.
+GamerHQ Host, external Skills and gamerhq-web release independently.
 
-Do not merge a client that depends on an unavailable contract merely because its
-own repository builds.
+If this repository needs a change from another repository, create a handoff rather
+than editing that repository directly. After the target repository publishes the
+required version/contract, GamerHQ may update its own dependency or immutable pin.
+
+Do not merge GamerHQ code that depends on an unavailable public contract.
 
 ## Deployment
 
