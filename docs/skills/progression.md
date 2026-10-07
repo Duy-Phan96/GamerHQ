@@ -261,3 +261,28 @@ overrides.
 
 This ownership boundary is what allows future revoke/reset behavior to remove
 only grants Progression itself created.
+
+
+## Extraction readiness
+
+Progression is still registered as a built-in GamerHQ Skill today, but its
+portable implementation is now treated as an extraction candidate.
+
+The frozen boundary, storage compatibility rules, public Management API IDs,
+capability set, host-adapter ownership and post-readiness extraction sequence are
+documented in
+[Progression extraction readiness](progression-extraction-readiness.md).
+
+The important boundary is:
+
+```text
+GamerHQ Discord/event activity adapters
+        ↓
+versioned public Management APIs
+        ↓
+portable Progression Skill
+```
+
+The later standalone package must preserve Skill ID `progression`,
+`config.v1`, `member.v1:<member-id>` and the documented versioned API IDs.
+Extraction itself must not become a data migration.
