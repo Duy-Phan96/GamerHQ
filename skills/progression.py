@@ -18,6 +18,10 @@ from skill_runtime.contracts.management_ui import ManagementDocumentBinding, Man
 from skill_runtime.contracts.manifest import SkillManagementApis, SkillManifest
 
 
+SKILL_ID = "progression"
+SKILL_VERSION = "0.1.0"
+RUNTIME_API_VERSION = "1"
+
 CONFIG_KEY = "config.v1"
 MEMBER_KEY_PREFIX = "member.v1:"
 
@@ -27,6 +31,24 @@ UPDATE_CONFIG_API = "progression.update-config.v1"
 PREVIEW_LEVEL_API = "progression.preview-level.v1"
 RECORD_ACTIVITY_API = "progression.record-activity.v1"
 MEMBER_STATUS_API = "progression.member-status.v1"
+
+PROGRESSION_MANAGEMENT_APIS = (
+    STATUS_API,
+    GET_CONFIG_API,
+    UPDATE_CONFIG_API,
+    PREVIEW_LEVEL_API,
+    RECORD_ACTIVITY_API,
+    MEMBER_STATUS_API,
+)
+
+PROGRESSION_CAPABILITIES = (
+    SkillCapability.STORAGE_SKILL.value,
+    SkillCapability.AUDIT_WRITE.value,
+    SkillCapability.DISCORD_MESSAGES_SEND.value,
+    SkillCapability.DISCORD_CHANNELS_READ.value,
+    SkillCapability.DISCORD_MEMBERS_READ.value,
+    SkillCapability.DISCORD_ROLES_MANAGE.value,
+)
 
 PROGRESSION_MANAGEMENT_UI = ManagementUiSchema(
     version="1",
@@ -367,28 +389,17 @@ def validate_config(value: Mapping[str, Any]) -> dict[str, Any]:
 @dataclass(slots=True)
 class ProgressionSkill:
     manifest = SkillManifest(
-        id="progression",
+        id=SKILL_ID,
         name="Progression & Achievements",
-        version="0.1.0",
-        runtime_api_version="1",
+        version=SKILL_VERSION,
+        runtime_api_version=RUNTIME_API_VERSION,
         description="Configurable XP, levels, achievements and rewards for GamerHQ communities.",
         author="GamerHQ",
-        permissions=(
-            SkillCapability.STORAGE_SKILL.value,
-            SkillCapability.AUDIT_WRITE.value,
-            SkillCapability.DISCORD_MESSAGES_SEND.value,
-            SkillCapability.DISCORD_CHANNELS_READ.value,
-            SkillCapability.DISCORD_MEMBERS_READ.value,
-            SkillCapability.DISCORD_ROLES_MANAGE.value,
-        ),
+        permissions=PROGRESSION_CAPABILITIES,
         management_apis=SkillManagementApis(
-            exposes=(
-                ManagementApiContract(STATUS_API),
-                ManagementApiContract(GET_CONFIG_API),
-                ManagementApiContract(UPDATE_CONFIG_API),
-                ManagementApiContract(PREVIEW_LEVEL_API),
-                ManagementApiContract(RECORD_ACTIVITY_API),
-                ManagementApiContract(MEMBER_STATUS_API),
+            exposes=tuple(
+                ManagementApiContract(contract_id)
+                for contract_id in PROGRESSION_MANAGEMENT_APIS
             )
         ),
         management_ui=PROGRESSION_MANAGEMENT_UI,
