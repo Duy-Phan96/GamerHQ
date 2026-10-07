@@ -272,6 +272,8 @@ See [RELEASES.md](RELEASES.md).
 
 Production deployment remains an explicit owner operation.
 
+Feature, Skill and web projects must not turn their individual green PR into a recommendation to deploy a moving `develop` head. They report deployment impact and any required release sequencing. A server update recommendation belongs to one reviewed GamerHQ release candidate and must name its exact version and immutable commit/tag through the [Server Release Snapshot](SERVER_RELEASE_SNAPSHOT.md).
+
 Use the existing:
 
 - `DEPLOY.md`;
@@ -332,6 +334,7 @@ A change is complete when applicable items are satisfied:
 - [ ] PR explains architecture/test/deployment impact.
 - [ ] Live acceptance requirements are explicitly known.
 - [ ] Deployment/rollback impact is understood.
+- [ ] If this change is intended for a server update, it is represented by an exact release-candidate snapshot rather than an implicit `develop` head.
 
 "The code works" alone is not a Definition of Done.
 
