@@ -22,6 +22,7 @@ class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
         by_distribution = {package.distribution: package for package in packages}
         recurring = by_distribution["gamerhq-skill-recurring-posts"]
         progression = by_distribution["gamerhq-skill-xp-progression"]
+        awin = by_distribution["gamerhq-skill-awin-affiliate"]
 
         self.assertEqual(recurring.source_kind, "github-commit")
         self.assertEqual(
@@ -41,6 +42,15 @@ class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
             progression.reviewed_commit,
             "565ee8379cdd22cb00c18db188eeaddd058e626d",
         )
+        self.assertEqual(awin.source_kind, "github-commit")
+        self.assertEqual(
+            awin.source_repository,
+            "Duy-Phan96/gamerhq-skill-awin-affiliate",
+        )
+        self.assertEqual(
+            awin.reviewed_commit,
+            "db6bd7ab9500930e1c65aea594be63771e95f4a7",
+        )
 
         plan = deployment_plan(packages)
         self.assertEqual(plan["schemaVersion"], "1")
@@ -49,6 +59,7 @@ class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
         reviewed = {item["distribution"]: item["reviewedCommit"] for item in plan["packages"]}
         self.assertEqual(reviewed["gamerhq-skill-recurring-posts"], recurring.reviewed_commit)
         self.assertEqual(reviewed["gamerhq-skill-xp-progression"], progression.reviewed_commit)
+        self.assertEqual(reviewed["gamerhq-skill-awin-affiliate"], awin.reviewed_commit)
         json.dumps(plan)
 
     def test_comments_and_blank_lines_are_ignored(self):
