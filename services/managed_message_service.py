@@ -25,6 +25,7 @@ ACTIONS = {
     'HOUSEHOLD_CHECK_REQUEST': ('Legacy household request', 'gamerhq:offers:household-check'),
     'CREATE_SUPPORT_TICKET': ('Create Support Ticket', 'gamerhq:tickets:create'),
     'SUBMIT_SUGGESTION': ('Submit Suggestion', 'gamerhq:suggestions:submit'),
+    'CREATE_EVENT': ('Create Event', 'gamerhq:lfg:create'),
 }
 from services.role_service import ROLE_GROUPS
 ACTIONS.update({f'ROLE_{option.key}': (option.label, f'gamerhq:preference:base:{option.key}')
@@ -57,7 +58,7 @@ def specs(guild):
     for key, name, label, action in [('central_guide', 'guide', 'Guide', None),
                                     ('suggestions_entry', 'suggestions', 'Suggestions', 'SUBMIT_SUGGESTION'),
                                     ('ticket_entry', 'need-support', 'Need Support', 'CREATE_SUPPORT_TICKET'),
-                                    ('community_events', 'community-events', 'Community Events', None)]:
+                                    ('community_events', 'community-events', 'Community Events', 'CREATE_EVENT')]:
         result[f'{key}:{guild.id}'] = (label, f'managed_channel:{guild.id}:{name}', [action] if action else [])
     from services.role_panel_service import channel as role_channel, message_keys, SECTIONS, panel_groups
     board = role_channel(guild)
@@ -165,6 +166,7 @@ def render(buttons, *, preview=False):
         if config['type'] == 'ACTION' and not preview:
             from cogs.tickets import SupportOffers, TicketEntry
             from cogs.suggestions import SuggestionEntryView
+            from cogs.lfg import LFGHubView
             action = config['target']
             if action == 'HOUSEHOLD_CHECK_REQUEST':
                 item = discord.ui.Button(label=config['label'], emoji=config['emoji'] or None, disabled=True, custom_id=ACTIONS[action][1])
@@ -173,7 +175,11 @@ def render(buttons, *, preview=False):
             if action in {'ROLE_english', 'ROLE_german'}:
                 continue  # Legacy controls are inert; explicit Repair removes their stored configuration.
             from cogs.roles import OnboardingEntry, ChooseRolesHubView, RoleToggleView, RoleSuggestionView
-            source = OnboardingEntry() if action == 'START_ONBOARDING' else TicketEntry() if action == 'CREATE_SUPPORT_TICKET' else SuggestionEntryView() if action == 'SUBMIT_SUGGESTION' else SupportOffers()
+            source = (OnboardingEntry() if action == 'START_ONBOARDING' else
+                      TicketEntry() if action == 'CREATE_SUPPORT_TICKET' else
+                      SuggestionEntryView() if action == 'SUBMIT_SUGGESTION' else
+                      LFGHubView() if action == 'CREATE_EVENT' else
+                      SupportOffers())
             if action == 'STREAMER_ROLE':
                 import config as runtime_config
                 if not runtime_config.STREAMER_ROLE_SELECTION_ENABLED:
