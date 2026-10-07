@@ -15,3 +15,5 @@ Start here:
 These documents coordinate existing canonical project sources. They do not
 replace topic architecture docs, release/deployment procedures, Skill contracts
 or security operations.
+
+- [Repository Ownership and Handoffs](REPOSITORY_OWNERSHIP_AND_HANDOFFS.md) — strict repository boundaries, independent releases and prompt-based handoffs between projects.
