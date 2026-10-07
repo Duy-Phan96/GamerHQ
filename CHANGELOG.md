@@ -12,6 +12,7 @@
 - Added a read-only release preflight for semantic version metadata, the active changelog section and immutable external Skill pins.
 - Added a machine-readable release readiness report that composes preflight and reviewed Skill deployment metadata without automating release or deployment.
 - Added Progression extraction-readiness gates that freeze its public identity, Management APIs, capabilities and storage namespace before standalone packaging.
+- Reduced Owner Change Log noise by grouping only unambiguous category deletions with their pure child-channel moves while preserving every history row.
 - Made the managed Community Events board a second entrypoint into the existing game-independent event builder without adding a parallel event system.
 
 ### Changed
