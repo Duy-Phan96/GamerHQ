@@ -11,6 +11,7 @@
 - Added Skill ecosystem governance for immutable release review, Marketplace publication and host deployment boundaries.
 - Added a read-only release preflight for semantic version metadata, the active changelog section and immutable external Skill pins.
 - Added a machine-readable release readiness report that composes preflight and reviewed Skill deployment metadata without automating release or deployment.
+- Added Progression extraction-readiness gates that freeze its public identity, Management APIs, capabilities and storage namespace before standalone packaging.
 - Made the managed Community Events board a second entrypoint into the existing game-independent event builder without adding a parallel event system.
 
 ### Changed
