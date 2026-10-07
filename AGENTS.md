@@ -19,6 +19,7 @@
 
 ## Development lifecycle
 - Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.
+- All GamerHQ ecosystem repositories (Host, web and standalone Skills) follow [GamerHQ Ecosystem Cross-Project Release Rules](docs/development/GAMERHQ_ECOSYSTEM_WORKING_RULES.md). Feature/Skill CI may make work integration-ready, but only one immutable GamerHQ release candidate + Server Release Snapshot may recommend a production server update.
 - AI-assisted work follows [SOP-008](docs/sop/SOP-008-ai-assisted-development.md): inspect → restate → architecture check → plan → smallest coherent change → test → diff self-review → human summary → PR.
 - Use the central Definition of Done proportionally; do not add bureaucracy to trivial changes.
 - For cross-repository changes merge in dependency order: public Runtime/SDK contract → external Skill/provider → GamerHQ integration/pin → web client.
@@ -38,6 +39,7 @@ Start with the relevant row; do not load every document or historical report.
 | Task | Reference |
 | --- | --- |
 | SDLC / Definition of Done | [Software Development Lifecycle](docs/development/SDLC.md) |
+| Cross-project release/deployment rules | [GamerHQ Ecosystem Working Rules](docs/development/GAMERHQ_ECOSYSTEM_WORKING_RULES.md), [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md) |
 | AI-assisted development | [AI Development SOP](docs/sop/SOP-008-ai-assisted-development.md) |
 | Workflow, validation, prompt examples | [Development workflow](docs/DEVELOPMENT_WORKFLOW.md) |
 | Module ownership and startup | [Architecture](docs/ARCHITECTURE.md) |

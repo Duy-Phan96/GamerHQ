@@ -19,9 +19,11 @@
 4. Update tests/checklist and `CHANGELOG.md`.
 5. Test locally/test-server against a backed-up database.
 6. Merge into `develop` only after the feature works.
-7. Create a release candidate and run `RELEASE_CHECKLIST.md`.
-8. Merge/tag on `main` only after the release candidate passes.
-9. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
+7. Create a release candidate, fill the [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md), and run `RELEASE_CHECKLIST.md`.
+8. Recommend a server update only for that exact release candidate after its automated gates are green; never recommend `latest develop`.
+9. Complete the required manual Discord/VPS acceptance for that exact candidate.
+10. Merge/tag on `main` only after the release candidate passes.
+11. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
 
 ## Changelog discipline
 
@@ -64,3 +66,12 @@ before merging, and never force-push release tags. Before every commit, inspect
 `git status` and confirm that `.env`, databases, `runtime/`, `backups/` and logs
 are absent. Tags use the exact `VERSION` value prefixed with `v`, for example
 `v1.0.0-beta.1-rc4`.
+
+
+## Cross-project deployment rule
+
+External Skill, web and feature projects may finish and merge independently, but they do not decide that the production server should update. Each project records its deployment impact and compatibility requirements. GamerHQ integrates those reviewed outputs into a release candidate.
+
+The release candidate is the only server-update decision boundary. Its snapshot must record the exact GamerHQ SHA/version, external Skill pins, data/config impact, CI/readiness evidence, manual acceptance, rollback target and newer work that is intentionally excluded.
+
+This prevents concurrent project work from turning a moving integration branch into an ambiguous deployment target.

@@ -39,3 +39,34 @@ Write down:
 
 Do not implement a missing host feature by bypassing the SDK. Request a new
 capability/contract instead.
+
+
+## Cross-project release boundary
+
+This repository can become **READY FOR GAMERHQ INTEGRATION** after its own
+package/conformance/CI gates are green.
+
+It must not independently recommend a production GamerHQ server update.
+
+For the GamerHQ ecosystem, deployment is decided only by one immutable GamerHQ
+Host release candidate and its Server Release Snapshot. Report this Skill's:
+
+- Skill ID;
+- package/distribution version;
+- Runtime API;
+- capabilities;
+- immutable reviewed commit/release;
+- migration/storage impact;
+- required Host integration/pin;
+- whether it should be included in the next GamerHQ release snapshot.
+
+The canonical ecosystem rule is maintained in the GamerHQ Host repository:
+
+`docs/development/GAMERHQ_ECOSYSTEM_WORKING_RULES.md`
+
+and the deployment decision template is:
+
+`docs/development/SERVER_RELEASE_SNAPSHOT.md`
+
+Never advise deploying a moving `develop` branch merely because this Skill's
+own CI is green.
