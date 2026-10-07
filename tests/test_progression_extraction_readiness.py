@@ -95,6 +95,27 @@ class ProgressionExtractionReadinessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(CONFIG_KEY, "config.v1")
         self.assertEqual(MEMBER_KEY_PREFIX, "member.v1:")
 
+    async def test_partial_legacy_member_state_is_read_additively_without_rewrite(self):
+        storage = FakeStorage({
+            CONFIG_KEY: DEFAULT_CONFIG,
+            MEMBER_KEY_PREFIX + "7": {"totalXp": 25},
+        })
+        skill = create_skill()
+        ctx = SimpleNamespace(storage=storage)
+
+        status = await skill.member_status(ctx, {"memberId": 7})
+
+        self.assertEqual(status["totalXp"], 25)
+        self.assertEqual(status["sourceXp"], {})
+        self.assertEqual(status["metrics"], {})
+        self.assertEqual(status["achievements"], ())
+        self.assertEqual(status["badges"], ())
+        self.assertEqual(status["titles"], ())
+        self.assertEqual(status["claimedRewards"], ())
+        self.assertEqual(status["ownedRoleGrants"], ())
+        self.assertEqual(storage.writes, 0)
+        self.assertEqual(storage.deletes, 0)
+
     async def test_disable_and_health_do_not_destroy_or_rewrite_storage(self):
         storage = FakeStorage({CONFIG_KEY: DEFAULT_CONFIG, MEMBER_KEY_PREFIX + "7": {"totalXp": 25}})
         before = deepcopy(storage.data)
