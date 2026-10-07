@@ -81,11 +81,19 @@ class AwinSkillIntegrationTests(unittest.TestCase):
         self.assertNotIn("self.access_token.value}", source)
         self.assertNotIn("repr(self.access_token", source)
 
-    def test_saved_html_authority_is_only_forwarded_when_explicit(self):
-        source = inspect.getsource(awin_management.AwinSavedHtmlModal.on_submit)
-        self.assertIn('if complete:', source)
-        self.assertIn('payload["completeAdvertiserId"] = complete', source)
-        self.assertIn('IMPORT_SAVED_HTML_API', source)
+    def test_saved_html_authority_requires_explicit_review_and_confirmation(self):
+        submit_source = inspect.getsource(awin_management.AwinSavedHtmlModal.on_submit)
+        confirm_source = inspect.getsource(
+            awin_management.AwinSavedHtmlAuthorityConfirmView.confirm
+        )
+        helper_source = inspect.getsource(awin_management._run_saved_html_import)
+
+        self.assertIn("if complete:", submit_source)
+        self.assertIn("AwinSavedHtmlAuthorityConfirmView", submit_source)
+        self.assertNotIn('completeAdvertiserId"] = complete', submit_source)
+        self.assertIn("complete_advertiser_id=self.complete_advertiser_id", confirm_source)
+        self.assertIn('payload["completeAdvertiserId"]', helper_source)
+        self.assertIn("IMPORT_SAVED_HTML_API", helper_source)
 
     def test_post_confirmation_forwards_skill_confirm_payload_unchanged(self):
         init_source = inspect.getsource(awin_management.AwinPostConfirmView.__init__)
