@@ -913,13 +913,20 @@ class SkillDetailsView(Menu):
                 'Review Disable' if status.enabled else 'Review Enable',
                 self.review_toggle,
             )
-        if status.skill_id in {'recurring-posts', 'progression'} and status.enabled and status.management_available:
+        if (
+            status.skill_id in {'recurring-posts', 'progression', 'awin-affiliate'}
+            and status.enabled
+            and status.management_available
+        ):
             self.action('Configure', self.configure)
         self.action('Back to Skills', self.back)
 
     async def configure(self, interaction):
         if self.skill_id == 'progression':
             return await open_progression(interaction, self.guild, self.admin_id)
+        if self.skill_id == 'awin-affiliate':
+            from cogs.awin_management import open_awin
+            return await open_awin(interaction, self.guild, self.admin_id)
         await open_recurring_posts(interaction, self.guild, self.admin_id)
 
     async def review_toggle(self, interaction):
