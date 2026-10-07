@@ -75,3 +75,22 @@ External Skill, web and feature projects may finish and merge independently, but
 The release candidate is the only server-update decision boundary. Its snapshot must record the exact GamerHQ SHA/version, external Skill pins, data/config impact, CI/readiness evidence, manual acceptance, rollback target and newer work that is intentionally excluded.
 
 This prevents concurrent project work from turning a moving integration branch into an ambiguous deployment target.
+
+
+## Server-update ownership and trigger
+
+Only the GamerHQ Host project creates production server-update recommendations
+and final update commands. External Skills and gamerhq-web report integration
+readiness and deployment impact only.
+
+The Host should proactively consider cutting a release candidate after a coherent
+server milestone, a set of accumulated server-relevant merges, a reviewed external
+Skill pin change, Host/Runtime compatibility work, important fixes, or material
+distance from the last accepted release.
+
+This should be a judgment call based on deployment value and risk, not a fixed
+number of commits.
+
+When triggered, freeze the intended state into one release candidate, run the
+complete release gates, fill the Server Release Snapshot, and keep newer work
+explicitly outside that candidate unless intentionally re-cut and retested.
