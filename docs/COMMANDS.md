@@ -13,7 +13,7 @@ Generated from current discord.py command group objects, without bot login or co
 
 ## Moderator / Staff actions
 
-Staff review suggestions and take/mark waiting/close support tickets via private persistent buttons. `/voice manage` permits Staff to select a managed room. Other actions remain scoped to the creator/host or current command authorization. These are not additional slash commands.
+Staff review suggestions and take/mark waiting/close support tickets via private persistent buttons. `/tickets overview` opens a read-only ephemeral staff dashboard with active counts, current assignment and links to the existing private ticket channels. `/voice manage` permits Staff to select a managed room. Other actions remain scoped to the creator/host or current command authorization.
 
 ## Admin / Owner commands
 
