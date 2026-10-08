@@ -340,6 +340,15 @@ class SchedulerEngineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_scoped_get_job_cannot_cross_skill_namespace(self):
         self.registry.register(FakeSkill("other-skill"))
+
+        async def other_handler(job):
+            return None
+
+        self.engine.register_handler(
+            skill_id="other-skill",
+            handler_id="post.execute.v1",
+            handler=other_handler,
+        )
         await self.engine.upsert_job(
             guild_id=1,
             skill_id="other-skill",
