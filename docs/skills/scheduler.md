@@ -174,13 +174,34 @@ await ctx.scheduler.upsert_job(
 )
 ```
 
+Read-only inspection of one Skill-owned job is also available:
+
+```python
+status = await ctx.scheduler.get_job(key="post:welcome")
+if status is not None:
+    print(status.next_run_at)
+```
+
+`SchedulerJobStatus` deliberately exposes only:
+
+- job key;
+- handler ID;
+- next run epoch;
+- last successful run epoch, when known;
+- failure count;
+- revision.
+
+It does **not** expose the job payload, lease/claim token, database fields or another
+Skill's scheduler state.
+
 And removal:
 
 ```python
 await ctx.scheduler.remove_job(key="post:welcome")
 ```
 
-The scoped adapter supplies the guild and Skill identity. A Skill cannot schedule a job under another Skill's namespace through this public API.
+The scoped adapter supplies the guild and Skill identity. A Skill cannot read,
+schedule or remove a job under another Skill's namespace through this public API.
 
 ## Security / capability
 
@@ -190,7 +211,7 @@ A Skill must declare:
 scheduler.jobs
 ```
 
-The Runtime rejects handler registration and job mutation when the capability is absent.
+The Runtime rejects handler registration, job inspection and job mutation when the capability is absent.
 
 ## Not included yet
 

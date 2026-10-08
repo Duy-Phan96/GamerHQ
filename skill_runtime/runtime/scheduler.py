@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from ..contracts.capabilities import SkillCapability
+from ..contracts.context import SchedulerJobStatus
 from ..contracts.schedule import ScheduleSpec, next_run_at, schedule_from_dict, schedule_to_dict
 from .registry import SkillRegistry
 
@@ -46,6 +47,7 @@ class StaleSchedulerClaimError(RuntimeError):
 
 class SchedulerStorePort(Protocol):
     async def upsert_job(self, job: ScheduledJob) -> None: ...
+    async def get_job(self, *, guild_id: int, skill_id: str, key: str) -> ScheduledJob | None: ...
     async def remove_job(self, *, guild_id: int, skill_id: str, key: str) -> bool: ...
     async def claim_due(self, *, now: int, lease_seconds: int, limit: int) -> tuple[ScheduledJob, ...]: ...
     async def finish_success(self, job: ScheduledJob, *, ran_at: int, next_run_at: int | None) -> None: ...
@@ -137,6 +139,34 @@ class SchedulerEngine:
         )
         await self.store.upsert_job(job)
         return job
+
+    async def get_job(
+        self,
+        *,
+        guild_id: int,
+        skill_id: str,
+        key: str,
+    ) -> SchedulerJobStatus | None:
+        self._require_scheduler_capability(skill_id)
+        if guild_id <= 0:
+            raise ValueError("guild_id must be positive.")
+        if not JOB_KEY.fullmatch(key):
+            raise ValueError("Scheduler job key must be 1-128 safe characters.")
+        job = await self.store.get_job(
+            guild_id=guild_id,
+            skill_id=skill_id,
+            key=key,
+        )
+        if job is None:
+            return None
+        return SchedulerJobStatus(
+            key=job.key,
+            handler_id=job.handler_id,
+            next_run_at=job.next_run_at,
+            last_run_at=job.last_run_at,
+            failure_count=job.failure_count,
+            revision=job.revision,
+        )
 
     async def remove_job(self, *, guild_id: int, skill_id: str, key: str) -> bool:
         self._require_scheduler_capability(skill_id)
@@ -248,6 +278,13 @@ class ScopedScheduler:
             handler_id=handler_id,
             schedule=schedule_from_dict(schedule),
             payload=payload,
+        )
+
+    async def get_job(self, *, key: str) -> SchedulerJobStatus | None:
+        return await self.engine.get_job(
+            guild_id=self.guild_id,
+            skill_id=self.skill_id,
+            key=key,
         )
 
     async def remove_job(self, *, key: str) -> None:
