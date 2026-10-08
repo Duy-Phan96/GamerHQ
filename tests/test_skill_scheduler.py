@@ -15,7 +15,7 @@ from skill_runtime.contracts.schedule import (
     schedule_to_dict,
 )
 from skill_runtime.runtime.registry import SkillRegistry
-from skill_runtime.runtime.scheduler import ScheduledJob, SchedulerEngine, StaleSchedulerClaimError
+from skill_runtime.runtime.scheduler import ScheduledJob, SchedulerEngine, ScopedScheduler, StaleSchedulerClaimError
 
 
 class FakeSkill:
@@ -42,6 +42,9 @@ class FakeStore:
 
     async def upsert_job(self, job):
         self.jobs[(job.guild_id, job.skill_id, job.key)] = job
+
+    async def get_job(self, *, guild_id, skill_id, key):
+        return self.jobs.get((guild_id, skill_id, key))
 
     async def remove_job(self, *, guild_id, skill_id, key):
         return self.jobs.pop((guild_id, skill_id, key), None) is not None
@@ -292,6 +295,81 @@ class SchedulerEngineTests(unittest.IsolatedAsyncioTestCase):
                 skill_id="no-scheduler",
                 handler_id="job.execute.v1",
                 handler=lambda job: None,
+            )
+
+    async def test_get_job_returns_sanitized_status(self):
+        await self.engine.upsert_job(
+            guild_id=1,
+            skill_id="scheduler-skill",
+            key="post:1",
+            handler_id="post.execute.v1",
+            schedule=IntervalSchedule(60),
+            payload={"private": "secret"},
+            now=100,
+        )
+        stored = self.store.jobs[(1, "scheduler-skill", "post:1")]
+        self.store.jobs[(1, "scheduler-skill", "post:1")] = ScheduledJob(
+            guild_id=stored.guild_id,
+            skill_id=stored.skill_id,
+            key=stored.key,
+            handler_id=stored.handler_id,
+            schedule=stored.schedule,
+            payload=stored.payload,
+            next_run_at=stored.next_run_at,
+            last_run_at=90,
+            failure_count=2,
+            revision=7,
+            claim_token="private-claim-token",
+        )
+
+        status = await self.engine.get_job(
+            guild_id=1,
+            skill_id="scheduler-skill",
+            key="post:1",
+        )
+
+        self.assertIsNotNone(status)
+        self.assertEqual(status.key, "post:1")
+        self.assertEqual(status.handler_id, "post.execute.v1")
+        self.assertEqual(status.next_run_at, 160)
+        self.assertEqual(status.last_run_at, 90)
+        self.assertEqual(status.failure_count, 2)
+        self.assertEqual(status.revision, 7)
+        self.assertFalse(hasattr(status, "payload"))
+        self.assertFalse(hasattr(status, "claim_token"))
+
+    async def test_scoped_get_job_cannot_cross_skill_namespace(self):
+        self.registry.register(FakeSkill("other-skill"))
+        await self.engine.upsert_job(
+            guild_id=1,
+            skill_id="other-skill",
+            key="post:1",
+            handler_id="post.execute.v1",
+            schedule=IntervalSchedule(60),
+            payload={},
+            now=100,
+        )
+        scoped = ScopedScheduler(
+            self.engine,
+            guild_id=1,
+            skill_id="scheduler-skill",
+        )
+
+        self.assertIsNone(await scoped.get_job(key="post:1"))
+
+    async def test_get_job_requires_scheduler_capability_and_valid_key(self):
+        self.registry.register(FakeSkill("no-read", scheduler=False))
+        with self.assertRaisesRegex(PermissionError, "scheduler.jobs"):
+            await self.engine.get_job(
+                guild_id=1,
+                skill_id="no-read",
+                key="post:1",
+            )
+        with self.assertRaisesRegex(ValueError, "job key"):
+            await self.engine.get_job(
+                guild_id=1,
+                skill_id="scheduler-skill",
+                key="bad key",
             )
 
     async def test_remove_job_is_idempotent(self):
