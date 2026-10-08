@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gamerhq-skill-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Portable Skill Runtime contracts and SDK for GamerHQ-compatible hosts"
 readme = "docs/skills/README.md"
 requires-python = ">=3.12"
