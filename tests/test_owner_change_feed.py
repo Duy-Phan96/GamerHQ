@@ -105,6 +105,119 @@ class OwnerFeedTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Category ID', notice)
         self.assertNotIn('Position', notice)
 
+    async def test_category_delete_groups_related_channel_moves_without_rewriting_history(self):
+        category_id = 5000
+        category = structure.record_change(
+            self.guild, 'category', 'temporary-category', category_id, self.owner.id,
+            'category_delete',
+            {'name': 'Temporary', 'position': 3},
+            {'name': 'Temporary', 'deleted': True},
+            reversible=False,
+        )
+        children = []
+        for index in range(3):
+            children.append(structure.record_change(
+                self.guild, 'channel', f'child-{index}', 6000 + index, self.owner.id,
+                'channel_update',
+                {'name': f'child-{index}', 'category_id': category_id, 'position': index},
+                {'name': f'child-{index}', 'category_id': None, 'position': index},
+                reversible=False,
+            ))
+
+        await feed.flush(self.guild)
+
+        self.room.send.assert_awaited_once()
+        notice = self.message(category)
+        self.assertIn('Category removed · 3 related channel moves', notice.content)
+        self.assertNotIn('child-0', notice.content)
+        self.assertEqual(
+            feed.load_notice(self.guild.id, category['id'])['grouped_change_ids'],
+            [child['id'] for child in children],
+        )
+        for child in children:
+            state = feed.load_notice(self.guild.id, child['id'])
+            self.assertEqual(state['state'], 'GROUPED')
+            self.assertEqual(state['parent_change_id'], category['id'])
+            self.assertIsNotNone(structure.get_change(self.guild, child['id']))
+
+        grouped = feed.change_for_message(self.guild, self.room.id, notice.id)
+        self.assertEqual(len(grouped['grouped_changes']), 3)
+        private_details = log.details(grouped)
+        for index in range(3):
+            self.assertIn(f'#child-{index}', private_details)
+        self.assertIn('Undo unavailable', private_details)
+
+    async def test_category_delete_grouping_falls_back_when_related_change_is_not_pure_move(self):
+        category_id = 5100
+        category = structure.record_change(
+            self.guild, 'category', 'temporary-category', category_id, self.owner.id,
+            'category_delete',
+            {'name': 'Temporary', 'position': 3},
+            {'name': 'Temporary', 'deleted': True},
+            reversible=False,
+        )
+        structure.record_change(
+            self.guild, 'channel', 'child-a', 6100, self.owner.id, 'channel_update',
+            {'name': 'child-a', 'category_id': category_id, 'position': 0},
+            {'name': 'child-a', 'category_id': None, 'position': 0},
+            reversible=False,
+        )
+        structure.record_change(
+            self.guild, 'channel', 'child-b', 6101, self.owner.id, 'channel_update',
+            {'name': 'child-b', 'category_id': category_id, 'position': 1},
+            {'name': 'renamed-child-b', 'category_id': None, 'position': 1},
+            reversible=False,
+        )
+        structure.record_change(
+            self.guild, 'channel', 'child-c', 6102, self.owner.id, 'channel_update',
+            {'name': 'child-c', 'category_id': category_id, 'position': 2},
+            {'name': 'child-c', 'category_id': None, 'position': 2},
+            reversible=False,
+        )
+
+        await feed.flush(self.guild)
+
+        self.assertEqual(self.room.send.await_count, 4)
+        self.assertNotIn('grouped_change_ids', feed.load_notice(self.guild.id, category['id']))
+
+    async def test_grouped_category_notice_retries_definite_send_without_duplicate(self):
+        category_id = 5200
+        category = structure.record_change(
+            self.guild, 'category', 'temporary-category', category_id, self.owner.id,
+            'category_delete',
+            {'name': 'Temporary', 'position': 3},
+            {'name': 'Temporary', 'deleted': True},
+            reversible=False,
+        )
+        children = [
+            structure.record_change(
+                self.guild, 'channel', f'child-{index}', 6200 + index, self.owner.id,
+                'channel_update',
+                {'name': f'child-{index}', 'category_id': category_id, 'position': index},
+                {'name': f'child-{index}', 'category_id': None, 'position': index},
+                reversible=False,
+            )
+            for index in range(3)
+        ]
+
+        sender = self.room.send.side_effect
+        self.room.send.side_effect = discord.Forbidden(
+            SimpleNamespace(status=403, reason='Forbidden'), 'denied'
+        )
+        await feed.flush(self.guild)
+        self.assertEqual(feed.load_notice(self.guild.id, category['id'])['state'], 'PENDING')
+        for child in children:
+            self.assertEqual(feed.load_notice(self.guild.id, child['id'])['state'], 'GROUPED')
+
+        feed._locks.clear()
+        self.room.send.side_effect = sender
+        await feed.flush(self.guild)
+        await feed.flush(self.guild)
+
+        self.assertEqual(self.room.send.await_count, 2)
+        self.assertEqual(len(self.messages), 1)
+        self.assertEqual(feed.load_notice(self.guild.id, category['id'])['state'], 'SENT')
+
     async def test_two_changes_produce_two_separate_messages_in_order(self):
         first, second = self.change(), self.change(action='category_update')
         await feed.flush(self.guild)

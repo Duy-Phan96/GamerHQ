@@ -22,7 +22,7 @@
 
 ### Fixed
 
-_No entries yet._
+- Reduced Owner Change Log noise by grouping only unambiguous category deletions with their pure child-channel moves while preserving every history row.
 
 ### Security
 
