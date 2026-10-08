@@ -49,6 +49,67 @@ class GamerHQSchedulerStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["revision"], 2)
         self.assertIn('"version":2', rows[0]["payload_json"])
 
+    async def test_get_job_returns_exact_scoped_job(self):
+        await self.store.upsert_job(
+            self.job(
+                next_run=200,
+                payload={"private": "do-not-expose-through-public-status"},
+            )
+        )
+        other_skill = ScheduledJob(
+            guild_id=1,
+            skill_id="other-skill",
+            key="post:1",
+            handler_id="post.execute.v1",
+            schedule=IntervalSchedule(60),
+            payload={"other": True},
+            next_run_at=999,
+        )
+        other_guild = ScheduledJob(
+            guild_id=2,
+            skill_id="recurring-posts",
+            key="post:1",
+            handler_id="post.execute.v1",
+            schedule=IntervalSchedule(60),
+            payload={"other": True},
+            next_run_at=888,
+        )
+        await self.store.upsert_job(other_skill)
+        await self.store.upsert_job(other_guild)
+
+        job = await self.store.get_job(
+            guild_id=1,
+            skill_id="recurring-posts",
+            key="post:1",
+        )
+
+        self.assertIsNotNone(job)
+        self.assertEqual(job.guild_id, 1)
+        self.assertEqual(job.skill_id, "recurring-posts")
+        self.assertEqual(job.key, "post:1")
+        self.assertEqual(job.next_run_at, 200)
+
+    async def test_get_job_missing_or_disabled_returns_none(self):
+        self.assertIsNone(
+            await self.store.get_job(
+                guild_id=1,
+                skill_id="recurring-posts",
+                key="missing",
+            )
+        )
+        await self.store.upsert_job(self.job(key="disabled"))
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE skill_jobs SET enabled=0 WHERE guild_id=1 AND skill_id='recurring-posts' AND job_key='disabled'"
+            )
+        self.assertIsNone(
+            await self.store.get_job(
+                guild_id=1,
+                skill_id="recurring-posts",
+                key="disabled",
+            )
+        )
+
     async def test_claim_due_is_atomic_and_lease_prevents_duplicate_claim(self):
         await self.store.upsert_job(self.job(next_run=100))
         first = await self.store.claim_due(now=100, lease_seconds=60, limit=10)
