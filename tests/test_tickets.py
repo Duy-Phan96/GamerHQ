@@ -224,6 +224,28 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row['channel_id'])
         self.assertIn('Channel unavailable',_ticket_detail(self.guild,row))
 
+    async def test_staff_overview_rechecks_current_staff_access(self):
+        await self.create(self.a)
+        view=TicketOverviewView(self.guild,self.mod.id)
+        interaction=SimpleNamespace(
+            guild=self.guild,
+            user=self.mod,
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        self.mod.roles=[self.guild.default_role]
+        self.assertFalse(await view.authorized(interaction))
+        interaction.response.send_message.assert_awaited_once()
+        self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
+
+        normal=TicketOverviewView(self.guild,self.a.id)
+        normal_interaction=SimpleNamespace(
+            guild=self.guild,
+            user=self.a,
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        self.assertFalse(await normal.authorized(normal_interaction))
+        normal_interaction.response.send_message.assert_awaited_once()
+
     async def test_staff_overview_view_contains_selector_but_no_mutation_controls(self):
         await self.create(self.a)
         view=TicketOverviewView(self.guild,self.mod.id)
