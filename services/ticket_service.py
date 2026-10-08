@@ -68,6 +68,30 @@ def list_tickets(guild_id):
         return [dict(r) for r in conn.execute('SELECT * FROM support_tickets WHERE guild_id=? ORDER BY id',(guild_id,))]
 
 
+def active_overview(guild):
+    """Read-only staff dashboard projection; never repairs channels or assignments."""
+    rows = []
+    for item in list_tickets(guild.id):
+        if item['status'] == 'CLOSED':
+            continue
+        channel = guild.get_channel(item['channel_id']) if item.get('channel_id') else None
+        assigned = guild.get_member(item['assigned_staff_id']) if item.get('assigned_staff_id') else None
+        creator = guild.get_member(item['creator_discord_id'])
+        rows.append({
+            'id': item['id'],
+            'status': item['status'],
+            'ticket_type': item.get('ticket_type', 'GENERAL_SUPPORT'),
+            'channel_id': channel.id if isinstance(channel, discord.TextChannel) else None,
+            'channel_ready': isinstance(channel, discord.TextChannel),
+            'assigned_staff_id': assigned.id if assigned and staff(assigned) else None,
+            'assigned_name': assigned.display_name if assigned and staff(assigned) else None,
+            'creator_id': item['creator_discord_id'],
+            'creator_name': creator.display_name if creator else None,
+            'updated_at': item['updated_at'],
+        })
+    return rows
+
+
 def limit(guild):
     raw = db.get_setting(f'ticket_open_limit:{guild.id}')
     return max(1,min(5,int(raw))) if raw and str(raw).isdigit() else 1
