@@ -6,6 +6,7 @@ reusable platform work built around it.
 Start here:
 - [Current Project Status](PROJECT_STATUS.md)
 - [Core Beta Acceptance](CORE_BETA_ACCEPTANCE.md)
+- [Thin Host Inventory](THIN_HOST_INVENTORY.md)
 - [Software Development Lifecycle](SDLC.md)
 - [Testing Strategy](TESTING.md)
 - [CI Quality Gates](CI.md)
