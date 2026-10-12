@@ -5,6 +5,7 @@ Run this after every release candidate before declaring it stable.
 ## Automated gates
 
 - [ ] `python -m pytest` passes (or `python -m tools.test` for unittest with offline isolation).
+- [ ] `python -m tools.release_readiness --expect-channel candidate` passes for the exact frozen candidate.
 - [ ] `python -m tools.production_preflight --db-path <runtime-db>` passes.
 - [ ] `git status` contains no `.env`, DB, logs, backups or runtime data.
 - [ ] Container image builds successfully on the deployment host.
@@ -84,13 +85,24 @@ Run this after every release candidate before declaring it stable.
 - [ ] Test multi-page Area creation and confirmed removal; confirm active-resource blocks and game/role preservation.
 
 
+## Core beta journey gate
+
+- [ ] Execute [Core Beta Acceptance](docs/development/CORE_BETA_ACCEPTANCE.md) against the exact frozen candidate.
+- [ ] Record the candidate version, full SHA, environment, section results and owner decision without private data.
+- [ ] Use separate Owner/Admin, Staff A, Staff B, Member A and Member B identities for authorization/privacy checks.
+- [ ] Stop on privacy exposure, wrong DB/guild, a second active bot, unexpected deletion/migration or duplicate managed resources.
+- [ ] Do not run setup, reconcile or repair automatically in response to a health finding; review and record it first.
+- [ ] Treat the result as candidate-specific; newer code or Skill pins require a new acceptance decision.
+
+
 ## Owner acceptance preparation
 
-- [ ] Review this checklist and [command reference](docs/COMMANDS.md).
-- [ ] Deploy/sync; run owner/admin health, inspect private Details, then confirmed reconciliation/repair.
-- [ ] Repeat health/setup; verify stable IDs/pins and manual-review protection.
-- [ ] Execute this checklist with two member accounts and a Staff account, including revoked permissions.
-- [ ] Record unresolved manual findings; do not run unknown-resource deletion as a repair shortcut.
+- [ ] Review this checklist, [Core Beta Acceptance](docs/development/CORE_BETA_ACCEPTANCE.md) and the [command reference](docs/COMMANDS.md).
+- [ ] Verify the exact immutable candidate, backup, rollback target and one-active-bot requirement before connecting it.
+- [ ] Run owner/admin health read-only first and inspect private Details; record warnings before any confirmed mutation.
+- [ ] Use existing preview/confirmation flows only when the owner explicitly approves a required reconcile/repair.
+- [ ] Execute acceptance with separate member and Staff accounts, including revoked permissions and restart persistence.
+- [ ] Record unresolved findings as blockers or focused Issues; never use unknown-resource deletion as a repair shortcut.
 
 
 ## Affiliate support board
@@ -105,7 +117,8 @@ Run this after every release candidate before declaring it stable.
 - [ ] Back up SQLite; deploy/restart the reviewed code manually. Run `/server health`.
 - [ ] Preview and confirm owner `/server setup`; verify both support entries are in START HERE and existing affiliate ID/history/pin are preserved. Run setup twice.
 - [ ] Users A/B create distinct tickets; each sees only their own. Moderator sees both; neither user sees ticket-logs or can manage channel permissions.
-- [ ] Double-submit, open-limit, required form fields and stale/unauthorized buttons behave safely.
+- [ ] Double-submit, open-limit, private chat entry and stale/unauthorized buttons behave safely.
+- [ ] Staff opens `/tickets overview`; active counts/assignment are current, the response is ephemeral and no private ticket description is exposed.
 - [ ] Staff takes a ticket, marks waiting, and resumes; a second Staff cannot replace an active assignee accidentally.
 - [ ] Creator cancels close, then confirms; history remains readable and posting is locked. Staff can also close. Repeated close is harmless.
 - [ ] Restart: assignment/state, entry and ticket buttons survive; closed tickets stay closed and no duplicate pins/channels appear.
