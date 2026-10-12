@@ -11,10 +11,11 @@ from hosts.gamerhq.skill_deployment import (
     deployment_plan,
     load_reviewed_skill_lock,
 )
-from tools.release_preflight import ROOT, VERSION_CHANNELS, check
+from tools.release_preflight import ROOT, check
 
 
 SCHEMA_VERSION = "1"
+READINESS_CHANNELS = frozenset({"candidate", "main"})
 
 
 def build_release_readiness(
@@ -29,6 +30,9 @@ def build_release_readiness(
     This composes existing authoritative validators. It does not create releases,
     tags, packages or deployments and does not perform live acceptance.
     """
+    if expected_channel not in READINESS_CHANNELS:
+        raise ValueError("Release readiness requires candidate or main version semantics")
+
     version_path = version_path or ROOT / "VERSION"
     changelog_path = changelog_path or ROOT / "CHANGELOG.md"
     skill_lock_path = skill_lock_path or ROOT / "requirements-skills.lock"
@@ -82,7 +86,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Emit JSON output.")
     parser.add_argument(
         "--expect-channel",
-        choices=sorted(VERSION_CHANNELS),
+        choices=sorted(READINESS_CHANNELS),
         default="candidate",
         help="Expected Host version channel; release readiness defaults to candidate.",
     )
