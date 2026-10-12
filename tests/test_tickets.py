@@ -8,7 +8,8 @@ from database import db
 from services import ticket_service as tickets
 from services import community_structure_service as structure
 from services.server_setup_service import repair_server
-from cogs.tickets import Tickets, TicketEntry, TicketActions, TicketModal, CloseConfirmation
+from cogs.tickets import (Tickets, TicketEntry, TicketActions, TicketModal, CloseConfirmation,
+    TicketOverviewView, _overview_text, _ticket_detail)
 
 class TicketTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -21,7 +22,7 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
 
     def member(self,uid,staff=False):
         member=MagicMock(spec=discord.Member)
-        member.id=uid;member.guild=self.guild;member.bot=False
+        member.id=uid;member.guild=self.guild;member.bot=False;member.display_name=f'User {uid}'
         member.roles=[self.guild.default_role]+([self.guild.mod] if staff else [])
         self.members[uid]=member
         return member
@@ -174,6 +175,88 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
         interaction.message=SimpleNamespace(id=123)
         await TicketActions().act(interaction,'take')
         self.assertEqual(tickets.get(item['id'])['status'],'OPEN')
+
+    async def test_staff_overview_tracks_open_assignment_waiting_and_close_read_only(self):
+        third=self.member(12)
+        open_item=await self.create(self.a)
+        active_item=await self.create(self.b)
+        waiting_item=await self.create(third)
+        await tickets.change(self.guild,self.mod,active_item['id'],'take')
+        await tickets.change(self.guild,self.other_mod,waiting_item['id'],'take')
+        await tickets.change(self.guild,self.other_mod,waiting_item['id'],'wait')
+
+        before=[dict(row) for row in tickets.list_tickets(self.guild.id)]
+        rows=tickets.active_overview(self.guild)
+        after=[dict(row) for row in tickets.list_tickets(self.guild.id)]
+        self.assertEqual(before,after)
+
+        by_id={row['id']:row for row in rows}
+        self.assertEqual(by_id[open_item['id']]['status'],'OPEN')
+        self.assertIsNone(by_id[open_item['id']]['assigned_staff_id'])
+        self.assertEqual(by_id[active_item['id']]['status'],'IN_PROGRESS')
+        self.assertEqual(by_id[active_item['id']]['assigned_staff_id'],self.mod.id)
+        self.assertEqual(by_id[waiting_item['id']]['status'],'WAITING_FOR_USER')
+        self.assertEqual(by_id[waiting_item['id']]['assigned_staff_id'],self.other_mod.id)
+
+        overview=_overview_text(self.guild,rows)
+        self.assertIn('Open / unassigned: **1**',overview)
+        self.assertIn('In progress: **1**',overview)
+        self.assertIn('Waiting: **1**',overview)
+        self.assertNotIn('Voice issue',overview)
+        self.assertNotIn('I cannot join my room.',overview)
+
+        await tickets.change(self.guild,self.mod,active_item['id'],'close')
+        refreshed=tickets.active_overview(self.guild)
+        self.assertNotIn(active_item['id'],{row['id'] for row in refreshed})
+
+    async def test_staff_overview_missing_channel_reports_unavailable_without_recreate(self):
+        item=await self.create(self.a)
+        channel=self.guild.get_channel(item['channel_id'])
+        self.guild.channels.remove(channel)
+        self.guild.text_channels.remove(channel)
+        before=[c.id for c in self.guild.channels]
+
+        rows=tickets.active_overview(self.guild)
+
+        self.assertEqual(before,[c.id for c in self.guild.channels])
+        row=next(row for row in rows if row['id']==item['id'])
+        self.assertFalse(row['channel_ready'])
+        self.assertIsNone(row['channel_id'])
+        self.assertIn('Channel unavailable',_ticket_detail(self.guild,row))
+
+    async def test_staff_overview_rechecks_current_staff_access(self):
+        await self.create(self.a)
+        view=TicketOverviewView(self.guild,self.mod.id)
+        interaction=SimpleNamespace(
+            guild=self.guild,
+            user=self.mod,
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        self.mod.roles=[self.guild.default_role]
+        self.assertFalse(await view.authorized(interaction))
+        interaction.response.send_message.assert_awaited_once()
+        self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
+
+        normal=TicketOverviewView(self.guild,self.a.id)
+        normal_interaction=SimpleNamespace(
+            guild=self.guild,
+            user=self.a,
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        self.assertFalse(await normal.authorized(normal_interaction))
+        normal_interaction.response.send_message.assert_awaited_once()
+
+    async def test_staff_overview_view_contains_selector_but_no_mutation_controls(self):
+        await self.create(self.a)
+        view=TicketOverviewView(self.guild,self.mod.id)
+        labels=[getattr(child,'label',None) for child in view.children]
+        custom_ids=[getattr(child,'custom_id',None) for child in view.children]
+        self.assertIn('Refresh',labels)
+        self.assertIn('Close',labels)
+        self.assertTrue(any(isinstance(child,discord.ui.Select) for child in view.children))
+        self.assertNotIn('Take Ticket',labels)
+        self.assertNotIn('Close Ticket',labels)
+        self.assertFalse(any(value in {'gamerhq:tickets:take','gamerhq:tickets:close'} for value in custom_ids))
 
     async def test_guide_health_and_worst_case_message_size(self):
         from services.health_service import scan
