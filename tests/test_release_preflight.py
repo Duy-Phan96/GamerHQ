@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.release_preflight import check, validate_skill_lock
+from tools.release_preflight import check, validate_skill_lock, validate_version_channel
 
 
 class ReleasePreflightTests(unittest.TestCase):
@@ -40,6 +40,30 @@ class ReleasePreflightTests(unittest.TestCase):
         self.assertIn("duplicate", errors[0])
         self.assertNotIn("1.2.4", errors[0])
 
+    def test_version_channels_accept_documented_host_versions(self):
+        cases = (
+            ("1.0.0-beta.2-dev", "develop"),
+            ("1.0.0-beta.2-dev.1", "develop"),
+            ("1.0.0-beta.2-rc1", "candidate"),
+            ("1.0.0-beta.2", "main"),
+            ("1.0.0-beta.2-rc1", "main"),
+        )
+        for version, channel in cases:
+            with self.subTest(version=version, channel=channel):
+                self.assertEqual(validate_version_channel(version, channel), ())
+
+    def test_version_channels_reject_wrong_branch_semantics(self):
+        cases = (
+            ("1.0.0-beta.2", "develop", "-dev"),
+            ("1.0.0-beta.2-dev", "candidate", "-rcN"),
+            ("1.0.0-beta.2-dev", "main", "exact accepted"),
+        )
+        for version, channel, message in cases:
+            with self.subTest(version=version, channel=channel):
+                errors = validate_version_channel(version, channel)
+                self.assertEqual(len(errors), 1)
+                self.assertIn(message, errors[0])
+
     def test_check_validates_release_metadata_without_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -47,7 +71,7 @@ class ReleasePreflightTests(unittest.TestCase):
             changelog = root / "CHANGELOG.md"
             lock = root / "requirements-skills.lock"
 
-            version.write_text("1.2.3\n", encoding="utf-8")
+            version.write_text("1.2.4-dev\n", encoding="utf-8")
             changelog.write_text(
                 "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Test\n",
                 encoding="utf-8",
@@ -67,12 +91,39 @@ class ReleasePreflightTests(unittest.TestCase):
                 version_path=version,
                 changelog_path=changelog,
                 skill_lock_path=lock,
+                expected_channel="develop",
             )
 
             self.assertTrue(result.ok)
             self.assertEqual(result.errors, ())
+            self.assertIn("Version channel valid for develop", result.notices)
             for path, contents in before.items():
                 self.assertEqual(path.read_bytes(), contents)
+
+    def test_check_reports_channel_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            version = root / "VERSION"
+            changelog = root / "CHANGELOG.md"
+            lock = root / "requirements-skills.lock"
+
+            version.write_text("1.2.4-dev\n", encoding="utf-8")
+            changelog.write_text(
+                "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Test\n",
+                encoding="utf-8",
+            )
+            lock.write_text("gamerhq-skill-example==1.2.3\n", encoding="utf-8")
+
+            result = check(
+                version_path=version,
+                changelog_path=changelog,
+                skill_lock_path=lock,
+                expected_channel="candidate",
+            )
+
+            self.assertFalse(result.ok)
+            self.assertEqual(len(result.errors), 1)
+            self.assertIn("-rcN", result.errors[0])
 
     def test_check_reports_invalid_version_changelog_and_lock(self):
         with tempfile.TemporaryDirectory() as directory:
