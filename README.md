@@ -28,7 +28,7 @@ GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with
 ### Community
 
 - Submit suggestions through a public entry point for private Staff review.
-- Open private support tickets with a short form. Staff can take tickets and mark them waiting; the creator or Staff can confirm closure. Closed tickets retain readable history.
+- Open a private support chat without a required form. Staff can take tickets, mark them waiting and use `/tickets overview`; the creator or Staff can confirm closure. Closed tickets retain readable history.
 - Use managed welcome, rules, guide and role-selection channels.
 - Use the Marketplace overview to open the read-only partner channels through clickable list entries. Need Support remains the separate private help-ticket entry.
 - Provide community-events, tournaments and giveaways boards; community activities have their own space.
@@ -206,7 +206,7 @@ Starting the bot connects to Discord, initializes SQLite, synchronizes commands 
 
 ## Commands
 
-These commands are defined in the extensions loaded by `bot.py`. The [full command reference](docs/COMMANDS.md) describes all 31 registered slash commands; `/server health` Details shows the deployed inventory.
+These commands are defined in the extensions loaded by `bot.py`. The [full command reference](docs/COMMANDS.md) describes the current registered slash commands; `/server health` Details shows the deployed inventory.
 
 ### Member commands
 
@@ -240,7 +240,7 @@ These commands are defined in the extensions loaded by `bot.py`. The [full comma
 | `/game-admin recover-existing`, `/game-admin set-visible` | Recover existing mappings or change selection visibility |
 | `/game-admin overview`, `/game-admin status`, `/game-admin database` | Refresh the selector or inspect game/database state |
 
-Staff review suggestions and take/mark waiting/close tickets through private buttons. Ticket creation and role-selection hubs also use components; they are not additional slash commands. Event management remains creator-only; participants can join, leave and use shared event links.
+Staff review suggestions and take/mark waiting/close tickets through private buttons. `/tickets overview` opens a read-only ephemeral staff dashboard with active counts, current assignment and links to existing private ticket channels. Ticket creation and role-selection hubs also use components; they are not additional slash commands. Event management remains creator-only; participants can join, leave and use shared event links.
 
 ## Server operations
 
@@ -268,7 +268,7 @@ The GitHub Actions workflow runs offline tests on Python 3.12/3.14, repository a
 - **Streamer Hub:** hidden beta implemented but disabled by default; live Twitch acceptance must be performed separately on a Dev server.
 - **Potential experiments:** participant availability feedback, post-session feedback and simpler game-role selection remain ideas under evaluation, not shipped features or delivery commitments.
 - **Tickets:** closed history stays in private Discord channels. Automatic transcript export, retention/deletion, reopening, Staff Notes and Add User are not implemented.
-- **XP, levels and achievements:** not implemented; no reward system is promised.
+- **XP, levels and achievements:** provided by the independently versioned XP & Progression Skill when installed and enabled; it is not a built-in Host reward system.
 
 ## Security and privacy
 

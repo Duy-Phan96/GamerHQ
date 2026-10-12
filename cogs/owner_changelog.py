@@ -158,12 +158,23 @@ async def refresh_board(guild, *, publish=False):
 
 
 def details(change):
-    if change.get("action", "").startswith("observed_"):
-        from services.server_change_observer import detail_text
-        return detail_text(change)
-
     def safe(value, limit=100):
         return discord.utils.escape_markdown(discord.utils.escape_mentions(str(value)))[:limit]
+
+    grouped = tuple(change.get("grouped_changes") or ())
+    if change.get("action", "").startswith("observed_"):
+        from services.server_change_observer import detail_text
+        text = detail_text(change)
+        if grouped:
+            lines = [text, "", f"**Related channel moves:** {len(grouped)}"]
+            for item in grouped[:12]:
+                before, after = item.get("before") or {}, item.get("after") or {}
+                name = after.get("name") or before.get("name") or "Unknown channel"
+                lines.append(f"- #{safe(name, 80)}")
+            if len(grouped) > 12:
+                lines.append(f"- …and {len(grouped) - 12} more")
+            return "\n".join(lines)[:1950]
+        return text
 
     before, after = change["before"], change["after"]
     resource_type = change.get("resource_type", "resource")
@@ -214,6 +225,15 @@ def details(change):
         lines.append("\nDiscord audit evidence identified an actor for this change.")
     else:
         lines.append("\nDiscord did not provide enough reliable audit evidence to identify who made it.")
+
+    if grouped:
+        lines.append(f"\n**Related channel moves:** {len(grouped)}")
+        for item in grouped[:12]:
+            child_before, child_after = item.get("before") or {}, item.get("after") or {}
+            child_name = child_after.get("name") or child_before.get("name") or "Unknown channel"
+            lines.append(f"- #{safe(child_name, 80)}")
+        if len(grouped) > 12:
+            lines.append(f"- …and {len(grouped) - 12} more")
 
     if feed.can_undo(change):
         lines.append("\n**Undo available:** restores the previous editable state after checking that the resource has not changed again.")

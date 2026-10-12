@@ -34,7 +34,18 @@ jobs:
         run: python -m pip wheel . --no-deps --wheel-dir /tmp/gamerhq-sdk-dist
       - name: Run release metadata preflight
         if: matrix.python == '3.12'
-        run: python -m tools.release_preflight
+        shell: bash
+        run: |
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          base="${GITHUB_BASE_REF:-}"
+          if [[ "$base" == "main" || ( -z "$base" && "$GITHUB_REF_NAME" == "main" ) ]]; then
+            channel="main"
+          elif [[ "$branch" == release/* ]]; then
+            channel="candidate"
+          else
+            channel="develop"
+          fi
+          python -m tools.release_preflight --expect-channel "$channel"
       - run: python -m pytest
       - run: python -m tools.repository_audit --history
       - run: bash -n scripts/update.sh scripts/backup.sh

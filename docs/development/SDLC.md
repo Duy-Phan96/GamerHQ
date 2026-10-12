@@ -67,7 +67,7 @@ Examples:
 
 - Runtime / SDK contract changes;
 - database lifecycle changes;
-- cross-repository changes;
+- repository-boundary or public-contract changes;
 - security/authentication changes;
 - Marketplace/install lifecycle changes;
 - external Skill compatibility changes.
@@ -75,7 +75,7 @@ Examples:
 Expected flow:
 
 Issue → architecture analysis → ADR when justified → staged implementation →
-cross-repository tests → PRs in dependency order → release/deployment review.
+repository-local tests → PR → handoff to another repository only when required.
 
 ## Lifecycle
 
@@ -135,7 +135,7 @@ Before implementation answer:
 - Does it change persisted state?
 - Does it require a migration?
 - Does it affect security, authorization or capabilities?
-- Does it require coordinated changes across repositories?
+- Does another repository need a new public contract or release?
 
 GamerHQ is the first reference customer, not the platform boundary. Portable
 components must remain usable by unrelated communities.
@@ -152,7 +152,7 @@ Before coding, produce a short plan containing:
 - backward-compatibility impact;
 - security impact;
 - deployment impact;
-- expected PR ordering for cross-repository work.
+- required handoffs to other repositories, if any.
 
 The plan should be proportional to the task.
 
@@ -245,7 +245,7 @@ A PR should be focused and explain:
 - deployment impact;
 - follow-ups.
 
-Cross-repository work should merge contracts/providers before dependent clients.
+Do not implement another repository's side of a dependency. Produce a handoff and wait for that repository to publish the required contract/version.
 
 ### 12. Merge
 
@@ -272,7 +272,7 @@ See [RELEASES.md](RELEASES.md).
 
 Production deployment remains an explicit owner operation.
 
-Feature, Skill and web projects must not turn their individual green PR into a recommendation to deploy a moving `develop` head. They report deployment impact and any required release sequencing. A server update recommendation belongs to one reviewed GamerHQ release candidate and must name its exact version and immutable commit/tag through the [Server Release Snapshot](SERVER_RELEASE_SNAPSHOT.md).
+GamerHQ server deployment is a GamerHQ-repository concern. Use the [Server Release Snapshot](SERVER_RELEASE_SNAPSHOT.md) when preparing a GamerHQ server release. External repositories publish independently and are consumed only through reviewed released contracts/packages.
 
 Use the existing:
 

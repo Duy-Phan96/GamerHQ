@@ -20,6 +20,15 @@ Discord.py / SQLite / GamerHQ services
 
 The dependency direction must never reverse. `skill_runtime/` must not import `database`, `services`, `cogs`, Discord.py, or GamerHQ-specific business logic.
 
+
+Repository ownership follows the same direction. An external Skill repository
+may depend on released public Runtime/SDK contracts, but it must not modify
+GamerHQ Host internals. Missing Host capabilities are requested through an
+explicit handoff to the GamerHQ project.
+
+GamerHQ may then independently publish the required Host/SDK contract. The Skill
+can consume that released version in its own follow-up release.
+
 ## Portable runtime
 
 The portable layer owns:
@@ -110,6 +119,30 @@ storage.skill
 must receive a permission error when attempting storage access even if its Python code obtains a storage-port reference.
 
 The same rule applies to scheduler jobs, Discord messaging, external HTTP access, Events and Public Skill APIs.
+
+## Thin Host / Skill extraction direction
+
+The platform goal is not to keep adding product behavior to GamerHQ forever.
+
+GamerHQ should increasingly become a Host for installed Skills. Stable domain
+capabilities can move out of the Host when they have:
+
+- a stable Skill ID;
+- stable storage/migration rules;
+- stable Runtime/Management/Public API contracts;
+- clear capability requirements;
+- independent tests and release lifecycle;
+- no private GamerHQ imports.
+
+Recurring Posts and XP & Progression are reference examples.
+
+Future extraction candidates include reminders, polls, giveaways, creator
+integrations, affiliate/provider integrations and other community-domain
+features when their boundaries mature.
+
+The Host may expose neutral events/capabilities that enable optional composition
+between independent Skills. A Skill must never import another Skill's private
+implementation.
 
 ## Extraction path
 

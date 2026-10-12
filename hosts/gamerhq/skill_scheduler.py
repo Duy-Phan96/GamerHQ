@@ -91,6 +91,29 @@ class GamerHQSchedulerStore:
                 ),
             )
 
+    async def get_job(
+        self,
+        *,
+        guild_id: int,
+        skill_id: str,
+        key: str,
+    ) -> ScheduledJob | None:
+        _valid_identity(guild_id, skill_id)
+        with db.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM skill_jobs
+                WHERE guild_id=? AND skill_id=? AND job_key=? AND enabled=1
+                """,
+                (guild_id, skill_id, key),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return _decode_row(row)
+        except ValueError:
+            return None
+
     async def remove_job(self, *, guild_id: int, skill_id: str, key: str) -> bool:
         _valid_identity(guild_id, skill_id)
         with db.connect() as conn:

@@ -42,6 +42,16 @@ class EventBusPort(Protocol):
     async def subscribe(self, event_id: str, handler: Callable[[EventEnvelope], Awaitable[None]]) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class SchedulerJobStatus:
+    key: str
+    handler_id: str
+    next_run_at: int
+    last_run_at: int | None
+    failure_count: int
+    revision: int
+
+
 class SchedulerPort(Protocol):
     async def upsert_job(
         self,
@@ -52,6 +62,7 @@ class SchedulerPort(Protocol):
         payload: Mapping[str, Any],
     ) -> None: ...
     async def remove_job(self, *, key: str) -> None: ...
+    async def get_job(self, *, key: str) -> SchedulerJobStatus | None: ...
 
 
 class SkillStoragePort(Protocol):

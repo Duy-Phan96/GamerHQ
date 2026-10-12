@@ -1,6 +1,7 @@
 """Persistent support controls; every action checks current membership and scope."""
 import logging
 import discord
+from discord import app_commands
 from discord.ext import commands
 from database import db
 from services import ticket_service as tickets
@@ -181,8 +182,170 @@ class SupportOffers(SafeView):
         await self.request(interaction, 'ELECTRICITY_REQUEST')
 
 
+def _current_staff(guild, user):
+    member = guild.get_member(user.id) if guild and user else None
+    return member if member and tickets.staff(member) else None
+
+
+def _overview_text(guild, rows):
+    counts = {
+        'OPEN': sum(row['status'] == 'OPEN' for row in rows),
+        'IN_PROGRESS': sum(row['status'] == 'IN_PROGRESS' for row in rows),
+        'WAITING_FOR_USER': sum(row['status'] == 'WAITING_FOR_USER' for row in rows),
+    }
+    lines = [
+        '# 🎫 Ticket Overview',
+        'Read-only staff view of active support tickets.',
+        '',
+        f"Open / unassigned: **{counts['OPEN']}** · In progress: **{counts['IN_PROGRESS']}** · Waiting: **{counts['WAITING_FOR_USER']}**",
+    ]
+    if not rows:
+        lines += ['', 'No active tickets.']
+        return '\n'.join(lines)
+    lines += ['', 'Select a ticket below to review its current assignment and open the private channel.']
+    if len(rows) > 25:
+        lines += [f'{len(rows) - 25} additional active tickets are not shown in this selector.']
+    return '\n'.join(lines)
+
+
+def _ticket_detail(guild, row):
+    type_label = tickets.TICKET_TYPES.get(row['ticket_type'], 'Support Ticket')
+    assigned = discord.utils.escape_markdown(row['assigned_name']) if row['assigned_name'] else 'Unassigned'
+    creator = discord.utils.escape_markdown(row['creator_name']) if row['creator_name'] else 'Left / unavailable'
+    channel = f"<#{row['channel_id']}>" if row['channel_ready'] else 'Channel unavailable — staff review required'
+    status = {
+        'OPEN': 'Open',
+        'IN_PROGRESS': 'In progress',
+        'WAITING_FOR_USER': 'Waiting for user',
+    }.get(row['status'], row['status'])
+    return (
+        f"# 🎫 Ticket #{row['id']:04d}\n"
+        f"**Type:** {discord.utils.escape_markdown(type_label)}\n"
+        f"**Status:** {status}\n"
+        f"**Assigned to:** {assigned}\n"
+        f"**Creator:** {creator}\n"
+        f"**Channel:** {channel}\n\n"
+        "This view is read-only. Use the controls inside the private ticket to take, wait or close it."
+    )
+
+
+class TicketOverviewSelect(discord.ui.Select):
+    def __init__(self, rows):
+        self.rows = {str(row['id']): row for row in rows[:25]}
+        options = []
+        for row in rows[:25]:
+            assigned = row['assigned_name'] or 'Unassigned'
+            status = {
+                'OPEN': 'Open',
+                'IN_PROGRESS': 'In progress',
+                'WAITING_FOR_USER': 'Waiting',
+            }.get(row['status'], row['status'])
+            options.append(discord.SelectOption(
+                label=f"Ticket #{row['id']:04d} · {status}"[:100],
+                description=f"{assigned} · {tickets.TICKET_TYPES.get(row['ticket_type'], 'Support')}"[:100],
+                value=str(row['id']),
+            ))
+        super().__init__(placeholder='Select active ticket', min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction):
+        view = self.view
+        if not await view.authorized(interaction):
+            return
+        item = tickets.get(int(self.values[0]))
+        if not item or item['guild_id'] != view.guild_id or item['status'] == 'CLOSED':
+            return await interaction.response.edit_message(
+                content='This ticket changed or closed. Refresh the overview.',
+                view=TicketOverviewView(interaction.guild, interaction.user.id),
+            )
+        current = next((row for row in tickets.active_overview(interaction.guild) if row['id'] == item['id']), None)
+        if current is None:
+            return await interaction.response.edit_message(
+                content='This ticket is no longer active. Refresh the overview.',
+                view=TicketOverviewView(interaction.guild, interaction.user.id),
+            )
+        detail_view = TicketOverviewDetailView(interaction.guild, interaction.user.id, current)
+        await interaction.response.edit_message(
+            content=_ticket_detail(interaction.guild, current),
+            view=detail_view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+class TicketOverviewView(SafeView):
+    def __init__(self, guild, actor_id):
+        super().__init__(timeout=180)
+        self.guild_id, self.actor_id = guild.id, actor_id
+        rows = tickets.active_overview(guild)
+        if rows:
+            self.add_item(TicketOverviewSelect(rows))
+
+    async def authorized(self, interaction):
+        if not interaction.guild or interaction.guild.id != self.guild_id or interaction.user.id != self.actor_id:
+            await interaction.response.send_message('This staff view belongs to another session.', ephemeral=True)
+            return False
+        if _current_staff(interaction.guild, interaction.user) is None:
+            await interaction.response.send_message('Staff access is no longer available.', ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label='Refresh', style=discord.ButtonStyle.secondary)
+    async def refresh(self, interaction, button):
+        if not await self.authorized(interaction):
+            return
+        rows = tickets.active_overview(interaction.guild)
+        await interaction.response.edit_message(
+            content=_overview_text(interaction.guild, rows),
+            view=TicketOverviewView(interaction.guild, interaction.user.id),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @discord.ui.button(label='Close', style=discord.ButtonStyle.secondary)
+    async def close(self, interaction, button):
+        if not await self.authorized(interaction):
+            return
+        await interaction.response.edit_message(content='Ticket overview closed.', view=None)
+        self.stop()
+
+
+class TicketOverviewDetailView(TicketOverviewView):
+    def __init__(self, guild, actor_id, row):
+        SafeView.__init__(self, timeout=180)
+        self.guild_id, self.actor_id = guild.id, actor_id
+        if row['channel_ready']:
+            self.add_item(discord.ui.Button(
+                label='Open Ticket',
+                url=f"https://discord.com/channels/{guild.id}/{row['channel_id']}",
+            ))
+
+    @discord.ui.button(label='Back to Overview', style=discord.ButtonStyle.secondary)
+    async def back(self, interaction, button):
+        if not await self.authorized(interaction):
+            return
+        rows = tickets.active_overview(interaction.guild)
+        await interaction.response.edit_message(
+            content=_overview_text(interaction.guild, rows),
+            view=TicketOverviewView(interaction.guild, interaction.user.id),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
 class Tickets(commands.Cog):
+    ticket_tools = app_commands.Group(name='tickets', description='Support ticket tools for GamerHQ staff.')
+
     def __init__(self,bot): self.bot=bot
+
+    @ticket_tools.command(name='overview', description='Show active support tickets and staff assignments.')
+    async def overview(self, interaction: discord.Interaction):
+        member = _current_staff(interaction.guild, interaction.user)
+        if member is None:
+            return await interaction.response.send_message('Staff only.', ephemeral=True)
+        rows = tickets.active_overview(interaction.guild)
+        await interaction.response.send_message(
+            _overview_text(interaction.guild, rows),
+            view=TicketOverviewView(interaction.guild, interaction.user.id),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
     async def cog_load(self):
         self.bot.add_view(TicketEntry())
         self.bot.add_view(TicketActions())

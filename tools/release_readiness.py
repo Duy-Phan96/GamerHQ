@@ -15,6 +15,7 @@ from tools.release_preflight import ROOT, check
 
 
 SCHEMA_VERSION = "1"
+READINESS_CHANNELS = frozenset({"candidate", "main"})
 
 
 def build_release_readiness(
@@ -22,12 +23,16 @@ def build_release_readiness(
     version_path: Path | None = None,
     changelog_path: Path | None = None,
     skill_lock_path: Path | None = None,
+    expected_channel: str = "candidate",
 ) -> dict[str, Any]:
     """Return a bounded machine-readable release readiness report.
 
     This composes existing authoritative validators. It does not create releases,
     tags, packages or deployments and does not perform live acceptance.
     """
+    if expected_channel not in READINESS_CHANNELS:
+        raise ValueError("Release readiness requires candidate or main version semantics")
+
     version_path = version_path or ROOT / "VERSION"
     changelog_path = changelog_path or ROOT / "CHANGELOG.md"
     skill_lock_path = skill_lock_path or ROOT / "requirements-skills.lock"
@@ -36,6 +41,7 @@ def build_release_readiness(
         version_path=version_path,
         changelog_path=changelog_path,
         skill_lock_path=skill_lock_path,
+        expected_channel=expected_channel,
     )
 
     version: str | None = None
@@ -63,6 +69,7 @@ def build_release_readiness(
         "schemaVersion": SCHEMA_VERSION,
         "readyForManualAcceptance": ready,
         "version": version,
+        "versionChannel": expected_channel,
         "preflight": {
             "ok": preflight.ok,
             "errors": list(preflight.errors),
@@ -77,14 +84,21 @@ def build_release_readiness(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="Emit JSON output.")
+    parser.add_argument(
+        "--expect-channel",
+        choices=sorted(READINESS_CHANNELS),
+        default="candidate",
+        help="Expected Host version channel; release readiness defaults to candidate.",
+    )
     args = parser.parse_args()
 
-    report = build_release_readiness()
+    report = build_release_readiness(expected_channel=args.expect_channel)
     if args.json:
         print(json.dumps(report, sort_keys=True))
     else:
         version = report["version"] or "unavailable"
         print(f"Release readiness for {version}")
+        print(f"Expected version channel: {report['versionChannel']}")
         print(
             "Automated release metadata: "
             + ("PASS" if report["preflight"]["ok"] else "FAIL")

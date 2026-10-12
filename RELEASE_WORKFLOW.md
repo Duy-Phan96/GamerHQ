@@ -2,8 +2,9 @@
 
 ## Branch model
 
-- `main` — last known-good deployable release.
-- `develop` — integration branch for the next release.
+- `main` — last known-good deployable release with an exact accepted, non-`-dev` `VERSION`.
+- `develop` — integration branch for the next release; `VERSION` carries the next planned semantic version with a `-dev` suffix.
+- `release/<version>` — immutable release-candidate work; `VERSION` ends with `-rcN` while the candidate is under review.
 - `feat/<name>` — one feature or focused change. Existing `feature/...` branches/history remain valid; use `feat/...` for new work.
 - `fix/<name>` — one bug fix.
 - `refactor/<name>` — focused internal restructuring.
@@ -19,11 +20,12 @@
 4. Update tests/checklist and `CHANGELOG.md`.
 5. Test locally/test-server against a backed-up database.
 6. Merge into `develop` only after the feature works.
-7. Create a release candidate, fill the [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md), and run `RELEASE_CHECKLIST.md`.
-8. Recommend a server update only for that exact release candidate after its automated gates are green; never recommend `latest develop`.
-9. Complete the required manual Discord/VPS acceptance for that exact candidate.
-10. Merge/tag on `main` only after the release candidate passes.
+7. When a coherent GamerHQ server milestone is ready, create a `release/<version>` branch and change `VERSION` from the `-dev` value to the exact `-rcN` candidate. Fill the [Server Release Snapshot](docs/development/SERVER_RELEASE_SNAPSHOT.md) and run `RELEASE_CHECKLIST.md`.
+8. Freeze and validate that exact candidate; do not silently advance it to a newer `develop` head.
+9. Complete the required GamerHQ Discord/VPS acceptance for that exact candidate.
+10. Merge/tag on `main` only after the release candidate passes. `main` must never retain a `-dev` version.
 11. Record the release tag on the reviewed `main` commit. The VPS update script fast-forwards `main`; run it only when `origin/main` is the accepted release. See `DEPLOY.md`.
+12. After release planning advances, update `develop` once to the next planned `-dev` version; do not reuse an older accepted release number.
 
 ## Changelog discipline
 
@@ -44,7 +46,26 @@ Use semantic-style versions:
 - Major: `2.0.0` — breaking changes.
 - During Beta: `1.0.0-beta.N`.
 
-Release candidates append `-rcN` until verified.
+The Host uses one `VERSION` file with branch-specific channels:
+
+```text
+develop:           1.0.0-beta.2-dev
+release candidate: 1.0.0-beta.2-rc1
+main/tag:           exact accepted version, for example 1.0.0-beta.2-rc1
+```
+
+A later stable beta release may use `1.0.0-beta.2` without `-rcN`. The accepted
+`main` version may therefore be a reviewed release candidate or a final beta,
+but never a `-dev` version.
+
+CI calls the release preflight with the expected branch channel:
+
+- ordinary PRs and `develop` pushes: `develop`;
+- `release/*` candidate PRs: `candidate`;
+- PRs/pushes targeting `main`: `main`.
+
+Host, SDK, Runtime API, web and external Skill versions remain independent. This
+policy applies only to the GamerHQ Host `VERSION` file.
 
 ## Commit examples
 
@@ -65,13 +86,4 @@ The repository is public. Protect `main`, require the test suite
 before merging, and never force-push release tags. Before every commit, inspect
 `git status` and confirm that `.env`, databases, `runtime/`, `backups/` and logs
 are absent. Tags use the exact `VERSION` value prefixed with `v`, for example
-`v1.0.0-beta.1-rc4`.
-
-
-## Cross-project deployment rule
-
-External Skill, web and feature projects may finish and merge independently, but they do not decide that the production server should update. Each project records its deployment impact and compatibility requirements. GamerHQ integrates those reviewed outputs into a release candidate.
-
-The release candidate is the only server-update decision boundary. Its snapshot must record the exact GamerHQ SHA/version, external Skill pins, data/config impact, CI/readiness evidence, manual acceptance, rollback target and newer work that is intentionally excluded.
-
-This prevents concurrent project work from turning a moving integration branch into an ambiguous deployment target.
+`v1.0.0-beta.2-rc1`.

@@ -12,7 +12,7 @@ Closes #
 
 - Owning repository/layer:
 - Public contract changes:
-- Cross-repository dependency/order:
+- Handoff required from another repository: <!-- None or target repo + requested public outcome -->
 
 ## Testing
 
@@ -37,10 +37,7 @@ Commands/results:
 
 <!-- None / manual live acceptance / owner VPS action / release sequencing. -->
 
-- Include in next server release snapshot: <!-- Yes / No / Not applicable -->
 - Required migration/config/secret change: <!-- None or exact requirement -->
-
-A feature PR being green does not mean `develop` is deployable. Server-update decisions are made only from an exact release candidate snapshot.
 
 ## Screenshots / Discord acceptance
 

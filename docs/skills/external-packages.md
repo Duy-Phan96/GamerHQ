@@ -189,3 +189,19 @@ deployment plan cannot silently drift to different pinning policies.
 
 This provides a stable input for future CI/deployment orchestration while
 preserving the current reviewed Docker build boundary.
+
+
+## Reviewed bundled external Skills
+
+Some reviewed external Skills are part of GamerHQ's deployment package set even
+when `GAMERHQ_EXTERNAL_SKILLS` is empty. Their immutable packages are pinned in
+`requirements-skills.lock` and their stable Skill IDs are listed by the host's
+bundled package configuration.
+
+The environment allowlist is therefore for additional deployment-installed
+external Skills; it is not the source of truth for the reviewed bundled package
+set.
+
+Awin Affiliate is integrated using this model. GamerHQ renders its workflows
+through versioned Management contracts only and does not import the Awin package
+implementation.

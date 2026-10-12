@@ -23,9 +23,10 @@ class FakeRuntime:
 class ExternalSkillHostLoadingTests(unittest.TestCase):
     def test_recurring_posts_is_a_bundled_external_package(self):
         self.assertIn("recurring-posts", BUNDLED_SKILL_IDS)
+        self.assertIn("awin-affiliate", BUNDLED_SKILL_IDS)
         self.assertEqual(
             configured_skill_ids(("recurring-posts", "other-skill")),
-            ("recurring-posts", "progression", "other-skill"),
+            ("recurring-posts", "progression", "awin-affiliate", "other-skill"),
         )
 
     def test_one_broken_package_does_not_block_healthy_package(self):

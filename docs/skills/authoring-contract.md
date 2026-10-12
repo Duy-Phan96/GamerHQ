@@ -141,6 +141,11 @@ Every persisted scheduled operation MUST have:
 - small JSON payload;
 - documented retry behavior.
 
+A Skill may inspect one of its own persisted jobs with `ctx.scheduler.get_job(key=...)`.
+The returned `SchedulerJobStatus` is intentionally narrow and read-only. Skills
+must not rely on host database fields, job payload internals, lease state or claim
+tokens for administration UX.
+
 Do not claim exactly-once delivery for external systems unless the Skill independently implements and proves that guarantee.
 
 ## Persistence rules
