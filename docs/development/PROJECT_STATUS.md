@@ -115,15 +115,8 @@ become the permanent platform boundary.
 At the time of this review, `main` identifies the accepted rc6 release while
 `develop` contains newer functionality but still carries an older `VERSION`
 value. The repository needs one documented rule for what `VERSION` means on
-`develop` versus `main` and release-candidate branches.
-
-### Some release tests are order-sensitive
-
-The current Staff Ticket Overview PR exposed a release-metadata regression:
-adding a valid changelog bullet changed the first generated release-note bullets
-and broke a test expecting an older item in that fixed position. Release tests
-should validate required content/structure without depending on unrelated bullet
-ordering.
+`develop` versus `main` and release-candidate branches. This is tracked in Issue
+#133.
 
 ### Documentation drift
 
@@ -138,6 +131,20 @@ onboarding, tickets, affiliate integrations, Runtime/SDK, Host Web APIs and a
 large future Skill roadmap. New feature lines should be deferred until the beta
 core and release process are coherent.
 
+## Follow-up completed from this audit
+
+- PR #129 completed the read-only Staff Ticket Overview and merged with green
+  Python 3.12/3.14 CI.
+- The release-note metadata regression was fixed by testing the current
+  `[Unreleased]` bullets semantically instead of expecting one unrelated bullet
+  at a fixed position.
+- Issue #63 was closed in GamerHQ with a handoff because `gamerhq-web` owns that
+  implementation.
+- Issue #133 now tracks Host `VERSION` semantics.
+- Issue #134 now tracks the measurable core-beta member journey.
+- Issue #135 now tracks the thin-Host ownership inventory.
+- Issue #136 now tracks repository/SDK licensing clarity.
+
 ## Completed strategic milestones
 
 ### Community and member foundations
@@ -148,6 +155,7 @@ core and release process are coherent.
 - member profile and onboarding management;
 - Server Booster experience;
 - private support tickets and audit lifecycle;
+- staff-only active ticket assignment overview;
 - managed server setup, repair, health and messaging.
 
 ### Skill Platform foundation
@@ -167,31 +175,37 @@ core and release process are coherent.
 - Awin Affiliate integrated from a reviewed standalone package;
 - read-only scoped scheduler job inspection added to SDK 0.2.0.
 
-## Active work
+## Active consolidation work
 
-### Staff Ticket Overview
+### Release/version policy — Issue #133
 
-Issue #11 / PR #129 adds a read-only, ephemeral staff overview for active ticket
-status and assignments while preserving the existing private ticket lifecycle.
+Define one testable rule for `VERSION` on `develop`, release-candidate branches
+and `main` without creating a second version source.
 
-Current status at this review:
+### Core beta acceptance — Issue #134
 
-- implementation present;
-- PR is mergeable;
-- CI fails in `tests/test_release_metadata.py` because the release-note test is
-  coupled to top-bullet ordering;
-- the verified failure is not the ticket architecture itself.
+Verify the real member journey across onboarding/profile, games, LFG/events,
+voice, support and restart stability.
 
-This is the immediate development blocker.
+### Thin Host inventory — Issue #135
+
+Classify current domains as Host primitive, keep temporarily, Skill candidate or
+legacy/retire before selecting another extraction.
+
+### Licensing — Issue #136
+
+Clarify whether MIT applies to the complete repository or only the packaged SDK
+before broader third-party adoption.
 
 ## Roadmap recovery
 
 ### Committed / active scope
 
-- complete and stabilize the Staff Ticket Overview;
 - consolidate release metadata and version semantics;
+- define and verify the core-beta member journey;
 - preserve the thin-Host direction;
 - maintain repository ownership and handoff boundaries;
+- inventory the current Host before the next extraction;
 - continue extracting mature domain functionality only when contracts and
   storage/lifecycle behavior are stable.
 
@@ -224,13 +238,16 @@ event capability.
 **Objective:** make the current development state coherent, documented and
 release-ready before adding another broad feature line.
 
-Deliverables:
+Completed:
 
-- finish PR #129;
-- make release-metadata tests semantic rather than position-dependent;
+- Staff Ticket Overview;
+- semantic release-note metadata regression test;
+- gamerhq-web ownership handoff for the old Host issue.
+
+Remaining:
+
 - define `VERSION` behavior across `develop`, release candidates and `main`;
 - correct README/documentation drift;
-- close or hand off work that belongs to another repository;
 - decide repository/SDK licensing and add the appropriate license file(s).
 
 ### Milestone 2 — GamerHQ core beta
@@ -252,6 +269,8 @@ member joins
     -> restart preserves state and creates no duplicates
 ```
 
+Issue #134 is the operational acceptance record.
+
 ### Milestone 3 — Thin Host inventory and extraction plan
 
 **Status:** Planned
@@ -263,7 +282,7 @@ Classify existing Host modules as:
 - Skill candidate;
 - legacy / retire.
 
-Do not begin another extraction until this inventory identifies a stable,
+Do not begin another extraction until Issue #135 identifies a stable,
 high-value boundary.
 
 ### Milestone 4 — SDK / third-party readiness
@@ -282,40 +301,34 @@ creator integrations, game stats and additional provider Skills.
 
 ## Prioritized execution backlog
 
-### P0 — current blocker
-
-1. Repair PR #129 CI by removing the unrelated release-note ordering assumption.
-
 ### P1 — high value
 
-2. Define and test `VERSION` semantics for `develop`, release candidates and
-   `main`.
-3. Define the GamerHQ core-beta acceptance journey and execute it for the next
+1. Issue #133 — define and test `VERSION` semantics for `develop`, release
+   candidates and `main`.
+2. Issue #134 — execute the GamerHQ core-beta acceptance journey for the next
    reviewed release.
-4. Produce the thin-Host ownership inventory before selecting the next
-   extraction.
+3. Issue #135 — produce the thin-Host ownership inventory before selecting the
+   next extraction.
 
 ### P2 — important maintenance
 
-5. Correct README and command-documentation drift.
-6. Close/handoff Issue #63 because gamerhq-web owns that implementation.
-7. Decide whether MIT applies to the whole repository or only the SDK; add an
-   explicit license file accordingly.
-8. Evaluate Dependabot and CodeQL/security scanning proportionally to current
+4. Correct README and command-documentation drift.
+5. Issue #136 — decide whether MIT applies to the whole repository or only the
+   SDK; add explicit license file(s) accordingly.
+6. Evaluate Dependabot and CodeQL/security scanning proportionally to current
    project maturity.
 
 ### P3 — postponed
 
-9. Reminders and polls.
-10. Tournaments, game stats and moderation/reputation features.
+7. Reminders and polls.
+8. Tournaments, game stats and moderation/reputation features.
 
 ## Decisions still required
 
 1. What does `VERSION` represent on `develop`?
 2. Does MIT license the complete repository or only `gamerhq-skill-sdk`?
-3. What measurable user journey defines GamerHQ beta completion?
-4. Which domain area should be the next extraction candidate after the thin-Host
-   inventory?
+3. What measurable evidence completes the core-beta journey in Issue #134?
+4. Which domain area should be the next extraction candidate after Issue #135?
 
 ## Recommended next release objective
 
@@ -327,7 +340,7 @@ Candidate scope:
 - already-reviewed Awin Host integration;
 - Owner Change Log grouping;
 - SDK 0.2.0 scheduler inspection;
-- Staff Ticket Overview only after CI is green;
+- Staff Ticket Overview;
 - release/documentation consistency fixes.
 
 Do not add tournament expansion, new game APIs, moderation automation or another
@@ -335,11 +348,11 @@ large platform initiative to that candidate.
 
 ## Next five actions
 
-1. Finish PR #129 and restore green CI.
-2. Resolve release/version metadata semantics.
-3. Define core-beta acceptance criteria.
-4. Perform the thin-Host inventory.
-5. Complete focused documentation/GitHub hygiene.
+1. Resolve release/version metadata semantics in Issue #133.
+2. Correct focused README/documentation drift.
+3. Prepare and execute the core-beta acceptance plan in Issue #134.
+4. Perform the thin-Host inventory in Issue #135.
+5. Resolve licensing scope in Issue #136.
 
 ## Maintenance rule
 
