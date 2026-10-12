@@ -4,6 +4,9 @@ This folder contains the lightweight engineering process for GamerHQ and the
 reusable platform work built around it.
 
 Start here:
+- [Current Project Status](PROJECT_STATUS.md)
+- [Core Beta Acceptance](CORE_BETA_ACCEPTANCE.md)
+- [Thin Host Inventory](THIN_HOST_INVENTORY.md)
 - [Software Development Lifecycle](SDLC.md)
 - [Testing Strategy](TESTING.md)
 - [CI Quality Gates](CI.md)
@@ -15,3 +18,5 @@ Start here:
 These documents coordinate existing canonical project sources. They do not
 replace topic architecture docs, release/deployment procedures, Skill contracts
 or security operations.
+
+- [Repository Ownership and Handoffs](REPOSITORY_OWNERSHIP_AND_HANDOFFS.md) — strict repository boundaries, independent releases and prompt-based handoffs between projects.

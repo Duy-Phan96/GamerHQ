@@ -11,6 +11,7 @@ class SkillSdkPackagingTests(unittest.TestCase):
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = data["project"]
         self.assertEqual(project["name"], "gamerhq-skill-sdk")
+        self.assertEqual(project["version"], "0.2.0")
         self.assertEqual(project["requires-python"], ">=3.12")
 
         finder = data["tool"]["setuptools"]["packages"]["find"]

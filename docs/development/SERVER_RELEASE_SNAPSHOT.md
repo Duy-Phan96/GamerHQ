@@ -1,10 +1,10 @@
 # Server Release Snapshot
 
-Use this template for every GamerHQ release candidate that may be deployed to the
-server.
+Use this template only for GamerHQ Host/server releases from this repository.
+It is a local deployment safety record, not a cross-repository release manager.
 
-A feature PR, Skill release or moving `develop` branch is never a deployment
-target by itself. The release candidate is the integration boundary.
+External Skills and gamerhq-web publish independently. This snapshot records only
+the exact versions/pins that this GamerHQ release chooses to consume.
 
 ## Decision
 

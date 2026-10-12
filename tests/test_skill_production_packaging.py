@@ -29,6 +29,7 @@ class SkillProductionPackagingTests(unittest.TestCase):
         lock = (ROOT / "requirements-skills.lock").read_text(encoding="utf-8")
         self.assertEqual(validate_skill_lock(lock), ())
         self.assertIn("gamerhq-skill-recurring-posts", lock)
+        self.assertIn("gamerhq-skill-awin-affiliate", lock)
 
     def test_ci_keeps_packaging_checks_running_after_independent_audit_failure(self):
         workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(

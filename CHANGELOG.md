@@ -4,8 +4,11 @@
 
 ### Added
 
+- Added `/tickets overview`, a staff-only active ticket overview showing assignment/status and safe links to existing private ticket channels without mutating ticket state.
+- Integrated the reviewed standalone Awin Affiliate 0.9.0 Skill as an immutable bundled external package with host-side setup, Creative Library, preview-confirmed Post Now, campaign management/history and safe diagnostics through public Management contracts only.
 - Added public `http.external` and `secrets.skill` Skill capabilities with host-mediated HTTPS access and encrypted, guild-and-Skill-scoped secret storage.
 - Introduced the lightweight GamerHQ Software Development Lifecycle, Definition of Done, AI-assisted development SOP and architecture decision guidance.
+- Added public SDK 0.2.0 read-only scoped Scheduler job inspection via `ctx.scheduler.get_job(key=...)`, returning a sanitized `SchedulerJobStatus` without payload, lease or claim-token data.
 - Added GitHub feature/bug Issue forms and an architecture-aware Pull Request template.
 - Added portable platform compilation and `gamerhq-skill-sdk` wheel-build CI gates.
 - Added Skill ecosystem governance for immutable release review, Marketplace publication and host deployment boundaries.
@@ -21,7 +24,7 @@
 
 ### Fixed
 
-_No entries yet._
+- Reduced Owner Change Log noise by grouping only unambiguous category deletions with their pure child-channel moves while preserving every history row.
 
 ### Security
 
