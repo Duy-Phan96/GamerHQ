@@ -19,10 +19,19 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(first_section, "[Unreleased]")
 
     def test_release_notes_read_current_unreleased_bullets(self):
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        current_section = changelog.split("\n## ", 2)[1]
+        expected = [
+            "• " + line[2:180]
+            for line in current_section.splitlines()
+            if line.startswith("- ")
+        ][:3]
+
         notes = release_notes()
-        self.assertIn("Software Development Lifecycle", notes)
+
+        self.assertTrue(expected)
+        self.assertEqual(notes.splitlines(), expected)
         self.assertNotIn("Recurring Posts 1.1 integration", notes)
-        self.assertNotIn("No release-specific", notes)
 
 
 if __name__ == "__main__":
