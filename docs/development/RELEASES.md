@@ -6,11 +6,43 @@ and ROLLBACK.md.
 
 ## Branch responsibilities
 
-- develop — integration branch for the next reviewed release.
-- main — last accepted deployable/release branch.
-- focused feature/fix/docs/chore branches — one coherent change.
+- `develop` — integration branch for the next reviewed release; Host `VERSION`
+  uses the next planned semantic version with a `-dev` suffix.
+- `release/<version>` — frozen release candidate; Host `VERSION` ends with
+  `-rcN`.
+- `main` — last accepted deployable/release branch; Host `VERSION` is the exact
+  accepted non-`-dev` version.
+- focused feature/fix/docs/chore branches — one coherent change based on the
+  agreed target branch and therefore using that target's version channel.
 
-Normal development merges into develop first. Production is never deployed from develop.
+Normal development merges into `develop` first. Production is never deployed
+from `develop`.
+
+## GamerHQ Host version channel
+
+The single root `VERSION` file is authoritative for the GamerHQ Host build and
+runtime release identity.
+
+Example lifecycle:
+
+```text
+develop:           1.0.0-beta.2-dev
+release candidate: 1.0.0-beta.2-rc1
+main/tag:           1.0.0-beta.2-rc1
+```
+
+Rules:
+
+- `develop` must not reuse an older accepted release number;
+- a release branch changes `VERSION` once to the exact candidate under review;
+- a frozen candidate is not silently advanced to a newer `develop` head;
+- `main` never carries a `-dev` version;
+- after release planning advances, `develop` moves once to the next planned
+  `-dev` version;
+- Host versioning does not control SDK, Runtime API, web or external Skill
+  versions.
+
+A final beta such as `1.0.0-beta.2` may be accepted without an `-rcN` suffix.
 
 ## Semantic versioning
 
@@ -63,6 +95,7 @@ For GamerHQ server releases, prepare a [Server Release Snapshot](SERVER_RELEASE_
 
 Before promotion:
 - required PR checks are green;
+- the branch-specific Host version channel is valid;
 - database migration implications are known;
 - external Skill pins are reviewed and immutable;
 - configuration/environment changes are documented;
@@ -90,14 +123,16 @@ post-deployment verification.
 
 Never claim production deployment from CI alone.
 
-
 ## Automated release metadata checks
 
 Release metadata is regression-tested:
 
-- `VERSION` must match the existing semantic-version syntax;
+- `VERSION` must match the supported semantic-version syntax;
+- CI validates `develop`, candidate and `main` version channels according to the
+  branch/PR target;
 - the first changelog section must be the canonical `[Unreleased]` section;
-- generated release notes must read from that current section.
+- generated release notes must read from that current section;
+- external Skill pins must remain reviewed and immutable.
 
-This keeps release metadata consistent without adding a separate release
-framework.
+This keeps release metadata consistent without adding a second version source or
+a heavyweight release framework.
