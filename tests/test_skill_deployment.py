@@ -40,7 +40,7 @@ class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
         )
         self.assertEqual(
             progression.reviewed_commit,
-            "565ee8379cdd22cb00c18db188eeaddd058e626d",
+            "b8226977adad5ea966f77805f6a4c0f56b78be17",
         )
         self.assertEqual(awin.source_kind, "github-commit")
         self.assertEqual(
