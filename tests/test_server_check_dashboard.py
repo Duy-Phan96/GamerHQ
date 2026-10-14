@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import discord
 
 import test_onboarding as fixtures
-from cogs.health import HealthView, dashboard, group_detail, group_for, grouped, open_server_check
+from cogs.health import AreaSelect, HealthView, dashboard, group_detail, group_for, grouped, open_server_check
 from services.health_service import Finding
 
 
@@ -109,6 +109,21 @@ class ServerCheckDashboardTests(unittest.IsolatedAsyncioTestCase):
         view.rebuild()
         self.assertEqual(before_channels, [(c.id, c.name) for c in self.guild.channels])
         self.assertIn("Minecraft mapping needs review", view.text())
+
+    async def test_area_select_callback_keeps_parent_view_after_rebuild(self):
+        owner = self.owner()
+        view = HealthView(self.guild, owner.id, self.findings())
+        select = next(child for child in view.children if isinstance(child, AreaSelect))
+        interaction = self.interaction(owner)
+        select._values = ["Games"]
+
+        await select.callback(interaction)
+
+        interaction.response.edit_message.assert_awaited_once()
+        payload = interaction.response.edit_message.await_args.kwargs
+        self.assertIs(payload["view"], view)
+        self.assertIn("Minecraft mapping needs review", payload["content"])
+        self.assertEqual(view.selected, "Games")
 
     async def test_other_member_cannot_use_existing_server_check_session(self):
         owner = self.owner()
