@@ -4,6 +4,7 @@
 
 ### Added
 
+- Integrated Progression 0.2.0 external member signals through the public `progression.record-signal.v1` contract, emitting replay-safe `discord/server_boosted` and `profile/first_game_added` events from trusted Host observations.
 - Added `/tickets overview`, a staff-only active ticket overview showing assignment/status and safe links to existing private ticket channels without mutating ticket state.
 - Integrated the reviewed standalone Awin Affiliate 0.9.0 Skill as an immutable bundled external package with host-side setup, Creative Library, preview-confirmed Post Now, campaign management/history and safe diagnostics through public Management contracts only.
 - Added public `http.external` and `secrets.skill` Skill capabilities with host-mediated HTTPS access and encrypted, guild-and-Skill-scoped secret storage.
@@ -19,6 +20,7 @@
 
 ### Changed
 
+- Updated the reviewed immutable XP & Progression Skill pin from the 0.1.0 baseline to the released 0.2.0 commit and documented explicitly authorized cross-repository work with target-repository branches/PRs and independent release ownership.
 - Standardized new branch and commit naming guidance while preserving existing branch history.
 - Documented independent Host, SDK, Runtime API, external Skill and web versioning/release responsibilities.
 
