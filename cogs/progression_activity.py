@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 
 GET_CONFIG_API = "progression.get-config.v1"
 RECORD_ACTIVITY_API = "progression.record-activity.v1"
+RECORD_SIGNAL_API = "progression.record-signal.v1"
 
 
 def eligible_voice_members(guild: discord.Guild, channel: discord.VoiceChannel) -> tuple[discord.Member, ...]:
@@ -26,6 +27,123 @@ def eligible_voice_members(guild: discord.Guild, channel: discord.VoiceChannel) 
         return ()
     humans = tuple(member for member in channel.members if not member.bot)
     return humans if len(humans) >= 2 else ()
+
+
+def _member_role_ids(member) -> set[int]:
+    return {
+        int(role.id)
+        for role in getattr(member, "roles", ())
+        if getattr(role, "id", None) is not None
+    }
+
+
+def _selectable_game_role_ids() -> set[int]:
+    role_ids: set[int] = set()
+    for game in db.get_selectable_games():
+        try:
+            role_id = int(game.get("role_id"))
+        except (TypeError, ValueError):
+            continue
+        if role_id > 0:
+            role_ids.add(role_id)
+    return role_ids
+
+
+def progression_member_signals(before, after, *, now: int | None = None) -> tuple[dict, ...]:
+    """Translate trusted Discord/member transitions into public Progression signals."""
+    if getattr(before, "guild", None) is None or getattr(after, "guild", None) is None:
+        return ()
+    if before.guild.id != after.guild.id or before.id != after.id:
+        return ()
+
+    guild = after.guild
+    before_roles = _member_role_ids(before)
+    after_roles = _member_role_ids(after)
+    signals: list[dict] = []
+
+    booster_role = getattr(guild, "premium_subscriber_role", None)
+    booster_role_id = getattr(booster_role, "id", None)
+    if (
+        booster_role_id is not None
+        and int(booster_role_id) not in before_roles
+        and int(booster_role_id) in after_roles
+    ):
+        premium_since = getattr(after, "premium_since", None)
+        if premium_since is not None and hasattr(premium_since, "timestamp"):
+            occurred_at = int(premium_since.timestamp())
+            signals.append({
+                "memberId": int(after.id),
+                "provider": "discord",
+                "signal": "server_boosted",
+                "dedupeKey": (
+                    f"discord:server_boosted:{guild.id}:{after.id}:{occurred_at}"
+                ),
+                "occurredAt": occurred_at,
+            })
+
+    game_role_ids = _selectable_game_role_ids()
+    if game_role_ids:
+        before_games = before_roles & game_role_ids
+        after_games = after_roles & game_role_ids
+        if not before_games and after_games:
+            occurred_at = int(now if now is not None else time.time())
+            signals.append({
+                "memberId": int(after.id),
+                "provider": "profile",
+                "signal": "first_game_added",
+                "dedupeKey": f"profile:first_game_added:{guild.id}:{after.id}",
+                "occurredAt": occurred_at,
+            })
+
+    return tuple(signals)
+
+
+async def emit_progression_signal(bot, guild_id: int, payload: dict, *, attempts: int = 2) -> bool:
+    """Best-effort public Runtime call; core member flows never depend on Progression."""
+    runtime = getattr(bot, "skill_runtime", None) if bot is not None else None
+    if runtime is None:
+        return False
+
+    try:
+        status = await runtime.status(guild_id=guild_id, skill_id="progression")
+    except Exception:
+        log.debug(
+            "Progression signal skipped because Skill status is unavailable guild=%s",
+            guild_id,
+            exc_info=True,
+        )
+        return False
+
+    if not getattr(status, "enabled", False):
+        return False
+
+    attempts = max(1, min(int(attempts), 3))
+    for attempt in range(attempts):
+        try:
+            await runtime.call_management(
+                guild_id=guild_id,
+                skill_id="progression",
+                contract_id=RECORD_SIGNAL_API,
+                payload=dict(payload),
+            )
+            return True
+        except Exception:
+            if attempt + 1 >= attempts:
+                log.exception(
+                    "Progression signal delivery failed guild=%s provider=%s signal=%s",
+                    guild_id,
+                    payload.get("provider"),
+                    payload.get("signal"),
+                )
+    return False
+
+
+async def dispatch_member_progression_signals(bot, before, after, *, now: int | None = None) -> tuple[dict, ...]:
+    """Observe one member update and best-effort deliver every derived signal."""
+    payloads = progression_member_signals(before, after, now=now)
+    for payload in payloads:
+        await emit_progression_signal(bot, after.guild.id, payload)
+    return payloads
 
 
 class ProgressionActivity(commands.Cog):
@@ -61,6 +179,10 @@ class ProgressionActivity(commands.Cog):
         except Exception:
             log.exception("Progression config unavailable for guild=%s", guild.id)
             return None
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        await dispatch_member_progression_signals(self.bot, before, after)
 
     @tasks.loop(minutes=1)
     async def voice_sampler(self):
