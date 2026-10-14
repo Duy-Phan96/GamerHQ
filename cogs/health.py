@@ -162,13 +162,14 @@ class AreaSelect(discord.ui.Select):
         super().__init__(placeholder="Choose an area", min_values=1, max_values=1, options=options, row=0)
 
     async def callback(self, interaction):
-        if not await self.view.interaction_check(interaction):
+        view = self.view
+        if view is None or not await view.interaction_check(interaction):
             return
-        self.view.selected = self.values[0]
-        self.view.rebuild()
+        view.selected = self.values[0]
+        view.rebuild()
         await interaction.response.edit_message(
-            content=group_detail(self.view.findings, self.view.selected),
-            view=self.view,
+            content=group_detail(view.findings, view.selected),
+            view=view,
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
