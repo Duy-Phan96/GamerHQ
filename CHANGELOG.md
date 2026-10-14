@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- Fixed `/server health` area selection so rebuilding the dashboard no longer detaches the active selector before the response is rendered.
 - Reduced Owner Change Log noise by grouping only unambiguous category deletions with their pure child-channel moves while preserving every history row.
 
 ### Security
