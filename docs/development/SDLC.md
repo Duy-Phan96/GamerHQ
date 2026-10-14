@@ -136,6 +136,7 @@ Before implementation answer:
 - Does it require a migration?
 - Does it affect security, authorization or capabilities?
 - Does another repository need a new public contract or release?
+- If cross-repository implementation is explicitly authorized, what branch/PR and completion record are required in each target repository?
 
 GamerHQ is the first reference customer, not the platform boundary. Portable
 components must remain usable by unrelated communities.
@@ -245,7 +246,7 @@ A PR should be focused and explain:
 - deployment impact;
 - follow-ups.
 
-Do not implement another repository's side of a dependency. Produce a handoff and wait for that repository to publish the required contract/version.
+By default, do not implement another repository's side of a dependency; produce a handoff. If the owner explicitly authorizes cross-repository implementation, perform it in the target repository on its own branch/PR, follow the target repository's instructions, and document the source/target relationship. Never treat that authorization as permission to bypass target release or production gates.
 
 ### 12. Merge
 

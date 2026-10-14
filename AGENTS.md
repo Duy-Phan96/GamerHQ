@@ -19,10 +19,10 @@
 
 ## Development lifecycle
 - Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.
-- Follow [Repository Ownership and Handoffs](docs/development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md): this project modifies only the GamerHQ repository. Inspect other repositories read-only when needed; request changes through an explicit handoff prompt instead of editing them.
+- Follow [Repository Ownership and Handoffs](docs/development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md). Cross-repository work is allowed only when the owner explicitly authorizes it; use a dedicated branch/PR in every target repository, preserve that repository's architecture/release rules, and document the source request, target change and resulting commit/PR.
 - AI-assisted work follows [SOP-008](docs/sop/SOP-008-ai-assisted-development.md): inspect → restate → architecture check → plan → smallest coherent change → test → diff self-review → human summary → PR.
 - Use the central Definition of Done proportionally; do not add bureaucracy to trivial changes.
-- When another repository is required, finish the GamerHQ-owned portion, document the blocker and produce a handoff. The target repository owns its implementation and release.
+- When another repository is required, prefer a handoff by default. If the owner explicitly authorizes end-to-end cross-repository work, make the target change in that repository on its own branch/PR and leave a traceable handoff/completion record in both projects. Each target repository still owns its implementation and release.
 - Use ADRs only for durable architectural decisions; see [ADR guidance](docs/architecture/decisions/README.md).
 
 ## Validation and handoff

@@ -22,7 +22,7 @@ class ExternalProgressionIntegrationTests(unittest.TestCase):
         skill = package.skill
         self.assertEqual(package.entry_point, "progression")
         self.assertEqual(skill.manifest.id, "progression")
-        self.assertEqual(skill.manifest.version, "0.1.0")
+        self.assertEqual(skill.manifest.version, "0.2.0")
         self.assertEqual(skill.manifest.runtime_api_version, "1")
         self.assertEqual(
             tuple(skill.manifest.permissions),
@@ -49,6 +49,7 @@ class ExternalProgressionIntegrationTests(unittest.TestCase):
         self.assertNotIn("gamerhq_skill_xp_progression", source)
         self.assertEqual(host_adapter.GET_CONFIG_API, "progression.get-config.v1")
         self.assertEqual(host_adapter.RECORD_ACTIVITY_API, "progression.record-activity.v1")
+        self.assertEqual(host_adapter.RECORD_SIGNAL_API, "progression.record-signal.v1")
 
 
 if __name__ == "__main__":
