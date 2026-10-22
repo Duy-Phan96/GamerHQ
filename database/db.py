@@ -893,6 +893,19 @@ def create_lfg_event_series(
     return get_lfg_event_series(series_id)
 
 
+def delete_lfg_event_series_if_empty(series_id):
+    """Delete a just-created series only when no concrete occurrence references it."""
+    with connect() as conn:
+        linked = conn.execute(
+            "SELECT 1 FROM lfg_events WHERE series_id=? LIMIT 1",
+            (series_id,),
+        ).fetchone()
+        if linked:
+            return False
+        cur = conn.execute("DELETE FROM lfg_event_series WHERE id=?", (series_id,))
+        return cur.rowcount > 0
+
+
 def get_lfg_event_series(series_id):
     with connect() as conn:
         row = conn.execute("SELECT * FROM lfg_event_series WHERE id=?", (series_id,)).fetchone()
