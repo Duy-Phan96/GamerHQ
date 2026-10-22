@@ -19,6 +19,7 @@ from services.lfg_service import (
     SERVER_TZ, find_lfg_channel, member_has_game_role,
     render_event,
 )
+from services.event_recurrence_service import Recurrence, recurrence_summary
 
 
 async def refresh_event_posts(guild: discord.Guild, event_id: int):
@@ -824,6 +825,7 @@ class EventDraftView(discord.ui.View):
             f"**Title:** {b.title}\n"
             f"**Start:** <t:{start_at}:F> (<t:{start_at}:R>)\n"
             f"**Players:** {b.max_players} total\n"
+            f"**Repeat:** {b._recurrence_label()}\n"
             f"**Voice invite:** {b.invite_lead} minutes before\n"
             f"**Visibility:** {'🔒 Private · Invite only' if b.visibility == 'private' else '🌐 Public'}\n\n"
             f"**Invited:** {inv}\n\n"
@@ -1009,6 +1011,36 @@ class BuilderPlayersSelect(discord.ui.Select):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
+class BuilderRecurrenceSelect(discord.ui.Select):
+    OPTIONS = (
+        ("once", "One-time", "Create a single event", "1️⃣"),
+        ("daily", "Daily", "Repeat every day", "🔁"),
+        ("weekly", "Weekly", "Repeat every week", "📆"),
+        ("weekdays", "Mon–Fri", "Repeat Monday through Friday", "🗓️"),
+        ("weekends", "Weekends", "Repeat Saturday and Sunday", "🎮"),
+    )
+
+    def __init__(self, builder):
+        self.builder = builder
+        options = [
+            discord.SelectOption(
+                label=label,
+                value=value,
+                description=description,
+                emoji=emoji,
+                default=builder.recurrence_mode == value,
+            )
+            for value, label, description, emoji in self.OPTIONS
+        ]
+        selected = next((label for value, label, _, _ in self.OPTIONS if value == builder.recurrence_mode), "One-time")
+        super().__init__(placeholder=f"🔁 Repeat · {selected}"[:150], options=options, row=3)
+
+    async def callback(self, interaction):
+        self.builder.recurrence_mode = self.values[0]
+        self.builder._rebuild()
+        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+
+
 class EventBuilderView(discord.ui.View):
     def __init__(self, *, host):
         super().__init__(timeout=600)
@@ -1022,6 +1054,7 @@ class EventBuilderView(discord.ui.View):
         self.max_players = 5
         self.invite_lead = 15
         self.visibility = "public"
+        self.recurrence_mode = "once"
         self.invited_ids = set()
         self._rebuild()
 
@@ -1034,6 +1067,7 @@ class EventBuilderView(discord.ui.View):
         self.add_item(BuilderDateSelect(self))
         self.add_item(BuilderTimeSelect(self))
         self.add_item(BuilderPlayersSelect(self))
+        self.add_item(BuilderRecurrenceSelect(self))
         for item in (self.edit_title, self.ampm_button, self.voice_lead, self.visibility_button, self.preview):
             self.add_item(item)
 
@@ -1055,6 +1089,20 @@ class EventBuilderView(discord.ui.View):
             return "Not selected"
         return f"{self.time_12h} {self.period}"
 
+    def _recurrence(self):
+        if self.recurrence_mode == "once":
+            return None
+        if self.recurrence_mode == "daily":
+            return Recurrence("daily", "Europe/Berlin")
+        if self.recurrence_mode == "weekly":
+            return Recurrence("weekly", "Europe/Berlin")
+        weekdays = (0, 1, 2, 3, 4) if self.recurrence_mode == "weekdays" else (5, 6)
+        return Recurrence("weekdays", "Europe/Berlin", weekdays=weekdays)
+
+    def _recurrence_label(self):
+        recurrence = self._recurrence()
+        return "One-time" if recurrence is None else recurrence_summary(recurrence)
+
     def content(self):
         date = datetime.fromisoformat(self.date).strftime("%A, %d %B %Y") if self.date else "Not selected"
         return (
@@ -1064,7 +1112,7 @@ class EventBuilderView(discord.ui.View):
             f"**📅 Date:** {date}\n"
             f"**🕐 Time:** {self._display_time()} · Europe/Berlin\n"
             f"**👥 Players:** {self.max_players}\n"
-
+            f"**🔁 Repeat:** {self._recurrence_label()}\n"
             f"**🔔 Voice invite:** {self.invite_lead} min before\n"
             f"**👁️ Visibility:** {'🌐 Public' if self.visibility == 'public' else '🔒 Private · Invite only'}\n"
             "Discord will display the final event in each member's local time."
