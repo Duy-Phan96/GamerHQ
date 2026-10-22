@@ -56,9 +56,9 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
                 builder = result["view"]
                 self.assertIsInstance(builder, lfg.EventBuilderView)
                 rows = builder.to_components()
-                # Date, time and participants each use one row; controls use the last row.
-                self.assertEqual(len(rows), 4)
-                self.assertEqual([len(row["components"]) for row in rows], [1, 1, 1, 5])
+                # Date, time, participants and recurrence each use one row; controls use the last row.
+                self.assertEqual(len(rows), 5)
+                self.assertEqual([len(row["components"]) for row in rows], [1, 1, 1, 1, 5])
                 self.assertEqual(
                     [component["label"] for component in rows[-1]["components"]],
                     ["Title", "PM", "15m", "Public", "Preview"],
