@@ -307,8 +307,6 @@ CREATE TABLE IF NOT EXISTS lfg_events (
     series_id INTEGER,
     occurrence_index INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS lfg_series_occurrence
-ON lfg_events(series_id, occurrence_index) WHERE series_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS lfg_event_members (
     event_id INTEGER NOT NULL,
