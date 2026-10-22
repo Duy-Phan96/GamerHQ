@@ -262,6 +262,29 @@ CREATE TABLE IF NOT EXISTS managed_roles (
     UNIQUE(role_kind, role_key)
 );
 
+CREATE TABLE IF NOT EXISTS lfg_event_series (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    host_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    timezone_name TEXT NOT NULL,
+    frequency TEXT NOT NULL CHECK(frequency IN ('daily','weekly','weekdays')),
+    weekdays_json TEXT NOT NULL DEFAULT '[]',
+    first_start_at INTEGER NOT NULL,
+    occurrence_limit INTEGER,
+    until_at INTEGER,
+    max_players INTEGER NOT NULL,
+    invite_lead_minutes INTEGER NOT NULL DEFAULT 15,
+    duration_minutes INTEGER NOT NULL DEFAULT 120,
+    visibility TEXT NOT NULL DEFAULT 'public',
+    note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','cancelled','completed')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS lfg_event_series_owner
+ON lfg_event_series(guild_id, host_id, status);
+
 CREATE TABLE IF NOT EXISTS lfg_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id INTEGER NOT NULL,
@@ -280,7 +303,9 @@ CREATE TABLE IF NOT EXISTS lfg_events (
     visibility TEXT NOT NULL DEFAULT 'public',
     private_channel_id INTEGER,
     share_token TEXT,
-    share_enabled INTEGER NOT NULL DEFAULT 1
+    share_enabled INTEGER NOT NULL DEFAULT 1,
+    series_id INTEGER,
+    occurrence_index INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS lfg_event_members (
@@ -427,6 +452,8 @@ def init_db():
             "dashboard_channel_id": "INTEGER",
             "dashboard_message_id": "INTEGER",
             "ended_at": "INTEGER",
+            "series_id": "INTEGER",
+            "occurrence_index": "INTEGER",
         }.items():
             if name not in cols:
                 conn.execute(f"ALTER TABLE lfg_events ADD COLUMN {name} {definition}")
@@ -442,6 +469,10 @@ def init_db():
             conn.execute("ALTER TABLE lfg_events ADD COLUMN share_token TEXT")
         if "share_enabled" not in cols:
             conn.execute("ALTER TABLE lfg_events ADD COLUMN share_enabled INTEGER NOT NULL DEFAULT 1")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS lfg_series_occurrence "
+            "ON lfg_events(series_id, occurrence_index) WHERE series_id IS NOT NULL"
+        )
 
         streamer_cols = {row["name"] for row in conn.execute("PRAGMA table_info(streamer_profiles)").fetchall()}
         if "description" not in streamer_cols:
@@ -781,7 +812,7 @@ def delete_managed_role(role_id):
         conn.execute("DELETE FROM managed_roles WHERE role_id=?", (role_id,))
 
 
-def create_lfg_event(*, guild_id, game_id=None, host_id, title, start_at, max_players, invite_lead_minutes, duration_minutes=120, visibility="public", share_token=None, enforce_member_limits=False):
+def create_lfg_event(*, guild_id, game_id=None, host_id, title, start_at, max_players, invite_lead_minutes, duration_minutes=120, visibility="public", share_token=None, enforce_member_limits=False, series_id=None, occurrence_index=None):
     from services.game_area_safety import require_available
     normalized_game_id = int(game_id) if game_id else 0
     if normalized_game_id:
@@ -802,10 +833,17 @@ def create_lfg_event(*, guild_id, game_id=None, host_id, title, start_at, max_pl
             conn.execute('INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, str(now)))
         cur = conn.execute(
             """
-            INSERT INTO lfg_events(guild_id,game_id,host_id,title,start_at,max_players,invite_lead_minutes,duration_minutes,visibility,share_token)
-            VALUES(?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO lfg_events(
+                guild_id,game_id,host_id,title,start_at,max_players,invite_lead_minutes,
+                duration_minutes,visibility,share_token,series_id,occurrence_index
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (guild_id, normalized_game_id, host_id, title, start_at, max_players, invite_lead_minutes, int(duration_minutes), visibility, share_token),
+            (
+                guild_id, normalized_game_id, host_id, title, start_at, max_players,
+                invite_lead_minutes, int(duration_minutes), visibility, share_token,
+                series_id, occurrence_index,
+            ),
         )
         event_id = cur.lastrowid
         conn.execute(
@@ -813,6 +851,95 @@ def create_lfg_event(*, guild_id, game_id=None, host_id, title, start_at, max_pl
             (event_id, host_id, "joined"),
         )
     return get_lfg_event(event_id)
+
+
+def create_lfg_event_series(
+    *,
+    guild_id,
+    host_id,
+    title,
+    timezone_name,
+    frequency,
+    weekdays,
+    first_start_at,
+    occurrence_limit=None,
+    until_at=None,
+    max_players,
+    invite_lead_minutes,
+    duration_minutes=120,
+    visibility="public",
+    note="",
+):
+    now = int(time.time())
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO lfg_event_series(
+                guild_id,host_id,title,timezone_name,frequency,weekdays_json,
+                first_start_at,occurrence_limit,until_at,max_players,
+                invite_lead_minutes,duration_minutes,visibility,note,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                guild_id, host_id, title, timezone_name, frequency,
+                json.dumps(list(weekdays)), int(first_start_at),
+                int(occurrence_limit) if occurrence_limit is not None else None,
+                int(until_at) if until_at is not None else None,
+                int(max_players), int(invite_lead_minutes), int(duration_minutes),
+                visibility, note, now, now,
+            ),
+        )
+        series_id = cur.lastrowid
+    return get_lfg_event_series(series_id)
+
+
+def get_lfg_event_series(series_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM lfg_event_series WHERE id=?", (series_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["weekdays"] = tuple(json.loads(result.pop("weekdays_json") or "[]"))
+        return result
+
+
+def get_active_lfg_event_series(guild_id=None):
+    with connect() as conn:
+        if guild_id is None:
+            rows = conn.execute(
+                "SELECT * FROM lfg_event_series WHERE status='active' ORDER BY first_start_at,id"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM lfg_event_series WHERE status='active' AND guild_id=? ORDER BY first_start_at,id",
+                (guild_id,),
+            ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["weekdays"] = tuple(json.loads(item.pop("weekdays_json") or "[]"))
+        result.append(item)
+    return result
+
+
+def set_lfg_event_series_status(series_id, status):
+    if status not in {"active", "cancelled", "completed"}:
+        raise ValueError("Invalid event-series status.")
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE lfg_event_series SET status=?,updated_at=? WHERE id=?",
+            (status, int(time.time()), series_id),
+        )
+        return cur.rowcount > 0
+
+
+def get_lfg_series_occurrences(series_id):
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM lfg_events WHERE series_id=? ORDER BY occurrence_index,start_at,id",
+            (series_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def get_lfg_event(event_id):
