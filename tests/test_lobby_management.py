@@ -76,6 +76,12 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Duration', builder.content())
         self.assertIn('Google Calendar', builder.content())
 
+        self.assertIn('Repeat:', builder.content())
+        recurrence = next(child for child in builder.children if isinstance(child, lfg.BuilderRecurrenceSelect))
+        self.assertEqual([option.value for option in recurrence.options], ['once', 'daily', 'weekly', 'weekdays', 'weekends'])
+        builder.recurrence_mode = 'weekly'
+        self.assertIn('Weekly · Europe/Berlin', builder.content())
+
     def test_invites_duplicates_capacity_and_private_security(self):
         with db.connect() as conn:
             conn.execute("UPDATE lfg_events SET visibility='private',share_token='secret' WHERE id=?", (self.eid,))
