@@ -800,6 +800,48 @@ class PreviewInviteUsersSelect(discord.ui.UserSelect):
         await interaction.response.edit_message(content=self.preview.content(), view=self.preview)
 
 
+def persist_event_draft(*, guild_id: int, builder, start_at: int) -> tuple[dict, dict | None]:
+    """Persist one event draft, optionally creating its recurrence series first."""
+    series = None
+    recurrence = builder._recurrence()
+    try:
+        if recurrence is not None:
+            recurrence = recurrence.validate()
+            series = db.create_lfg_event_series(
+                guild_id=guild_id,
+                host_id=builder.host.id,
+                title=builder.title,
+                timezone_name=recurrence.timezone_name,
+                frequency=recurrence.frequency,
+                weekdays=recurrence.weekdays,
+                first_start_at=start_at,
+                occurrence_limit=recurrence.occurrence_limit,
+                until_at=recurrence.until_at,
+                max_players=builder.max_players,
+                invite_lead_minutes=builder.invite_lead,
+                visibility=builder.visibility,
+            )
+        event = db.create_lfg_event(
+            guild_id=guild_id,
+            game_id=0,
+            host_id=builder.host.id,
+            title=builder.title,
+            start_at=start_at,
+            max_players=builder.max_players,
+            invite_lead_minutes=builder.invite_lead,
+            visibility=builder.visibility,
+            share_token=secrets.token_urlsafe(8),
+            enforce_member_limits=True,
+            series_id=series["id"] if series else None,
+            occurrence_index=0 if series else None,
+        )
+        return event, series
+    except Exception:
+        if series:
+            db.delete_lfg_event_series_if_empty(series["id"])
+        raise
+
+
 class EventDraftView(discord.ui.View):
     """Final preview. Optional invites are selected here; all other settings come from the builder."""
     def __init__(self, builder):
@@ -870,36 +912,13 @@ class EventDraftView(discord.ui.View):
             start_at = parse_server_datetime(b.date, f'{hour:02d}:{minute:02d}')
         except ValueError as exc:
             return await interaction.edit_original_response(content=str(exc), view=None)
-        series = None
-        recurrence = b._recurrence()
         try:
-            if recurrence is not None:
-                recurrence = recurrence.validate()
-                series = db.create_lfg_event_series(
-                    guild_id=interaction.guild.id,
-                    host_id=b.host.id,
-                    title=b.title,
-                    timezone_name=recurrence.timezone_name,
-                    frequency=recurrence.frequency,
-                    weekdays=recurrence.weekdays,
-                    first_start_at=start_at,
-                    occurrence_limit=recurrence.occurrence_limit,
-                    until_at=recurrence.until_at,
-                    max_players=b.max_players,
-                    invite_lead_minutes=b.invite_lead,
-                    visibility=b.visibility,
-                )
-            event = db.create_lfg_event(
-                guild_id=interaction.guild.id, game_id=0, host_id=b.host.id,
-                title=b.title, start_at=start_at, max_players=b.max_players,
-                invite_lead_minutes=b.invite_lead, visibility=b.visibility,
-                share_token=secrets.token_urlsafe(8), enforce_member_limits=True,
-                series_id=series["id"] if series else None,
-                occurrence_index=0 if series else None,
+            event, series = persist_event_draft(
+                guild_id=interaction.guild.id,
+                builder=b,
+                start_at=start_at,
             )
         except ValueError as exc:
-            if series:
-                db.delete_lfg_event_series_if_empty(series["id"])
             return await interaction.edit_original_response(content=str(exc), view=None)
         for uid in b.invited_ids:
             member = interaction.guild.get_member(int(uid))
