@@ -211,6 +211,7 @@ before broader third-party adoption.
 
 ### Proposed future scope
 
+- Event Manager recurring events, followed by standalone Skill extraction readiness (Issue #153);
 - reminders;
 - polls/community decisions;
 - creator/streamer Skill;
@@ -292,12 +293,31 @@ high-value boundary.
 Focus on public compatibility policy, independent SDK distribution, developer
 experience, licensing and proportional security/dependency automation.
 
-### Milestone 5 — Growth features
+### Milestone 5 — Event Manager maturation and extraction
+
+**Status:** Planned
+
+Extend the current event system with recurring events first, then prepare the
+Event Manager for extraction into a standalone Skill. The sequence is:
+
+1. add recurring series with timezone/DST-safe scheduling and explicit
+   occurrence-versus-series editing/cancellation;
+2. live-accept one-time and recurring event behavior;
+3. separate domain state from Discord resource adapters and publish stable event
+   lifecycle contracts;
+4. perform extraction-readiness review;
+5. create the standalone Event Manager Skill repository through the normal
+   repository handoff process.
+
+Issue #153 is the operational record for this work. GamerHQ remains the
+first/reference customer after extraction.
+
+### Milestone 6 — Growth features
 
 **Status:** Future
 
-Only after consolidation and core-beta validation: reminders, polls, giveaways,
-creator integrations, game stats and additional provider Skills.
+After consolidation and Event Manager stabilization: reminders, polls,
+giveaways, creator integrations, game stats and additional provider Skills.
 
 ## Prioritized execution backlog
 
@@ -318,10 +338,12 @@ creator integrations, game stats and additional provider Skills.
 6. Evaluate Dependabot and CodeQL/security scanning proportionally to current
    project maturity.
 
-### P3 — postponed
+### P3 — planned / postponed
 
-7. Reminders and polls.
-8. Tournaments, game stats and moderation/reputation features.
+7. Issue #153 — add recurring events to the Event Manager and prepare its
+   standalone Skill extraction.
+8. Reminders and polls.
+9. Tournaments, game stats and moderation/reputation features.
 
 ## Decisions still required
 
