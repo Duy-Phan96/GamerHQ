@@ -870,14 +870,36 @@ class EventDraftView(discord.ui.View):
             start_at = parse_server_datetime(b.date, f'{hour:02d}:{minute:02d}')
         except ValueError as exc:
             return await interaction.edit_original_response(content=str(exc), view=None)
+        series = None
+        recurrence = b._recurrence()
         try:
+            if recurrence is not None:
+                recurrence = recurrence.validate()
+                series = db.create_lfg_event_series(
+                    guild_id=interaction.guild.id,
+                    host_id=b.host.id,
+                    title=b.title,
+                    timezone_name=recurrence.timezone_name,
+                    frequency=recurrence.frequency,
+                    weekdays=recurrence.weekdays,
+                    first_start_at=start_at,
+                    occurrence_limit=recurrence.occurrence_limit,
+                    until_at=recurrence.until_at,
+                    max_players=b.max_players,
+                    invite_lead_minutes=b.invite_lead,
+                    visibility=b.visibility,
+                )
             event = db.create_lfg_event(
                 guild_id=interaction.guild.id, game_id=0, host_id=b.host.id,
                 title=b.title, start_at=start_at, max_players=b.max_players,
                 invite_lead_minutes=b.invite_lead, visibility=b.visibility,
                 share_token=secrets.token_urlsafe(8), enforce_member_limits=True,
+                series_id=series["id"] if series else None,
+                occurrence_index=0 if series else None,
             )
         except ValueError as exc:
+            if series:
+                db.delete_lfg_event_series_if_empty(series["id"])
             return await interaction.edit_original_response(content=str(exc), view=None)
         for uid in b.invited_ids:
             member = interaction.guild.get_member(int(uid))
@@ -920,7 +942,11 @@ class EventDraftView(discord.ui.View):
         await send_event_invites(interaction.guild, db.get_lfg_event(event["id"]), posts[0])
         where = " and ".join(p.channel.mention for p in posts)
         visibility_note = "🔒 Private event" if b.visibility == "private" else "🌐 Public event"
-        await interaction.edit_original_response(content=f"✅ {visibility_note} created in {where}.", view=None)
+        repeat_note = f" · 🔁 {b._recurrence_label()}" if series else ""
+        await interaction.edit_original_response(
+            content=f"✅ {visibility_note} created in {where}{repeat_note}.",
+            view=None,
+        )
         self.stop()
 
     @discord.ui.button(label="Cancel", emoji="✖️", style=discord.ButtonStyle.danger, row=1)
