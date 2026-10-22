@@ -2,9 +2,11 @@ import tempfile
 import unittest
 from datetime import datetime, time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from cogs import lfg
 from database import db
 from services.event_recurrence_service import (
     Recurrence,
@@ -101,6 +103,54 @@ class EventRecurrenceTests(unittest.TestCase):
         for spec in invalid:
             with self.subTest(spec=spec), self.assertRaises(ValueError):
                 spec.validate()
+
+    def test_one_time_draft_creates_only_one_event(self):
+        start = int(datetime(2030, 2, 1, 20, 0, tzinfo=ZoneInfo("Europe/Berlin")).timestamp())
+        builder = SimpleNamespace(
+            host=SimpleNamespace(id=10),
+            title="One Night",
+            max_players=5,
+            invite_lead=15,
+            visibility="public",
+            _recurrence=lambda: None,
+        )
+        event, series = lfg.persist_event_draft(guild_id=1, builder=builder, start_at=start)
+        self.assertIsNone(series)
+        self.assertIsNone(event["series_id"])
+        self.assertIsNone(event["occurrence_index"])
+        self.assertEqual(db.get_active_lfg_event_series(1), [])
+
+    def test_recurring_draft_creates_series_and_first_occurrence(self):
+        start = int(datetime(2030, 2, 1, 20, 0, tzinfo=ZoneInfo("Europe/Berlin")).timestamp())
+        builder = SimpleNamespace(
+            host=SimpleNamespace(id=10),
+            title="Weekly Night",
+            max_players=5,
+            invite_lead=15,
+            visibility="public",
+            _recurrence=lambda: Recurrence("weekly", "Europe/Berlin"),
+        )
+        event, series = lfg.persist_event_draft(guild_id=1, builder=builder, start_at=start)
+        self.assertIsNotNone(series)
+        self.assertEqual(series["frequency"], "weekly")
+        self.assertEqual(event["series_id"], series["id"])
+        self.assertEqual(event["occurrence_index"], 0)
+        self.assertEqual([row["id"] for row in db.get_lfg_series_occurrences(series["id"])], [event["id"]])
+
+    def test_failed_occurrence_creation_does_not_leave_empty_series(self):
+        start = int(datetime(2030, 2, 1, 20, 0, tzinfo=ZoneInfo("Europe/Berlin")).timestamp())
+        builder = SimpleNamespace(
+            host=SimpleNamespace(id=10),
+            title="Broken Series",
+            max_players=5,
+            invite_lead=15,
+            visibility="public",
+            _recurrence=lambda: Recurrence("weekly", "Europe/Berlin"),
+        )
+        with patch.object(db, "create_lfg_event", side_effect=ValueError("failed")):
+            with self.assertRaisesRegex(ValueError, "failed"):
+                lfg.persist_event_draft(guild_id=1, builder=builder, start_at=start)
+        self.assertEqual(db.get_active_lfg_event_series(1), [])
 
     def test_series_storage_is_additive_and_occurrences_can_link_uniquely(self):
         tz = ZoneInfo("Europe/Berlin")
