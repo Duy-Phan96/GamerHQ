@@ -49,7 +49,7 @@ class ReviewedSkillDeploymentPlanTests(unittest.TestCase):
         )
         self.assertEqual(
             awin.reviewed_commit,
-            "db6bd7ab9500930e1c65aea594be63771e95f4a7",
+            "efdfc37256f69b1f868e6355c0d7906e0f85d078",
         )
 
         plan = deployment_plan(packages)
