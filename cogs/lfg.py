@@ -20,6 +20,7 @@ from services.lfg_service import (
     render_event,
 )
 from services.event_recurrence_service import Recurrence, recurrence_summary
+from services.event_series_service import materialize_guild
 
 
 async def refresh_event_posts(guild: discord.Guild, event_id: int):
@@ -1251,6 +1252,20 @@ class LFG(commands.Cog):
                 await cleanup_ended(guild, reconcile=self.voice_scheduler.current_loop % 10 == 0)
             except Exception:
                 logging.getLogger(__name__).exception('LFG terminal recovery failed guild=%s; retry next cycle.', guild.id)
+            if self.voice_scheduler.current_loop % 10 == 0:
+                try:
+                    created = materialize_guild(guild.id, now=now)
+                    if created:
+                        logging.getLogger(__name__).info(
+                            'Materialized %s recurring event occurrence(s) guild=%s',
+                            len(created),
+                            guild.id,
+                        )
+                except (sqlite3.Error, ValueError):
+                    logging.getLogger(__name__).exception(
+                        'Recurring event materialization failed guild=%s; retry next cycle.',
+                        guild.id,
+                    )
             try:
                 events = db.get_active_lfg_events(guild.id)
             except sqlite3.Error:
