@@ -12,7 +12,7 @@ from tools.release_preflight import validate_skill_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AWIN_SHA = "db6bd7ab9500930e1c65aea594be63771e95f4a7"
+AWIN_SHA = "efdfc37256f69b1f868e6355c0d7906e0f85d078"
 
 
 class AwinSkillIntegrationTests(unittest.TestCase):
@@ -26,14 +26,14 @@ class AwinSkillIntegrationTests(unittest.TestCase):
         self.assertIn("awin-affiliate", BUNDLED_SKILL_IDS)
 
         distribution = importlib.metadata.distribution("gamerhq-skill-awin-affiliate")
-        self.assertEqual(distribution.version, "0.9.0")
+        self.assertEqual(distribution.version, "0.9.3")
 
         loaded = discover_installed_skills(("awin-affiliate",))
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].distribution, "gamerhq-skill-awin-affiliate")
         report = validate_skill_implementation(loaded[0].skill)
         self.assertEqual(report.skill_id, "awin-affiliate")
-        self.assertEqual(report.version, "0.9.0")
+        self.assertEqual(report.version, "0.9.3")
 
     def test_server_management_routes_awin_without_importing_skill_implementation(self):
         source = inspect.getsource(server_management.SkillDetailsView)
