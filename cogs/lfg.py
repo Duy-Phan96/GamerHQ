@@ -326,6 +326,107 @@ async def _revoke_private_event_access(guild: discord.Guild, event: dict, member
         await channel.set_permissions(member, overwrite=None)
 
 
+def _private_event_topic(event: dict) -> str:
+    return f"Private GamerHQ event #{int(event['id'])} · {event['title']}"
+
+
+async def ensure_private_event_channel(
+    guild: discord.Guild,
+    event: dict,
+    game: dict | None = None,
+) -> discord.TextChannel | None:
+    """Reuse/recover the one private channel owned by this event before creating one."""
+    tracked = _event_private_channel(guild, event)
+    if tracked is not None:
+        return tracked
+
+    topic = _private_event_topic(event)
+    recovered = next(
+        (
+            channel for channel in guild.text_channels
+            if isinstance(channel, discord.TextChannel) and channel.topic == topic
+        ),
+        None,
+    )
+    if recovered is not None:
+        db.set_lfg_event_private_channel(int(event["id"]), recovered.id)
+        return recovered
+    return await create_private_event_channel(guild, event, game)
+
+
+async def ensure_event_publication(guild: discord.Guild, event: dict) -> bool:
+    """Ensure a concrete event occurrence has its normal Discord surface.
+
+    Safe to retry after restart or a partial Discord failure.
+    """
+    if not event or event.get("status") != "scheduled":
+        return False
+
+    event_id = int(event["id"])
+    if event.get("visibility") == "private":
+        target = await ensure_private_event_channel(guild, event, None)
+    else:
+        target = find_lfg_channel(guild)
+    if not isinstance(target, discord.TextChannel):
+        return False
+
+    rows = db.get_lfg_event_messages(event_id)
+    message_id = next(
+        (int(row["message_id"]) for row in rows if int(row["channel_id"]) == target.id),
+        None,
+    )
+    message = None
+    if message_id:
+        try:
+            message = await target.fetch_message(message_id)
+        except discord.NotFound:
+            message = None
+        except discord.HTTPException:
+            return False
+
+    view = LFGEventView(event_id)
+    if message is None:
+        marker = f"gamerhq:lfg:join:{event_id}"
+        try:
+            async for candidate in target.history(limit=100):
+                if guild.me and candidate.author.id != guild.me.id:
+                    continue
+                if any(
+                    getattr(child, "custom_id", None) == marker
+                    for row in candidate.components
+                    for child in row.children
+                ):
+                    message = candidate
+                    break
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
+    if message is None:
+        try:
+            message = await target.send(
+                render_event(guild, event),
+                view=view,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+    else:
+        try:
+            await message.edit(
+                content=render_event(guild, event),
+                view=view,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
+    db.add_lfg_event_message(event_id, channel_id=target.id, message_id=message.id)
+    if not event.get("channel_id") or not event.get("message_id"):
+        db.set_lfg_event_message(event_id, channel_id=target.id, message_id=message.id)
+    await refresh_event_posts(guild, event_id)
+    return True
+
+
 async def create_private_event_channel(guild: discord.Guild, event: dict, game: dict | None = None) -> discord.TextChannel | None:
     category = guild.get_channel(int(game["category_id"])) if game and game.get("category_id") else None
     if not isinstance(category, discord.CategoryChannel):
@@ -360,7 +461,7 @@ async def create_private_event_channel(guild: discord.Guild, event: dict, game: 
             _safe_event_channel_name(str(event["title"]), int(event["id"])),
             category=category if isinstance(category, discord.CategoryChannel) else None,
             overwrites=overwrites,
-            topic=f"Private GamerHQ event #{int(event['id'])} · {event['title']}",
+            topic=_private_event_topic(event),
             reason=f"GamerHQ private LFG event #{int(event['id'])}",
         )
     except discord.HTTPException as exc:
@@ -1261,6 +1362,15 @@ class LFG(commands.Cog):
                             len(created),
                             guild.id,
                         )
+                        for occurrence in created:
+                            try:
+                                await ensure_event_publication(guild, occurrence)
+                            except (discord.HTTPException, TimeoutError, OSError):
+                                logging.getLogger(__name__).exception(
+                                    'Recurring occurrence publication deferred guild=%s event=%s',
+                                    guild.id,
+                                    occurrence["id"],
+                                )
                 except (sqlite3.Error, ValueError):
                     logging.getLogger(__name__).exception(
                         'Recurring event materialization failed guild=%s; retry next cycle.',
@@ -1276,7 +1386,10 @@ class LFG(commands.Cog):
                     event_id = int(event["id"])
                     # Periodically repair missing cards and failed Discord updates.
                     if self.voice_scheduler.current_loop % 10 == 0:
-                        await refresh_event_posts(guild, event_id)
+                        if event.get("series_id"):
+                            await ensure_event_publication(guild, event)
+                        else:
+                            await refresh_event_posts(guild, event_id)
                     event = db.get_lfg_event(event_id)
                     if not event or event['status'] != 'scheduled':
                         continue
