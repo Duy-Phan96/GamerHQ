@@ -1,9 +1,10 @@
 import tempfile
 import unittest
+import discord
 from datetime import datetime, time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from cogs import lfg
@@ -252,6 +253,76 @@ class EventRecurrenceTests(unittest.TestCase):
         now = first + 2 * 86400 + 60
         created = materialize_series(series, now=now, through_at=first + 5 * 86400)
         self.assertEqual([row["occurrence_index"] for row in created], [3])
+
+    async def test_public_occurrence_publication_reuses_existing_message(self):
+        start = int(datetime(2030, 2, 1, 20, 0, tzinfo=ZoneInfo("Europe/Berlin")).timestamp())
+        event = db.create_lfg_event(
+            guild_id=1,
+            host_id=10,
+            title="Weekly Night",
+            start_at=start,
+            max_players=5,
+            invite_lead_minutes=15,
+            series_id=1,
+            occurrence_index=1,
+        )
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 500
+        channel.send = AsyncMock()
+        sent = SimpleNamespace(id=900, edit=AsyncMock())
+        channel.send.return_value = sent
+        existing = SimpleNamespace(id=900, edit=AsyncMock())
+
+        async def empty_history(*args, **kwargs):
+            if False:
+                yield None
+
+        channel.history = empty_history
+        channel.fetch_message = AsyncMock(return_value=existing)
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 1
+        guild.me = SimpleNamespace(id=999)
+        guild.get_member.return_value = None
+
+        with patch.object(lfg, "find_lfg_channel", return_value=channel), \
+             patch.object(lfg, "render_event", return_value="card"), \
+             patch.object(lfg, "refresh_event_posts", AsyncMock()) as refresh:
+            self.assertTrue(await lfg.ensure_event_publication(guild, event))
+            self.assertTrue(await lfg.ensure_event_publication(guild, db.get_lfg_event(event["id"])))
+
+        channel.send.assert_awaited_once()
+        existing.edit.assert_awaited_once()
+        refresh.assert_awaited()
+        rows = db.get_lfg_event_messages(event["id"])
+        self.assertEqual([(row["channel_id"], row["message_id"]) for row in rows], [(500, 900)])
+
+    async def test_private_occurrence_recovers_channel_by_owned_topic(self):
+        start = int(datetime(2030, 2, 1, 20, 0, tzinfo=ZoneInfo("Europe/Berlin")).timestamp())
+        event = db.create_lfg_event(
+            guild_id=1,
+            host_id=10,
+            title="Private Raid",
+            start_at=start,
+            max_players=5,
+            invite_lead_minutes=15,
+            visibility="private",
+            series_id=1,
+            occurrence_index=1,
+        )
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 700
+        channel.topic = lfg._private_event_topic(event)
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 1
+        guild.text_channels = [channel]
+        guild.get_channel.return_value = None
+
+        recovered = await lfg.ensure_private_event_channel(guild, event)
+        self.assertIs(recovered, channel)
+        self.assertEqual(db.get_lfg_event(event["id"])["private_channel_id"], 700)
 
     def test_series_storage_is_additive_and_occurrences_can_link_uniquely(self):
         tz = ZoneInfo("Europe/Berlin")
