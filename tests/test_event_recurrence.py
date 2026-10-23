@@ -14,6 +14,7 @@ from services.event_recurrence_service import (
     recurrence_summary,
     resolve_local_wall_time,
 )
+from services.event_series_service import materialize_guild, materialize_series
 
 
 class EventRecurrenceTests(unittest.TestCase):
@@ -151,6 +152,106 @@ class EventRecurrenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "failed"):
                 lfg.persist_event_draft(guild_id=1, builder=builder, start_at=start)
         self.assertEqual(db.get_active_lfg_event_series(1), [])
+
+    def test_materialization_is_idempotent_across_retries_and_restart(self):
+        tz = ZoneInfo("Europe/Berlin")
+        first = int(datetime(2030, 1, 7, 19, 0, tzinfo=tz).timestamp())
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title="Weekly Raid",
+            timezone_name="Europe/Berlin",
+            frequency="weekly",
+            weekdays=(),
+            first_start_at=first,
+            occurrence_limit=4,
+            max_players=6,
+            invite_lead_minutes=30,
+        )
+        db.create_lfg_event(
+            guild_id=1,
+            host_id=10,
+            title="Weekly Raid",
+            start_at=first,
+            max_players=6,
+            invite_lead_minutes=30,
+            series_id=series["id"],
+            occurrence_index=0,
+        )
+
+        now = first - 60
+        through = int(datetime(2030, 1, 31, 23, 59, tzinfo=tz).timestamp())
+        first_run = materialize_series(series, now=now, through_at=through)
+        second_run = materialize_series(db.get_lfg_event_series(series["id"]), now=now, through_at=through)
+        db.init_db()
+        third_run = materialize_guild(1, now=now, through_at=through)
+
+        self.assertEqual(len(first_run), 3)
+        self.assertEqual(second_run, [])
+        self.assertEqual(third_run, [])
+        occurrences = db.get_lfg_series_occurrences(series["id"])
+        self.assertEqual([row["occurrence_index"] for row in occurrences], [0, 1, 2, 3])
+
+    def test_materialization_respects_rolling_horizon(self):
+        tz = ZoneInfo("Europe/Berlin")
+        first = int(datetime(2030, 1, 1, 20, 0, tzinfo=tz).timestamp())
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title="Daily",
+            timezone_name="Europe/Berlin",
+            frequency="daily",
+            weekdays=(),
+            first_start_at=first,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        db.create_lfg_event(
+            guild_id=1,
+            host_id=10,
+            title="Daily",
+            start_at=first,
+            max_players=5,
+            invite_lead_minutes=15,
+            series_id=series["id"],
+            occurrence_index=0,
+        )
+
+        now = first - 60
+        through = first + 2 * 86400
+        created = materialize_series(series, now=now, through_at=through)
+        self.assertEqual([row["occurrence_index"] for row in created], [1, 2])
+        self.assertTrue(all(row["start_at"] <= through for row in created))
+
+    def test_materialization_skips_past_missing_occurrences(self):
+        tz = ZoneInfo("Europe/Berlin")
+        first = int(datetime(2030, 1, 1, 20, 0, tzinfo=tz).timestamp())
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title="Daily",
+            timezone_name="Europe/Berlin",
+            frequency="daily",
+            weekdays=(),
+            first_start_at=first,
+            occurrence_limit=4,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        db.create_lfg_event(
+            guild_id=1,
+            host_id=10,
+            title="Daily",
+            start_at=first,
+            max_players=5,
+            invite_lead_minutes=15,
+            series_id=series["id"],
+            occurrence_index=0,
+        )
+
+        now = first + 2 * 86400 + 60
+        created = materialize_series(series, now=now, through_at=first + 5 * 86400)
+        self.assertEqual([row["occurrence_index"] for row in created], [3])
 
     def test_series_storage_is_additive_and_occurrences_can_link_uniquely(self):
         tz = ZoneInfo("Europe/Berlin")
