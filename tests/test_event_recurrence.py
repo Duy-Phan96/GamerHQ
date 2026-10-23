@@ -18,7 +18,7 @@ from services.event_recurrence_service import (
 from services.event_series_service import materialize_guild, materialize_series
 
 
-class EventRecurrenceTests(unittest.TestCase):
+class EventRecurrenceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
