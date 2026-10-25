@@ -25,6 +25,17 @@
 - When another repository is required, prefer a handoff by default. If the owner explicitly authorizes end-to-end cross-repository work, make the target change in that repository on its own branch/PR and leave a traceable handoff/completion record in both projects. Each target repository still owns its implementation and release.
 - Use ADRs only for durable architectural decisions; see [ADR guidance](docs/architecture/decisions/README.md).
 
+## Cross-project handoff queue
+- GitHub Issues in `Duy-Phan96/GamerHQ` are the durable queue for requests originating in gamerhq-web, external Skills or other repositories.
+- Queue issues use the title prefix `[HANDOFF QUEUE]`, include a priority such as `[P0]`–`[P3]`, and record the source repository, problem, requested public outcome, acceptance criteria, compatibility/security constraints and release impact.
+- At the start of every new work session, and whenever the owner says `weiter` or asks for the next task, inspect open `[HANDOFF QUEUE]` issues before inventing or selecting new work.
+- Do not interrupt an active coherent workstream merely because a new queue item appears. Respect priority, dependencies and safe checkpoints. P0 incidents/release blockers may supersede normal work; otherwise leave the item queued.
+- Search existing open and recently closed queue issues before creating another one. Update the existing item when it represents the same outcome.
+- When work starts, add a queue comment with `STATUS: IN PROGRESS` plus the branch/PR. Use `STATUS: BLOCKED` with the exact dependency when applicable. When accepted, add the final commit/release evidence and close the issue.
+- A prompt in another ChatGPT conversation is not the durable source of truth by itself. The corresponding GitHub queue issue is authoritative for cross-project scheduling and must be checked without requiring the owner to paste the prompt again.
+- If GitHub write access is unavailable, return the complete handoff prompt and state clearly that it was **not queued**. Never imply that another project was notified when no queue record exists.
+- A queue item never bypasses repository ownership, review, CI, release or production rules. It authorizes scheduling, not automatic implementation or deployment.
+
 ## Validation and handoff
 - Run relevant offline tests for behavior changes; add regression coverage for bugs, authorization, retries and persistence where affected.
 - Use pytest or tools.test, never raw unittest discovery that bypasses isolation. See the workflow and tests/AGENTS.md.
