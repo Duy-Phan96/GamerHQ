@@ -59,10 +59,11 @@ async def revoke_access(guild, event, user_id):
 
 
 class EditModal(discord.ui.Modal):
-    def __init__(self, event, schedule=False):
+    def __init__(self, event, schedule=False, series_scope=False):
         super().__init__(title='Change Date / Time' if schedule else 'Edit Event Details')
         self.event_id = event['id']
         self.schedule = schedule
+        self.series_scope = series_scope
         if schedule:
             local = datetime.fromtimestamp(event['start_at'], SERVER_TZ)
             self.date = discord.ui.TextInput(label='Date (YYYY-MM-DD, Europe/Berlin)', default=local.strftime('%Y-%m-%d'), max_length=10)
@@ -82,9 +83,24 @@ class EditModal(discord.ui.Modal):
                 'title': str(self.name), 'note': str(self.note), 'max_players': int(str(self.seats)),
                 'invite_lead_minutes': int(str(self.reminder))}
             await interaction.response.defer(ephemeral=True)
-            event = rules.edit(self.event_id, interaction.guild.id, interaction.user.id, **values)
-            await changed(interaction.guild, event, time_changed=event['start_at'] != old['start_at'])
-            await interaction.edit_original_response(content='✅ Event updated.', view=LobbyPanel(event, interaction.user.id))
+            if self.series_scope:
+                affected = rules.edit_series_from(
+                    self.event_id,
+                    interaction.guild.id,
+                    interaction.user.id,
+                    **values,
+                )
+                for item in affected:
+                    await changed(interaction.guild, item)
+                event = db.get_lfg_event(self.event_id)
+                await interaction.edit_original_response(
+                    content=f'✅ This and {max(0, len(affected) - 1)} future occurrence(s) updated.',
+                    view=LobbyPanel(event, interaction.user.id),
+                )
+            else:
+                event = rules.edit(self.event_id, interaction.guild.id, interaction.user.id, **values)
+                await changed(interaction.guild, event, time_changed=event['start_at'] != old['start_at'])
+                await interaction.edit_original_response(content='✅ Event updated.', view=LobbyPanel(event, interaction.user.id))
         except ValueError as exc:
             await error(interaction, exc)
 
@@ -256,6 +272,27 @@ class ProposalDecision(BackView):
             self.add_item(button)
 
 
+class SeriesEditScopeView(BackView):
+    def __init__(self, event, user_id, *, schedule=False):
+        super().__init__(event['id'], user_id)
+        self.schedule = schedule
+
+    @discord.ui.button(label='Only This Event', style=discord.ButtonStyle.secondary)
+    async def only_this(self, interaction, button):
+        event = authorized_event(interaction, self.event_id, host=True)
+        await interaction.response.send_modal(EditModal(event, schedule=self.schedule))
+
+    @discord.ui.button(label='This + Future Series', style=discord.ButtonStyle.primary)
+    async def this_and_future(self, interaction, button):
+        event = authorized_event(interaction, self.event_id, host=True)
+        if self.schedule:
+            return await interaction.response.send_message(
+                'Series date/time changes require a safe series split. That scope is handled separately; edit this occurrence for now.',
+                ephemeral=True,
+            )
+        await interaction.response.send_modal(EditModal(event, schedule=False, series_scope=True))
+
+
 class SeriesEndScopeView(BackView):
     def __init__(self, event, user_id, status):
         super().__init__(event['id'], user_id)
@@ -339,7 +376,17 @@ class ActionSelect(discord.ui.Select):
             action = self.values[0]
             event = authorized_event(interaction, self.view.event_id, host=True)
             if action.startswith('Edit Details') or action == 'Change Date / Time':
-                return await interaction.response.send_modal(EditModal(event, schedule=action == 'Change Date / Time'))
+                schedule = action == 'Change Date / Time'
+                if event.get('series_id'):
+                    return await interaction.response.edit_message(
+                        content=(
+                            f"{action}: choose the scope.\n\n"
+                            "**Only This Event** changes only this occurrence.\n"
+                            "**This + Future Series** applies from this occurrence onward."
+                        ),
+                        view=SeriesEditScopeView(event, interaction.user.id, schedule=schedule),
+                    )
+                return await interaction.response.send_modal(EditModal(event, schedule=schedule))
             if action in {'Invite Player', 'Remove Player'}:
                 view = BackView(event['id'], interaction.user.id)
                 view.add_item(PlayerSelect(event['id'], remove=action == 'Remove Player'))
