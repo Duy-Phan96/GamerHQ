@@ -159,6 +159,63 @@ def decide(event_id, guild_id, actor_id, proposal_id, decision):
     return db.get_lfg_event(event_id)
 
 
+def end_series_from(event_id, guild_id, actor_id, status):
+    """End this recurring occurrence and every future scheduled occurrence.
+
+    The series definition is terminal after this operation, so materialization
+    cannot recreate cancelled/completed future occurrences.
+    """
+    if status not in {'cancelled', 'completed'}:
+        raise ValueError('Invalid final state.')
+    with db.connect() as conn:
+        event = _event(conn, event_id, guild_id)
+        _host(event, actor_id)
+        series_id = event.get('series_id')
+        occurrence_index = event.get('occurrence_index')
+        if not series_id or occurrence_index is None:
+            raise ValueError('This event is not part of a recurring series.')
+
+        series = conn.execute(
+            "SELECT * FROM lfg_event_series WHERE id=? AND guild_id=?",
+            (series_id, guild_id),
+        ).fetchone()
+        if not series or series['status'] != 'active':
+            raise ValueError('This recurring series is no longer active.')
+
+        now = int(time.time())
+        conn.execute(
+            "UPDATE lfg_event_series SET status=?,updated_at=? WHERE id=?",
+            (status, now, series_id),
+        )
+        conn.execute(
+            """
+            UPDATE lfg_events
+            SET status=?,ended_at=?
+            WHERE series_id=? AND occurrence_index>=? AND status='scheduled'
+            """,
+            (status, now, series_id, occurrence_index),
+        )
+        conn.execute(
+            """
+            UPDATE lfg_time_proposals
+            SET status='EXPIRED'
+            WHERE event_id IN (
+                SELECT id FROM lfg_events
+                WHERE series_id=? AND occurrence_index>=?
+            ) AND status='PENDING'
+            """,
+            (series_id, occurrence_index),
+        )
+    logging.getLogger(__name__).warning(
+        'lobby-series timestamp=%s actor=%s target=%s series=%s result=%s',
+        int(time.time()), actor_id, event_id, series_id, status,
+    )
+    return [
+        event for event in db.get_lfg_series_occurrences(series_id)
+        if int(event.get('occurrence_index') or 0) >= int(occurrence_index)
+    ]
+
+
 def end(event_id, guild_id, actor_id, status, *, administrator=False):
     if status not in {'cancelled', 'completed'}:
         raise ValueError('Invalid final state.')

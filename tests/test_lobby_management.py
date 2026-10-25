@@ -141,6 +141,75 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rules.proposals(self.eid)[0]['id'], pid)
         self.assertEqual(db.get_lfg_event(self.eid)['title'], 'Test Lobby')
 
+    def test_series_end_from_occurrence_only_affects_current_and_future(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start - 7 * 86400,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        previous = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start - 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=0,
+        )
+        current = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=1,
+        )
+        future = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start + 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=2,
+        )
+
+        affected = rules.end_series_from(current['id'], 1, 10, 'cancelled')
+
+        self.assertEqual([row['id'] for row in affected], [current['id'], future['id']])
+        self.assertEqual(db.get_lfg_event(previous['id'])['status'], 'scheduled')
+        self.assertEqual(db.get_lfg_event(current['id'])['status'], 'cancelled')
+        self.assertEqual(db.get_lfg_event(future['id'])['status'], 'cancelled')
+        self.assertEqual(db.get_lfg_event_series(series['id'])['status'], 'cancelled')
+        with self.assertRaises(ValueError):
+            rules.end_series_from(current['id'], 1, 10, 'cancelled')
+
+    async def test_recurring_event_end_action_requires_scope_choice(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        with db.connect() as conn:
+            conn.execute(
+                'UPDATE lfg_events SET series_id=?,occurrence_index=0 WHERE id=?',
+                (series['id'], self.eid),
+            )
+        event = db.get_lfg_event(self.eid)
+        action = ui.ActionSelect(event, 10)
+        panel = ui.LobbyPanel(event, 10)
+        action = next(child for child in panel.children if isinstance(child, ui.ActionSelect))
+        action._values = ['Cancel Event']
+        request = self.request(10)
+
+        await action.callback(request)
+
+        payload = request.response.edit_message.call_args.kwargs
+        self.assertIsInstance(payload['view'], ui.SeriesEndScopeView)
+        self.assertIn('Only This Event', payload['content'])
+        self.assertIn('This + Future Series', payload['content'])
+
     async def test_event_management_is_creator_only(self):
         panel = ui.LobbyPanel(self.event, 10)
         panel.to_components()
