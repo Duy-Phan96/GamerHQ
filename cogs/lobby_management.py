@@ -256,6 +256,48 @@ class ProposalDecision(BackView):
             self.add_item(button)
 
 
+class SeriesEndScopeView(BackView):
+    def __init__(self, event, user_id, status):
+        super().__init__(event['id'], user_id)
+        self.status = status
+
+    @discord.ui.button(label='Only This Event', style=discord.ButtonStyle.secondary)
+    async def only_this(self, interaction, button):
+        await interaction.response.edit_message(
+            content='End only this occurrence?',
+            view=EndConfirm(self.event_id, interaction.user.id, self.status),
+        )
+
+    @discord.ui.button(label='This + Future Series', style=discord.ButtonStyle.danger)
+    async def this_and_future(self, interaction, button):
+        try:
+            event = authorized_event(interaction, self.event_id, host=True)
+            if not event.get('series_id'):
+                raise ValueError('This event is not part of a recurring series.')
+            affected = rules.end_series_from(
+                self.event_id,
+                interaction.guild.id,
+                interaction.user.id,
+                self.status,
+            )
+            await interaction.response.defer(ephemeral=True)
+            for item in affected:
+                await changed(interaction.guild, item)
+                await notify_members(
+                    interaction.guild,
+                    item,
+                    f"Recurring series {self.status} from this occurrence onward. "
+                    "Resources are cleaned up once voice is empty; final cards remain for 24 hours.",
+                )
+            await interaction.edit_original_response(
+                content=f'✅ Recurring series {self.status} from this event onward. '
+                        f'{len(affected)} occurrence(s) affected.',
+                view=None,
+            )
+        except ValueError as exc:
+            await error(interaction, exc)
+
+
 class EndConfirm(BackView):
     def __init__(self, event_id, user_id, status):
         super().__init__(event_id, user_id)
@@ -311,6 +353,15 @@ class ActionSelect(discord.ui.Select):
                 return await interaction.response.send_message(embed=embed, ephemeral=True)
             if action in {'Close Event', 'Cancel Event'}:
                 status = 'completed' if action == 'Close Event' else 'cancelled'
+                if event.get('series_id'):
+                    return await interaction.response.edit_message(
+                        content=(
+                            f"{action}: choose the scope.\n\n"
+                            "**Only This Event** affects this occurrence only.\n"
+                            "**This + Future Series** ends this occurrence and all future occurrences in the series."
+                        ),
+                        view=SeriesEndScopeView(event, interaction.user.id, status),
+                    )
                 return await interaction.response.edit_message(
                     content=f"{action}? This ends the event for everyone and cannot be undone.",
                     view=EndConfirm(event['id'], interaction.user.id, status),
