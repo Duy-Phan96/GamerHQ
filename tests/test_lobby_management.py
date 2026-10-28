@@ -309,6 +309,116 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Only This Event', payload['content'])
         self.assertIn('This + Future Series', payload['content'])
 
+    def test_series_schedule_split_preserves_history_and_event_ids(self):
+        tz = lfg.SERVER_TZ
+        first = int(datetime.fromtimestamp(self.start - 14 * 86400, tz).timestamp())
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=first,
+            occurrence_limit=5,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        previous = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start - 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=1,
+        )
+        current = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=2,
+        )
+        future = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start + 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=3,
+        )
+        db.set_lfg_event_member(current['id'], 20, 'joined')
+        new_start = self.start + 2 * 3600
+
+        result = rules.split_series_schedule(current['id'], 1, 10, new_start)
+
+        old_series = db.get_lfg_event_series(series['id'])
+        new_series = db.get_lfg_event_series(result['new_series_id'])
+        self.assertEqual(old_series['status'], 'completed')
+        self.assertEqual(new_series['status'], 'active')
+        self.assertEqual(new_series['first_start_at'], new_start)
+
+        previous_after = db.get_lfg_event(previous['id'])
+        current_after = db.get_lfg_event(current['id'])
+        future_after = db.get_lfg_event(future['id'])
+        self.assertEqual(previous_after['series_id'], series['id'])
+        self.assertEqual(current_after['id'], current['id'])
+        self.assertEqual(future_after['id'], future['id'])
+        self.assertEqual(current_after['series_id'], new_series['id'])
+        self.assertEqual(future_after['series_id'], new_series['id'])
+        self.assertEqual(current_after['occurrence_index'], 0)
+        self.assertEqual(future_after['occurrence_index'], 1)
+        self.assertEqual(current_after['start_at'], new_start)
+        self.assertEqual(db.get_lfg_event_members(current['id'])[1]['user_id'], 20)
+
+    def test_series_schedule_split_rejects_open_future_voice(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start,
+            occurrence_limit=3,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        current = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=0,
+        )
+        future = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start + 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=1,
+        )
+        db.set_lfg_event_voice(future['id'], 999)
+
+        with self.assertRaises(ValueError):
+            rules.split_series_schedule(current['id'], 1, 10, self.start + 3600)
+
+    async def test_recurring_schedule_edit_scope_opens_series_modal(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        with db.connect() as conn:
+            conn.execute(
+                'UPDATE lfg_events SET series_id=?,occurrence_index=0 WHERE id=?',
+                (series['id'], self.eid),
+            )
+        event = db.get_lfg_event(self.eid)
+        scope = ui.SeriesEditScopeView(event, 10, schedule=True)
+        request = self.request(10)
+
+        await scope.this_and_future.callback(request)
+
+        modal = request.response.send_modal.call_args.args[0]
+        self.assertIsInstance(modal, ui.EditModal)
+        self.assertTrue(modal.schedule)
+        self.assertTrue(modal.series_scope)
+
     async def test_event_management_is_creator_only(self):
         panel = ui.LobbyPanel(self.event, 10)
         panel.to_components()
