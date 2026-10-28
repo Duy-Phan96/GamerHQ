@@ -66,6 +66,94 @@ def edit(event_id, guild_id, actor_id, **changes):
     return db.get_lfg_event(event_id)
 
 
+def edit_series_from(event_id, guild_id, actor_id, **changes):
+    """Apply supported detail changes to this and future scheduled occurrences."""
+    allowed = {'title', 'note', 'max_players', 'invite_lead_minutes', 'duration_minutes'}
+    if not changes or set(changes) - allowed:
+        raise ValueError('Unsupported recurring-series change.')
+
+    with db.connect() as conn:
+        event = _event(conn, event_id, guild_id)
+        _host(event, actor_id)
+        series_id = event.get('series_id')
+        occurrence_index = event.get('occurrence_index')
+        if not series_id or occurrence_index is None:
+            raise ValueError('This event is not part of a recurring series.')
+
+        series = conn.execute(
+            "SELECT * FROM lfg_event_series WHERE id=? AND guild_id=?",
+            (series_id, guild_id),
+        ).fetchone()
+        if not series or series['status'] != 'active':
+            raise ValueError('This recurring series is no longer active.')
+
+        if 'title' in changes:
+            changes['title'] = changes['title'].strip()
+            if not 1 <= len(changes['title']) <= 100:
+                raise ValueError('Title must contain 1–100 characters.')
+        if 'note' in changes and len(changes['note']) > 500:
+            raise ValueError('Note must be at most 500 characters.')
+        if 'invite_lead_minutes' in changes and not 0 <= changes['invite_lead_minutes'] <= 1440:
+            raise ValueError('Voice reminder must be 0–1440 minutes before start.')
+        if 'duration_minutes' in changes and not 30 <= changes['duration_minutes'] <= 1440:
+            raise ValueError('Event duration must be between 30 minutes and 24 hours.')
+
+        affected = [
+            dict(row) for row in conn.execute(
+                """
+                SELECT * FROM lfg_events
+                WHERE series_id=? AND occurrence_index>=? AND status='scheduled'
+                ORDER BY occurrence_index,id
+                """,
+                (series_id, occurrence_index),
+            ).fetchall()
+        ]
+        if 'max_players' in changes:
+            target = int(changes['max_players'])
+            if not 1 <= target <= 99:
+                raise ValueError('Seats must be between 1 and 99.')
+            for item in affected:
+                joined = conn.execute(
+                    "SELECT count(*) FROM lfg_event_members WHERE event_id=? AND status='joined'",
+                    (item['id'],),
+                ).fetchone()[0]
+                if target < max(1, joined):
+                    raise ValueError(
+                        f"Seats cannot be below {max(1, joined)} for occurrence #{item['occurrence_index']}."
+                    )
+
+        if 'invite_lead_minutes' in changes:
+            for item in affected:
+                if item.get('voice_channel_id') and int(changes['invite_lead_minutes']) != int(item['invite_lead_minutes']):
+                    raise ValueError('A future occurrence already has voice open; its reminder can no longer change.')
+
+        now = int(time.time())
+        series_fields = {
+            key: value for key, value in changes.items()
+            if key in {'title', 'note', 'max_players', 'invite_lead_minutes', 'duration_minutes'}
+        }
+        if series_fields:
+            conn.execute(
+                'UPDATE lfg_event_series SET ' +
+                ','.join(f'{key}=?' for key in series_fields) +
+                ',updated_at=? WHERE id=?',
+                (*series_fields.values(), now, series_id),
+            )
+        if changes and affected:
+            conn.execute(
+                'UPDATE lfg_events SET ' +
+                ','.join(f'{key}=?' for key in changes) +
+                ' WHERE series_id=? AND occurrence_index>=? AND status=\'scheduled\'',
+                (*changes.values(), series_id, occurrence_index),
+            )
+
+    return [
+        row for row in db.get_lfg_series_occurrences(series_id)
+        if row.get('status') == 'scheduled'
+        and int(row.get('occurrence_index') or 0) >= int(occurrence_index)
+    ]
+
+
 def invite(event_id, guild_id, actor_id, user_id):
     with db.connect() as conn:
         event = _event(conn, event_id, guild_id)

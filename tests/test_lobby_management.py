@@ -210,6 +210,105 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Only This Event', payload['content'])
         self.assertIn('This + Future Series', payload['content'])
 
+    def test_series_detail_edit_updates_current_and_future_only(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start - 7 * 86400,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        previous = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start - 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=0,
+        )
+        current = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=1,
+        )
+        future = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start + 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=2,
+        )
+
+        affected = rules.edit_series_from(
+            current['id'], 1, 10,
+            title='Updated Raid', max_players=6, invite_lead_minutes=30,
+        )
+
+        self.assertEqual([row['id'] for row in affected], [current['id'], future['id']])
+        self.assertEqual(db.get_lfg_event(previous['id'])['title'], 'Weekly Raid')
+        self.assertEqual(db.get_lfg_event(current['id'])['title'], 'Updated Raid')
+        self.assertEqual(db.get_lfg_event(future['id'])['invite_lead_minutes'], 30)
+        stored = db.get_lfg_event_series(series['id'])
+        self.assertEqual(stored['title'], 'Updated Raid')
+        self.assertEqual(stored['max_players'], 6)
+
+    def test_series_detail_edit_respects_future_capacity(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        current = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=0,
+        )
+        future = db.create_lfg_event(
+            guild_id=1, host_id=10, title='Weekly Raid',
+            start_at=self.start + 7 * 86400, max_players=5, invite_lead_minutes=15,
+            series_id=series['id'], occurrence_index=1,
+        )
+        db.set_lfg_event_member(future['id'], 20, 'joined')
+        db.set_lfg_event_member(future['id'], 30, 'joined')
+
+        with self.assertRaises(ValueError):
+            rules.edit_series_from(current['id'], 1, 10, max_players=2)
+
+    async def test_recurring_edit_action_requires_scope_choice(self):
+        series = db.create_lfg_event_series(
+            guild_id=1,
+            host_id=10,
+            title='Weekly Raid',
+            timezone_name='Europe/Berlin',
+            frequency='weekly',
+            weekdays=(),
+            first_start_at=self.start,
+            max_players=5,
+            invite_lead_minutes=15,
+        )
+        with db.connect() as conn:
+            conn.execute(
+                'UPDATE lfg_events SET series_id=?,occurrence_index=0 WHERE id=?',
+                (series['id'], self.eid),
+            )
+        event = db.get_lfg_event(self.eid)
+        panel = ui.LobbyPanel(event, 10)
+        action = next(child for child in panel.children if isinstance(child, ui.ActionSelect))
+        action._values = ['Edit Details / Seats / Reminder']
+        request = self.request(10)
+
+        await action.callback(request)
+
+        payload = request.response.edit_message.call_args.kwargs
+        self.assertIsInstance(payload['view'], ui.SeriesEditScopeView)
+        self.assertIn('Only This Event', payload['content'])
+        self.assertIn('This + Future Series', payload['content'])
+
     async def test_event_management_is_creator_only(self):
         panel = ui.LobbyPanel(self.event, 10)
         panel.to_components()
