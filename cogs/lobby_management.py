@@ -84,19 +84,36 @@ class EditModal(discord.ui.Modal):
                 'invite_lead_minutes': int(str(self.reminder))}
             await interaction.response.defer(ephemeral=True)
             if self.series_scope:
-                affected = rules.edit_series_from(
-                    self.event_id,
-                    interaction.guild.id,
-                    interaction.user.id,
-                    **values,
-                )
-                for item in affected:
-                    await changed(interaction.guild, item)
-                event = db.get_lfg_event(self.event_id)
-                await interaction.edit_original_response(
-                    content=f'✅ This and {max(0, len(affected) - 1)} future occurrence(s) updated.',
-                    view=LobbyPanel(event, interaction.user.id),
-                )
+                if self.schedule:
+                    result = rules.split_series_schedule(
+                        self.event_id,
+                        interaction.guild.id,
+                        interaction.user.id,
+                        values['start_at'],
+                    )
+                    affected = result['occurrences']
+                    for item in affected:
+                        await changed(interaction.guild, item, time_changed=True)
+                    event = db.get_lfg_event(self.event_id)
+                    await interaction.edit_original_response(
+                        content=f'✅ Series schedule changed from this event onward. '
+                                f'{len(affected)} occurrence(s) moved to the new schedule.',
+                        view=LobbyPanel(event, interaction.user.id),
+                    )
+                else:
+                    affected = rules.edit_series_from(
+                        self.event_id,
+                        interaction.guild.id,
+                        interaction.user.id,
+                        **values,
+                    )
+                    for item in affected:
+                        await changed(interaction.guild, item)
+                    event = db.get_lfg_event(self.event_id)
+                    await interaction.edit_original_response(
+                        content=f'✅ This and {max(0, len(affected) - 1)} future occurrence(s) updated.',
+                        view=LobbyPanel(event, interaction.user.id),
+                    )
             else:
                 event = rules.edit(self.event_id, interaction.guild.id, interaction.user.id, **values)
                 await changed(interaction.guild, event, time_changed=event['start_at'] != old['start_at'])
@@ -285,12 +302,9 @@ class SeriesEditScopeView(BackView):
     @discord.ui.button(label='This + Future Series', style=discord.ButtonStyle.primary)
     async def this_and_future(self, interaction, button):
         event = authorized_event(interaction, self.event_id, host=True)
-        if self.schedule:
-            return await interaction.response.send_message(
-                'Series date/time changes require a safe series split. That scope is handled separately; edit this occurrence for now.',
-                ephemeral=True,
-            )
-        await interaction.response.send_modal(EditModal(event, schedule=False, series_scope=True))
+        await interaction.response.send_modal(
+            EditModal(event, schedule=self.schedule, series_scope=True)
+        )
 
 
 class SeriesEndScopeView(BackView):
