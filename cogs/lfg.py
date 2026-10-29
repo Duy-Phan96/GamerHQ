@@ -1158,6 +1158,91 @@ class BuilderPlayersSelect(discord.ui.Select):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
+WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+WEEKDAY_ALIASES = {
+    "mon": 0, "monday": 0,
+    "tue": 1, "tues": 1, "tuesday": 1,
+    "wed": 2, "wednesday": 2,
+    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
+    "fri": 4, "friday": 4,
+    "sat": 5, "saturday": 5,
+    "sun": 6, "sunday": 6,
+}
+
+
+class RecurrenceSettingsModal(discord.ui.Modal, title="Repeat Settings"):
+    def __init__(self, builder):
+        super().__init__(timeout=300)
+        self.builder = builder
+        custom = builder.recurrence_mode == "custom"
+        current_days = ", ".join(WEEKDAY_LABELS[day] for day in builder.recurrence_weekdays)
+        self.weekdays = discord.ui.TextInput(
+            label="Weekdays (custom only)",
+            placeholder="Mon, Wed, Fri",
+            default=current_days,
+            required=custom,
+            max_length=80,
+        )
+        self.count = discord.ui.TextInput(
+            label="End after occurrences (optional)",
+            placeholder="e.g. 10",
+            default=str(builder.recurrence_limit) if builder.recurrence_limit is not None else "",
+            required=False,
+            max_length=3,
+        )
+        self.end_date = discord.ui.TextInput(
+            label="Or end date YYYY-MM-DD (optional)",
+            placeholder="e.g. 2026-12-31",
+            default=builder.recurrence_until_date or "",
+            required=False,
+            max_length=10,
+        )
+        self.add_item(self.weekdays)
+        self.add_item(self.count)
+        self.add_item(self.end_date)
+
+    async def on_submit(self, interaction):
+        try:
+            count_text = str(self.count).strip()
+            date_text = str(self.end_date).strip()
+            if count_text and date_text:
+                raise ValueError("Choose either an occurrence count or an end date, not both.")
+
+            limit = None
+            if count_text:
+                limit = int(count_text)
+                if not 2 <= limit <= 365:
+                    raise ValueError("Occurrence count must be between 2 and 365.")
+
+            until_date = None
+            if date_text:
+                try:
+                    parsed = datetime.strptime(date_text, "%Y-%m-%d").date()
+                except ValueError as exc:
+                    raise ValueError("Use end date YYYY-MM-DD, e.g. 2026-12-31.") from exc
+                if self.builder.date and parsed < datetime.fromisoformat(self.builder.date).date():
+                    raise ValueError("The series end date cannot be before the first event.")
+                until_date = parsed.isoformat()
+
+            weekdays = self.builder.recurrence_weekdays
+            if self.builder.recurrence_mode == "custom":
+                raw = [part.strip().lower() for part in str(self.weekdays).replace(";", ",").split(",") if part.strip()]
+                if not raw:
+                    raise ValueError("Choose at least one weekday for a custom recurrence.")
+                unknown = [value for value in raw if value not in WEEKDAY_ALIASES]
+                if unknown:
+                    raise ValueError("Use weekday names such as Mon, Wed, Fri.")
+                weekdays = tuple(sorted({WEEKDAY_ALIASES[value] for value in raw}))
+
+            self.builder.recurrence_weekdays = weekdays
+            self.builder.recurrence_limit = limit
+            self.builder.recurrence_until_date = until_date
+            self.builder._rebuild()
+            await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        except (ValueError, TypeError) as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
 class BuilderRecurrenceSelect(discord.ui.Select):
     OPTIONS = (
         ("once", "One-time", "Create a single event", "1️⃣"),
@@ -1165,6 +1250,7 @@ class BuilderRecurrenceSelect(discord.ui.Select):
         ("weekly", "Weekly", "Repeat every week", "📆"),
         ("weekdays", "Mon–Fri", "Repeat Monday through Friday", "🗓️"),
         ("weekends", "Weekends", "Repeat Saturday and Sunday", "🎮"),
+        ("custom", "Custom", "Choose weekdays and series end", "⚙️"),
     )
 
     def __init__(self, builder):
@@ -1184,8 +1270,18 @@ class BuilderRecurrenceSelect(discord.ui.Select):
 
     async def callback(self, interaction):
         self.builder.recurrence_mode = self.values[0]
-        self.builder._rebuild()
-        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        if self.builder.recurrence_mode == "weekdays":
+            self.builder.recurrence_weekdays = (0, 1, 2, 3, 4)
+        elif self.builder.recurrence_mode == "weekends":
+            self.builder.recurrence_weekdays = (5, 6)
+        elif self.builder.recurrence_mode in {"daily", "weekly", "once"}:
+            self.builder.recurrence_weekdays = ()
+        if self.builder.recurrence_mode == "once":
+            self.builder.recurrence_limit = None
+            self.builder.recurrence_until_date = None
+            self.builder._rebuild()
+            return await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        await interaction.response.send_modal(RecurrenceSettingsModal(self.builder))
 
 
 class EventBuilderView(discord.ui.View):
@@ -1202,6 +1298,9 @@ class EventBuilderView(discord.ui.View):
         self.invite_lead = 15
         self.visibility = "public"
         self.recurrence_mode = "once"
+        self.recurrence_weekdays = ()
+        self.recurrence_limit = None
+        self.recurrence_until_date = None
         self.invited_ids = set()
         self._rebuild()
 
@@ -1239,12 +1338,28 @@ class EventBuilderView(discord.ui.View):
     def _recurrence(self):
         if self.recurrence_mode == "once":
             return None
+        until_at = None
+        if self.recurrence_until_date:
+            end_day = datetime.strptime(self.recurrence_until_date, "%Y-%m-%d").date()
+            until_at = int(
+                datetime.combine(end_day, datetime.max.time().replace(microsecond=0), tzinfo=SERVER_TZ).timestamp()
+            )
         if self.recurrence_mode == "daily":
-            return Recurrence("daily", "Europe/Berlin")
+            return Recurrence(
+                "daily", "Europe/Berlin",
+                occurrence_limit=self.recurrence_limit, until_at=until_at,
+            )
         if self.recurrence_mode == "weekly":
-            return Recurrence("weekly", "Europe/Berlin")
-        weekdays = (0, 1, 2, 3, 4) if self.recurrence_mode == "weekdays" else (5, 6)
-        return Recurrence("weekdays", "Europe/Berlin", weekdays=weekdays)
+            return Recurrence(
+                "weekly", "Europe/Berlin",
+                occurrence_limit=self.recurrence_limit, until_at=until_at,
+            )
+        return Recurrence(
+            "weekdays", "Europe/Berlin",
+            weekdays=tuple(self.recurrence_weekdays),
+            occurrence_limit=self.recurrence_limit,
+            until_at=until_at,
+        )
 
     def _recurrence_label(self):
         recurrence = self._recurrence()
