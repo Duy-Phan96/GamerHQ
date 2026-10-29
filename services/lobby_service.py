@@ -1,8 +1,10 @@
 """Transactional lobby rules. Discord messages are views, never authority."""
+import json
 import time
 import logging
 
 from database import db
+from services.event_recurrence_service import Recurrence, occurrence_times
 
 
 def _event(conn, event_id, guild_id):
@@ -152,6 +154,123 @@ def edit_series_from(event_id, guild_id, actor_id, **changes):
         if row.get('status') == 'scheduled'
         and int(row.get('occurrence_index') or 0) >= int(occurrence_index)
     ]
+
+
+def split_series_schedule(event_id, guild_id, actor_id, start_at):
+    """Move this and future occurrences to a new recurring series schedule.
+
+    Concrete event IDs are preserved so participants, messages and other
+    occurrence-owned state remain attached. The old series becomes historical
+    and cannot materialize replacement future events.
+    """
+    _future(start_at)
+    with db.connect() as conn:
+        event = _event(conn, event_id, guild_id)
+        _host(event, actor_id)
+        if event.get('voice_channel_id'):
+            raise ValueError('Voice is already open. Close this lobby and create another to reschedule safely.')
+
+        series_id = event.get('series_id')
+        occurrence_index = event.get('occurrence_index')
+        if not series_id or occurrence_index is None:
+            raise ValueError('This event is not part of a recurring series.')
+
+        series = conn.execute(
+            "SELECT * FROM lfg_event_series WHERE id=? AND guild_id=?",
+            (series_id, guild_id),
+        ).fetchone()
+        if not series or series['status'] != 'active':
+            raise ValueError('This recurring series is no longer active.')
+
+        affected = [
+            dict(row) for row in conn.execute(
+                """
+                SELECT * FROM lfg_events
+                WHERE series_id=? AND occurrence_index>=? AND status='scheduled'
+                ORDER BY occurrence_index,id
+                """,
+                (series_id, occurrence_index),
+            ).fetchall()
+        ]
+        if not affected or int(affected[0]['id']) != int(event_id):
+            raise ValueError('The selected recurring occurrence is no longer available.')
+        if any(item.get('voice_channel_id') for item in affected):
+            raise ValueError('A future occurrence already has voice open; the series schedule cannot be shifted safely.')
+
+        remaining_limit = None
+        if series['occurrence_limit'] is not None:
+            remaining_limit = max(1, int(series['occurrence_limit']) - int(occurrence_index))
+
+        recurrence = Recurrence(
+            frequency=str(series['frequency']),
+            timezone_name=str(series['timezone_name']),
+            weekdays=tuple(json.loads(series['weekdays_json'] or '[]')),
+            occurrence_limit=remaining_limit,
+            until_at=series['until_at'],
+        ).validate()
+        planned = occurrence_times(
+            int(start_at),
+            recurrence,
+            limit=max(len(affected), remaining_limit or len(affected) or 1),
+        )
+        if len(planned) < len(affected):
+            raise ValueError('The new schedule ends before all existing future occurrences can be moved.')
+
+        now = int(time.time())
+        cur = conn.execute(
+            """
+            INSERT INTO lfg_event_series(
+                guild_id,host_id,title,timezone_name,frequency,weekdays_json,
+                first_start_at,occurrence_limit,until_at,max_players,
+                invite_lead_minutes,duration_minutes,visibility,note,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                series['guild_id'], series['host_id'], series['title'],
+                series['timezone_name'], series['frequency'], series['weekdays_json'],
+                int(start_at), remaining_limit, series['until_at'],
+                series['max_players'], series['invite_lead_minutes'],
+                series['duration_minutes'], series['visibility'], series['note'],
+                now, now,
+            ),
+        )
+        new_series_id = cur.lastrowid
+
+        # Retire the old recurrence definition before moving events so a crash
+        # cannot recreate the split-away future schedule on restart.
+        conn.execute(
+            "UPDATE lfg_event_series SET status='completed',updated_at=? WHERE id=?",
+            (now, series_id),
+        )
+
+        # Avoid temporary UNIQUE(series_id, occurrence_index) conflicts by moving
+        # all affected rows to the new series with negative staging indexes first.
+        for offset, item in enumerate(affected):
+            conn.execute(
+                "UPDATE lfg_events SET series_id=?,occurrence_index=? WHERE id=?",
+                (new_series_id, -(offset + 1), item['id']),
+            )
+
+        for new_index, (item, new_start) in enumerate(zip(affected, planned)):
+            conn.execute(
+                """
+                UPDATE lfg_events
+                SET occurrence_index=?,start_at=?,voice_invite_sent=0
+                WHERE id=?
+                """,
+                (new_index, int(new_start), item['id']),
+            )
+            conn.execute('DELETE FROM lfg_voice_notifications WHERE event_id=?', (item['id'],))
+            conn.execute(
+                "UPDATE lfg_time_proposals SET status='EXPIRED' WHERE event_id=? AND status='PENDING'",
+                (item['id'],),
+            )
+
+    return {
+        'old_series_id': int(series_id),
+        'new_series_id': int(new_series_id),
+        'occurrences': db.get_lfg_series_occurrences(new_series_id),
+    }
 
 
 def invite(event_id, guild_id, actor_id, user_id):
