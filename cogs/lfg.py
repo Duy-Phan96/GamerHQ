@@ -1171,10 +1171,11 @@ WEEKDAY_ALIASES = {
 
 
 class RecurrenceSettingsModal(discord.ui.Modal, title="Repeat Settings"):
-    def __init__(self, builder):
+    def __init__(self, builder, mode):
         super().__init__(timeout=300)
         self.builder = builder
-        custom = builder.recurrence_mode == "custom"
+        self.mode = mode
+        custom = mode == "custom"
         current_days = ", ".join(WEEKDAY_LABELS[day] for day in builder.recurrence_weekdays)
         self.weekdays = discord.ui.TextInput(
             label="Weekdays (custom only)",
@@ -1224,8 +1225,12 @@ class RecurrenceSettingsModal(discord.ui.Modal, title="Repeat Settings"):
                     raise ValueError("The series end date cannot be before the first event.")
                 until_date = parsed.isoformat()
 
-            weekdays = self.builder.recurrence_weekdays
-            if self.builder.recurrence_mode == "custom":
+            if self.mode == "weekdays":
+                weekdays = (0, 1, 2, 3, 4)
+            elif self.mode == "weekends":
+                weekdays = (5, 6)
+            elif self.mode == "custom":
+                weekdays = self.builder.recurrence_weekdays
                 raw = [part.strip().lower() for part in str(self.weekdays).replace(";", ",").split(",") if part.strip()]
                 if not raw:
                     raise ValueError("Choose at least one weekday for a custom recurrence.")
@@ -1233,7 +1238,10 @@ class RecurrenceSettingsModal(discord.ui.Modal, title="Repeat Settings"):
                 if unknown:
                     raise ValueError("Use weekday names such as Mon, Wed, Fri.")
                 weekdays = tuple(sorted({WEEKDAY_ALIASES[value] for value in raw}))
+            else:
+                weekdays = ()
 
+            self.builder.recurrence_mode = self.mode
             self.builder.recurrence_weekdays = weekdays
             self.builder.recurrence_limit = limit
             self.builder.recurrence_until_date = until_date
@@ -1269,19 +1277,15 @@ class BuilderRecurrenceSelect(discord.ui.Select):
         super().__init__(placeholder=f"🔁 Repeat · {selected}"[:150], options=options, row=3)
 
     async def callback(self, interaction):
-        self.builder.recurrence_mode = self.values[0]
-        if self.builder.recurrence_mode == "weekdays":
-            self.builder.recurrence_weekdays = (0, 1, 2, 3, 4)
-        elif self.builder.recurrence_mode == "weekends":
-            self.builder.recurrence_weekdays = (5, 6)
-        elif self.builder.recurrence_mode in {"daily", "weekly", "once"}:
+        mode = self.values[0]
+        if mode == "once":
+            self.builder.recurrence_mode = "once"
             self.builder.recurrence_weekdays = ()
-        if self.builder.recurrence_mode == "once":
             self.builder.recurrence_limit = None
             self.builder.recurrence_until_date = None
             self.builder._rebuild()
             return await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
-        await interaction.response.send_modal(RecurrenceSettingsModal(self.builder))
+        await interaction.response.send_modal(RecurrenceSettingsModal(self.builder, mode))
 
 
 class EventBuilderView(discord.ui.View):
