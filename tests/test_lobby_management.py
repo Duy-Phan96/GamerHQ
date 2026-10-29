@@ -79,9 +79,73 @@ class LobbyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn('Repeat:', builder.content())
         recurrence = next(child for child in builder.children if isinstance(child, lfg.BuilderRecurrenceSelect))
-        self.assertEqual([option.value for option in recurrence.options], ['once', 'daily', 'weekly', 'weekdays', 'weekends'])
+        self.assertEqual([option.value for option in recurrence.options], ['once', 'daily', 'weekly', 'weekdays', 'weekends', 'custom'])
         builder.recurrence_mode = 'weekly'
         self.assertIn('Weekly · Europe/Berlin', builder.content())
+
+    async def test_repeat_settings_support_custom_weekdays_and_occurrence_limit(self):
+        host = MagicMock(spec=discord.Member)
+        host.id = 10
+        builder = lfg.EventBuilderView(host=host)
+        builder.date = '2030-01-07'
+        modal = lfg.RecurrenceSettingsModal(builder, 'custom')
+        modal.weekdays._value = 'Mon, Wed, Fri'
+        modal.count._value = '10'
+        modal.end_date._value = ''
+        interaction = self.request(10)
+
+        await modal.on_submit(interaction)
+
+        self.assertEqual(builder.recurrence_mode, 'custom')
+        self.assertEqual(builder.recurrence_weekdays, (0, 2, 4))
+        self.assertEqual(builder.recurrence_limit, 10)
+        self.assertIsNone(builder.recurrence_until_date)
+        recurrence = builder._recurrence()
+        self.assertEqual(recurrence.weekdays, (0, 2, 4))
+        self.assertEqual(recurrence.occurrence_limit, 10)
+        self.assertIn('Every Mon, Wed, Fri', builder.content())
+
+    async def test_repeat_settings_support_end_date_and_reject_conflicting_end_rules(self):
+        host = MagicMock(spec=discord.Member)
+        host.id = 10
+        builder = lfg.EventBuilderView(host=host)
+        builder.date = '2030-01-07'
+
+        modal = lfg.RecurrenceSettingsModal(builder, 'weekly')
+        modal.weekdays._value = ''
+        modal.count._value = ''
+        modal.end_date._value = '2030-03-01'
+        interaction = self.request(10)
+        await modal.on_submit(interaction)
+
+        self.assertEqual(builder.recurrence_mode, 'weekly')
+        self.assertEqual(builder.recurrence_until_date, '2030-03-01')
+        self.assertIsNone(builder.recurrence_limit)
+        self.assertIn('until 2030-03-01', builder.content())
+
+        invalid = lfg.RecurrenceSettingsModal(builder, 'weekly')
+        invalid.count._value = '5'
+        invalid.end_date._value = '2030-03-01'
+        invalid.weekdays._value = ''
+        bad = self.request(10)
+        await invalid.on_submit(bad)
+        bad.response.send_message.assert_awaited_once()
+        self.assertIn('either', bad.response.send_message.call_args.args[0].lower())
+
+    async def test_repeat_selection_is_not_committed_when_settings_modal_only_opens(self):
+        host = MagicMock(spec=discord.Member)
+        host.id = 10
+        builder = lfg.EventBuilderView(host=host)
+        select = next(child for child in builder.children if isinstance(child, lfg.BuilderRecurrenceSelect))
+        select._values = ['daily']
+        interaction = self.request(10)
+
+        await select.callback(interaction)
+
+        self.assertEqual(builder.recurrence_mode, 'once')
+        modal = interaction.response.send_modal.call_args.args[0]
+        self.assertIsInstance(modal, lfg.RecurrenceSettingsModal)
+        self.assertEqual(modal.mode, 'daily')
 
     def test_invites_duplicates_capacity_and_private_security(self):
         with db.connect() as conn:
