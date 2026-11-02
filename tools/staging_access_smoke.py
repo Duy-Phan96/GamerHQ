@@ -53,6 +53,11 @@ def main():
                     "from tools.skill_staging import main; "
                     "sys.argv=['staging', '--profile', '/etc/gamerhq/staging/profile.json', 'inspect']; main()"])
                 print("Disposable fixture local inspection:", diagnostic.stdout, diagnostic.stderr)
+                diagnostic = subprocess.run(["/opt/gamerhq-staging/deployment-worker/.venv/bin/python", "-c",
+                    "import sys; sys.path.insert(0, '/opt/gamerhq-staging/deployment-worker'); "
+                    "from tools.staging_dispatch import main; main()"], input=json.dumps(
+                        {"version": 1, "phase": "prepare", "operation": "inspect"}), capture_output=True, text=True, timeout=30)
+                print("Disposable fixture dispatcher:", diagnostic.stdout, diagnostic.stderr)
                 raise RuntimeError("Restricted SSH inspect failed: " + result.stderr[-1500:])
             assert json.loads(result.stdout)["productionChanged"] is False
             for rejected in ("id", "bash", encode({"version": 1, "phase": "prepare", "operation": "build"}),
