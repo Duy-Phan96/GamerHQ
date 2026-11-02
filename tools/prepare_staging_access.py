@@ -71,7 +71,7 @@ def package_plan(output):
 
 def prerequisites(install=False):
     required = {'git': 'git', 'setfacl': 'acl', 'newuidmap': 'uidmap', 'newgidmap': 'uidmap',
-        'dockerd-rootless-setuptool.sh': 'docker-ce-rootless-extras', 'rootlesskit': 'docker-ce-rootless-extras',
+        'rootlesskit': 'rootlesskit',
         'slirp4netns': 'slirp4netns'}
     missing = sorted({package for command, package in required.items() if not shutil.which(command)})
     if not Path('/usr/lib/systemd/user/dbus.service').exists() and not Path('/lib/systemd/user/dbus.service').exists():
@@ -90,7 +90,7 @@ def prerequisites(install=False):
         return prerequisites(False)
     if missing:
         raise RuntimeError('Missing prerequisites: ' + ', '.join(sorted(set(missing))) + '. No production Docker fallback is permitted.')
-    for command in ('docker', 'systemctl', 'loginctl', 'runuser', 'useradd', 'getent', 'ssh-keygen', 'sshd'):
+    for command in ('docker', 'dockerd', 'systemctl', 'loginctl', 'runuser', 'useradd', 'getent', 'ssh-keygen', 'sshd'):
         if not shutil.which(command):
             raise RuntimeError('Existing infrastructure prerequisite missing: ' + command)
     if Path('/proc/1/comm').read_text().strip() != 'systemd' or not Path('/sys/fs/cgroup/cgroup.controllers').exists():
@@ -216,9 +216,25 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
     def user(*args):
         return run(['runuser', '-u', ACCOUNT, '--', 'env', *[k + '=' + v for k,v in values.items()], *args])
     if state['phase'] == 'DAEMON':
-        # --force permits a second rootless daemon while the production rootful
-        # daemon keeps running. Never stop/disable/reconfigure production Docker.
-        user('dockerd-rootless-setuptool.sh', 'install', '--force')
+        # Use the exact vendored upstream launcher with the existing daemon binary.
+        # No Docker CE package repository or rootful daemon replacement is needed.
+        vendor = WORKER / 'deploy/staging/rootless'
+        upstream = json.loads((vendor / 'UPSTREAM.json').read_text())
+        launcher = vendor / 'dockerd-rootless.sh'
+        if hashlib.sha256(launcher.read_bytes()).hexdigest() != upstream['sha256']['dockerd-rootless.sh']:
+            raise ValueError('Pinned upstream rootless launcher checksum differs')
+        for path in (HOME / '.config/systemd', HOME / '.config/systemd/user'):
+            path.mkdir(mode=0o700, exist_ok=True); os.chown(path, uid, gid)
+        unit = HOME / '.config/systemd/user/docker.service'
+        if not unit.exists():
+            write_new(unit, '[Unit]\nDescription=Isolated rootless GamerHQ staging Docker\nRequires=dbus.socket\n'
+                '[Service]\nEnvironment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
+                'Environment=DOCKERD_ROOTLESS_ROOTLESSKIT_DISABLE_HOST_LOOPBACK=true\nExecStart=' + str(launcher) + '\n'
+                'Type=notify\nNotifyAccess=all\nDelegate=yes\nKillMode=mixed\nTimeoutStartSec=90\nTimeoutStopSec=45\n'
+                'Restart=on-failure\nRestartSec=2\nMemoryMax=1G\nCPUQuota=50%\nTasksMax=1024\n'
+                '[Install]\nWantedBy=default.target\n', 0o644)
+        user('systemctl', '--user', 'daemon-reload')
+        user('systemctl', '--user', 'enable', '--now', 'docker.service')
         values.update(DOCKER_HOST=f'unix:///run/user/{uid}/docker.sock', DOCKER_CONFIG=str(CONFIG / 'docker-client'))
         info = json.loads(user('docker', 'info', '--format', '{{json .}}'))
         if not any('rootless' in item for item in info.get('SecurityOptions', [])) or info.get('CgroupDriver') != 'systemd' or str(info.get('CgroupVersion')) != '2':

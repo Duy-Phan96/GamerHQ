@@ -23,7 +23,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns docker-ce-rootless-extras
+          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
           sudo systemctl start ssh
           sudo mkdir -p /opt/gamerhq/data
           printf 'synthetic production sentinel\n' | sudo tee /opt/gamerhq/data/production-fixture >/dev/null
