@@ -11,6 +11,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  staging-rhel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify actual AlmaLinux 9 Python and D-Bus capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull almalinux:9
+          docker image inspect almalinux:9 --format '{{json .RepoDigests}}'
+          docker run --rm --network bridge --volume "$PWD:/source:ro" --workdir /source almalinux:9 bash -euc '
+            dnf install -y python3 python3.12 python3.12-pip dbus-broker dbus-daemon
+            python3 -m tools.staging_rhel_smoke
+          '
   staging-access:
     # This provisions only the disposable hosted runner, never the GamerHQ VPS.
     runs-on: ubuntu-latest
