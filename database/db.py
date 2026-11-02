@@ -190,6 +190,26 @@ CREATE TABLE IF NOT EXISTS skill_secrets (
     PRIMARY KEY (guild_id, skill_id, secret_key)
 );
 
+CREATE TABLE IF NOT EXISTS skill_managed_resources (
+    guild_id INTEGER NOT NULL,
+    skill_id TEXT NOT NULL,
+    resource_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    lease_token TEXT,
+    lease_until INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(guild_id,skill_id,resource_key)
+);
+CREATE TABLE IF NOT EXISTS skill_domain_authority (
+    guild_id INTEGER NOT NULL,
+    domain TEXT NOT NULL,
+    skill_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    target_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY(guild_id,domain)
+);
+
 CREATE TABLE IF NOT EXISTS skill_jobs (
     guild_id INTEGER NOT NULL,
     skill_id TEXT NOT NULL,
@@ -964,9 +984,11 @@ def get_lfg_event(event_id):
 def get_active_lfg_events(guild_id=None):
     with connect() as conn:
         if guild_id is None:
-            rows = conn.execute("SELECT * FROM lfg_events WHERE status='scheduled' ORDER BY start_at").fetchall()
+            rows = conn.execute("SELECT * FROM lfg_events e WHERE status='scheduled' AND NOT EXISTS "
+                "(SELECT 1 FROM skill_domain_authority a WHERE a.guild_id=e.guild_id AND a.domain='event-manager') ORDER BY start_at").fetchall()
         else:
-            rows = conn.execute("SELECT * FROM lfg_events WHERE status='scheduled' AND guild_id=? ORDER BY start_at", (guild_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM lfg_events e WHERE status='scheduled' AND guild_id=? AND NOT EXISTS "
+                "(SELECT 1 FROM skill_domain_authority a WHERE a.guild_id=e.guild_id AND a.domain='event-manager') ORDER BY start_at", (guild_id,)).fetchall()
         return [dict(row) for row in rows]
 
 
