@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "sourceRequest": "owner-platform-transformation-2026-11-02",
+  "trackingIssue": "https://github.com/Duy-Phan96/GamerHQ/issues/172",
+  "hostBranch": "feat/event-manager-v2-platform",
+  "skillRepository": "Duy-Phan96/gamerhq-skill-event-manager",
+  "skillBranch": "feat/portable-event-manager-v2",
+  "webBranch": "feat/event-manager-v2-management",
+  "runtimeApi": "1",
+  "sdkRequired": ">=0.3,<0.4",
+  "newCapabilities": ["storage.atomic"],
+  "managementSchema": "1 with collection revision/preview bindings",
+  "releaseOrder": ["host-sdk", "skill", "host-adapter-and-migration", "web", "staging", "approved-production"],
+  "productionApproved": false,
+  "liveAcceptanceComplete": false,
+  "v1CutoverComplete": false,
+  "status": "FOUNDATIONS_IN_REVIEW"
+}

@@ -408,9 +408,12 @@ class LobbyAdmin(commands.Cog):
     @tasks.loop(seconds=60)
     async def refresh(self):
         for guild in self.bot.guilds:
+            from hosts.gamerhq.event_cutover import owns_events
             if guild.unavailable:
                 continue
             try:
+                if owns_events(guild.id):
+                    continue
                 await refresh_board(guild)
             except Exception:
                 log.warning('Lobby admin overview unavailable guild=%s; use Server Management to review.', guild.id)

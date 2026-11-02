@@ -69,6 +69,23 @@ class SkillStoragePort(Protocol):
     async def get(self, key: str) -> Any | None: ...
     async def set(self, key: str, value: Any) -> None: ...
     async def delete(self, key: str) -> None: ...
+    async def transact(self, *, checks: Mapping[str, Any | None], writes: Mapping[str, Any | None]) -> bool:
+        """Atomically compare all keys and apply all writes in this namespace.
+
+        None expects absence in checks and deletes in writes. A conflict writes
+        nothing. Requires storage.atomic; no cross-guild or cross-Skill access.
+        """
+        ...
+    async def compare_and_set(self, key: str, expected: Any | None, value: Any) -> bool:
+        """Atomically replace a JSON value; None expects an absent key.
+
+        Requires storage.atomic in addition to storage.skill. JSON null is not
+        supported by this operation. Equality is structural JSON equality.
+        """
+        ...
+    async def list_keys(self, *, prefix: str, after: str = "", limit: int = 100) -> tuple[str, ...]:
+        """Return sorted namespace-local keys, exclusively after the cursor."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +160,16 @@ class SkillLogger(Protocol):
     def error(self, message: str, *args: object) -> None: ...
 
 
+class ManagedResourcePort(Protocol):
+    async def ensure_area(self, *, key: str, name: str, visibility: str,
+                          member_ids: tuple[int, ...], chat_enabled: bool, overview: str) -> Mapping[str, Any]: ...
+    async def ensure_voice(self, *, key: str, name: str, member_ids: tuple[int, ...]) -> Mapping[str, Any]: ...
+    async def retire_voice(self, *, key: str) -> bool:
+        """Delete only an owned empty temporary voice channel; occupied returns False."""
+        ...
+    async def health(self) -> Mapping[str, Any]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class SkillContext:
     """Only supported boundary through which a portable Skill reaches its host."""
@@ -159,6 +186,8 @@ class SkillContext:
     permissions: PermissionPort
     skills: SkillApiPort
     logger: SkillLogger
+    resources: ManagedResourcePort | None = None
+    actor_id: int | None = None
 
     def __post_init__(self) -> None:
         if self.guild_id <= 0:

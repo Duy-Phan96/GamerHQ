@@ -20,6 +20,8 @@ class SkillCapability(StrEnum):
     DISCORD_VOICE_MANAGE = "discord.voice.manage"
     SCHEDULER_JOBS = "scheduler.jobs"
     STORAGE_SKILL = "storage.skill"
+    STORAGE_ATOMIC = "storage.atomic"
+    DISCORD_RESOURCES_MANAGE = "discord.resources.manage"
     EVENTS_EMIT = "events.emit"
     EVENTS_SUBSCRIBE = "events.subscribe"
     SKILL_API_CALL = "skills.api.call"

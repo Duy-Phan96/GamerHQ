@@ -22,6 +22,13 @@ _EXACT_REQUIREMENT = re.compile(
     r"^(?P<distribution>[A-Za-z0-9][A-Za-z0-9_.-]*)=="
     r"(?P<version>[^=<>!~*\s]+)$"
 )
+_WHEEL_REQUIREMENT = re.compile(
+    r"^(?P<distribution>[A-Za-z0-9][A-Za-z0-9_.-]*)\s*@\s*"
+    r"(?P<url>https://github\.com/(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/releases/download/"
+    r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:b[0-9]+)?)/"
+    r"(?P<filename>[A-Za-z0-9_]+-[0-9]+\.[0-9]+\.[0-9]+(?:b[0-9]+)?-py3-none-any\.whl)"
+    r"#sha256=(?P<sha256>[0-9a-f]{64}))$"
+)
 
 
 class SkillDeploymentPlanError(ValueError):
@@ -36,10 +43,11 @@ class ReviewedSkillPackage:
     source_repository: str | None = None
     reviewed_commit: str | None = None
     exact_version: str | None = None
+    sha256: str | None = None
 
     @property
     def requirement(self) -> str:
-        if self.source_kind == "github-commit" and self.source_url:
+        if self.source_kind in ("github-commit", "release-wheel") and self.source_url:
             return f"{self.distribution} @ {self.source_url}"
         if self.source_kind == "exact-version" and self.exact_version:
             return f"{self.distribution}=={self.exact_version}"
@@ -60,6 +68,8 @@ class ReviewedSkillPackage:
             result["reviewedCommit"] = self.reviewed_commit
         if self.exact_version is not None:
             result["exactVersion"] = self.exact_version
+        if self.sha256 is not None:
+            result["sha256"] = self.sha256
         return result
 
 
@@ -84,13 +94,14 @@ def parse_reviewed_skill_lock(text: str) -> tuple[ReviewedSkillPackage, ...]:
 
         github = _GITHUB_REQUIREMENT.fullmatch(line)
         exact = _EXACT_REQUIREMENT.fullmatch(line)
-        if github is None and exact is None:
+        wheel = _WHEEL_REQUIREMENT.fullmatch(line)
+        if github is None and exact is None and wheel is None:
             raise SkillDeploymentPlanError(
                 f"requirements-skills.lock:{line_number}: external Skill dependency "
                 "is non-immutable or is not an immutable reviewed pin."
             )
 
-        match = github or exact
+        match = github or exact or wheel
         assert match is not None
         distribution = match.group("distribution")
         key = _normalized_distribution(distribution)
@@ -100,7 +111,15 @@ def parse_reviewed_skill_lock(text: str) -> tuple[ReviewedSkillPackage, ...]:
             )
         seen.add(key)
 
-        if github is not None:
+        if wheel is not None:
+            filename = wheel.group("filename")
+            expected = f"{distribution.replace('-', '_')}-{wheel.group('version')}-py3-none-any.whl"
+            if filename.lower() != expected.lower():
+                raise SkillDeploymentPlanError("Release wheel name/version does not match the reviewed requirement.")
+            packages.append(ReviewedSkillPackage(distribution=distribution, source_kind="release-wheel",
+                source_url=wheel.group("url"), source_repository=wheel.group("repository"),
+                exact_version=wheel.group("version"), sha256=wheel.group("sha256")))
+        elif github is not None:
             packages.append(
                 ReviewedSkillPackage(
                     distribution=distribution,

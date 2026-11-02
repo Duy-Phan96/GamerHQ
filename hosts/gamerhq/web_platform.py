@@ -204,6 +204,10 @@ class GamerHQWebPlatformService:
                                     "itemIdPayloadKey": field["collection"]["item_id_payload_key"],
                                     "itemReadPath": field["collection"]["item_read_path"],
                                     "scheduleHintsPath": field["collection"]["schedule_hints_path"],
+                                    "revisionPath": field["collection"]["revision_path"],
+                                    "expectedRevisionKey": field["collection"]["expected_revision_key"],
+                                    "previewRequired": field["collection"]["preview_required"],
+                                    "createRequestIdKey": field["collection"]["create_request_id_key"],
                                     "titlePath": field["collection"]["title_path"],
                                     "statusPath": field["collection"]["status_path"],
                                     "summaryPath": field["collection"]["summary_path"],
@@ -228,6 +232,7 @@ class GamerHQWebPlatformService:
         contract_id: str,
         payload: Mapping[str, Any],
         authorized_guild_ids: Iterable[int],
+        actor_id: int | None = None,
     ) -> dict[str, Any]:
         self._require_guild(guild_id, authorized_guild_ids)
         result = await self.skill_runtime.call_management(
@@ -235,6 +240,7 @@ class GamerHQWebPlatformService:
             skill_id=skill_id,
             contract_id=contract_id,
             payload=dict(payload),
+            **({"actor_id": actor_id} if actor_id is not None else {}),
         )
         return _json_value(result)
 

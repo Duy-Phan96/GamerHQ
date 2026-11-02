@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
 
@@ -29,18 +30,24 @@ from .skill_host import (
 from .skill_scheduler import GamerHQSchedulerStore
 from .skill_http import GamerHQExternalHttp
 from .skill_secrets import GamerHQSkillSecrets
+from .skill_resources import GamerHQManagedResources
+from database import db
+import json
 
 
 HOST_CAPABILITIES = frozenset({
     *DISCORD_HOST_CAPABILITIES,
     SkillCapability.SCHEDULER_JOBS.value,
     SkillCapability.STORAGE_SKILL.value,
+    SkillCapability.STORAGE_ATOMIC.value,
+    SkillCapability.DISCORD_RESOURCES_MANAGE.value,
     SkillCapability.EVENTS_EMIT.value,
     SkillCapability.EVENTS_SUBSCRIBE.value,
     SkillCapability.SKILL_API_CALL.value,
     SkillCapability.AUDIT_WRITE.value,
     SkillCapability.HTTP_EXTERNAL.value,
 })
+_MANAGEMENT_ACTOR = ContextVar("skill_management_actor", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +188,8 @@ class GamerHQSkillRuntime:
         guild = self._guild(guild_id)
         permissions = self.permissions(skill_id)
         permissions.require_all_declared()
+        policy_raw = db.get_setting(f"skill_resources:{guild.id}:{skill_id}") if permissions.allows("discord.resources.manage") else None
+        policy = json.loads(policy_raw) if policy_raw else {}
         return SkillContext(
             guild_id=guild.id,
             skill_id=skill_id,
@@ -225,6 +234,8 @@ class GamerHQSkillRuntime:
                 skill_id=skill_id,
             ),
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
+            resources=GamerHQManagedResources(guild=guild, skill_id=skill_id, permissions=permissions, policy=policy),
+            actor_id=_MANAGEMENT_ACTOR.get(),
         )
 
     def management_ui_schema(self, skill_id: str):
@@ -262,13 +273,17 @@ class GamerHQSkillRuntime:
         skill_id: str,
         contract_id: str,
         payload,
+        actor_id=None,
     ):
-        result = await self.management.call(
-            guild_id=guild_id,
-            skill_id=skill_id,
-            contract_id=contract_id,
-            payload=payload,
-        )
+        if skill_id == "event-manager" and contract_id not in ("event-manager.migrate-plan.v1", "event-manager.list.v1", "event-manager.get.v1", "event-manager.history.v1"):
+            self._require_event_authority(guild_id)
+        if actor_id is not None and (type(actor_id) is not int or not 0 < actor_id < 2**64):
+            raise ValueError("Invalid trusted management actor identity.")
+        token = _MANAGEMENT_ACTOR.set(actor_id)
+        try:
+            result = await self.management.call(guild_id=guild_id, skill_id=skill_id, contract_id=contract_id, payload=payload)
+        finally:
+            _MANAGEMENT_ACTOR.reset(token)
         if contract_id in self._configuration_mutation_contracts(skill_id):
             skill = self.registry.get(skill_id)
             await self.state.set_configured(
@@ -288,6 +303,8 @@ class GamerHQSkillRuntime:
         )
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        if skill_id == "event-manager":
+            self._require_event_authority(guild_id)
         # Context creation validates every required capability before lifecycle
         # code or persistent enabled state is touched.
         await self.context(guild_id, skill_id)
@@ -299,6 +316,14 @@ class GamerHQSkillRuntime:
                 await self.manager.disable(guild_id=guild_id, skill_id=skill_id)
             raise
         return changed
+
+    def _require_event_authority(self, guild_id):
+        from .event_cutover import owns_events
+        with db.connect() as conn:
+            legacy = conn.execute("SELECT 1 FROM lfg_events WHERE guild_id=? UNION SELECT 1 FROM lfg_event_series WHERE guild_id=? LIMIT 1",
+                                  (guild_id, guild_id)).fetchone()
+        if legacy and not owns_events(guild_id):
+            raise ValueError("Legacy Event Manager data requires verified migration and authority cutover first.")
 
     async def disable_skill(self, *, guild_id: int, skill_id: str) -> bool:
         changed = await self.manager.disable(guild_id=guild_id, skill_id=skill_id)
