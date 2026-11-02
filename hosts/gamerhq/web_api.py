@@ -134,6 +134,15 @@ async def get_skill(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def list_skill_deployments(request: web.Request) -> web.Response:
+    result = await _service(request).list_skill_deployments(
+        guild_id=int(request.match_info["guild_id"]),
+        skill_id=request.match_info["skill_id"],
+        authorized_guild_ids=_authorized_guild_ids(request),
+    )
+    return web.json_response({"deployments": result})
+
+
 async def get_management_schema(request: web.Request) -> web.Response:
     result = await _service(request).get_management_schema(
         guild_id=int(request.match_info["guild_id"]),
@@ -211,6 +220,7 @@ def create_web_api_app(
             ),
             web.get("/api/v1/servers/{guild_id}/skills", list_skills),
             web.get("/api/v1/servers/{guild_id}/skills/{skill_id}", get_skill),
+            web.get("/api/v1/servers/{guild_id}/skills/{skill_id}/deployments", list_skill_deployments),
             web.get(
                 "/api/v1/servers/{guild_id}/skills/{skill_id}/management-schema",
                 get_management_schema,

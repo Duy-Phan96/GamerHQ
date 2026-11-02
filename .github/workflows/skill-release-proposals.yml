@@ -1,0 +1,61 @@
+name: Propose reviewed Skill release updates
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: skill-release-proposals
+  cancel-in-progress: false
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Discover checksum-backed releases from locked publishers
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m tools.skill_release_updates --output skill-update-proposal.json --prepare-lock
+      - name: Open a draft Host review PR when the lock changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          if git diff --quiet -- requirements-skills.lock; then
+            echo "No new checksum-backed update proposal. Production unchanged."
+            exit 0
+          fi
+          proposal_id=$(python -c "import json; print(json.load(open('skill-update-proposal.json'))['proposalId'])")
+          branch="chore/skill-artifacts-$proposal_id"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "This immutable proposal already has a branch; preserving its review state."
+            exit 0
+          fi
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add requirements-skills.lock skill-update-proposal.json
+          git commit -m 'chore: propose checksum-pinned Skill release updates'
+          git push -u origin "$branch"
+          cat > "$RUNNER_TEMP/skill-update-body.md" <<'BODY'
+          New stable Skill release artifacts were discovered in repositories already locked by this Host.
+
+          This draft changes only reviewed dependency inputs and records candidate checksums. No release code was executed by discovery, and no production update was performed or approved.
+
+          Required review: publisher/source trust, SDK/dependency compatibility, capabilities, migration/backup/rollback, wheel preflight, staged image tests and health checks. Approve any approval-required PR workflow runs or run the existing Offline tests workflow against this proposal branch before review; GITHUB_TOKEN-created PRs do not bypass CI approval.
+
+          Artifact identity is checksum-pinned. The release publisher's checksum does not replace source review. Deployment remains Host-owned and requires the normal release and explicit production approval process.
+          BODY
+          gh pr create --draft --base "$BASE_BRANCH" --head "$branch" --title 'chore: review released Skill artifact updates' --body-file "$RUNNER_TEMP/skill-update-body.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-release-discovery
+          path: skill-update-proposal.json

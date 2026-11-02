@@ -88,9 +88,12 @@ of a matching application/database backup. Code rollback alone is insufficient.
 3. Discord adapter replacement and unified full event editing. V1 remains the
    running implementation until this is accepted; it is not a permanent second
    V2 implementation. The V2 package is not bundled or enabled by this change.
-4. Artifact publication/trust review, updater orchestration, staged image build,
+4. Artifact publication/trust review, staged installation/deployment orchestration, staged image build,
    migration preflight, deployment history and health-driven rollback. The new
    artifact verifier/policy is preparation, not an automatic deployment system.
+   The companion `feat/skill-release-proposals` branch adds Host-owned daily
+   discovery and draft update PRs for locked publisher repositories. It does not
+   automatically merge, stage, deploy, run migrations or roll back production.
 5. Host update/uninstall/history APIs; web participant/history and resource UX.
 6. Python 3.12/3.14 CI, Docker staging, production inspection and live acceptance.
 

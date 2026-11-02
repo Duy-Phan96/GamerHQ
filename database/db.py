@@ -209,6 +209,20 @@ CREATE TABLE IF NOT EXISTS skill_domain_authority (
     created_at INTEGER NOT NULL,
     PRIMARY KEY(guild_id,domain)
 );
+CREATE TABLE IF NOT EXISTS skill_deployments (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    state TEXT NOT NULL,
+    image TEXT,
+    previous_image TEXT,
+    evidence_json TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS skill_deployments_single_application
+ON skill_deployments(state) WHERE state='APPLYING';
 
 CREATE TABLE IF NOT EXISTS skill_jobs (
     guild_id INTEGER NOT NULL,
