@@ -39,7 +39,10 @@ SDK 0.3.0 adds `storage.atomic`: capability-checked structural JSON compare-and-
 and bounded prefix pagination inside the existing `(guild, skill)` namespace.
 CAS uses a SQLite write transaction before reading, including across processes.
 `None` means absent; atomic values cannot be JSON null. Each value retains the
-existing 64 KiB ceiling. This is not a multi-key transaction API.
+existing 64 KiB ceiling. `transact(checks,writes)` additionally provides bounded
+multi-key atomic transactions for domain revisions, occurrence updates and effect claims.
+`discord.resources.manage` exposes the trusted managed-resource port; the Host
+owns category policy, ownership, privacy and Discord effects.
 
 Collection schemas can declare `revision_path`, `expected_revision_key`,
 `create_request_id_key` and `preview_required`; both revision fields must be supplied together. Web API
@@ -78,29 +81,45 @@ Retain old channels unless separately approved for consolidation. Rollback after
 new V2 writes requires a tested reverse migration or write freeze and restoration
 of a matching application/database backup. Code rollback alone is insufficient.
 
-## Remaining engineering work and release gates
+## Current implementation and release gates
 
-1. Public Host managed-resource contract: tenant/Skill-scoped persistent text
-   area, overview and per-occurrence voice; enforced visibility/access policy,
-   ownership verification, retry recovery and no uncontrolled resource creation.
-2. Transactional V1 import and single-authority cutover, including all legacy
-   participant statuses, invitation/share references, proposals and voice claims.
-3. Discord adapter replacement and unified full event editing. V1 remains the
-   running implementation until this is accepted; it is not a permanent second
-   V2 implementation. The V2 package is not bundled or enabled by this change.
-4. Artifact publication/trust review, staged installation/deployment orchestration, staged image build,
-   migration preflight, deployment history and health-driven rollback. The new
-   artifact verifier/policy is preparation, not an automatic deployment system.
-   The companion `feat/skill-release-proposals` branch adds Host-owned daily
-   discovery and draft update PRs for locked publisher repositories. It does not
-   automatically merge, stage, deploy, run migrations or roll back production.
-5. Host update/uninstall/history APIs; web participant/history and resource UX.
-6. Python 3.12/3.14 CI, Docker staging, production inspection and live acceptance.
+Host #173 and #174 are merged into develop. The Skill #1/#2 and Web #66 are
+merged into their main branches. Host #175 integrates the installed-Skill Discord
+editor, normal empty-domain installation, legacy barriers, resource hardening and
+combined acceptance tests. It still requires passing final-head CI before merge.
 
-The V2 preview must report degraded health while Discord delivery/cutover are
-unavailable. Production image, token/session count, backups and container health
-have **not** been inspected from this development environment. The owner's V1
-acceptance-image observations are historical input, not new verification.
+The trusted Host now implements persistent area/card and temporary voice resources,
+atomic six-table import, verified text/voice adoption and one domain authority.
+Adopted legacy voice channels are retained. The portable Skill owns scheduling,
+configuration, occurrences, participants, history and retained invitation codes;
+legacy exclusions require explicit re-invitation. Discord and Web consume its
+shared versioned API/schema. See [cutover details](event-manager-cutover.md).
+
+The Host update worker stages reviewed SDK/Skill bytes into an isolated immutable
+image, requires separate apply approval, rejects stale READY records, records
+history and checks health. It rolls back the image only when application data is
+unchanged, otherwise preserving data for reviewed recovery. The protected workflow
+is opt-in and disabled. See [worker boundary](staged-deployment-worker.md).
+
+Remaining release gates:
+
+1. Approve private Skill artifact delivery and reviewed SDK/Skill release pins.
+   The package is not bundled/enabled in production by these development merges.
+2. Provision an authorized staging Host/Discord identity/category, protected profile,
+   runner and approval environments. Host repository runner/variable/secret/environment
+   inventories were empty when inspected; no configuration was changed.
+3. Complete real Event Manager Docker/private-artifact and live Discord acceptance,
+   with backed-up/anonymized existing six-table data, permission/restart/retry checks,
+   precise resource decisions and verified recovery limits. Public-fixture Docker CI
+   validates the generic staging mechanism, not live customer acceptance.
+4. Obtain separate approval for the exact production image and migration/cutover
+   plan. No production database, Gateway, channel or credential was changed.
+
+Interrupted durable effect claims fail closed and need verified Host quiescence
+and remote-state review. Notification reservations are not delivery confirmation;
+DM dispatch, a new proposal workflow and uninstall retention controls are not claimed.
+Production image/session/backup/container state has not been inspected here. The
+owner's V1 acceptance-image observations remain historical input.
 
 Release order: Host SDK contract → independent Skill artifact → reviewed Host
 package pin and adapter/migration → web → staging → explicit production approval.
