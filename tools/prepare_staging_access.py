@@ -254,6 +254,10 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         if not unit.exists():
             write_new(unit, '[Unit]\nDescription=Isolated rootless GamerHQ staging Docker\nRequires=dbus.socket\n'
                 '[Service]\nEnvironment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
+                'Environment=HOME=' + str(HOME) + '\nEnvironment=XDG_RUNTIME_DIR=/run/user/' + str(uid) + '\n'
+                'Environment=XDG_DATA_HOME=' + str(HOME / '.local/share') + '\nEnvironment=XDG_CONFIG_HOME=' + str(HOME / '.config') + '\n'
+                'Environment=XDG_CACHE_HOME=' + str(HOME / '.cache') + '\n'
+                'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus\n'
                 'Environment=DOCKERD_ROOTLESS_ROOTLESSKIT_DISABLE_HOST_LOOPBACK=true\nExecStart=' + str(launcher) + '\n'
                 'Type=notify\nNotifyAccess=all\nDelegate=yes\nKillMode=mixed\nTimeoutStartSec=90\nTimeoutStopSec=45\n'
                 'Restart=on-failure\nRestartSec=2\nMemoryMax=1G\nCPUQuota=50%\nTasksMax=1024\n'
