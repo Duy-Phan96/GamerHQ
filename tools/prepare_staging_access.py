@@ -55,6 +55,24 @@ def write_new(path, content, mode=0o600):
     path.chmod(mode)
 
 
+def install_ssh_restriction(path, body):
+    created = not path.exists()
+    if created:
+        write_new(path, body, 0o644)
+    elif path.read_text() != body:
+        raise PermissionError('Existing SSH staging policy differs; it was not overwritten')
+    try:
+        run(['sshd', '-t'])
+        effective = run(['sshd', '-T', '-C', 'user=' + ACCOUNT + ',host=localhost,addr=127.0.0.1'])
+        if not all(value in effective.splitlines() for value in ('authenticationmethods publickey', 'passwordauthentication no',
+                'kbdinteractiveauthentication no', 'disableforwarding yes', 'permittty no', 'forcecommand ' + str(ENTRY))):
+            raise RuntimeError('The per-account SSH restrictions did not take effect; global SSH policy was not weakened')
+    except Exception:
+        if created:
+            path.unlink()  # only our just-created file; never an existing owner policy
+        raise
+
+
 def record(value):
     with tempfile.NamedTemporaryFile(mode='w', dir=STATE, prefix='state-', delete=False) as output:
         json.dump(value, output, indent=2)
@@ -121,7 +139,7 @@ def preflight(commit, key):
             raise PermissionError('Existing bootstrap state belongs to another source/key; review rather than overwrite it.')
         return state
     for path in (ROOT, CONFIG, HOME, ENTRY, Path('/etc/gamerhq/staging'), Path('/etc/sudoers.d/gamerhq-staging-bridge'),
-            Path('/usr/local/libexec/gamerhq-staging-dispatch')):
+            Path('/usr/local/libexec/gamerhq-staging-dispatch'), Path('/etc/ssh/sshd_config.d/90-gamerhq-staging.conf')):
         if path.exists() or path.is_symlink():
             raise FileExistsError('Unknown/legacy staging target already exists: ' + str(path) + '. No existing target was overwritten.')
     account = subprocess.run(['getent', 'passwd', ACCOUNT], capture_output=True)
@@ -317,13 +335,7 @@ except Exception:
         restriction = Path('/etc/ssh/sshd_config.d/90-gamerhq-staging.conf')
         if not restriction.parent.is_dir():
             raise RuntimeError('The SSH daemon needs a reviewed per-account drop-in include; global SSH policy was not changed')
-        if not restriction.exists():
-            write_new(restriction, 'Match User ' + ACCOUNT + '\n    AuthenticationMethods publickey\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    DisableForwarding yes\n    PermitTTY no\n    PermitTunnel no\n    PermitUserRC no\n    ForceCommand ' + str(ENTRY) + '\nMatch all\n', 0o644)
-        run(['sshd', '-t'])
-        effective = run(['sshd', '-T', '-C', 'user=' + ACCOUNT + ',host=localhost,addr=127.0.0.1'])
-        if not all(value in effective.splitlines() for value in ('authenticationmethods publickey', 'passwordauthentication no',
-                'kbdinteractiveauthentication no', 'disableforwarding yes', 'permittty no', 'forcecommand ' + str(ENTRY))):
-            raise RuntimeError('The per-account SSH restrictions did not take effect; global SSH policy was not weakened')
+        install_ssh_restriction(restriction, 'Match User ' + ACCOUNT + '\n    AuthenticationMethods publickey\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    DisableForwarding yes\n    PermitTTY no\n    PermitTunnel no\n    PermitUserRC no\n    ForceCommand ' + str(ENTRY) + '\nMatch all\n')
         service = next((name for name in ('ssh.service', 'sshd.service') if subprocess.run(['systemctl', 'is-active', '--quiet', name]).returncode == 0), None)
         if not service:
             raise RuntimeError('No existing SSH service was found for a safe configuration reload')
@@ -348,7 +360,7 @@ def receipt():
     if len(connection) != 4 or not key_path.is_file():
         return {'endpointDiscovery': 'Owner must supply the actual reachable SSH endpoint and independently pinned public host key.'}
     host, port = connection[2], int(connection[3])
-    key = public_key(key_path.read_text())
+    key = public_key(' '.join(key_path.read_text().split()[:2]))
     return {'GAMERHQ_STAGING_SSH_HOST': host, 'GAMERHQ_STAGING_SSH_PORT': str(port),
         'GAMERHQ_STAGING_SSH_KNOWN_HOSTS': (host if port == 22 else '[' + host + ']:' + str(port)) + ' ' + key}
 

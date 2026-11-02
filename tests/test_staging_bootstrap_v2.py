@@ -173,3 +173,14 @@ def test_artifact_access_can_rotate_without_rewriting_bot_credentials_or_dataset
         before = target.read_bytes()
         with pytest.raises(ValueError): configure("credentials", {"releaseToken": "new", "profile": "/opt/gamerhq"}, {})
         assert target.read_bytes() == before
+
+
+def test_failed_ssh_validation_removes_only_its_new_policy_and_preserves_existing_policy(tmp_path):
+    from tools.prepare_staging_access import install_ssh_restriction
+    policy = tmp_path / "staging.conf"
+    with patch("tools.prepare_staging_access.run", side_effect=RuntimeError("synthetic invalid policy")):
+        with pytest.raises(RuntimeError): install_ssh_restriction(policy, "new fixture")
+        assert not policy.exists()
+        policy.write_text("owner policy")
+        with pytest.raises(PermissionError): install_ssh_restriction(policy, "new fixture")
+        assert policy.read_text() == "owner policy"
