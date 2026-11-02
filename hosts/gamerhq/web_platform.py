@@ -207,6 +207,7 @@ class GamerHQWebPlatformService:
                                     "revisionPath": field["collection"]["revision_path"],
                                     "expectedRevisionKey": field["collection"]["expected_revision_key"],
                                     "previewRequired": field["collection"]["preview_required"],
+                                    "createRequestIdKey": field["collection"]["create_request_id_key"],
                                     "titlePath": field["collection"]["title_path"],
                                     "statusPath": field["collection"]["status_path"],
                                     "summaryPath": field["collection"]["summary_path"],

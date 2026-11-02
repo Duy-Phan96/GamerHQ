@@ -103,6 +103,7 @@ class ManagementCollectionSchema:
     revision_path: str | None = None
     expected_revision_key: str | None = None
     preview_required: bool = False
+    create_request_id_key: str | None = None
 
     def __post_init__(self) -> None:
         if (self.revision_path is None) != (self.expected_revision_key is None):
@@ -115,6 +116,8 @@ class ManagementCollectionSchema:
             raise ValueError("Collection preview_required must be boolean.")
         if self.preview_required and not self.operations.validate_contract:
             raise ValueError("Required collection preview needs a validation contract.")
+        if self.create_request_id_key is not None and not FIELD_KEY.fullmatch(self.create_request_id_key):
+            raise ValueError("Collection create request ID must be a field key.")
         if not CONFIG_PATH.fullmatch(self.item_id_path):
             raise ValueError("Management collection item_id_path must be a config path.")
         if not FIELD_KEY.fullmatch(self.item_id_payload_key):

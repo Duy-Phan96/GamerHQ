@@ -41,8 +41,8 @@ CAS uses a SQLite write transaction before reading, including across processes.
 `None` means absent; atomic values cannot be JSON null. Each value retains the
 existing 64 KiB ceiling. This is not a multi-key transaction API.
 
-Collection schemas can declare `revision_path`, `expected_revision_key` and
-`preview_required`; both revision fields must be supplied together. Web API
+Collection schemas can declare `revision_path`, `expected_revision_key`,
+`create_request_id_key` and `preview_required`; both revision fields must be supplied together. Web API
 projection uses camelCase. Existing collection schemas remain compatible.
 
 The deployment lock additionally accepts reviewed GitHub release wheels with

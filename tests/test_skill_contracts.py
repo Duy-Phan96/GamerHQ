@@ -14,6 +14,7 @@ class SkillContractTests(unittest.TestCase):
         operations = ManagementCollectionOperations(list_contract="events.list.v1", create_contract="events.create.v1")
         for extra in ({"revision_path": "revision"}, {"expected_revision_key": "revision"},
                       {"revision_path": "bad path", "expected_revision_key": "revision"},
+                      {"create_request_id_key": "bad key"},
                       {"preview_required": True}, {"preview_required": "true"}):
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 ManagementCollectionSchema(operations=operations, item_fields=(), **extra)
