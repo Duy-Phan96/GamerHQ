@@ -158,3 +158,18 @@ def test_vendored_rootless_launcher_is_exactly_the_recorded_upstream_bytes():
     source = json.loads((root / "UPSTREAM.json").read_text())
     assert source["commit"] == "f8215cc266744ef195a50a70d427c345da2acdbb"
     assert hashlib.sha256((root / "dockerd-rootless.sh").read_bytes()).hexdigest() == source["sha256"]["dockerd-rootless.sh"]
+
+
+def test_artifact_access_can_rotate_without_rewriting_bot_credentials_or_dataset(tmp_path):
+    from tools.staging_configuration import configure
+    target = tmp_path / "worker.env"
+    target.write_text("old fixture")
+    with patch("tools.staging_configuration.audit"), patch("tools.staging_dispatch.ENVIRONMENT", target), patch.dict(
+            os.environ, {"GAMERHQ_STAGING_WEB_API_SECRET": "synthetic-staging-api-secret"}):
+        configure("credentials", {"releaseToken": "synthetic-renewed-read-only-access"}, {"workerEnabled": True})
+        assert "synthetic-renewed-read-only-access" in target.read_text()
+        assert "synthetic-staging-api-secret" in target.read_text()
+        assert "DISCORD_TOKEN" not in target.read_text()
+        before = target.read_bytes()
+        with pytest.raises(ValueError): configure("credentials", {"releaseToken": "new", "profile": "/opt/gamerhq"}, {})
+        assert target.read_bytes() == before

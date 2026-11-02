@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [health, initial, release, authorize-live, revoke]
+        options: [health, initial, release, credentials, authorize-live, revoke]
         required: true
       approval:
         description: Exact operation approval from the bootstrap guide
@@ -29,7 +29,7 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           APPROVAL: ${{ inputs.approval }}
-          INITIAL_CONFIGURATION: ${{ inputs.operation == 'initial' && secrets.GAMERHQ_STAGING_CONFIGURATION || '' }}
+          INITIAL_CONFIGURATION: ${{ (inputs.operation == 'initial' || inputs.operation == 'credentials') && secrets.GAMERHQ_STAGING_CONFIGURATION || '' }}
           RELEASE_DESCRIPTOR: ${{ inputs.release_descriptor }}
           GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
           GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT || '22' }}
@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$OPERATION" == initial ]]; then
+          if [[ "$OPERATION" == initial || "$OPERATION" == credentials ]]; then
             export GAMERHQ_STAGING_CONFIGURATION="$INITIAL_CONFIGURATION"
           elif [[ "$OPERATION" == release ]]; then
             export GAMERHQ_STAGING_CONFIGURATION="$RELEASE_DESCRIPTOR"

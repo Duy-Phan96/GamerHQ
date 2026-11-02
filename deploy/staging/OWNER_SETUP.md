@@ -122,7 +122,10 @@ For each future Skill release, use configuration `release` with the exact approv
 then explicitly `apply` that deployment ID. Version is read from the running Host;
 paths/publishers/capabilities cannot be supplied as arbitrary SSH arguments. Every
 release still needs source/trust review; this is not unattended production deployment.
-New descriptors invalidate old verification evidence. Health validation, backups,
+New descriptors invalidate old verification evidence. Renew private release access by updating the
+GitHub configuration secret and choosing `credentials`, approval
+`ROTATE STAGING ARTIFACT ACCESS`; it updates only artifact access and never the
+bot token, API secret or dataset. No SSH credential-file edit is needed. Health validation, backups,
 deployment history and guarded image rollback use the existing Host controller.
 
 ## Health, failure handling and revocation

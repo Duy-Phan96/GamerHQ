@@ -47,7 +47,9 @@ def main():
     parser.add_argument("--approval", default="")
     parser.add_argument("--deployment-id", default="")
     args = parser.parse_args()
-    payload = json.loads(os.environ["GAMERHQ_STAGING_CONFIGURATION"]) if args.phase == "configure" and args.operation in ("initial", "release") else None
+    payload = json.loads(os.environ["GAMERHQ_STAGING_CONFIGURATION"]) if args.phase == "configure" and args.operation in ("initial", "release", "credentials") else None
+    if args.operation == "credentials" and payload is not None:
+        payload = {"releaseToken": payload["releaseToken"]}
     output = invoke({"version": 1, "phase": args.phase, "operation": args.operation, "approval": args.approval,
         "deploymentId": args.deployment_id}, host=os.environ.get("GAMERHQ_STAGING_SSH_HOST", ""),
         port=int(os.environ.get("GAMERHQ_STAGING_SSH_PORT", "22")), private_key=os.environ.get("GAMERHQ_STAGING_SSH_KEY", ""),

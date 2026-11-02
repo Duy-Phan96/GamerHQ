@@ -30,6 +30,15 @@ def atomic_json(path, value):
     write_record(path, value)
 
 
+def atomic_private_text(path, body):
+    if path.is_symlink():
+        raise ValueError("Private staging settings cannot be symbolic links.")
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=path.name + ".", delete=False) as stream:
+        stream.write(body); stream.flush(); os.fsync(stream.fileno())
+        target = Path(stream.name)
+    target.chmod(0o600); target.replace(path)
+
+
 def descriptor(value, *, sdk=False):
     from hosts.gamerhq.skill_artifacts import version_parts
     allowed = {"repository", "distribution", "version", "tag", "reviewedCommit", "sha256", "sourceReviewed", "allowPrerelease"}
@@ -90,6 +99,12 @@ def configure(operation, payload, profile):
             if not isinstance(payload, dict) or set(payload) != {"skillRelease"}:
                 raise ValueError("Only one reviewed Skill descriptor may change.")
             atomic_json(profile["releaseFile"], descriptor(payload["skillRelease"]))
+        elif operation == "credentials":
+            if not isinstance(payload, dict) or set(payload) != {"releaseToken"} or not isinstance(payload["releaseToken"], str) or not 20 <= len(payload["releaseToken"]) <= 2048 or any(c.isspace() for c in payload["releaseToken"]):
+                raise ValueError("Supply only the renewed read-only staging artifact credential.")
+            from tools.staging_dispatch import ENVIRONMENT
+            atomic_private_text(ENVIRONMENT, "GAMERHQ_SKILL_RELEASE_TOKEN=" + payload["releaseToken"] +
+                "\nGAMERHQ_STAGING_WEB_API_SECRET=" + os.environ["GAMERHQ_STAGING_WEB_API_SECRET"] + "\n")
         elif operation == "initial":
             initial(payload, profile)
         else:
@@ -124,10 +139,7 @@ def initial(payload, profile):
     # Atomic private replacements; never print or put secrets into SSH command arguments.
     for path, body in ((Path(profile["botEnvFile"]), "DISCORD_TOKEN=" + payload["discordToken"] + "\nGUILD_ID=" + payload["stagingGuildId"] + "\nGAMERHQ_WEB_API_SECRET=" + secret + "\n"),
             (ENVIRONMENT, "GAMERHQ_SKILL_RELEASE_TOKEN=" + payload["releaseToken"] + "\nGAMERHQ_STAGING_WEB_API_SECRET=" + secret + "\n")):
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=path.name + ".", delete=False) as stream:
-            stream.write(body); stream.flush(); os.fsync(stream.fileno())
-            target = Path(stream.name)
-        target.chmod(0o600); target.replace(path)
+        atomic_private_text(path, body)
     atomic_json(profile["sdkReleaseFile"], sdk)
     atomic_json(profile["releaseFile"], skill)
     atomic_json(PROFILE, profile)
