@@ -6,8 +6,9 @@ import subprocess
 import sys
 
 WORKER = Path("/opt/gamerhq-staging/deployment-worker")
-PROFILE = Path("/etc/gamerhq/staging/profile.json")
-ENVIRONMENT = Path("/etc/gamerhq/staging/worker.env")
+CONTROL = Path("/etc/gamerhq-staging")
+PROFILE = CONTROL / "settings/profile.json"
+ENVIRONMENT = CONTROL / "settings/worker.env"
 
 # The installed root launcher uses Python isolated mode. Only this fixed,
 # root-owned reviewed source is added; no SSH caller import paths are honored.
@@ -16,17 +17,21 @@ if __name__ == "__main__":
 from tools.staging_bridge_protocol import validate
 
 
-def protected_file(path, *, private=False):
+def protected_file(path, *, private=False, uid=0):
     info = path.stat()
-    if path.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022:
+    if path.is_symlink() or info.st_uid != uid or info.st_mode & 0o022:
         raise PermissionError("Staging control files must be root-owned and protected.")
     if private and info.st_mode & 0o077:
         raise PermissionError("Staging worker credentials must be private.")
 
 
 def environment(path=ENVIRONMENT):
-    protected_file(path, private=True)
-    result = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+    protected_file(path, private=True, uid=os.geteuid())
+    uid = os.geteuid()
+    result = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/var/lib/gamerhq-staging-bridge", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
+        "DOCKER_HOST": f"unix:///run/user/{uid}/docker.sock", "DOCKER_CONFIG": str(CONTROL / "docker-client"),
+        "GIT_CONFIG_GLOBAL": str(CONTROL / "gitconfig"), "GIT_OPTIONAL_LOCKS": "0",
+        "XDG_RUNTIME_DIR": f"/run/user/{uid}", "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus"}
     permitted = {"GAMERHQ_SKILL_RELEASE_TOKEN", "GAMERHQ_STAGING_WEB_API_SECRET"}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
@@ -59,35 +64,72 @@ def command_for(request, profile, *, current_version=None):
 
 
 def main():
-    if os.geteuid() != 0:
-        raise PermissionError("The staging dispatcher requires its fixed privileged launcher.")
+    if os.geteuid() == 0:
+        raise PermissionError("Staging automation must never execute as root.")
     import fcntl
     # Preparation and update workflows share the same staging resources, including
     # when requests originate outside Actions. Never overlap those operations.
-    lock = (WORKER.parent / "operation.lock").open("a")
+    lock = (WORKER.parent / "worker/operation.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    protected_file(PROFILE)
+    if (WORKER.parent / "worker/access-revoked").exists():
+        raise PermissionError("Staging deployment access has been revoked.")
+    protected_file(CONTROL / "policy.json")
+    policy = json.loads((CONTROL / "policy.json").read_text())
+    if policy.get("deploymentUid") != os.geteuid() or policy.get("schemaVersion") != 2:
+        raise PermissionError("The root-owned staging identity policy does not match.")
+    protected_file(PROFILE, uid=os.geteuid())
     protected_file(WORKER / "tools/staging_dispatch.py")
     if (WORKER / ".env").exists():
         raise PermissionError("The protected worker checkout must not contain a runtime environment file.")
-    body = sys.stdin.buffer.read(4097)
-    if len(body) > 4096:
+    body = sys.stdin.buffer.read(32769)
+    if len(body) > 32768:
         raise ValueError("Staging request exceeds its bound.")
-    request = validate(json.loads(body))
+    envelope = json.loads(body)
+    if not isinstance(envelope, dict) or set(envelope) != {"request", "configuration"}:
+        raise ValueError("Unsupported staging request envelope.")
+    request = validate(envelope["request"])
     profile = json.loads(PROFILE.read_text(encoding="utf-8"))
     from hosts.gamerhq.skill_staging import validate_profile
     validate_profile(profile)
+    from tools.staging_configuration import validate_binding, configure, audit
+    validate_binding(profile, policy)
     values = environment()
     os.environ.clear(); os.environ.update(values)
+    from hosts.gamerhq.staging_rootless import verify_rootless, verify_identity
+    if request["phase"] == "configure" and request["operation"] == "revoke":
+        verify_identity(profile)  # revocation must work even when Docker is unhealthy
+    else:
+        verify_rootless(profile)
+    if request["phase"] == "configure":
+        detail = configure(request["operation"], envelope["configuration"], profile) or {}
+        print(json.dumps({"result": "PASS", "operation": request["operation"], "productionChanged": False, **detail}))
+        return
+    if envelope["configuration"] is not None:
+        raise ValueError("Unexpected configuration payload.")
+    if request["operation"] == "build-base" and profile.get("workerEnabled") is True:
+        raise PermissionError("The initial Host base cannot be replaced after live authorization.")
     current = None
     if request["phase"] == "update" and request["operation"] == "stage":
         from tools.skill_staging import host_request, release_for
         release = release_for(profile)
         current = host_request(profile, f"/api/v1/servers/{profile['stagingGuildId']}/skills/{release['skillId']}")["version"]
     command = command_for(request, profile, current_version=current)
-    result = subprocess.run(command, cwd=WORKER, env=values, capture_output=True, text=True, timeout=2100)
-    if result.returncode or len(result.stdout.encode()) > 65536:
-        raise RuntimeError("The staging operation failed; production was not targeted.")
+    audit(request["operation"], "STARTED")
+    try:
+        result = subprocess.run(command, cwd=WORKER, env=values, capture_output=True, text=True, timeout=2100)
+        if result.returncode or len(result.stdout.encode()) > 65536:
+            raise RuntimeError("The staging operation failed; production was not targeted.")
+    except Exception:
+        audit(request["operation"], "FAILED")
+        raise
+    audit(request["operation"], "PASS")
+    if request["operation"] == "build-base":
+        from hosts.gamerhq.skill_deployment_docker import IMAGE
+        evidence = json.loads((Path(profile["workRoot"]) / "base-candidate.json").read_text())
+        if evidence.get("sourceCommit") != profile["hostSourceCommit"] or evidence.get("gatewayStarted") is not False or not IMAGE.fullmatch(evidence.get("image", "")):
+            raise ValueError("Initial Host base provenance did not verify.")
+        from tools.skill_staging import write_record
+        write_record(PROFILE, {**profile, "baseImage": evidence["image"]})
     print(result.stdout, end="")
 
 

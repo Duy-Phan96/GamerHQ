@@ -1,0 +1,11 @@
+{
+  "repository": "moby/moby",
+  "tag": "v28.5.1",
+  "commit": "f8215cc266744ef195a50a70d427c345da2acdbb",
+  "license": "Apache-2.0",
+  "licenseUrl": "https://github.com/moby/moby/blob/f8215cc266744ef195a50a70d427c345da2acdbb/LICENSE",
+  "sha256": {
+    "dockerd-rootless.sh": "5a4fcf228be8e5d2fd6c0676c858372a2afb95144675d02f215301272c344f65"
+  },
+  "note": "Unmodified upstream shell helpers. Distro Docker daemon/client, rootlesskit, slirp4netns and uidmap are used; no production Docker replacement."
+}

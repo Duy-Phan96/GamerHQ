@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One-time private staging configuration packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["stagingBotId", "stagingGuildId", "productionBotId", "productionGuildId", "categoryId", "voiceCategoryId", "discordToken", "releaseToken", "sdkRelease", "skillRelease"],
+  "properties": {
+    "stagingBotId": {"$ref": "#/$defs/id"},
+    "stagingGuildId": {"$ref": "#/$defs/id"},
+    "productionBotId": {"$ref": "#/$defs/id"},
+    "productionGuildId": {"$ref": "#/$defs/id"},
+    "categoryId": {"$ref": "#/$defs/id"},
+    "voiceCategoryId": {"$ref": "#/$defs/id"},
+    "discordToken": {"type": "string", "minLength": 20, "maxLength": 2048, "description": "New dedicated staging application token. Never production."},
+    "releaseToken": {"type": "string", "minLength": 20, "maxLength": 2048, "description": "Approved read-only credential for private release contents."},
+    "sdkRelease": {"$ref": "#/$defs/release"},
+    "skillRelease": {"$ref": "#/$defs/release"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+    "release": {
+      "type": "object",
+      "required": ["repository", "distribution", "version", "reviewedCommit", "sha256", "sourceReviewed"],
+      "properties": {
+        "repository": {"enum": ["Duy-Phan96/GamerHQ", "Duy-Phan96/gamerhq-skill-event-manager"]},
+        "distribution": {"enum": ["gamerhq-skill-sdk", "gamerhq-skill-event-manager"]},
+        "version": {"type": "string"},
+        "reviewedCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sourceReviewed": {"const": true},
+        "tag": {"type": "string"},
+        "allowPrerelease": {"type": "boolean"},
+        "skillId": {"const": "event-manager"},
+        "runtimeApi": {"const": "1"},
+        "migrationMode": {"enum": ["none", "backward-compatible"]},
+        "capabilities": {"type": "array", "items": {"enum": ["storage.skill", "storage.atomic", "scheduler.jobs", "discord.resources.manage"]}}
+      },
+      "additionalProperties": false,
+      "description": "Use exact actually published/reviewed release bytes. Runtime enforces distinct SDK/Skill fields and publisher/version/capability policy."
+    }
+  }
+}

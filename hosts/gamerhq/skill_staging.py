@@ -149,6 +149,10 @@ class NoRedirects(HTTPRedirectHandler):
 
 
 def verify_daemon(profile):
+    if profile.get("dockerMode") == "rootless":
+        from .staging_rootless import verify_rootless
+        verify_rootless(profile)
+        return
     if os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT", "default") != "default":
         raise ValueError("Staging must use the approved local VPS Docker context.")
     expected = profile.get("dockerDaemonId", "")

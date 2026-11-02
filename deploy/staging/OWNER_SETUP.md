@@ -1,90 +1,161 @@
-# One-time owner setup for isolated staging
+# Verified one-time staging bootstrap
 
-Nothing in this procedure deploys production. It requires an owner-controlled VPS
-administrator session; SSH access and credentials have not been delegated to Codex.
-Do not execute it until the exact Host commit and installer have been reviewed.
+The operator command is generated from an exact public Git commit, the SHA-256
+of that commit's installer bytes, and the actual public half of the dedicated
+Actions key. It downloads into an automatically created private temporary
+directory, rejects redirects/oversized responses/checksum mismatch, then executes.
+It requires no pre-copied script, public-key file or guessed remote path. Do not
+use the obsolete `/APPROVED-TEMP` command from the earlier handoff.
 
-## Consolidated infrastructure preparation
+Use the **complete generated operator command from the accepted handoff** in the
+existing root SSH session. Do not replace its commit/checksum/key with examples.
+`tools/bootstrap_command.py` produces the command and CI executes that same
+verified-download path twice to test both initial setup and retry. No moving
+branch, curl pipe, production credential or GitHub access token is involved.
 
-Use a new dedicated Ed25519 SSH key pair, kept outside the repositories. Retain the
-private half in a protected GitHub `staging` environment secret, never send it to
-Codex or put it on the VPS. Transfer only its public half and a reviewed copy of
-`tools/prepare_staging_access.py` to an administrator-controlled temporary directory.
-The approved Linux VPS needs Python 3.12+, venv/pip, Git, Docker Compose v2, OpenSSH
-and sudo/visudo already installed. The installer deliberately does not install
-system packages, alter SSH daemon policy, grant Docker group access or restart any
-service. Its public dependency download needs outbound PyPI/GitHub access.
+## What the one-time root operation does
 
-Run the same command first without `--apply` for a read-only preflight, then once
-with the exact approval after reviewing that plan:
+- Checks Linux/systemd/cgroup-v2, Python 3.12+, rootless Docker helpers and SSH
+  environment policy. With the generated command, missing prerequisites may be
+  installed only from already configured signed APT repositories after a dry run
+  proves there are no upgrades/removals or rootful Docker/SSH replacements. It
+  does not add package repositories, relax AppArmor/kernel/SSH policy or disable
+  production Docker. Unsupported hosts stop with the exact prerequisite blocker.
+- Clones the public Host at the exact commit, verifies its installer matches the
+  downloaded bytes, and creates a root-owned, read-only deployment worker/venv.
+  Public pinned dependencies use a clean environment, without production Git/pip
+  credentials. The bootstrap's root-private state records resumable phases; the
+  same command retries known partial setup, while unknown/legacy paths are refused.
+- Creates only the new `gamerhq-staging-bridge` account, with an impossible password
+  hash and no supplementary admin/Docker groups or sudo rule. Its root-owned SSH
+  key file and forced-command entry point accept only bounded Host operations.
+- Adds and validates a **per-account** SSH restriction: public key only, no shell,
+  user rc, PTY, forwarding or tunnels. The existing SSH service is reloaded to apply
+  that restriction, preserving current sessions. Global/root login rules stay intact.
+- Enables only the new account's user manager/lingering and a separate rootless
+  Docker service. Production Docker is never stopped, disabled or reconfigured.
+  A UID-specific systemd sandbox hides `/opt/gamerhq`, `/etc/gamerhq`, `/root`,
+  `/var/lib/docker` and the production Docker socket from deployment jobs/daemon.
+- Creates staging-only data/backup/artifact/work directories and private settings.
+  ACLs share only the new staging SQLite/data paths between the Host worker and
+  mapped container UID 10001; no production data or secrets are read/copied.
+- Generates a new private staging API credential, leaves the Discord token blank
+  and worker disabled, and enables a five-minute **read-only** watchdog. It creates
+  no staging database, Event Manager installation or Discord Gateway connection.
 
-```sh
-sudo python3 /APPROVED-TEMP/prepare_staging_access.py \
-  --commit REVIEWED_40_CHARACTER_HOST_COMMIT \
-  --public-key-file /APPROVED-TEMP/dedicated-staging.pub \
-  --apply --approval 'PREPARE ISOLATED STAGING'
-```
-
-This is the single infrastructure setup command. It creates only the new staging
-root/configuration, a root-owned worker/venv from the exact public Host commit and
-the locked-password `gamerhq-staging-bridge` account. The account has no Docker
-membership; a root-owned `authorized_keys` forced command accepts only bounded
-staging operations. The sole sudo rule permits the fixed root dispatcher with no
-arguments. No general shell, client-selected paths, environment or source refs are
-accepted. The dispatcher clears inherited environment and executes existing Host
-tools. It starts no container and creates no database. It never reads production
-`.env` or copies production data. Existing paths/accounts cause refusal before
-provisioning; after a partial failure, review the new staging paths locally rather
-than deleting or overwriting them automatically.
-
-Independently verify the VPS SSH host-key fingerprint through the existing trusted
-administrator channel. Keep strict host-key checking; do not use automatic
-`ssh-keyscan` trust or `accept-new`. If local SSH/PAM policy refuses the dedicated
-account, have the administrator review the narrow account policy; do not weaken
-global SSH settings or unlock password login. CI exercises this path on a fresh
-Ubuntu runner; that does not establish the VPS's actual policy or reachability.
-
-## Protected configuration packet
-
-Complete this packet in the same owner-controlled setup session, using a protected
-editor or secret manager. Do not paste values into chat, repository files or logs.
-
-| Location | Required configuration |
+| Actual installed resource | Location / identity |
 | --- | --- |
-| `/etc/gamerhq/staging/profile.json` | Reviewed immutable Host image, exact SDK hash, dedicated staging/production public IDs for exclusion, staging categories; keep `workerEnabled=false` |
-| `/etc/gamerhq/staging/*release.json` | Approved publisher, exact tag/version/commit and independently reviewed wheel SHA-256; `sourceReviewed=true` only after review |
-| `/etc/gamerhq/staging/worker.env` (0600) | Read-only private Skill release credential and a newly generated staging Web API secret |
-| `/etc/gamerhq/staging/bot.env` (0600) | New staging Discord token, dedicated guild, the same new staging API secret; no production values |
-| GitHub protected `staging` environment | Required reviewer, restrict allowed workflow branches to reviewed release refs/main; secret `GAMERHQ_STAGING_SSH_KEY` only |
-| GitHub `staging` variables | `GAMERHQ_STAGING_SSH_HOST`, optional `GAMERHQ_STAGING_SSH_PORT`, independently pinned `GAMERHQ_STAGING_SSH_KNOWN_HOSTS` |
+| Reviewed immutable worker | `/opt/gamerhq-staging/deployment-worker` |
+| Root-only resumable bootstrap state | `/var/lib/gamerhq-staging-bootstrap` |
+| Private staging configuration | `/etc/gamerhq-staging/settings` |
+| Immutable identity/isolation policy | `/etc/gamerhq-staging/policy.json` |
+| Staging data/backups/artifacts/work | `/opt/gamerhq-staging/{data,backups,artifacts,worker}` |
+| Dedicated home/rootless image storage | `/var/lib/gamerhq-staging-bridge` |
+| Rootless socket | `/run/user/<allocated deployment UID>/docker.sock`, derived and recorded by setup |
+| Compose container/network | `gamerhq-staging-bot` / `gamerhq-staging-private`, only in that daemon |
+| Host API listener | `127.0.0.1:18080`, authenticated |
 
-The installer records the local daemon ID and source commit, but leaves image,
-artifact approvals and identities unconfigured. Protected descriptors are owner
-policy; SSH callers cannot replace them. Candidate releases must first be published
-from reviewed tags in their owning repositories. Private artifact access is not
-assumed. Keep credentials limited to release contents in the required repository.
+The socket UID is discovered, not an operator placeholder. The generated command
+contains no remote file path that must exist beforehand. Container/network creation
+waits for an approved immutable candidate; it cannot safely fabricate an image,
+release, Discord application or guild.
 
-## Verification and explicit live boundary
+## One-time inputs that cannot be invented
 
-After the packet and restricted SSH reachability are verified, authorize the
-preparation workflow by setting `GAMERHQ_STAGING_PREPARATION_ENABLED=true`. Use
-`inspect`, `build-base` (explicit build approval), review and record the resulting
-immutable image, `initialize` (dedicated IDs and explicit empty-DB approval),
-`fetch`, `verify-offline`, then `build`. These operations start no Gateway. Local
-artifact verification attests reviewed bytes, not GitHub publication provenance;
-`fetch` and live verification separately verify exact published tags/commits.
+The repository's protected `staging` environment must require owner review, deny
+admin bypass and allow only `main`. `GAMERHQ_STAGING_PREPARATION_ENABLED` and
+`GAMERHQ_STAGING_UPDATES_ENABLED` are **repository variables**, initially `false`.
+The dedicated private key belongs only in environment secret
+`GAMERHQ_STAGING_SSH_KEY`; never send it to chat or put it in source/on the VPS.
+The actual handoff records which of these settings were configured through the
+available GitHub administration permission.
 
-Do not enable the worker simply to build an image. Only after verifying the new
-Discord identity belongs exclusively to the isolated guild and live verification
-passes, obtain owner authorization to enable `workerEnabled`, re-run `verify`,
-and explicitly approve `bootstrap`. This is the first operation that can connect
-the staging bot. `install` then uses the public Host lifecycle, followed by explicit
-configuration/enablement. Unconfigured templates and offline proof cannot cross
-this boundary. Keep `GAMERHQ_STAGING_UPDATES_ENABLED` unset until this initial
-acceptance is complete; subsequent stage/apply/history reuse the Host controller
-and require a reviewed READY deployment ID before application.
+1. Run the verified operator command once. Its public receipt reports the observed
+   SSH address/port and actual public host key. Confirm public reachability (NAT or
+   an SSH proxy can change the externally reachable address/port) and host-key
+   authenticity through the existing trusted root session. Supply that **non-secret**
+   receipt to the agent, or set environment variables `GAMERHQ_STAGING_SSH_HOST`,
+   `GAMERHQ_STAGING_SSH_PORT`, `GAMERHQ_STAGING_SSH_KNOWN_HOSTS` in GitHub. No host-key
+   auto-trust, `ssh-keyscan` or `accept-new` is used.
+2. Add environment secret `GAMERHQ_STAGING_CONFIGURATION`, following
+   [the configuration schema](configuration.schema.json). It needs a **new** staging
+   Discord application/token, dedicated guild/categories, public production IDs for
+   exclusion checks, read-only access to approved private GitHub Releases, and exact
+   reviewed SDK/Skill release commit/version/checksum descriptors. Never paste the
+   packet in chat, reuse the production token or copy production `.env`/SQLite.
+   The staging API secret is already generated server-side; it is not a manual input.
+3. In **Protected staging configuration and access**, choose `initial`, approve the
+   environment review, and enter `CONFIGURE ISOLATED STAGING`. Credentials travel
+   on encrypted SSH **stdin**, never remote-command arguments or audit output.
+   Initial configuration refuses an existing staging database/container.
 
-Do not set `GAMERHQ_DEPLOYMENT_WORKER_ENABLED`, transfer production credentials,
-restore production data, migrate production or clean up Discord channels during
-this procedure. Separate production approval must identify the exact image,
-deployment ID, backup, authority cutover and recovery plan after staging acceptance.
+These are one-time owner identity/trust/credential actions, not routine VPS edits.
+If a required publisher release does not exist, publish/review it in its owning
+repository first; do not substitute a moving branch or unverified local wheel.
+
+## Host-owned operations after enrollment
+
+After restricted reachability/health is verified, enable the preparation repository
+variable. All following operations are reviewed GitHub workflows using the installed
+Host worker; no manual VPS command is needed:
+
+1. Preparation `build-base`, approval `BUILD ISOLATED STAGING BASE`: build exact
+   installed Host source inside the rootless daemon and record its immutable image
+   automatically. This never changes the production image or starts a bot.
+2. `initialize`, approval `INITIALIZE ISOLATED STAGING`: create new staging SQLite
+   exclusively. Then `fetch`, `verify-offline`, `build` verify exact GitHub release
+   provenance/checksums/SDK compatibility and probe the isolated candidate image.
+3. Configuration `authorize-live`, approval `AUTHORIZE ISOLATED STAGING`: freshly
+   verify the actual new bot identity, exclusive staging guild membership, category
+   permissions, private release access and approved bytes, then enable the staging
+   worker and record a fresh live proof. Offline proof cannot authorize live use.
+4. Preparation `bootstrap`, approval `BOOTSTRAP ISOLATED STAGING`: **first staging
+   Gateway connection**, only after explicit approval; refuses an existing container
+   and waits for its Gateway heartbeat and Host/package health. `install`, approval
+   `INSTALL IN ISOLATED STAGING`, uses the public Skill lifecycle. Configure/enable
+   the Skill and perform live Discord/Web and migration/rollback acceptance.
+5. Enable the separate staging-updates repository variable only after acceptance.
+
+For each future Skill release, use configuration `release` with the exact approved
+`{"skillRelease": ...}` descriptor and `APPROVE STAGING RELEASE`; then preparation
+`fetch`, `verify`, followed by the existing worker `stage`, inspect READY/history,
+then explicitly `apply` that deployment ID. Version is read from the running Host;
+paths/publishers/capabilities cannot be supplied as arbitrary SSH arguments. Every
+release still needs source/trust review; this is not unattended production deployment.
+New descriptors invalidate old verification evidence. Renew private release access by updating the
+GitHub configuration secret and choosing `credentials`, approval
+`ROTATE STAGING ARTIFACT ACCESS`; it updates only artifact access and never the
+bot token, API secret or dataset. No SSH credential-file edit is needed. Health validation, backups,
+deployment history and guarded image rollback use the existing Host controller.
+
+## Health, failure handling and revocation
+
+The watchdog checks rootless engine identity/storage, enforced cgroup-v2 limits,
+production path masking and (after live enablement) Gateway heartbeat plus authenticated
+Host/Skill health. It never repairs, creates resources or connects a second bot.
+Before live authorization it reports `READY_OFFLINE`. During initial authorized
+bootstrap, health may remain failed until the first Gateway/Host is ready.
+
+Actions record safe operation results. Audit records in the staging user/system
+journal carry only operation, status, random audit ID and UID, never payloads,
+tokens or subprocess stderr. Root-owned worker sources and systemd sandbox policy
+remain separate from writable staging state. Worker locks serialize all remote operations.
+Interrupted private record writes use unique atomic temporary files; existing data
+is retained. Unchanged-data image rollback and `RECOVERY_REQUIRED` refusal after
+application writes remain authoritative; there is no automatic DB replacement.
+
+Configuration `revoke`, approval `REVOKE STAGING ACCESS`, writes a durable deny marker
+before attempting to stop the named staging container and **only its user Docker
+service**. It works even when Docker RPC is unhealthy. Every subsequent forced
+command is denied. Disable both repository gates and delete the GitHub SSH secret
+as well. If service shutdown itself fails, the deny marker remains and an owner
+must perform emergency recovery; no production service is targeted. Re-enrollment
+or removal of the root-owned SSH key is an explicit owner security operation,
+not an automatic recovery or normal Skill-update step.
+
+## Separate production boundary
+
+No production key, token, database, container, package pin or deployment gate is
+provisioned or enabled here. Production requires its own exact image/deployment-ID,
+backup, authority cutover and recovery authorization after successful isolated
+acceptance. This bootstrap does not grant that permission.

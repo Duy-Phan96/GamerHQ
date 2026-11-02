@@ -1,0 +1,15 @@
+{
+  "environment": "staging",
+  "requiredReviewer": "repository owner",
+  "preventSelfReview": false,
+  "canAdminsBypass": false,
+  "allowedBranches": ["main"],
+  "repositoryVariables": {
+    "GAMERHQ_STAGING_PREPARATION_ENABLED": "false",
+    "GAMERHQ_STAGING_UPDATES_ENABLED": "false"
+  },
+  "environmentSecrets": ["GAMERHQ_STAGING_SSH_KEY", "GAMERHQ_STAGING_CONFIGURATION"],
+  "environmentVariables": ["GAMERHQ_STAGING_SSH_HOST", "GAMERHQ_STAGING_SSH_PORT", "GAMERHQ_STAGING_SSH_KNOWN_HOSTS"],
+  "productionConfigured": false,
+  "note": "A sole repository owner may review their manually dispatched staging jobs. Production remains separately disabled; no independent human review is falsely claimed."
+}

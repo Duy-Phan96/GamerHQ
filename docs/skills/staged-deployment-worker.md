@@ -45,10 +45,13 @@ private evidence, credentials or approval controls. Apply is never a Web or Skil
 The opt-in `skill-deployment-worker.yml` workflow invokes a fixed, preinstalled
 Host worker. Staging uses a GitHub-hosted client with a bounded SSH forced command,
 the protected worker at `/opt/gamerhq-staging/deployment-worker`, and profile
-`/etc/gamerhq/staging/profile.json`. Follow the
+`/etc/gamerhq-staging/settings/profile.json`. Follow the
 [consolidated owner setup](../../deploy/staging/OWNER_SETUP.md) for the approved
 existing VPS, new dedicated identity, release trust and fresh verification gates.
-No Docker-group membership or self-hosted deployment runner is required for staging.
+Staging uses a separate rootless daemon and a UID-specific production-path sandbox.
+No sudo, production Docker-group membership or self-hosted deployment runner is required.
+The one-time verified installer and stdin-only protected configuration/release workflows
+replace the old manually copied script/root dispatcher.
 `GAMERHQ_STAGING_UPDATES_ENABLED` is separate from preparation and production gates.
 
 The independent production job remains disabled and restricted to main. Before
