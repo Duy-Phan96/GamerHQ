@@ -78,6 +78,12 @@ repository checkout on the deployment runner. Its gate is
 `staging` GitHub environment and supply approved credentials before enabling that
 preparation gate. The separate deployment worker gate also remains disabled.
 
+GitHub requires manual-dispatch definitions on the default branch. The separate
+workflow-only registration PR #177 prepares those two definitions on `main`;
+the worker implementation/templates remain in #176 on `develop`. Registration
+does not enable either gate or deploy application code. See
+[GitHub dispatch requirements](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+
 Every operation uses the fixed profile above:
 
 | Operation | Behavior / approval |
