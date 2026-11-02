@@ -16,11 +16,19 @@ branch, curl pipe, production credential or GitHub access token is involved.
 ## What the one-time root operation does
 
 - Checks Linux/systemd/cgroup-v2, Python 3.12+, rootless Docker helpers and SSH
-  environment policy. With the generated command, missing prerequisites may be
+  environment policy. AlmaLinux/RHEL 9 and Debian/Ubuntu use the same capability
+  checks: an actual temporary venv with pip/SSL/SQLite, a user D-Bus socket with
+  dbus-broker or dbus-daemon, user namespaces and existing Docker/helper binaries.
+  System Python is unchanged; a Python 3.9 launcher re-executes the verified
+  installer with the separately installed working Python 3.12+ interpreter.
+  On Debian/Ubuntu only, with the generated command, missing prerequisites may be
   installed only from already configured signed APT repositories after a dry run
   proves there are no upgrades/removals or rootful Docker/SSH replacements. It
   does not add package repositories, relax AppArmor/kernel/SSH policy or disable
   production Docker. Unsupported hosts stop with the exact prerequisite blocker.
+  RHEL packages are never automatically installed or upgraded. Missing capabilities
+  report RHEL hints (shadow-utils, dbus-broker, working Python venv); Debian-only
+  package names are not required on AlmaLinux.
 - Clones the public Host at the exact commit, verifies its installer matches the
   downloaded bytes, and creates a root-owned, read-only deployment worker/venv.
   Public pinned dependencies use a clean environment, without production Git/pip
@@ -36,12 +44,27 @@ branch, curl pipe, production credential or GitHub access token is involved.
   Docker service. Production Docker is never stopped, disabled or reconfigured.
   A UID-specific systemd sandbox hides `/opt/gamerhq`, `/etc/gamerhq`, `/root`,
   `/var/lib/docker` and the production Docker socket from deployment jobs/daemon.
+  Before starting its daemon, setup verifies the new user's real D-Bus socket,
+  systemd user session and an actual RootlessKit user namespace. It verifies the
+  daemon's cgroup-v2 delegation, storage driver and staging-only storage location.
+  SELinux state is checked before and after startup and recorded in the root-private
+  capability receipt. No SELinux policy, booleans, permissive domains, global labels,
+  sysctls or system-default Python are changed. If enforcing policy blocks startup,
+  setup fails; an owner-reviewed staging-only policy adjustment would be required.
 - Creates staging-only data/backup/artifact/work directories and private settings.
   ACLs share only the new staging SQLite/data paths between the Host worker and
   mapped container UID 10001; no production data or secrets are read/copied.
 - Generates a new private staging API credential, leaves the Discord token blank
   and worker disabled, and enables a five-minute **read-only** watchdog. It creates
   no staging database, Event Manager installation or Discord Gateway connection.
+
+CI exercises real AlmaLinux 9 system Python 3.9, separate Python 3.12 venv/pip and
+D-Bus provider detection in a disposable container; Ubuntu CI additionally exercises
+the full rootless Docker/systemd/restricted SSH lifecycle. A container CI job cannot
+prove AlmaLinux user-systemd or enforcing SELinux behavior on the VPS. Only successful
+execution there establishes bootstrap acceptance. The previously failed prerequisite
+check ran before creating bootstrap state; rerun the new verified command. Existing
+state belonging to a different commit/key is refused, never replaced or key-rotated.
 
 | Actual installed resource | Location / identity |
 | --- | --- |

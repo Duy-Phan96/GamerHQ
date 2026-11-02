@@ -88,20 +88,66 @@ def package_plan(output):
             raise PermissionError('Prerequisite installation would change existing infrastructure; no packages were installed.')
 
 
+def distribution(path=Path('/etc/os-release')):
+    values = {}
+    for line in path.read_text().splitlines():
+        if '=' in line and not line.startswith('#'):
+            key, value = line.split('=', 1)
+            values[key] = value.strip().strip('\"\'')
+    names = {values.get('ID', ''), *values.get('ID_LIKE', '').split()}
+    family = 'rhel' if names & {'rhel', 'almalinux', 'rocky', 'centos', 'fedora'} else 'debian' if names & {'debian', 'ubuntu'} else 'unknown'
+    return {'id': values.get('ID', 'unknown'), 'version': values.get('VERSION_ID', ''), 'family': family}
+
+
+def python_runtime():
+    """Test the installed interpreter, venv, pip and required stdlib, not RPM/DEB names."""
+    for name in ('python3.12', 'python3.14', 'python3.13'):
+        python = shutil.which(name)
+        if not python:
+            continue
+        try:
+            with tempfile.TemporaryDirectory(prefix='gamerhq-venv-check-') as directory:
+                run([python, '-m', 'venv', directory])
+                executable = str(Path(directory) / 'bin/python')
+                run([executable, '-I', '-c', 'import sys, ssl, sqlite3; assert sys.version_info >= (3,12)'])
+                run([executable, '-I', '-m', 'pip', '--version'])
+            return python
+        except RuntimeError:
+            continue
+    return None
+
+
+def dbus_provider(roots=(Path('/usr/lib/systemd/user'), Path('/lib/systemd/user'))):
+    # RHEL uses dbus-broker; Debian commonly uses dbus-daemon. Follow unit aliases.
+    socket = any((root / 'dbus.socket').is_file() for root in roots)
+    provider = any((root / name).is_file() for root in roots for name in ('dbus.service', 'dbus-broker.service'))
+    return socket and provider and bool(shutil.which('dbus-broker-launch') or shutil.which('dbus-daemon'))
+
+
+def selinux_status():
+    enforce = Path('/sys/fs/selinux/enforce')
+    if not enforce.exists():
+        return 'Disabled'
+    if not shutil.which('getenforce') or not shutil.which('selinuxenabled'):
+        raise RuntimeError('Active SELinux requires getenforce and selinuxenabled (RHEL: libselinux-utils); policy was not changed')
+    status = run(['getenforce'])
+    if status not in ('Enforcing', 'Permissive') or status != ('Enforcing' if enforce.read_text().strip() == '1' else 'Permissive'):
+        raise RuntimeError('SELinux runtime state could not be verified; policy was not changed')
+    return status
+
+
 def prerequisites(install=False):
+    distro = distribution()
     required = {'git': 'git', 'setfacl': 'acl', 'newuidmap': 'uidmap', 'newgidmap': 'uidmap',
         'rootlesskit': 'rootlesskit',
         'slirp4netns': 'slirp4netns'}
     missing = sorted({package for command, package in required.items() if not shutil.which(command)})
-    if not Path('/usr/lib/systemd/user/dbus.service').exists() and not Path('/lib/systemd/user/dbus.service').exists():
+    if not dbus_provider():
         missing.append('dbus-user-session')
-    python = next((value for name in ('python3.12', 'python3.14', 'python3.13') if (value := shutil.which(name))), None)
+    python = python_runtime()
     if python is None:
         missing += ['python3.12', 'python3.12-venv']
-    elif subprocess.run([python, '-c', 'import ensurepip'], capture_output=True).returncode:
-        version = run([python, '-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'])
-        missing.append('python' + version + '-venv')
-    if missing and install and shutil.which('apt-get'):
+    if missing and install and distro['family'] == 'debian' and shutil.which('apt-get'):
         args = ['apt-get', '--no-upgrade', '--no-install-recommends', 'install', *sorted(set(missing))]
         try:
             plan = run([args[0], '--simulate', *args[1:]])
@@ -111,12 +157,20 @@ def prerequisites(install=False):
         run(['apt-get', '-y', *args[1:]], env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive', 'NEEDRESTART_MODE': 'l'})
         return prerequisites(False)
     if missing:
-        raise RuntimeError('Missing prerequisites: ' + ', '.join(sorted(set(missing))) + '. No production Docker fallback is permitted.')
-    for command in ('docker', 'dockerd', 'systemctl', 'loginctl', 'runuser', 'useradd', 'getent', 'ssh-keygen', 'sshd'):
+        if distro['family'] == 'rhel':
+            hints = {'uidmap': 'shadow-utils (newuidmap/newgidmap)', 'dbus-user-session': 'dbus-broker or dbus-daemon user socket/service',
+                'python3.12-venv': 'working Python 3.12+ venv with pip (no separate RHEL venv package)'}
+            missing = [hints.get(value, value) for value in missing]
+        raise RuntimeError('Missing runtime capabilities on ' + distro['id'] + ' ' + distro['version'] + ': ' + ', '.join(sorted(set(missing))) + '. RHEL packages are never installed automatically; no production Docker fallback is permitted.')
+    for command in ('docker', 'dockerd', 'systemctl', 'systemd-run', 'loginctl', 'runuser', 'useradd', 'getent', 'ssh-keygen', 'sshd'):
         if not shutil.which(command):
             raise RuntimeError('Existing infrastructure prerequisite missing: ' + command)
     if Path('/proc/1/comm').read_text().strip() != 'systemd' or not Path('/sys/fs/cgroup/cgroup.controllers').exists():
         raise RuntimeError('Rootless staging requires systemd and cgroup v2; no global kernel/SSH policy will be weakened.')
+    for path in ('/proc/sys/user/max_user_namespaces', '/proc/sys/kernel/unprivileged_userns_clone'):
+        if Path(path).exists() and int(Path(path).read_text()) <= 0:
+            raise RuntimeError('User namespaces are disabled by host policy: ' + path + '; no global sysctl was changed')
+    selinux_status()
     ssh = run(['sshd', '-T']).splitlines()
     if 'permituserenvironment no' not in ssh or any(fnmatch.fnmatch(name, pattern) for line in ssh if line.startswith('acceptenv ')
             for pattern in line.split()[1:] for name in ('LD_PRELOAD', 'LD_LIBRARY_PATH', 'PYTHONPATH', 'ENV', 'BASH_ENV')):
@@ -159,6 +213,7 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
     if sys.version_info < (3, 12):
         os.execv(python, [python, str(Path(__file__).resolve()), *sys.argv[1:]])
     os.umask(0o077)
+    selinux = selinux_status()
     if not STATE.exists():
         STATE.mkdir(mode=0o700)
         record(state)
@@ -241,6 +296,11 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
     def user(*args):
         return run(['runuser', '-u', ACCOUNT, '--', 'env', *[k + '=' + v for k,v in values.items()], *args])
     if state['phase'] == 'DAEMON':
+        # Check the actual new user's bus/manager, not the owner's root session.
+        user('systemctl', '--user', 'start', 'dbus.socket')
+        user('systemctl', '--user', 'is-active', 'dbus.socket')
+        user('systemctl', '--user', 'show-environment')
+        user('systemd-run', '--user', '--wait', '--pipe', '--collect', '--quiet', 'rootlesskit', '--net=none', '/bin/true')
         # Use the exact vendored upstream launcher with the existing daemon binary.
         # No Docker CE package repository or rootful daemon replacement is needed.
         vendor = WORKER / 'deploy/staging/rootless'
@@ -276,6 +336,15 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
             time.sleep(1)
         if not any('rootless' in item for item in info.get('SecurityOptions') or []) or info.get('CgroupDriver') != 'systemd' or str(info.get('CgroupVersion')) != '2':
             raise RuntimeError('Rootless daemon/resource delegation did not verify; no rootful fallback is permitted.')
+        if info.get('Driver') not in ('overlay2', 'fuse-overlayfs', 'btrfs', 'vfs', 'overlayfs'):
+            raise RuntimeError('Rootless storage driver could not be verified')
+        if not Path(info.get('DockerRootDir', '/')).is_relative_to(HOME):
+            raise RuntimeError('Rootless storage is outside the dedicated staging home')
+        if selinux_status() != selinux:
+            raise RuntimeError('SELinux state changed during setup; staging acceptance refused')
+        state['capabilities'] = {'distribution': distribution(), 'python': python, 'venv': True,
+            'userBus': True, 'userNamespace': True, 'cgroupVersion': '2', 'storageDriver': info['Driver'],
+            'selinux': selinux, 'selinuxPolicyChanged': False}
         profile = json.loads((WORKER / 'deploy/staging/profile.example.json').read_text())
         profile.update(configurationRoot=str(CONFIG), deploymentUid=uid, deploymentHome=str(HOME), dockerMode='rootless',
             dockerHost=values['DOCKER_HOST'], dockerDaemonId=info['ID'], hostSourceCommit=commit, workerEnabled=False)
