@@ -37,6 +37,13 @@ class GamerHQManagedResources:
 
     async def health(self):
         parent = self._policy()
+        with db.connect() as conn:
+            pending = conn.execute("SELECT 1 FROM skill_managed_resources WHERE guild_id=? AND skill_id=? AND "
+                "(json_extract(state_json,'$.creating')=1 OR json_extract(state_json,'$.messagePending')=1 OR "
+                "json_extract(state_json,'$.synchronizationPending')=1 OR json_extract(state_json,'$.retiring')=1) LIMIT 1",
+                (self.guild.id, self.skill_id)).fetchone()
+        if pending:
+            return {"state": "DEGRADED", "detail": "Managed resource synchronization is pending or requires reconciliation."}
         return {"state": "PASS", "categoryId": str(parent.id)}
 
     @contextmanager
@@ -130,6 +137,7 @@ class GamerHQManagedResources:
             channel = await self._channel(state, "text", parent, name, members, visibility, chat_enabled, save)
             state["channelId"] = channel.id
             state.pop("creating", None)
+            state["synchronizationPending"] = True
             save()
             overwrite = channel.overwrites_for(self.guild.default_role)
             overwrite.view_channel, overwrite.send_messages = visibility == "public", chat_enabled if visibility == "public" else False
@@ -177,6 +185,7 @@ class GamerHQManagedResources:
             else:
                 await message.edit(content=None, embed=embed, allowed_mentions=discord.AllowedMentions.none())
             state["messageId"], state["messagePending"] = message.id, False
+            state["synchronizationPending"] = False
             save()
             return {"channelId": str(channel.id), "messageId": str(message.id), "resourceKey": key}
 
@@ -189,6 +198,7 @@ class GamerHQManagedResources:
             channel = await self._channel(state, "voice", parent, name, members, save=save)
             state["channelId"] = channel.id
             state.pop("creating", None)
+            state["synchronizationPending"] = True
             save()
             requested = {str(member.id): member for member in members}
             for member_id, original in list(state["members"].items()):
@@ -205,6 +215,7 @@ class GamerHQManagedResources:
                 save()
                 overwrite.view_channel, overwrite.connect = True, True
                 await channel.set_permissions(member, overwrite=overwrite, reason="Voice participants reconciled")
+            state["synchronizationPending"] = False
             save()
             return {"channelId": str(channel.id), "resourceKey": key}
 
@@ -221,8 +232,11 @@ class GamerHQManagedResources:
                 raise InvalidHostOperationError("Voice resource ownership changed.")
             if channel.members:
                 return False
+            state["retiring"] = True
+            save()
             await channel.delete(reason="Owned empty temporary Skill voice session completed")
             state.pop("channelId", None)
+            state.pop("retiring", None)
             state["reserved"] = False
             save()
             return True

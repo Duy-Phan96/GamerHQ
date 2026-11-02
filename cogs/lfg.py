@@ -1410,6 +1410,11 @@ class LFGHubView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Create Event",emoji="➕",style=discord.ButtonStyle.primary,custom_id="gamerhq:lfg:create")
     async def create_event(self, interaction, button):
+        runtime = getattr(getattr(interaction, "client", None), "skill_runtime", None)
+        if runtime is not None and runtime.registry.contains("event-manager") is True:
+            from cogs.event_manager import open_editor
+            await interaction.response.defer(ephemeral=True)
+            return await open_editor(interaction)
         # A persistent hub button must acknowledge Discord immediately. DB lookups
         # and view construction happen after the defer so a slow disk or exception
         # can never surface as "The application did not respond".
