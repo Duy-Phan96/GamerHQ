@@ -1,0 +1,66 @@
+name: Approved Host Skill worker
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, production]
+        required: true
+      operation:
+        type: choice
+        options: [stage, apply, history]
+        required: true
+      release:
+        description: Reviewed release filename in protected artifact directory
+        type: string
+      wheel:
+        description: Reviewed wheel filename in protected artifact directory
+        type: string
+      current_version:
+        type: string
+      deployment_id:
+        description: READY deployment ID; choosing apply explicitly approves this ID
+        type: string
+      skill_id:
+        type: string
+        default: event-manager
+permissions:
+  contents: read
+concurrency:
+  group: host-skill-deployment
+  cancel-in-progress: false
+jobs:
+  worker:
+    if: vars.GAMERHQ_DEPLOYMENT_WORKER_ENABLED == 'true' && (inputs.environment != 'production' || github.ref == 'refs/heads/main')
+    runs-on: [self-hosted, linux, gamerhq-deployment]
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
+    steps:
+      - name: Invoke installed reviewed worker
+        working-directory: ${{ inputs.environment == 'staging' && '/opt/gamerhq-staging/deployment-worker' || '/opt/gamerhq/deployment-worker' }}
+        env:
+          TARGET: ${{ inputs.environment }}
+          OPERATION: ${{ inputs.operation }}
+          RELEASE: ${{ inputs.release }}
+          WHEEL: ${{ inputs.wheel }}
+          CURRENT_VERSION: ${{ inputs.current_version }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          SKILL_ID: ${{ inputs.skill_id }}
+          GAMERHQ_WEB_API_SECRET: ${{ secrets.GAMERHQ_WEB_API_SECRET }}
+          GAMERHQ_STAGING_WEB_API_SECRET: ${{ secrets.GAMERHQ_STAGING_WEB_API_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker=/opt/gamerhq/deployment-worker/.venv/bin/python
+          profile="/etc/gamerhq/deployments/$TARGET.json"
+          if [[ "$TARGET" == staging ]]; then
+            worker=/opt/gamerhq-staging/deployment-worker/.venv/bin/python
+            profile=/etc/gamerhq/staging/profile.json
+          fi
+          case "$OPERATION" in
+            stage) "$worker" -m tools.skill_deployment_worker --profile "$profile" stage --release "$RELEASE" --wheel "$WHEEL" --current-version "$CURRENT_VERSION" --manual-review ;;
+            apply) export GAMERHQ_PRODUCTION_APPROVAL="$DEPLOYMENT_ID"
+              "$worker" -m tools.skill_deployment_worker --profile "$profile" apply --id "$DEPLOYMENT_ID" --approval "APPROVE $DEPLOYMENT_ID" ;;
+            history) "$worker" -m tools.skill_deployment_worker --profile "$profile" history --skill-id "$SKILL_ID" ;;
+            *) exit 2 ;;
+          esac
