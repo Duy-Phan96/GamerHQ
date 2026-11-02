@@ -26,18 +26,20 @@ class GamerHQManagedResources:
         self.clock = clock
         self.user_lookup = user_lookup
 
-    def _policy(self):
+    def _policy(self, *, voice=False):
         self.permissions.require("discord.resources.manage")
-        parent = self.guild.get_channel(int(self.policy.get("categoryId") or 0))
+        parent = self.guild.get_channel(int((self.policy.get("voiceCategoryId") if voice else None) or self.policy.get("categoryId") or 0))
         if not isinstance(parent, discord.CategoryChannel) or parent.guild.id != self.guild.id:
             raise CapabilityUnavailableError("Managed resource category must be configured by the Host.")
         rights = parent.permissions_for(self.guild.me)
-        if not rights.manage_channels or not rights.view_channel or not rights.send_messages or not rights.read_message_history:
+        if not rights.manage_channels or not rights.view_channel or (not voice and (not rights.send_messages or not rights.read_message_history)):
             raise CapabilityUnavailableError("Host bot lacks the managed category permissions required by this capability.")
         return parent
 
     async def health(self):
         parent = self._policy()
+        if self.policy.get("voiceCategoryId"):
+            self._policy(voice=True)
         with db.connect() as conn:
             pending = conn.execute("SELECT 1 FROM skill_managed_resources WHERE guild_id=? AND skill_id=? AND "
                 "(json_extract(state_json,'$.creating')=1 OR json_extract(state_json,'$.messagePending')=1 OR "
@@ -206,7 +208,7 @@ class GamerHQManagedResources:
             return {"channelId": str(channel.id), "messageId": str(message.id), "resourceKey": key}
 
     async def ensure_voice(self, *, key, name, member_ids):
-        parent = self._policy()
+        parent = self._policy(voice=True)
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
             raise InvalidHostOperationError("Invalid voice name.")
         members = await self._members(member_ids)
@@ -235,7 +237,7 @@ class GamerHQManagedResources:
             return {"channelId": str(channel.id), "resourceKey": key}
 
     async def retire_voice(self, *, key):
-        parent = self._policy()
+        parent = self._policy(voice=True)
         with self._claim(key, "voice", reserve=False) as (state, save):
             channel = next((channel for channel in await self.guild.fetch_channels() if channel.id == state.get("channelId")), None)
             if channel is None:
@@ -246,6 +248,9 @@ class GamerHQManagedResources:
                 return True
             if not isinstance(channel, discord.VoiceChannel) or channel.guild.id != self.guild.id or channel.category_id != parent.id:
                 raise InvalidHostOperationError("Voice resource ownership changed.")
+            if state.get("retainLegacy"):
+                # Existing customer channels need separately approved cleanup.
+                return False
             if channel.members:
                 return False
             state["retiring"] = True

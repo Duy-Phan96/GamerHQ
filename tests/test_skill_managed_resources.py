@@ -208,3 +208,26 @@ def test_uncertain_voice_retirement_recovers_without_deleting_another_channel(fi
         voice.delete.assert_awaited_once()
         assert (await adapter.health())["state"] == "PASS"
     asyncio.run(scenario())
+
+
+def test_adopted_legacy_voice_uses_its_original_category_and_is_never_automatically_deleted(fixture):
+    async def scenario():
+        parent = MagicMock(spec=discord.CategoryChannel)
+        parent.id, parent.guild = 20, fixture.guild
+        original = fixture.guild.get_channel.side_effect
+        fixture.guild.get_channel.side_effect = lambda ident: parent if ident == 20 else original(ident)
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.id, voice.guild, voice.category_id, voice.members = 300, fixture.guild, 20, []
+        voice.overwrites_for.side_effect = lambda target: discord.PermissionOverwrite(view_channel=False, connect=False)
+        fixture.channels.append(voice)
+        adapter = fixture.adapter(policy={"categoryId": 10, "voiceCategoryId": 20})
+        with adapter._claim("voice:legacy", "voice") as (state, save):
+            state.update(channelId=300, retainLegacy=True)
+            save()
+        result = await adapter.ensure_voice(key="voice:legacy", name="Legacy Raid", member_ids=(50,))
+        assert result["channelId"] == "300"
+        fixture.guild.create_voice_channel.assert_not_awaited()
+        assert await adapter.retire_voice(key="voice:legacy") is False
+        voice.delete.assert_not_awaited()
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())

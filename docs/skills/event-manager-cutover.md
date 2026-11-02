@@ -66,6 +66,14 @@ required. Code rollback does not restore database authority.
 
 ## Evidence and deployment boundary
 
+Every stored legacy voice ID also requires read-only Host identity/privacy
+verification and an occurrence-scoped managed binding in the cutover transaction.
+Adopted legacy voice channels carry `retainLegacy=true`: reconciliation reuses
+their IDs and never automatically deletes them, even when empty. Existing voice
+and text categories may differ; the trusted resource policy supports a separate
+`voiceCategoryId`. Missing, renamed or ambiguous legacy voice mappings block
+cutover for review instead of causing a replacement channel to be created.
+
 Fresh tenants use the public installation lifecycle. With no legacy Event/series
 rows, installation atomically claims the domain and installs legacy write barriers.
 Existing tenants install disabled and require the verified import before enablement.

@@ -8,11 +8,13 @@ import tempfile
 import importlib.util
 from types import SimpleNamespace
 from unittest.mock import patch
+from unittest.mock import MagicMock, AsyncMock
+import discord
 
 import pytest
 
 from database import db
-from hosts.gamerhq.event_cutover import apply, digest, owns_events, prepare, rollback_unmodified, snapshot_for_guild
+from hosts.gamerhq.event_cutover import apply, digest, owns_events, prepare, rollback_unmodified, snapshot_for_guild, verify_legacy_resources
 from hosts.gamerhq.skill_packages import load_external_skill_packages
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
 from skill_runtime import SkillManifest, SkillManagementApis, ManagementApiContract, SkillHealth
@@ -41,6 +43,8 @@ def commit(fixture, plan):
     bindings = {event["resourceKey"]: {"channelId": 100, "messageId": 200,
         "marker": f"Private GamerHQ event #{fixture.event['id']} · Private Raid", "members": {}}
         for key, event in plan["writes"].items() if key.startswith("event.v2:") and event.get("chat")}
+    bindings.update({"voice:" + row["id"]: {"kind": "voice", "channelId": 300, "retainLegacy": True, "members": {}}
+        for key, row in plan["writes"].items() if key.startswith("occurrence.v2:") and row.get("voice")})
     return apply(plan, backup_path=fixture.backup, backup_sha256=fixture.checksum, verified_resources=bindings)
 
 
@@ -57,6 +61,7 @@ def fixture():
         db.set_lfg_event_member(event["id"], 30, "invited")
         db.set_lfg_event_private_channel(event["id"], 100)
         db.set_lfg_event_message(event["id"], channel_id=100, message_id=200)
+        db.claim_lfg_event_voice(event["id"], 300, expected_start=event["start_at"])
         db.claim_lfg_voice_notification(event["id"], 20, 123)
         with db.connect() as conn:
             conn.execute("INSERT INTO lfg_time_proposals(event_id,proposer_id,start_at,reason,status,created_at) VALUES(?,?,?,?,?,?)",
@@ -145,6 +150,30 @@ def test_normal_install_claims_empty_tenant_and_blocks_new_legacy_authority(fixt
     with pytest.raises(sqlite3.IntegrityError, match="authority"):
         db.create_lfg_event(guild_id=2, host_id=10, title="Legacy duplicate", start_at=2000000000,
             max_players=5, invite_lead_minutes=15)
+
+
+def test_cutover_requires_verified_legacy_voice_adoption_and_preserves_its_identity(fixture):
+    plan = asyncio.run(prepare(fixture.runtime, guild_id=1))
+    guild = MagicMock(spec=discord.Guild)
+    guild.id, guild.me = 1, SimpleNamespace(id=999)
+    text, voice = MagicMock(spec=discord.TextChannel), MagicMock(spec=discord.VoiceChannel)
+    text.id, text.guild, text.topic = 100, guild, f"Private GamerHQ event #{fixture.event['id']} · Private Raid"
+    text.overwrites_for.return_value = discord.PermissionOverwrite(view_channel=False)
+    text.fetch_message = AsyncMock(return_value=SimpleNamespace(author=guild.me))
+    voice.id, voice.guild, voice.name = 300, guild, "📅・Private Raid"
+    voice.overwrites_for.return_value = discord.PermissionOverwrite(view_channel=False)
+    guild.fetch_channels = AsyncMock(return_value=[text, voice])
+    bindings = asyncio.run(verify_legacy_resources(guild, plan))
+    voice_key = next(key for key in bindings if key.startswith("voice:"))
+    assert bindings[voice_key]["retainLegacy"] is True
+    without_voice = {key: value for key, value in bindings.items() if key != voice_key}
+    with pytest.raises(ValueError, match="voice mappings"):
+        apply(plan, backup_path=fixture.backup, backup_sha256=fixture.checksum, verified_resources=without_voice)
+    assert not owns_events(1)
+    assert apply(plan, backup_path=fixture.backup, backup_sha256=fixture.checksum, verified_resources=bindings)
+    with db.connect() as conn:
+        row = conn.execute("SELECT kind,state_json FROM skill_managed_resources WHERE resource_key=?", (voice_key,)).fetchone()
+    assert row["kind"] == "voice" and json.loads(row["state_json"])["channelId"] == 300
 
 
 def test_recorded_public_contract_is_valid_without_private_package_access(fixture):

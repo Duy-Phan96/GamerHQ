@@ -114,6 +114,22 @@ async def verify_legacy_resources(guild, plan):
         if message_id:
             state["messageId"] = message_id
         bindings[event["resourceKey"]] = state
+    claimed_voice = set()
+    for key, occurrence in plan["writes"].items():
+        if not key.startswith("occurrence.v2:") or not occurrence.get("voice"):
+            continue
+        channel_id = int(occurrence["voice"]["channelId"])
+        source = [row for row in rows if row["id"] == occurrence.get("legacyEventId") and row.get("voice_channel_id") == channel_id]
+        channel = channels.get(channel_id)
+        if len(source) != 1 or channel_id in claimed_voice or not isinstance(channel, discord.VoiceChannel) or channel.guild.id != guild.id:
+            raise ValueError("Legacy voice mapping is ambiguous or unavailable; reconcile before cutover.")
+        if channel.name != f"📅・{source[0]['title']}"[:100]:
+            raise ValueError("Legacy voice identity changed; manual verification required.")
+        if source[0].get("visibility") == "private" and channel.overwrites_for(guild.default_role).view_channel is not False:
+            raise ValueError("Legacy private voice permissions require reconciliation.")
+        claimed_voice.add(channel_id)
+        bindings["voice:" + occurrence["id"]] = {"kind": "voice", "channelId": channel_id, "retainLegacy": True,
+            "members": {str(member["user_id"]): [None, None] for member in members if member["event_id"] == source[0]["id"]}}
     return bindings
 
 
@@ -141,6 +157,10 @@ def apply(plan, *, backup_path: Path, backup_sha256: str, verified_resources=Non
             binding = verified_resources.get(event["resourceKey"])
             if not binding or str(binding.get("channelId")) != str(event["chat"]["channelId"]):
                 raise ValueError("Verify selected Discord resources through the trusted Host before cutover.")
+        if key.startswith("occurrence.v2:") and event.get("voice"):
+            binding = verified_resources.get("voice:" + event["id"])
+            if not binding or binding.get("kind") != "voice" or binding.get("retainLegacy") is not True or str(binding.get("channelId")) != str(event["voice"]["channelId"]):
+                raise ValueError("Verify and retain legacy voice mappings before cutover.")
     for key, value in writes.items():
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", key) or value is None:
             raise ValueError("Invalid import storage key/value.")
@@ -167,9 +187,13 @@ def apply(plan, *, backup_path: Path, backup_sha256: str, verified_resources=Non
         for key, body in encoded.items():
             conn.execute("INSERT INTO skill_storage VALUES(?,?,?,?,?)", (guild_id, "event-manager", key, body, int(time.time())))
         for key, state in verified_resources.items():
+            state = dict(state)
+            kind = state.pop("kind", "text")
+            if kind not in ("text", "voice"):
+                raise ValueError("Invalid verified resource kind.")
             state = {**state, "importBaselineHash": digest(state)}
-            conn.execute("INSERT INTO skill_managed_resources VALUES(?,?,?,'text',?,NULL,0)",
-                         (guild_id, "event-manager", key, json.dumps(state)))
+            conn.execute("INSERT INTO skill_managed_resources VALUES(?,?,?,?,?,NULL,0)",
+                         (guild_id, "event-manager", key, kind, json.dumps(state)))
         install_barriers(conn)
         conn.execute("INSERT INTO skill_domain_authority VALUES(?,?,?,?,?,?)",
             (guild_id, "event-manager", "event-manager", plan["sourceHash"], plan["targetHash"], int(time.time())))
