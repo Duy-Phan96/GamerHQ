@@ -296,11 +296,15 @@ class GamerHQSkillRuntime:
 
     async def install_skill(self, *, guild_id: int, skill_id: str) -> bool:
         skill = self.registry.get(skill_id)
-        return await self.state.install(
+        changed = await self.state.install(
             guild_id=guild_id,
             skill_id=skill_id,
             version=skill.manifest.version,
         )
+        if skill_id == "event-manager":
+            from .event_cutover import claim_empty_tenant
+            claim_empty_tenant(guild_id)
+        return changed
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
         if skill_id == "event-manager":
@@ -318,11 +322,8 @@ class GamerHQSkillRuntime:
         return changed
 
     def _require_event_authority(self, guild_id):
-        from .event_cutover import owns_events
-        with db.connect() as conn:
-            legacy = conn.execute("SELECT 1 FROM lfg_events WHERE guild_id=? UNION SELECT 1 FROM lfg_event_series WHERE guild_id=? LIMIT 1",
-                                  (guild_id, guild_id)).fetchone()
-        if legacy and not owns_events(guild_id):
+        from .event_cutover import claim_empty_tenant
+        if not claim_empty_tenant(guild_id):
             raise ValueError("Legacy Event Manager data requires verified migration and authority cutover first.")
 
     async def disable_skill(self, *, guild_id: int, skill_id: str) -> bool:

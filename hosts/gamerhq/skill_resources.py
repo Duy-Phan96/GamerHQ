@@ -225,6 +225,7 @@ class GamerHQManagedResources:
             channel = next((channel for channel in await self.guild.fetch_channels() if channel.id == state.get("channelId")), None)
             if channel is None:
                 state.pop("channelId", None)
+                state.pop("retiring", None)
                 state["reserved"] = False
                 save()
                 return True

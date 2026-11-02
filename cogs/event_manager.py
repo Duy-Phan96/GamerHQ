@@ -32,7 +32,7 @@ async def call(interaction, operation, payload):
     if not runtime.registry.contains(SKILL):
         raise ValueError("The reviewed Event Manager package is unavailable in this Host.")
     return await runtime.call_management(guild_id=interaction.guild.id, skill_id=SKILL,
-        contract_id=f"event-manager.{operation}.v1", payload=payload)
+        contract_id=f"event-manager.{operation}.v1", payload=payload, actor_id=interaction.user.id)
 
 
 async def open_editor(interaction, event_id=None):
@@ -249,19 +249,21 @@ class EventManager(commands.Cog):
     @lfg.command(name="manage", description="List events you may view and manage.")
     async def manage(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        events = (await call(interaction, "list", {}))["events"]
-        visible = [event for event in events if can_view(interaction.user, event)]
+        result = await call(interaction, "list", {})
+        participant_events = {row["eventId"] for row in result.get("occurrences", [])
+            if row["status"] in ("scheduled", "active") and str(interaction.user.id) in row["participants"]}
+        visible = [event for event in result["events"] if can_view(interaction.user, event) or event["id"] in participant_events]
         await interaction.followup.send("\n".join(f"`{event['id']}` · {event['config']['name']} · {event['status']}" for event in visible[:25]) or "No events available.", ephemeral=True)
 
     async def member_action(self, interaction, event_id, action, *, start_at=None):
         state = (await call(interaction, "get", {"eventId": event_id}))["state"]
-        if not can_view(interaction.user, state):
-            raise PermissionError("This private event is not available to you.")
         history = await call(interaction, "history", {"eventId": event_id})
-        available = [row for row in history["occurrences"] if row["status"] == "scheduled" and (start_at is None or row["startAt"] == start_at)]
+        available = [row for row in history["occurrences"] if row["status"] in ("scheduled", "active") and (start_at is None or row["startAt"] == start_at)]
         if not available:
             raise ValueError("No scheduled occurrence is available.")
         row = min(available, key=lambda item: item["startAt"])
+        if not can_view(interaction.user, state) and str(interaction.user.id) not in row["participants"]:
+            raise PermissionError("This private event is not available to you.")
         members = set(row["participants"])
         if action == "join":
             members.add(str(interaction.user.id))
@@ -279,6 +281,35 @@ class EventManager(commands.Cog):
     async def leave(self, interaction: discord.Interaction, event_id: str):
         await interaction.response.defer(ephemeral=True)
         await self.member_action(interaction, event_id, "leave")
+
+    @lfg.command(name="participants", description="Replace participants for the next occurrence only.")
+    async def participants(self, interaction: discord.Interaction, event_id: str, member_ids: str):
+        await interaction.response.defer(ephemeral=True)
+        state = (await call(interaction, "get", {"eventId": event_id}))["state"]
+        if not can_manage(interaction.user, state):
+            raise PermissionError("Only the event owner or a server administrator may manage participants.")
+        rows = (await call(interaction, "history", {"eventId": event_id}))["occurrences"]
+        available = [row for row in rows if row["status"] in ("scheduled", "active")]
+        if not available:
+            raise ValueError("No occurrence is available.")
+        row = min(available, key=lambda value: value["startAt"])
+        await call(interaction, "occurrences-update", {"occurrenceId": row["id"], "revision": row["revision"], "participants": member_ids})
+        await interaction.followup.send("Participants saved for this occurrence. Discord access will be reconciled.", ephemeral=True)
+
+    @lfg.command(name="join-code", description="Join a migrated private occurrence using its existing invitation code.")
+    async def join_code(self, interaction: discord.Interaction, code: str):
+        await interaction.response.defer(ephemeral=True)
+        await call(interaction, "join-code", {"code": code.strip()})
+        await interaction.followup.send("Participation saved. Discord access will be reconciled.", ephemeral=True)
+
+    @lfg.command(name="active", description="Pause or resume this event without deleting its area or history.")
+    async def active(self, interaction: discord.Interaction, event_id: str, active: bool):
+        await interaction.response.defer(ephemeral=True)
+        state = (await call(interaction, "get", {"eventId": event_id}))["state"]
+        if not can_manage(interaction.user, state):
+            raise PermissionError("Only the event owner or a server administrator may change this event.")
+        await call(interaction, "set-active", {"eventId": event_id, "revision": state["revision"], "active": active})
+        await interaction.followup.send("Event resumed." if active else "Event paused. Its area and history are retained.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction):

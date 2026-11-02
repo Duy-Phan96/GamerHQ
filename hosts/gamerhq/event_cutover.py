@@ -61,6 +61,28 @@ async def prepare(runtime, *, guild_id, decisions=None):
         contract_id="event-manager.migrate-plan.v1", payload={"snapshot": snapshot, "decisions": decisions or {}})
 
 
+def claim_empty_tenant(guild_id):
+    """Normal installation claims an empty domain without a legacy migration.
+
+    Existing legacy tenants remain installable but disabled pending verified cutover.
+    The lock serializes this decision with legacy writes and installs their barrier.
+    """
+    with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        installed = conn.execute("SELECT installed FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchone()
+        if not installed or not installed[0]:
+            raise ValueError("Install Event Manager through the Skill lifecycle first.")
+        if conn.execute("SELECT 1 FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild_id,)).fetchone():
+            return True
+        snapshot = snapshot_for_guild(conn, guild_id)
+        if snapshot["events"] or snapshot["series"]:
+            return False
+        conn.execute("INSERT INTO skill_domain_authority VALUES(?,'event-manager','event-manager',?,?,?)",
+            (guild_id, digest(snapshot), digest({}), int(time.time())))
+        install_barriers(conn)
+        return True
+
+
 async def verify_legacy_resources(guild, plan):
     """Read-only ownership proof for selected canonical legacy private channels."""
     if str(guild.id) != plan["guildId"]:

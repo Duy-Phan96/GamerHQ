@@ -66,6 +66,20 @@ required. Code rollback does not restore database authority.
 
 ## Evidence and deployment boundary
 
+Fresh tenants use the public installation lifecycle. With no legacy Event/series
+rows, installation atomically claims the domain and installs legacy write barriers.
+Existing tenants install disabled and require the verified import before enablement.
+The installed-package acceptance tests exercise lifecycle restart, shared editor
+contracts and real Host adapter persistence against synthetic Discord fixtures.
+Run `python -m pytest tests/test_event_skill_end_to_end.py -q` with the approved
+Skill wheel installed; public CI skips this gate when that private artifact is absent.
+
+When Event Manager is present in the Runtime, startup loads `cogs.event_manager`.
+The schema-driven editor offers all Event fields and seven weekday toggles; slash
+commands handle listing, creation/editing, pause/resume and occurrence participants.
+Migrated join/leave button references resolve through the Skill API. If authority
+exists but its package is missing, startup does not restore legacy domain behavior.
+
 Offline tests exercise actual installed Skill plans locally, with realistic
 synthetic six-table SQLite fixtures, transactional source-change/backup/conflict
 failures, legacy write barriers, tenant isolation and rollback refusal after V2

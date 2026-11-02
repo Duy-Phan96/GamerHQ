@@ -139,6 +139,14 @@ def test_namespace_conflicts_and_unverified_backups_fail_closed(fixture):
     assert not owns_events(1)
 
 
+def test_normal_install_claims_empty_tenant_and_blocks_new_legacy_authority(fixture):
+    assert asyncio.run(fixture.runtime.install_skill(guild_id=2, skill_id="event-manager"))
+    assert owns_events(2) and not owns_events(1)
+    with pytest.raises(sqlite3.IntegrityError, match="authority"):
+        db.create_lfg_event(guild_id=2, host_id=10, title="Legacy duplicate", start_at=2000000000,
+            max_players=5, invite_lead_minutes=15)
+
+
 def test_recorded_public_contract_is_valid_without_private_package_access(fixture):
     runtime = GamerHQSkillRuntime(fixture.runtime.bot)
     runtime.register(RecordedMigrationSkill(), source_kind="external", source_distribution="recorded-contract-fixture")
