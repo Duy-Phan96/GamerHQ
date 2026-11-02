@@ -130,6 +130,13 @@ class GamerHQWebPlatformService:
         status = await self.skill_runtime.status(guild_id=int(guild_id), skill_id=skill_id)
         return self._skill_status(status)
 
+    async def list_skill_deployments(self, *, guild_id: int, skill_id: str, authorized_guild_ids):
+        self._require_guild(guild_id, authorized_guild_ids)
+        # Validate the package exists before returning Host-wide deployment history.
+        await self.skill_runtime.status(guild_id=int(guild_id), skill_id=skill_id)
+        from .skill_update_controller import deployment_history
+        return deployment_history(skill_id=skill_id)
+
     async def get_management_schema(
         self,
         *,

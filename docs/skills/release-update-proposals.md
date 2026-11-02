@@ -43,4 +43,8 @@ visible workflow failure, with the immutable branch preserved for review/recover
 
 The first reviewed Host contract PR is #173. This follow-up is a stacked PR into
 its feature branch; release it only after the contract foundation is accepted.
-No production deployment history or health-driven rollback is implemented here.
+The foundation is merged into develop. This PR now also includes the separate
+[staged deployment worker](staged-deployment-worker.md), read-only history API,
+isolated package probe and guarded health-driven image rollback. Discovery still
+does not apply updates. Deployment runner provisioning, private artifact delivery
+and live staging remain explicit owner-controlled gates.
