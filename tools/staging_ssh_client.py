@@ -29,6 +29,7 @@ def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=s
         key.chmod(0o600); hosts.chmod(0o600)
         args = ["ssh", "-F", "/dev/null", "-T", "-p", str(port), "-i", str(key), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
             "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "StrictHostKeyChecking=yes",
+            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "PreferredAuthentications=publickey",
             "-o", "UserKnownHostsFile=" + str(hosts), "gamerhq-staging-bridge@" + host, command]
         body = json.dumps(payload) if payload is not None else ""
         if len(body.encode()) > 16384:

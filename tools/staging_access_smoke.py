@@ -78,13 +78,21 @@ def main():
             health = encode({'version':1,'phase':'configure','operation':'health'})
             healthy = run(base + [health], input='')
             assert healthy.returncode == 0 and json.loads(healthy.stdout)['status'] == 'READY_OFFLINE'
+            profile = json.loads(Path('/etc/gamerhq-staging/settings/profile.json').read_text())
+            assert not Path(profile['database']).exists()  # bootstrap itself created no dataset
+            initialize = encode({'version':1,'phase':'prepare','operation':'initialize','approval':'INITIALIZE ISOLATED STAGING'})
+            initialized = run(base + [initialize], input='')
+            assert initialized.returncode == 0, initialized.stderr
             acl = user("import os,subprocess; from tools.staging_dispatch import environment; os.environ.clear(); os.environ.update(environment()); "
                 "subprocess.run(['docker','run','--rm','--network','none','--user','10001:10001','--volume','/opt/gamerhq-staging/data:/state',"
                 "'python:3.12-slim','python','-c',\"open('/state/access-probe','w').write('synthetic-stage-data')\"],check=True); "
-                "from pathlib import Path; assert Path('/opt/gamerhq-staging/data/access-probe').read_text()=='synthetic-stage-data'; print('ROOTLESS_SHARED_STORAGE_PASS')")
+                "from pathlib import Path; assert Path('/opt/gamerhq-staging/data/access-probe').read_text()=='synthetic-stage-data'; "
+                "subprocess.run(['docker','run','--rm','--network','none','--user','10001:10001','--volume','/opt/gamerhq-staging/data:/state',"
+                "'python:3.12-slim','python','-c',\"import sqlite3; c=sqlite3.connect('/state/gamerhq.db'); c.execute('create table bootstrap_acl_probe (value text)'); c.execute(\\\"insert into bootstrap_acl_probe values ('preserved')\\\"); c.commit(); c.close()\"],check=True); "
+                "import sqlite3; c=sqlite3.connect('/opt/gamerhq-staging/data/gamerhq.db'); assert c.execute('select value from bootstrap_acl_probe').fetchone()[0]=='preserved'; c.close(); print('ROOTLESS_SHARED_SQLITE_STORAGE_PASS')")
             assert acl.returncode == 0, acl.stderr
             profile = json.loads(Path('/etc/gamerhq-staging/settings/profile.json').read_text())
-            assert profile['workerEnabled'] is False and not Path(profile['database']).exists()
+            assert profile['workerEnabled'] is False and Path(profile['database']).exists()
             assert run(['docker','inspect','--format','{{.State.Running}}','gamerhq-production-fixture']).stdout.strip() == 'true'
             assert run(['docker','inspect','--format','{{.Id}}','gamerhq-production-fixture']).stdout.strip() == Path('/tmp/production-fixture-id').read_text().strip()
             audit = run(['journalctl','-t','gamerhq-staging','--since','-10min','--no-pager','--output=cat']).stdout
@@ -92,7 +100,7 @@ def main():
             revoke = encode({'version':1,'phase':'configure','operation':'revoke','approval':'REVOKE STAGING ACCESS'})
             assert run(base+[revoke],input='').returncode == 0
             assert run(base+[inspect],input='').returncode != 0
-            print('PASS: immutable resumable bootstrap; rootless Docker; production file/socket/container isolation; no sudo; SSH shell rejection; stdin-only configuration; shared UID-10001 storage ACL; watchdog audit; durable revocation. No staging database or Gateway created.')
+            print('PASS: immutable resumable bootstrap; rootless Docker; production file/socket/container isolation; no sudo; SSH shell rejection; stdin-only configuration; authorized synthetic DB initialization; shared UID-10001 SQLite ACL; watchdog audit; durable revocation. Bootstrap created no database; no Gateway was started.')
         finally:
             server.terminate(); server.wait(timeout=10)
 

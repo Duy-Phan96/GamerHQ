@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 ROOT = Path('/opt/gamerhq-staging')
 CONFIG = Path('/etc/gamerhq-staging')
@@ -84,7 +85,10 @@ def prerequisites(install=False):
         missing.append('python' + version + '-venv')
     if missing and install and shutil.which('apt-get'):
         args = ['apt-get', '--no-upgrade', '--no-install-recommends', 'install', *sorted(set(missing))]
-        plan = run([args[0], '--simulate', *args[1:]])
+        try:
+            plan = run([args[0], '--simulate', *args[1:]])
+        except RuntimeError:
+            raise RuntimeError('Required prerequisites are unavailable from configured package sources: ' + ', '.join(sorted(set(missing))) + '; no existing packages or repositories were changed') from None
         package_plan(plan)
         run(['apt-get', '-y', *args[1:]], env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive', 'NEEDRESTART_MODE': 'l'})
         return prerequisites(False)
@@ -360,4 +364,6 @@ if __name__ == '__main__':
         # All setup errors are our bounded prerequisite/path/policy messages or
         # sanitized subprocess failures. Never print command stderr or secrets.
         message = str(error) if isinstance(error, (ValueError, PermissionError, FileExistsError, RuntimeError)) else type(error).__name__
-        raise SystemExit('Rootless staging bootstrap stopped: ' + message + '. Production Docker and the bot were not restarted or reconfigured. Any SSH restrictions target only the new staging identity. Re-run the same verified command to resume known setup state.') from None
+        frame = traceback.extract_tb(error.__traceback__)[-1]
+        location = Path(frame.filename).name + ':' + str(frame.lineno) + ' (' + frame.name + ')'
+        raise SystemExit('Rootless staging bootstrap stopped at ' + location + ': ' + message + '. Production Docker and the bot were not restarted or reconfigured. Any SSH restrictions target only the new staging identity. Re-run the same verified command to resume known setup state.') from None

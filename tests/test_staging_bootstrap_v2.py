@@ -150,3 +150,11 @@ def test_atomic_staging_records_recover_without_reusing_stale_temporary_files(tm
     write_record(path, {"verified": True})
     assert json.loads(path.read_text()) == {"verified": True}
     assert stale.read_text() == "interrupted old attempt"
+
+
+def test_vendored_rootless_launcher_is_exactly_the_recorded_upstream_bytes():
+    import hashlib
+    root = Path(__file__).resolve().parents[1] / "deploy/staging/rootless"
+    source = json.loads((root / "UPSTREAM.json").read_text())
+    assert source["commit"] == "f8215cc266744ef195a50a70d427c345da2acdbb"
+    assert hashlib.sha256((root / "dockerd-rootless.sh").read_bytes()).hexdigest() == source["sha256"]["dockerd-rootless.sh"]
