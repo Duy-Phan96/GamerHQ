@@ -249,6 +249,56 @@ class GamerHQSkillStorage:
                 (self.guild_id, self.skill_id, key, encoded, int(time.time())),
             )
 
+    async def compare_and_set(self, key: str, expected: Any | None, value: Any) -> bool:
+        self.permissions.require(SkillCapability.STORAGE_SKILL.value)
+        self.permissions.require(SkillCapability.STORAGE_ATOMIC.value)
+        key = self._key(key)
+        if value is None:
+            raise ValueError("Atomic storage does not accept JSON null.")
+        try:
+            encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
+            if expected is not None:
+                json.dumps(expected, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Atomic storage requires finite JSON values.") from exc
+        if len(encoded.encode("utf-8")) > _MAX_STORAGE_JSON_BYTES:
+            raise ValueError("Skill storage value exceeds the 64 KiB host limit.")
+        with db.connect() as conn:
+            # Lock before reading so independent processes cannot both win.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value_json FROM skill_storage WHERE guild_id=? AND skill_id=? AND storage_key=?",
+                (self.guild_id, self.skill_id, key),
+            ).fetchone()
+            if (row is None) != (expected is None):
+                return False
+            if row is not None and json.dumps(json.loads(row["value_json"]), ensure_ascii=False,
+                    separators=(",", ":"), sort_keys=True, allow_nan=False) != json.dumps(
+                    expected, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False):
+                return False
+            conn.execute(
+                "INSERT INTO skill_storage(guild_id,skill_id,storage_key,value_json,updated_at) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(guild_id,skill_id,storage_key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",
+                (self.guild_id, self.skill_id, key, encoded, int(time.time())),
+            )
+        return True
+
+    async def list_keys(self, *, prefix: str, after: str = "", limit: int = 100) -> tuple[str, ...]:
+        self.permissions.require(SkillCapability.STORAGE_SKILL.value)
+        self.permissions.require(SkillCapability.STORAGE_ATOMIC.value)
+        prefix = self._key(prefix)
+        if after:
+            after = self._key(after)
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("Storage page size must be between 1 and 1000.")
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT storage_key FROM skill_storage WHERE guild_id=? AND skill_id=? "
+                "AND substr(storage_key,1,?)=? AND storage_key>? ORDER BY storage_key LIMIT ?",
+                (self.guild_id, self.skill_id, len(prefix), prefix, after, limit),
+            ).fetchall()
+        return tuple(row["storage_key"] for row in rows)
+
     async def delete(self, key: str) -> None:
         self.permissions.require(SkillCapability.STORAGE_SKILL.value)
         key = self._key(key)

@@ -69,6 +69,16 @@ class SkillStoragePort(Protocol):
     async def get(self, key: str) -> Any | None: ...
     async def set(self, key: str, value: Any) -> None: ...
     async def delete(self, key: str) -> None: ...
+    async def compare_and_set(self, key: str, expected: Any | None, value: Any) -> bool:
+        """Atomically replace a JSON value; None expects an absent key.
+
+        Requires storage.atomic in addition to storage.skill. JSON null is not
+        supported by this operation. Equality is structural JSON equality.
+        """
+        ...
+    async def list_keys(self, *, prefix: str, after: str = "", limit: int = 100) -> tuple[str, ...]:
+        """Return sorted namespace-local keys, exclusively after the cursor."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

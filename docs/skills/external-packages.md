@@ -156,6 +156,26 @@ changing production behavior without host-side review.
 
 ## Reviewed deployment plan
 
+Event Manager V2 prerequisites, migration safeguards and current integration
+limits are tracked in [Event Manager V2](event-manager-v2.md).
+
+The lock parser also accepts reviewed universal wheel release assets in this form:
+
+```text
+example-skill @ https://github.com/example/skill/releases/download/v1.2.3/example_skill-1.2.3-py3-none-any.whl#sha256=<64-lowercase-hex-digest>
+```
+
+The filename, distribution and release version must agree. Pip verifies the
+fragment checksum when building the reviewed Host image. A checksum is artifact
+identity, not publisher trust or code review. Existing archive/version pins
+remain supported and are not represented as checksum-verified artifacts.
+
+Preflight a downloaded wheel without importing its code:
+
+```text
+python -m tools.skill_artifact_preflight --wheel /staging/example_skill-1.2.3-py3-none-any.whl --distribution example-skill --version 1.2.3 --sha256 <reviewed-sha256>
+```
+
 `requirements-skills.lock` remains the single reviewed source of truth for
 external Skill package dependencies.
 

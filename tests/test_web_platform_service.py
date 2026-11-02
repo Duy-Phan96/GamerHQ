@@ -123,6 +123,8 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
                                 item_id_payload_key="postId",
                                 item_read_path="item",
                                 schedule_hints_path="schedules",
+                                revision_path="revision",
+                                expected_revision_key="expectedRevision",
                                 max_items=20,
                             ),
                         ),
@@ -226,6 +228,9 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(collection["itemIdPayloadKey"], "postId")
         self.assertEqual(collection["itemReadPath"], "item")
         self.assertEqual(collection["scheduleHintsPath"], "schedules")
+        self.assertEqual(collection["revisionPath"], "revision")
+        self.assertEqual(collection["expectedRevisionKey"], "expectedRevision")
+        self.assertFalse(collection["previewRequired"])
         self.assertEqual(collection["maxItems"], 20)
 
     async def test_management_call_stays_on_versioned_runtime_router(self):

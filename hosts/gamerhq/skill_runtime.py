@@ -35,6 +35,7 @@ HOST_CAPABILITIES = frozenset({
     *DISCORD_HOST_CAPABILITIES,
     SkillCapability.SCHEDULER_JOBS.value,
     SkillCapability.STORAGE_SKILL.value,
+    SkillCapability.STORAGE_ATOMIC.value,
     SkillCapability.EVENTS_EMIT.value,
     SkillCapability.EVENTS_SUBSCRIBE.value,
     SkillCapability.SKILL_API_CALL.value,

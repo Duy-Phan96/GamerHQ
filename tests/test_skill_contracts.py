@@ -10,6 +10,18 @@ from skill_runtime.contracts.public_api import PublicApiContract
 
 
 class SkillContractTests(unittest.TestCase):
+    def test_collection_revision_and_preview_bindings_fail_closed(self):
+        operations = ManagementCollectionOperations(list_contract="events.list.v1", create_contract="events.create.v1")
+        for extra in ({"revision_path": "revision"}, {"expected_revision_key": "revision"},
+                      {"revision_path": "bad path", "expected_revision_key": "revision"},
+                      {"preview_required": True}, {"preview_required": "true"}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                ManagementCollectionSchema(operations=operations, item_fields=(), **extra)
+        valid = ManagementCollectionSchema(operations=ManagementCollectionOperations(
+            list_contract="events.list.v1", create_contract="events.create.v1", validate_contract="events.validate.v1"),
+            item_fields=(), revision_path="revision", expected_revision_key="revision", preview_required=True)
+        self.assertTrue(valid.preview_required)
+
     def manifest(self, **overrides):
         values = dict(
             id="recurring-posts",
