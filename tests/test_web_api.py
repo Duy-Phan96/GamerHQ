@@ -40,7 +40,10 @@ class FakePlatformService:
             raise SkillManagementConflictError(
                 "Target Skill configuration changed. Reload and review your changes again."
             )
-        return {"received": dict(kwargs["payload"])}
+        result = {"received": dict(kwargs["payload"])}
+        if kwargs.get("actor_id") is not None:
+            result["actorId"] = str(kwargs["actor_id"])
+        return result
 
     async def install_skill(self, **kwargs):
         if kwargs["guild_id"] not in set(kwargs["authorized_guild_ids"]):
@@ -56,6 +59,16 @@ class FakePlatformService:
 
 
 class WebApiTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_trusted_actor_header_is_validated_and_not_taken_from_payload(self):
+        headers = {**self.headers(), "X-GamerHQ-Actor-Id": "999"}
+        response = await self.client.post('/api/v1/servers/123/skills/demo/management/demo.write.v1',
+            headers=headers, json={"payload": {"ownerId": "123"}})
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["actorId"], "999")
+        headers["X-GamerHQ-Actor-Id"] = "invalid"
+        response = await self.client.post('/api/v1/servers/123/skills/demo/management/demo.write.v1',
+            headers=headers, json={"payload": {}})
+        self.assertEqual(response.status, 400)
     async def asyncSetUp(self):
         app = create_web_api_app(
             platform_service=FakePlatformService(),

@@ -148,12 +148,19 @@ async def call_management(request: web.Request) -> web.Response:
     payload = body.get("payload")
     if not isinstance(payload, Mapping):
         raise ValueError("Management request requires a JSON object payload.")
+    raw_actor = request.headers.get("X-GamerHQ-Actor-Id")
+    actor = None
+    if raw_actor is not None:
+        if not raw_actor.isascii() or not raw_actor.isdigit() or not 0 < int(raw_actor) < 2**64:
+            raise ValueError("Invalid trusted actor identity.")
+        actor = int(raw_actor)
     result = await _service(request).call_management(
         guild_id=int(request.match_info["guild_id"]),
         skill_id=request.match_info["skill_id"],
         contract_id=request.match_info["contract_id"],
         payload=payload,
         authorized_guild_ids=_authorized_guild_ids(request),
+        **({"actor_id": actor} if actor is not None else {}),
     )
     return web.json_response(result)
 

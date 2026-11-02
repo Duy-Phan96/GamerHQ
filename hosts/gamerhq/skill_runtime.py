@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
 
@@ -46,6 +47,7 @@ HOST_CAPABILITIES = frozenset({
     SkillCapability.AUDIT_WRITE.value,
     SkillCapability.HTTP_EXTERNAL.value,
 })
+_MANAGEMENT_ACTOR = ContextVar("skill_management_actor", default=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +188,7 @@ class GamerHQSkillRuntime:
         guild = self._guild(guild_id)
         permissions = self.permissions(skill_id)
         permissions.require_all_declared()
-        policy_raw = db.get_setting(f"skill_resources:{guild.id}:{skill_id}")
+        policy_raw = db.get_setting(f"skill_resources:{guild.id}:{skill_id}") if permissions.allows("discord.resources.manage") else None
         policy = json.loads(policy_raw) if policy_raw else {}
         return SkillContext(
             guild_id=guild.id,
@@ -233,6 +235,7 @@ class GamerHQSkillRuntime:
             ),
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
             resources=GamerHQManagedResources(guild=guild, skill_id=skill_id, permissions=permissions, policy=policy),
+            actor_id=_MANAGEMENT_ACTOR.get(),
         )
 
     def management_ui_schema(self, skill_id: str):
@@ -270,15 +273,17 @@ class GamerHQSkillRuntime:
         skill_id: str,
         contract_id: str,
         payload,
+        actor_id=None,
     ):
         if skill_id == "event-manager" and contract_id not in ("event-manager.migrate-plan.v1", "event-manager.list.v1", "event-manager.get.v1", "event-manager.history.v1"):
             self._require_event_authority(guild_id)
-        result = await self.management.call(
-            guild_id=guild_id,
-            skill_id=skill_id,
-            contract_id=contract_id,
-            payload=payload,
-        )
+        if actor_id is not None and (type(actor_id) is not int or not 0 < actor_id < 2**64):
+            raise ValueError("Invalid trusted management actor identity.")
+        token = _MANAGEMENT_ACTOR.set(actor_id)
+        try:
+            result = await self.management.call(guild_id=guild_id, skill_id=skill_id, contract_id=contract_id, payload=payload)
+        finally:
+            _MANAGEMENT_ACTOR.reset(token)
         if contract_id in self._configuration_mutation_contracts(skill_id):
             skill = self.registry.get(skill_id)
             await self.state.set_configured(

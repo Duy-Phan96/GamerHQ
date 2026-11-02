@@ -232,6 +232,7 @@ class GamerHQWebPlatformService:
         contract_id: str,
         payload: Mapping[str, Any],
         authorized_guild_ids: Iterable[int],
+        actor_id: int | None = None,
     ) -> dict[str, Any]:
         self._require_guild(guild_id, authorized_guild_ids)
         result = await self.skill_runtime.call_management(
@@ -239,6 +240,7 @@ class GamerHQWebPlatformService:
             skill_id=skill_id,
             contract_id=contract_id,
             payload=dict(payload),
+            **({"actor_id": actor_id} if actor_id is not None else {}),
         )
         return _json_value(result)
 

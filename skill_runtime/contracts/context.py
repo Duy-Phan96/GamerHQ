@@ -187,6 +187,7 @@ class SkillContext:
     skills: SkillApiPort
     logger: SkillLogger
     resources: ManagedResourcePort | None = None
+    actor_id: int | None = None
 
     def __post_init__(self) -> None:
         if self.guild_id <= 0:

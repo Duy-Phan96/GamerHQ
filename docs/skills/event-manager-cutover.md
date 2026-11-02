@@ -12,6 +12,15 @@ under `storage.atomic`, and `SkillContext.resources` under
 write and cannot address another tenant/Skill. Limits are 10,000 keys, 64 KiB
 per value and 16 MiB per transaction. Null means absent/delete, not JSON null.
 
+Collection schemas may omit `create_contract` for internally materialized
+entities such as occurrences; declared get/validate/update operations still use
+the same generic renderer and revision checks. No fake create action is exposed.
+The trusted BFF sets `X-GamerHQ-Actor-Id` from its authenticated session; the Host
+validates it and scopes `SkillContext.actor_id` to one call via a context variable.
+It is identity metadata, not authorization: guild authorization still runs first.
+Concurrent requests cannot inherit another actor, and browser payload owner IDs
+cannot override the trusted actor when the Skill creates an Event.
+
 Managed resources accept logical keys, participant IDs, text/voice configuration
 and overview data. No raw Discord client, arbitrary channel ID or role management
 is part of this contract. Trusted Host policy is stored at
