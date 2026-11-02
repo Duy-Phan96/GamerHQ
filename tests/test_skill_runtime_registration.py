@@ -107,6 +107,23 @@ class ManagementFixtureSkill:
 
 
 class SkillRuntimeRegistrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_management_actor_is_scoped_to_each_call_and_cleared_afterwards(self):
+        import asyncio
+        class ActorSkill(ManagementFixtureSkill):
+            async def read_config(self, ctx, payload):
+                await asyncio.sleep(0)
+                return {"actor": ctx.actor_id}
+        skill = ActorSkill()
+        self.runtime.register(skill)
+        await self.runtime.register_all()
+        await self.runtime.install_skill(guild_id=123, skill_id=skill.manifest.id)
+        async def invoke(actor):
+            return await self.runtime.call_management(guild_id=123, skill_id=skill.manifest.id,
+                contract_id=skill.READ_API, payload={}, actor_id=actor)
+        first, second = await asyncio.gather(invoke(10), invoke(20))
+        self.assertEqual(first["actor"], 10)
+        self.assertEqual(second["actor"], 20)
+        self.assertIsNone((await self.runtime.context(123, skill.manifest.id)).actor_id)
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db_patch = patch.object(db, "DB_PATH", Path(self.temp.name) / "runtime.db")

@@ -1448,7 +1448,11 @@ class LFG(commands.Cog):
         now = int(datetime.now(SERVER_TZ).timestamp())
         for guild in self.bot.guilds:
             from hosts.gamerhq.event_cutover import owns_events
-            if owns_events(guild.id):
+            try:
+                if owns_events(guild.id):
+                    continue
+            except db.sqlite3.Error:
+                logging.getLogger(__name__).exception("Event authority unavailable guild=%s; legacy effects skipped.", guild.id)
                 continue
             try:
                 await cleanup_ended(guild, reconcile=self.voice_scheduler.current_loop % 10 == 0)
