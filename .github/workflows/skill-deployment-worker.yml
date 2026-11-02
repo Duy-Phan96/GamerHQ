@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Invoke installed reviewed worker
-        working-directory: /opt/gamerhq/deployment-worker
+        working-directory: ${{ inputs.environment == 'staging' && '/opt/gamerhq-staging/deployment-worker' || '/opt/gamerhq/deployment-worker' }}
         env:
           TARGET: ${{ inputs.environment }}
           OPERATION: ${{ inputs.operation }}
@@ -47,11 +47,16 @@ jobs:
           DEPLOYMENT_ID: ${{ inputs.deployment_id }}
           SKILL_ID: ${{ inputs.skill_id }}
           GAMERHQ_WEB_API_SECRET: ${{ secrets.GAMERHQ_WEB_API_SECRET }}
+          GAMERHQ_STAGING_WEB_API_SECRET: ${{ secrets.GAMERHQ_STAGING_WEB_API_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
           worker=/opt/gamerhq/deployment-worker/.venv/bin/python
           profile="/etc/gamerhq/deployments/$TARGET.json"
+          if [[ "$TARGET" == staging ]]; then
+            worker=/opt/gamerhq-staging/deployment-worker/.venv/bin/python
+            profile=/etc/gamerhq/staging/profile.json
+          fi
           case "$OPERATION" in
             stage) "$worker" -m tools.skill_deployment_worker --profile "$profile" stage --release "$RELEASE" --wheel "$WHEEL" --current-version "$CURRENT_VERSION" --manual-review ;;
             apply) export GAMERHQ_PRODUCTION_APPROVAL="$DEPLOYMENT_ID"

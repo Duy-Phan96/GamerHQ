@@ -1,0 +1,10 @@
+{
+  "repository": "Duy-Phan96/GamerHQ",
+  "distribution": "gamerhq-skill-sdk",
+  "version": "0.3.0",
+  "tag": "skill-sdk-v0.3.0",
+  "reviewedCommit": "REPLACE_WITH_REVIEWED_SDK_RELEASE_COMMIT",
+  "sha256": "REPLACE_WITH_REVIEWED_SDK_WHEEL_SHA256",
+  "sourceReviewed": false,
+  "allowPrerelease": false
+}

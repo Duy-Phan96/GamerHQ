@@ -46,8 +46,12 @@ The opt-in `skill-deployment-worker.yml` workflow invokes a fixed, preinstalled
 Host worker, with no repository checkout on the deployment runner. Before enabling
 `GAMERHQ_DEPLOYMENT_WORKER_ENABLED`, the owner must provision a dedicated runner
 labelled `gamerhq-deployment`, install the reviewed worker at
-`/opt/gamerhq/deployment-worker`, install protected profiles under
-`/etc/gamerhq/deployments/{staging,production}.json`, and protect both GitHub
+`/opt/gamerhq/deployment-worker` for production and the separate
+`/opt/gamerhq-staging/deployment-worker` for staging. Production uses
+`/etc/gamerhq/deployments/production.json`; staging uses
+`/etc/gamerhq/staging/profile.json`. Follow the
+[isolated staging profile](../../deploy/staging/README.md) for separate identity,
+release trust and fresh verification gates, and protect both GitHub
 environments (production requires an independent reviewer). Production dispatch
 is restricted to main. Do not enable this on a runner accepting untrusted PR jobs.
 This implementation does not change runner, repository, credential or environment

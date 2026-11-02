@@ -58,6 +58,11 @@ jobs:
       - name: Build production image (no bot login)
         if: always() && matrix.python == '3.12'
         run: docker compose build
+      - name: Validate isolated staging Compose without credentials
+        if: always() && matrix.python == '3.12'
+        env:
+          GAMERHQ_STAGING_IMAGE: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: docker compose --file deploy/staging/compose.json --profile live-acceptance config --quiet
       - name: Verify isolated Host-owned Skill staging with public fixture
         if: success() && matrix.python == '3.12'
         shell: bash
