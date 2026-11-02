@@ -1,0 +1,13 @@
+{
+  "repository": "Duy-Phan96/gamerhq-skill-event-manager",
+  "skillId": "event-manager",
+  "distribution": "gamerhq-skill-event-manager",
+  "version": "0.1.0",
+  "reviewedCommit": "REPLACE_WITH_REVIEWED_RELEASE_COMMIT",
+  "sha256": "REPLACE_WITH_REVIEWED_RELEASE_WHEEL_SHA256",
+  "runtimeApi": "1",
+  "capabilities": ["storage.skill", "storage.atomic", "scheduler.jobs", "discord.resources.manage"],
+  "sourceReviewed": false,
+  "migrationMode": "backward-compatible",
+  "allowPrerelease": false
+}

@@ -28,6 +28,8 @@ def secret_findings(text):
         # Public lazy-export symbol -> module mapping, not credential material.
         # Keep this exact pair narrow, including historical versions of the file.
         if match.group(1) == 'GamerHQSkillSecrets' and value == 'skill_secrets':continue
+        # These schema fields contain environment-variable names, never values.
+        if match.group(1) in ('healthSecretEnv','releaseTokenEnv') and re.fullmatch(r'[A-Z][A-Z0-9_]*',value):continue
         if len(value)<8 or value.casefold() in PLACEHOLDERS: continue
         if value.startswith(('os.','values.','self.','str(','(','<','$','env.','discord.')):continue
         if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_','must-not-appear','must-not-render')):continue

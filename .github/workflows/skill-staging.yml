@@ -1,0 +1,35 @@
+name: Isolated Skill staging preparation
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [inspect, initialize, fetch, verify, build, bootstrap, install]
+        required: true
+      approval:
+        description: Explicit operation approval; bootstrap starts only the dedicated staging Gateway
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: isolated-skill-staging
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true'
+    runs-on: [self-hosted, linux, gamerhq-deployment]
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Invoke installed reviewed staging tool
+        working-directory: /opt/gamerhq-staging/deployment-worker
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVAL: ${{ inputs.approval }}
+          GAMERHQ_SKILL_RELEASE_TOKEN: ${{ secrets.GAMERHQ_SKILL_RELEASE_TOKEN }}
+          GAMERHQ_STAGING_WEB_API_SECRET: ${{ secrets.GAMERHQ_STAGING_WEB_API_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          /opt/gamerhq-staging/deployment-worker/.venv/bin/python -m tools.skill_staging \
+            --profile /etc/gamerhq/staging/profile.json "$OPERATION" --approval "$APPROVAL"

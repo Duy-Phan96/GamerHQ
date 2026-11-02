@@ -69,6 +69,10 @@ def main():
     history.add_argument("--skill-id", required=True)
     args = parser.parse_args()
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
+    if profile.get("environment") == "staging" and args.command != "history":
+        from hosts.gamerhq.skill_staging import require_verification
+        require_verification(profile)
+        os.environ["GAMERHQ_STAGING_IMAGE"] = profile["baseImage"]
     db.DB_PATH = Path(profile["database"]).resolve(strict=True)
     if args.command == "history":
         print(json.dumps({"deployments": deployment_history(skill_id=args.skill_id)}))
@@ -95,6 +99,8 @@ def main():
         if profile.get("environment") == "production" and os.environ.get("GAMERHQ_PRODUCTION_APPROVAL") != args.id:
             raise PermissionError("Protected production approval for this deployment is required.")
     approved = profile.get("approvedCapabilities", {}).get(release["skillId"], [])
+    if profile.get("environment") == "staging" and release != json.loads(Path(profile["releaseFile"]).read_text(encoding="utf-8")):
+        raise ValueError("Staging release differs from its verified protected descriptor.")
     if not set(release.get("capabilities", [])) <= set(approved):
         raise ValueError("Host profile does not approve these Skill capabilities.")
     backend = DockerSkillDeployment(base_image=profile["baseImage"], sdk_wheel=root / profile["sdkWheel"],
