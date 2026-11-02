@@ -20,6 +20,12 @@ from skill_runtime.contracts.capabilities import KNOWN_CAPABILITIES
 from .skill_artifacts import UpdatePolicy, update_decision, verify_wheel
 
 
+def application_generation(conn):
+    # Every application attempt enters one of these states permanently. READY
+    # records staged before another attempt must be verified again afterwards.
+    return conn.execute("SELECT count(*) FROM skill_deployments WHERE state IN ('APPLYING','APPLIED','ROLLED_BACK','RECOVERY_REQUIRED')").fetchone()[0]
+
+
 def application_fingerprint(path):
     with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         conn.execute("BEGIN")
@@ -71,7 +77,9 @@ class SkillUpdateController:
         artifact = verify_wheel(Path(wheel), distribution=release["distribution"], version=release["version"], sha256=release["sha256"])
         ident = uuid.uuid4().hex
         evidence = {"artifact": artifact, "release": release, "policyDecision": decision, "previousVersion": current_version}
+        evidence["previousImage"] = self.backend.current_image()
         with db.connect() as conn:
+            evidence["applicationGeneration"] = application_generation(conn)
             conn.execute("INSERT INTO skill_deployments VALUES(?,?,?,'STAGING',NULL,NULL,?,'',?,?)",
                 (ident, release["skillId"], release["version"], json.dumps(evidence), int(time.time()), int(time.time())))
         try:
@@ -90,16 +98,20 @@ class SkillUpdateController:
     def apply(self, ident, *, approval):
         if approval != f"APPROVE {ident}":
             raise PermissionError("Explicit approval for this staged deployment is required.")
+        current_image = self.backend.current_image()
         with db.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM skill_deployments WHERE id=?", (ident,)).fetchone()
             if not row or row["state"] != "READY":
                 raise ValueError("Only a verified READY deployment can be applied.")
+            staged = json.loads(row["evidence_json"])
+            if current_image != staged["previousImage"] or application_generation(conn) != staged["applicationGeneration"]:
+                raise ValueError("Host changed after staging; verify a new candidate before application.")
             conn.execute("UPDATE skill_deployments SET state='APPLYING',updated_at=? WHERE id=?", (int(time.time()), ident))
         old_image = None
         fingerprint = None
         try:
-            old_image = self.backend.current_image()
+            old_image = current_image
             self._state(ident, "APPLYING", previous=old_image)
             self.backend.stop()  # the old Gateway is stopped before any replacement starts
             self.backup_root.mkdir(parents=True, exist_ok=True)

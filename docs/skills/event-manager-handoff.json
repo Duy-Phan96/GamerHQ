@@ -2,28 +2,48 @@
   "schemaVersion": 1,
   "sourceRequest": "owner-platform-transformation-2026-11-02",
   "trackingIssue": "https://github.com/Duy-Phan96/GamerHQ/issues/172",
-  "hostBranch": "feat/event-manager-v2-platform",
+  "hostBranch": "feat/event-weekday-creation",
   "hostContractPR": "https://github.com/Duy-Phan96/GamerHQ/pull/173",
   "releaseProposalPR": "https://github.com/Duy-Phan96/GamerHQ/pull/174",
   "skillPR": "https://github.com/Duy-Phan96/gamerhq-skill-event-manager/pull/1",
   "webPR": "https://github.com/Duy-Phan96/gamerhq-web/pull/66",
   "testedCodeCommits": {
-    "hostContracts": "3c456c39c05ccaecebee1df8b140d7221378ab33",
-    "releaseProposals": "69954d279753c4d5e3177357061111738555bd4f",
-    "skill": "1df164955063e39c1e69cd1926c8586bcc33524c",
-    "webInitial": "e3d9574d54ce2d4c6205e4b7b2684474bb49f041"
+    "hostContracts": "5e67265c6af3a7bf785683b18b006bd338955803",
+    "releaseProposals": "057923655e5f86ea4ab5110c809cc715cb61251f",
+    "skill": "1cba3c81c9da5947044899dd9295450bc5c1ff06",
+    "webInitial": "785d55f05ce3fa5188b7cd6bd850534de45cd981",
+    "hostIntegrated": "bbd3cee142901e862c8c3072027e901e66c2167c"
   },
-  "localEvidence": {"hostFullTests": 1174, "hostFullSubtests": 134, "hostLatestFocusedTests": 71, "hostLatestFocusedSubtests": 6, "skillTests": 31, "webTests": 57},
+  "localEvidence": {
+    "hostFullTests": 1234,
+    "hostFullSubtests": 140,
+    "hostLatestFocusedTests": 31,
+    "hostLatestFocusedSubtests": 0,
+    "skillTests": 42,
+    "webTests": 60
+  },
   "skillRepository": "Duy-Phan96/gamerhq-skill-event-manager",
   "skillBranch": "feat/portable-event-manager-v2",
   "webBranch": "feat/event-manager-v2-management",
   "runtimeApi": "1",
   "sdkRequired": ">=0.3,<0.4",
-  "newCapabilities": ["storage.atomic"],
+  "newCapabilities": [
+    "storage.atomic",
+    "discord.resources.manage"
+  ],
   "managementSchema": "1 with collection revision/preview bindings",
-  "releaseOrder": ["host-sdk", "skill", "host-adapter-and-migration", "web", "staging", "approved-production"],
+  "releaseOrder": [
+    "host-sdk",
+    "skill",
+    "host-adapter-and-migration",
+    "web",
+    "staging",
+    "approved-production"
+  ],
   "productionApproved": false,
   "liveAcceptanceComplete": false,
   "v1CutoverComplete": false,
-  "status": "FOUNDATIONS_IN_REVIEW"
+  "status": "HOST_FOUNDATION_AND_UPDATER_MERGED_INTEGRATION_VALIDATION",
+  "hostIntegrationPR": "https://github.com/Duy-Phan96/GamerHQ/pull/175",
+  "skillPreservationPR": "https://github.com/Duy-Phan96/gamerhq-skill-event-manager/pull/2"
 }

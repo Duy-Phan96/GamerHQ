@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "sourceRequest": "owner-platform-transformation-2026-11-02",
+  "trackingIssue": "https://github.com/Duy-Phan96/GamerHQ/issues/172",
+  "branch": "feat/event-weekday-creation",
+  "baseBranch": "feat/event-manager-v2-platform",
+  "hostContractPR": "https://github.com/Duy-Phan96/GamerHQ/pull/173",
+  "status": "INTERIM_CREATION_UX_READY_FOR_REVIEW",
+  "localTests": 74,
+  "localSubtests": 25,
+  "newPrimaryModes": ["once", "recurring"],
+  "weekdayControls": 7,
+  "storageMigrationRequired": false,
+  "existingFinitePoliciesPreserved": true,
+  "persistentEventAreaImplemented": false,
+  "v1CutoverComplete": false,
+  "productionApproved": false,
+  "liveAcceptanceComplete": false
+}

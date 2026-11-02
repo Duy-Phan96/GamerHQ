@@ -138,3 +138,96 @@ def test_policy_membership_and_ambiguity_fail_without_publication(fixture):
             await fixture.adapter().ensure_area(**spec())
         assert fixture.channels[0].send.await_count == 1
     asyncio.run(scenario())
+
+
+def test_uncached_or_departed_members_are_revoked_without_forgetting_their_overrides(fixture):
+    async def scenario():
+        await fixture.adapter().ensure_area(**spec())
+        fixture.guild.get_member.side_effect = lambda ident: None
+        adapter = fixture.adapter()
+        with pytest.raises(TransientHostError, match="retained"):
+            await adapter.ensure_area(**spec(member_ids=()))
+        assert (await adapter.health())["state"] == "DEGRADED"
+        adapter.user_lookup = AsyncMock(return_value=fixture.member)
+        await adapter.ensure_area(**spec(member_ids=()))
+        assert fixture.channels[0].test_overrides[fixture.member].view_channel is None
+        adapter.user_lookup.assert_awaited_once_with(50)
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())
+
+
+def test_reusing_retired_resource_keys_cannot_bypass_the_active_quota(fixture):
+    adapter = fixture.adapter(policy={"categoryId": 10, "maxResources": 1})
+    with adapter._claim("retired", "voice") as (state, save):
+        state["reserved"] = False
+        save()
+    with adapter._claim("active", "text"):
+        with pytest.raises(InvalidHostOperationError, match="quota"):
+            with adapter._claim("retired", "voice"):
+                pytest.fail("A retired key bypassed the resource quota")
+        # Idempotent retirement does not reserve a new active resource.
+        with adapter._claim("retired", "voice", reserve=False):
+            pass
+
+
+def test_occupied_voice_is_retained_and_empty_owned_voice_is_retired(fixture):
+    async def scenario():
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.id, voice.guild, voice.category_id, voice.members = 300, fixture.guild, 10, [fixture.member]
+        fixture.channels.append(voice)
+        adapter = fixture.adapter()
+        with adapter._claim("voice:session", "voice") as (state, save):
+            state["channelId"] = voice.id
+            save()
+        assert await adapter.retire_voice(key="voice:session") is False
+        voice.delete.assert_not_awaited()
+        voice.members = []
+        assert await adapter.retire_voice(key="voice:session") is True
+        voice.delete.assert_awaited_once()
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())
+
+
+def test_uncertain_voice_retirement_recovers_without_deleting_another_channel(fixture):
+    async def scenario():
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.id, voice.guild, voice.category_id, voice.members = 300, fixture.guild, 10, []
+        fixture.channels.append(voice)
+        adapter = fixture.adapter()
+        with adapter._claim("voice:session", "voice") as (state, save):
+            state["channelId"] = voice.id
+            save()
+        async def uncertain(**kwargs):
+            fixture.channels.remove(voice)
+            raise TimeoutError("Synthetic response loss after remote deletion")
+        voice.delete.side_effect = uncertain
+        with pytest.raises(TimeoutError):
+            await adapter.retire_voice(key="voice:session")
+        assert (await adapter.health())["state"] == "DEGRADED"
+        assert await adapter.retire_voice(key="voice:session") is True
+        voice.delete.assert_awaited_once()
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())
+
+
+def test_adopted_legacy_voice_uses_its_original_category_and_is_never_automatically_deleted(fixture):
+    async def scenario():
+        parent = MagicMock(spec=discord.CategoryChannel)
+        parent.id, parent.guild = 20, fixture.guild
+        original = fixture.guild.get_channel.side_effect
+        fixture.guild.get_channel.side_effect = lambda ident: parent if ident == 20 else original(ident)
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.id, voice.guild, voice.category_id, voice.members = 300, fixture.guild, 20, []
+        voice.overwrites_for.side_effect = lambda target: discord.PermissionOverwrite(view_channel=False, connect=False)
+        fixture.channels.append(voice)
+        adapter = fixture.adapter(policy={"categoryId": 10, "voiceCategoryId": 20})
+        with adapter._claim("voice:legacy", "voice") as (state, save):
+            state.update(channelId=300, retainLegacy=True)
+            save()
+        result = await adapter.ensure_voice(key="voice:legacy", name="Legacy Raid", member_ids=(50,))
+        assert result["channelId"] == "300"
+        fixture.guild.create_voice_channel.assert_not_awaited()
+        assert await adapter.retire_voice(key="voice:legacy") is False
+        voice.delete.assert_not_awaited()
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())

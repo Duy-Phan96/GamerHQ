@@ -906,6 +906,13 @@ def persist_event_draft(*, guild_id: int, builder, start_at: int) -> tuple[dict,
     """Persist one event draft, optionally creating its recurrence series first."""
     series = None
     recurrence = builder._recurrence()
+    if recurrence is not None:
+        recurrence = recurrence.validate()
+        if recurrence.frequency == "weekdays":
+            from zoneinfo import ZoneInfo
+            first_day = datetime.fromtimestamp(start_at, ZoneInfo(recurrence.timezone_name)).weekday()
+            if first_day not in recurrence.weekdays:
+                raise ValueError("Choose a first date that matches one of the selected weekdays.")
     try:
         if recurrence is not None:
             recurrence = recurrence.validate()
@@ -1158,134 +1165,98 @@ class BuilderPlayersSelect(discord.ui.Select):
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
 
 
-WEEKDAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-WEEKDAY_ALIASES = {
-    "mon": 0, "monday": 0,
-    "tue": 1, "tues": 1, "tuesday": 1,
-    "wed": 2, "wednesday": 2,
-    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
-    "fri": 4, "friday": 4,
-    "sat": 5, "saturday": 5,
-    "sun": 6, "sunday": 6,
-}
+class WeekdayToggle(discord.ui.Button):
+    def __init__(self, editor, day):
+        self.editor = editor
+        self.day = day
+        super().__init__(label=("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")[day],
+            style=discord.ButtonStyle.primary if day in editor.selected else discord.ButtonStyle.secondary,
+            row=day // 4)
+
+    async def callback(self, interaction):
+        if not await self.editor.interaction_check(interaction):
+            return
+        if self.day in self.editor.selected:
+            self.editor.selected.remove(self.day)
+        else:
+            self.editor.selected.add(self.day)
+        self.editor.rebuild()
+        await interaction.response.edit_message(content=self.editor.content(), view=self.editor)
 
 
-class RecurrenceSettingsModal(discord.ui.Modal, title="Repeat Settings"):
-    def __init__(self, builder, mode):
-        super().__init__(timeout=300)
+class WeekdayEditorView(discord.ui.View):
+    """A transient draft editor; applying weekdays never persists an event."""
+    def __init__(self, builder):
+        super().__init__(timeout=600)
         self.builder = builder
-        self.mode = mode
-        custom = mode == "custom"
-        current_days = ", ".join(WEEKDAY_LABELS[day] for day in builder.recurrence_weekdays)
-        self.weekdays = discord.ui.TextInput(
-            label="Weekdays (custom only)",
-            placeholder="Mon, Wed, Fri",
-            default=current_days,
-            required=custom,
-            max_length=80,
-        )
-        self.count = discord.ui.TextInput(
-            label="End after occurrences (optional)",
-            placeholder="e.g. 10",
-            default=str(builder.recurrence_limit) if builder.recurrence_limit is not None else "",
-            required=False,
-            max_length=3,
-        )
-        self.end_date = discord.ui.TextInput(
-            label="Or end date YYYY-MM-DD (optional)",
-            placeholder="e.g. 2026-12-31",
-            default=builder.recurrence_until_date or "",
-            required=False,
-            max_length=10,
-        )
-        self.add_item(self.weekdays)
-        self.add_item(self.count)
-        self.add_item(self.end_date)
+        default_day = datetime.fromisoformat(builder.date).weekday() if builder.date else datetime.now(SERVER_TZ).weekday()
+        self.selected = set(builder.recurrence_weekdays or (default_day,))
+        self.rebuild()
 
-    async def on_submit(self, interaction):
-        try:
-            count_text = str(self.count).strip()
-            date_text = str(self.end_date).strip()
-            if count_text and date_text:
-                raise ValueError("Choose either an occurrence count or an end date, not both.")
+    def rebuild(self):
+        self.clear_items()
+        for day in range(7):
+            self.add_item(WeekdayToggle(self, day))
+        self.add_item(self.apply_days)
+        self.add_item(self.back)
 
-            limit = None
-            if count_text:
-                limit = int(count_text)
-                if not 2 <= limit <= 365:
-                    raise ValueError("Occurrence count must be between 2 and 365.")
+    def content(self):
+        labels = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+        days = ", ".join(labels[day] for day in sorted(self.selected)) or "Choose at least one weekday"
+        return ("# Recurring Event\n\nSelect each weekday independently.\n\n"
+                f"**Every:** {days}\n**Time:** {self.builder._display_time()} · Europe/Berlin\n\n"
+                "Review the final preview before creating. Nothing has been posted yet.")
 
-            until_date = None
-            if date_text:
-                try:
-                    parsed = datetime.strptime(date_text, "%Y-%m-%d").date()
-                except ValueError as exc:
-                    raise ValueError("Use end date YYYY-MM-DD, e.g. 2026-12-31.") from exc
-                if self.builder.date and parsed < datetime.fromisoformat(self.builder.date).date():
-                    raise ValueError("The series end date cannot be before the first event.")
-                until_date = parsed.isoformat()
+    async def interaction_check(self, interaction):
+        return await self.builder.interaction_check(interaction)
 
-            if self.mode == "weekdays":
-                weekdays = (0, 1, 2, 3, 4)
-            elif self.mode == "weekends":
-                weekdays = (5, 6)
-            elif self.mode == "custom":
-                weekdays = self.builder.recurrence_weekdays
-                raw = [part.strip().lower() for part in str(self.weekdays).replace(";", ",").split(",") if part.strip()]
-                if not raw:
-                    raise ValueError("Choose at least one weekday for a custom recurrence.")
-                unknown = [value for value in raw if value not in WEEKDAY_ALIASES]
-                if unknown:
-                    raise ValueError("Use weekday names such as Mon, Wed, Fri.")
-                weekdays = tuple(sorted({WEEKDAY_ALIASES[value] for value in raw}))
-            else:
-                weekdays = ()
+    @discord.ui.button(label="Apply weekdays", style=discord.ButtonStyle.success, row=2)
+    async def apply_days(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        if not self.selected:
+            return await interaction.response.send_message("Choose at least one weekday.", ephemeral=True)
+        self.builder.recurrence_mode = "recurring"
+        self.builder.recurrence_weekdays = tuple(sorted(self.selected))
+        self.builder.recurrence_limit = None
+        self.builder.recurrence_until_date = None
+        self.builder._rebuild()
+        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        self.stop()
 
-            self.builder.recurrence_mode = self.mode
-            self.builder.recurrence_weekdays = weekdays
-            self.builder.recurrence_limit = limit
-            self.builder.recurrence_until_date = until_date
-            self.builder._rebuild()
-            await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
-        except (ValueError, TypeError) as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=2)
+    async def back(self, interaction, button):
+        if not await self.interaction_check(interaction):
+            return
+        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        self.stop()
 
 
 class BuilderRecurrenceSelect(discord.ui.Select):
     OPTIONS = (
-        ("once", "One-time", "Create a single event", "1️⃣"),
-        ("daily", "Daily", "Repeat every day", "🔁"),
-        ("weekly", "Weekly", "Repeat every week", "📆"),
-        ("weekdays", "Mon–Fri", "Repeat Monday through Friday", "🗓️"),
-        ("weekends", "Weekends", "Repeat Saturday and Sunday", "🎮"),
-        ("custom", "Custom", "Choose weekdays and series end", "⚙️"),
+        ("once", "One-time Event", "Create one event", "1️⃣"),
+        ("recurring", "Recurring Event", "Choose the weekdays to repeat", "🔁"),
     )
 
     def __init__(self, builder):
         self.builder = builder
-        options = [
-            discord.SelectOption(
-                label=label,
-                value=value,
-                description=description,
-                emoji=emoji,
-                default=builder.recurrence_mode == value,
-            )
-            for value, label, description, emoji in self.OPTIONS
-        ]
-        selected = next((label for value, label, _, _ in self.OPTIONS if value == builder.recurrence_mode), "One-time")
-        super().__init__(placeholder=f"🔁 Repeat · {selected}"[:150], options=options, row=3)
+        current = "once" if builder.recurrence_mode == "once" else "recurring"
+        options = [discord.SelectOption(label=label, value=value, description=description, emoji=emoji,
+                   default=current == value) for value, label, description, emoji in self.OPTIONS]
+        super().__init__(placeholder="Event type", options=options, row=3)
 
     async def callback(self, interaction):
-        mode = self.values[0]
-        if mode == "once":
+        if not await self.builder.interaction_check(interaction):
+            return
+        if self.values[0] == "once":
             self.builder.recurrence_mode = "once"
             self.builder.recurrence_weekdays = ()
             self.builder.recurrence_limit = None
             self.builder.recurrence_until_date = None
             self.builder._rebuild()
             return await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
-        await interaction.response.send_modal(RecurrenceSettingsModal(self.builder, mode))
+        editor = WeekdayEditorView(self.builder)
+        await interaction.response.edit_message(content=editor.content(), view=editor)
 
 
 class EventBuilderView(discord.ui.View):
@@ -1424,6 +1395,9 @@ class EventBuilderView(discord.ui.View):
         dt = datetime.fromisoformat(self.date).replace(hour=hour, minute=minute, tzinfo=SERVER_TZ)
         if dt <= datetime.now(SERVER_TZ):
             return await interaction.response.send_message("❌ The event must be in the future.", ephemeral=True)
+        recurrence = self._recurrence()
+        if recurrence is not None and recurrence.frequency == "weekdays" and dt.weekday() not in recurrence.weekdays:
+            return await interaction.response.send_message("Choose a first date that matches one of the selected weekdays.", ephemeral=True)
         draft = EventDraftView(self)
         await interaction.response.edit_message(content=draft.content(), view=draft)
 
@@ -1436,6 +1410,11 @@ class LFGHubView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Create Event",emoji="➕",style=discord.ButtonStyle.primary,custom_id="gamerhq:lfg:create")
     async def create_event(self, interaction, button):
+        runtime = getattr(getattr(interaction, "client", None), "skill_runtime", None)
+        if runtime is not None and runtime.registry.contains("event-manager") is True:
+            from cogs.event_manager import open_editor
+            await interaction.response.defer(ephemeral=True)
+            return await open_editor(interaction)
         # A persistent hub button must acknowledge Discord immediately. DB lookups
         # and view construction happen after the defer so a slow disk or exception
         # can never surface as "The application did not respond".

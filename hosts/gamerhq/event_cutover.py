@@ -53,12 +53,41 @@ def owns_events(guild_id):
         return conn.execute("SELECT 1 FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild_id,)).fetchone() is not None
 
 
+def _configuration_checkpoint(conn, guild_id, configured):
+    # Host lifecycle metadata stays outside the Skill-owned domain namespace.
+    conn.execute("INSERT INTO settings(key,value) VALUES(?,?)", (f"event_cutover:{guild_id}",
+        json.dumps({"configured": bool(configured)})))
+
+
 async def prepare(runtime, *, guild_id, decisions=None):
     with db.connect() as conn:
         conn.execute("BEGIN")
         snapshot = snapshot_for_guild(conn, guild_id)
     return await runtime.call_management(guild_id=guild_id, skill_id="event-manager",
         contract_id="event-manager.migrate-plan.v1", payload={"snapshot": snapshot, "decisions": decisions or {}})
+
+
+def claim_empty_tenant(guild_id):
+    """Normal installation claims an empty domain without a legacy migration.
+
+    Existing legacy tenants remain installable but disabled pending verified cutover.
+    The lock serializes this decision with legacy writes and installs their barrier.
+    """
+    with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        installed = conn.execute("SELECT installed,configured FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchone()
+        if not installed or not installed[0]:
+            raise ValueError("Install Event Manager through the Skill lifecycle first.")
+        if conn.execute("SELECT 1 FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild_id,)).fetchone():
+            return True
+        snapshot = snapshot_for_guild(conn, guild_id)
+        if snapshot["events"] or snapshot["series"]:
+            return False
+        _configuration_checkpoint(conn, guild_id, installed["configured"])
+        conn.execute("INSERT INTO skill_domain_authority VALUES(?,'event-manager','event-manager',?,?,?)",
+            (guild_id, digest(snapshot), digest({}), int(time.time())))
+        install_barriers(conn)
+        return True
 
 
 async def verify_legacy_resources(guild, plan):
@@ -92,6 +121,22 @@ async def verify_legacy_resources(guild, plan):
         if message_id:
             state["messageId"] = message_id
         bindings[event["resourceKey"]] = state
+    claimed_voice = set()
+    for key, occurrence in plan["writes"].items():
+        if not key.startswith("occurrence.v2:") or not occurrence.get("voice"):
+            continue
+        channel_id = int(occurrence["voice"]["channelId"])
+        source = [row for row in rows if row["id"] == occurrence.get("legacyEventId") and row.get("voice_channel_id") == channel_id]
+        channel = channels.get(channel_id)
+        if len(source) != 1 or channel_id in claimed_voice or not isinstance(channel, discord.VoiceChannel) or channel.guild.id != guild.id:
+            raise ValueError("Legacy voice mapping is ambiguous or unavailable; reconcile before cutover.")
+        if channel.name != f"📅・{source[0]['title']}"[:100]:
+            raise ValueError("Legacy voice identity changed; manual verification required.")
+        if source[0].get("visibility") == "private" and channel.overwrites_for(guild.default_role).view_channel is not False:
+            raise ValueError("Legacy private voice permissions require reconciliation.")
+        claimed_voice.add(channel_id)
+        bindings["voice:" + occurrence["id"]] = {"kind": "voice", "channelId": channel_id, "retainLegacy": True,
+            "members": {str(member["user_id"]): [None, None] for member in members if member["event_id"] == source[0]["id"]}}
     return bindings
 
 
@@ -119,6 +164,10 @@ def apply(plan, *, backup_path: Path, backup_sha256: str, verified_resources=Non
             binding = verified_resources.get(event["resourceKey"])
             if not binding or str(binding.get("channelId")) != str(event["chat"]["channelId"]):
                 raise ValueError("Verify selected Discord resources through the trusted Host before cutover.")
+        if key.startswith("occurrence.v2:") and event.get("voice"):
+            binding = verified_resources.get("voice:" + event["id"])
+            if not binding or binding.get("kind") != "voice" or binding.get("retainLegacy") is not True or str(binding.get("channelId")) != str(event["voice"]["channelId"]):
+                raise ValueError("Verify and retain legacy voice mappings before cutover.")
     for key, value in writes.items():
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", key) or value is None:
             raise ValueError("Invalid import storage key/value.")
@@ -135,22 +184,29 @@ def apply(plan, *, backup_path: Path, backup_sha256: str, verified_resources=Non
             if previous["source_hash"] == plan["sourceHash"] and previous["target_hash"] == plan["targetHash"]:
                 return False
             raise ValueError("Another import already owns this domain.")
-        installed = conn.execute("SELECT installed FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchone()
+        installed = conn.execute("SELECT installed,configured FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchone()
         if not installed or not installed[0]:
             raise ValueError("Install the reviewed Event Manager through the normal lifecycle first.")
         if digest(snapshot_for_guild(conn, guild_id)) != plan["sourceHash"]:
             raise ValueError("Legacy state changed after preview; generate a fresh plan and backup.")
         if conn.execute("SELECT 1 FROM skill_storage WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchone():
             raise ValueError("Target Skill namespace must be empty before initial migration.")
+        _configuration_checkpoint(conn, guild_id, installed["configured"])
         for key, body in encoded.items():
             conn.execute("INSERT INTO skill_storage VALUES(?,?,?,?,?)", (guild_id, "event-manager", key, body, int(time.time())))
         for key, state in verified_resources.items():
+            state = dict(state)
+            kind = state.pop("kind", "text")
+            if kind not in ("text", "voice"):
+                raise ValueError("Invalid verified resource kind.")
             state = {**state, "importBaselineHash": digest(state)}
-            conn.execute("INSERT INTO skill_managed_resources VALUES(?,?,?,'text',?,NULL,0)",
-                         (guild_id, "event-manager", key, json.dumps(state)))
+            conn.execute("INSERT INTO skill_managed_resources VALUES(?,?,?,?,?,NULL,0)",
+                         (guild_id, "event-manager", key, kind, json.dumps(state)))
         install_barriers(conn)
         conn.execute("INSERT INTO skill_domain_authority VALUES(?,?,?,?,?,?)",
             (guild_id, "event-manager", "event-manager", plan["sourceHash"], plan["targetHash"], int(time.time())))
+        conn.execute("UPDATE skill_guild_state SET configured=1,updated_at=? WHERE guild_id=? AND skill_id='event-manager'",
+            (int(time.time()), guild_id))
     return True
 
 
@@ -168,6 +224,9 @@ def rollback_unmodified(*, guild_id, resources_verified=False):
             "SELECT * FROM skill_storage WHERE guild_id=? AND skill_id='event-manager'", (guild_id,))}
         if digest(values) != authority["target_hash"]:
             raise ValueError("V2 state changed; a reviewed reverse migration is required.")
+        checkpoint = conn.execute("SELECT value FROM settings WHERE key=?", (f"event_cutover:{guild_id}",)).fetchone()
+        if checkpoint is None:
+            raise ValueError("Lifecycle checkpoint is unavailable; reviewed rollback required.")
         bindings = conn.execute("SELECT state_json FROM skill_managed_resources WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchall()
         for binding in bindings:
             value = json.loads(binding[0])
@@ -177,4 +236,7 @@ def rollback_unmodified(*, guild_id, resources_verified=False):
         conn.execute("DELETE FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild_id,))
         conn.execute("DELETE FROM skill_storage WHERE guild_id=? AND skill_id='event-manager'", (guild_id,))
         conn.execute("DELETE FROM skill_managed_resources WHERE guild_id=? AND skill_id='event-manager'", (guild_id,))
+        conn.execute("UPDATE skill_guild_state SET configured=?,updated_at=? WHERE guild_id=? AND skill_id='event-manager'",
+            (int(json.loads(checkpoint[0])["configured"]), int(time.time()), guild_id))
+        conn.execute("DELETE FROM settings WHERE key=?", (f"event_cutover:{guild_id}",))
     return True

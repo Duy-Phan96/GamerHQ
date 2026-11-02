@@ -19,28 +19,38 @@ from .skill_host import _valid_identity
 
 
 class GamerHQManagedResources:
-    def __init__(self, *, guild, skill_id, permissions, policy=None, clock=time.time):
+    def __init__(self, *, guild, skill_id, permissions, policy=None, clock=time.time, user_lookup=None):
         _valid_identity(guild.id, skill_id)
         self.guild, self.skill_id, self.permissions = guild, skill_id, permissions
         self.policy = policy or {}
         self.clock = clock
+        self.user_lookup = user_lookup
 
-    def _policy(self):
+    def _policy(self, *, voice=False):
         self.permissions.require("discord.resources.manage")
-        parent = self.guild.get_channel(int(self.policy.get("categoryId") or 0))
+        parent = self.guild.get_channel(int((self.policy.get("voiceCategoryId") if voice else None) or self.policy.get("categoryId") or 0))
         if not isinstance(parent, discord.CategoryChannel) or parent.guild.id != self.guild.id:
             raise CapabilityUnavailableError("Managed resource category must be configured by the Host.")
         rights = parent.permissions_for(self.guild.me)
-        if not rights.manage_channels or not rights.view_channel or not rights.send_messages or not rights.read_message_history:
+        if not rights.manage_channels or not rights.view_channel or (not voice and (not rights.send_messages or not rights.read_message_history)):
             raise CapabilityUnavailableError("Host bot lacks the managed category permissions required by this capability.")
         return parent
 
     async def health(self):
         parent = self._policy()
+        if self.policy.get("voiceCategoryId"):
+            self._policy(voice=True)
+        with db.connect() as conn:
+            pending = conn.execute("SELECT 1 FROM skill_managed_resources WHERE guild_id=? AND skill_id=? AND "
+                "(json_extract(state_json,'$.creating')=1 OR json_extract(state_json,'$.messagePending')=1 OR "
+                "json_extract(state_json,'$.synchronizationPending')=1 OR json_extract(state_json,'$.retiring')=1) LIMIT 1",
+                (self.guild.id, self.skill_id)).fetchone()
+        if pending:
+            return {"state": "DEGRADED", "detail": "Managed resource synchronization is pending or requires reconciliation."}
         return {"state": "PASS", "categoryId": str(parent.id)}
 
     @contextmanager
-    def _claim(self, key, kind):
+    def _claim(self, key, kind, *, reserve=True):
         if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,110}", key):
             raise InvalidHostOperationError("Invalid managed resource key.")
         identity = (self.guild.id, self.skill_id, key)
@@ -52,14 +62,19 @@ class GamerHQManagedResources:
                 raise InvalidHostOperationError("Managed resource kind cannot change.")
             if row and row["lease_until"] > int(self.clock()):
                 raise TransientHostError("Managed resource reconciliation is already in progress.")
-            if row is None:
+            old_state = json.loads(row["state_json"]) if row else None
+            if reserve and (row is None or (not old_state.get("channelId") and old_state.get("reserved") is False)):
                 count = conn.execute("SELECT count(*) FROM skill_managed_resources WHERE guild_id=? AND skill_id=? "
                     "AND (json_extract(state_json,'$.channelId') IS NOT NULL OR coalesce(json_extract(state_json,'$.reserved'),1)=1)", identity[:2]).fetchone()[0]
                 if count >= int(self.policy.get("maxResources", 100)):
                     raise InvalidHostOperationError("Managed resource quota reached.")
-            state = json.loads(row["state_json"]) if row else {"marker": "skill-resource:" + secrets.token_hex(24), "members": {}, "reserved": True}
+            state = old_state if row else {"marker": "skill-resource:" + secrets.token_hex(24), "members": {}, "reserved": True}
+            if reserve:
+                state["reserved"] = True
+            elif row is None:
+                state["reserved"] = False
             conn.execute("INSERT INTO skill_managed_resources VALUES(?,?,?,?,?,?,?) ON CONFLICT(guild_id,skill_id,resource_key) "
-                         "DO UPDATE SET lease_token=excluded.lease_token,lease_until=excluded.lease_until",
+                         "DO UPDATE SET state_json=excluded.state_json,lease_token=excluded.lease_token,lease_until=excluded.lease_until",
                          (*identity, kind, json.dumps(state), token, int(self.clock()) + 120))
         try:
             yield state, lambda: self._save(identity, token, state)
@@ -89,6 +104,16 @@ class GamerHQManagedResources:
             members.append(member)
         return members
 
+    async def _revocation_target(self, member_id):
+        target = self.guild.get_member(int(member_id))
+        if target is None and self.user_lookup is not None:
+            # Discord permits member overwrites by User identity, including a
+            # departed guild member. Clear access before a future rejoin.
+            target = await self.user_lookup(int(member_id))
+        if target is None:
+            raise TransientHostError("Member revocation requires verified user identity; mapping retained.")
+        return target
+
     async def _channel(self, state, kind, parent, name, members, visibility="private", chat=True, save=None):
         # Fetch the authoritative channel inventory before creating/recovering.
         channels = await self.guild.fetch_channels()
@@ -112,6 +137,7 @@ class GamerHQManagedResources:
         overwrites = {self.guild.default_role: discord.PermissionOverwrite(view_channel=visibility == "public", send_messages=chat)}
         overwrites[self.guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         state["creating"] = True
+        state["reserved"] = True
         save()
         return await (self.guild.create_text_channel(name, category=parent, topic=state["marker"], overwrites=overwrites,
                       reason="Host-managed Skill resource") if kind == "text" else
@@ -130,6 +156,7 @@ class GamerHQManagedResources:
             channel = await self._channel(state, "text", parent, name, members, visibility, chat_enabled, save)
             state["channelId"] = channel.id
             state.pop("creating", None)
+            state["synchronizationPending"] = True
             save()
             overwrite = channel.overwrites_for(self.guild.default_role)
             overwrite.view_channel, overwrite.send_messages = visibility == "public", chat_enabled if visibility == "public" else False
@@ -139,11 +166,10 @@ class GamerHQManagedResources:
             requested = {str(member.id): member for member in members}
             for member_id, original in list(state["members"].items()):
                 if member_id not in requested:
-                    member = self.guild.get_member(int(member_id))
-                    if member:
-                        overwrite = channel.overwrites_for(member)
-                        overwrite.view_channel, overwrite.send_messages = original
-                        await channel.set_permissions(member, overwrite=overwrite, reason="Skill membership removed")
+                    member = await self._revocation_target(member_id)
+                    overwrite = channel.overwrites_for(member)
+                    overwrite.view_channel, overwrite.send_messages = original
+                    await channel.set_permissions(member, overwrite=overwrite, reason="Skill membership removed")
                     del state["members"][member_id]
             for member_id, member in requested.items():
                 overwrite = channel.overwrites_for(member)
@@ -177,11 +203,12 @@ class GamerHQManagedResources:
             else:
                 await message.edit(content=None, embed=embed, allowed_mentions=discord.AllowedMentions.none())
             state["messageId"], state["messagePending"] = message.id, False
+            state["synchronizationPending"] = False
             save()
             return {"channelId": str(channel.id), "messageId": str(message.id), "resourceKey": key}
 
     async def ensure_voice(self, *, key, name, member_ids):
-        parent = self._policy()
+        parent = self._policy(voice=True)
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
             raise InvalidHostOperationError("Invalid voice name.")
         members = await self._members(member_ids)
@@ -189,15 +216,15 @@ class GamerHQManagedResources:
             channel = await self._channel(state, "voice", parent, name, members, save=save)
             state["channelId"] = channel.id
             state.pop("creating", None)
+            state["synchronizationPending"] = True
             save()
             requested = {str(member.id): member for member in members}
             for member_id, original in list(state["members"].items()):
                 if member_id not in requested:
-                    member = self.guild.get_member(int(member_id))
-                    if member:
-                        overwrite = channel.overwrites_for(member)
-                        overwrite.view_channel, overwrite.connect = original
-                        await channel.set_permissions(member, overwrite=overwrite, reason="Voice participant removed")
+                    member = await self._revocation_target(member_id)
+                    overwrite = channel.overwrites_for(member)
+                    overwrite.view_channel, overwrite.connect = original
+                    await channel.set_permissions(member, overwrite=overwrite, reason="Voice participant removed")
                     del state["members"][member_id]
             for member_id, member in requested.items():
                 overwrite = channel.overwrites_for(member)
@@ -205,24 +232,32 @@ class GamerHQManagedResources:
                 save()
                 overwrite.view_channel, overwrite.connect = True, True
                 await channel.set_permissions(member, overwrite=overwrite, reason="Voice participants reconciled")
+            state["synchronizationPending"] = False
             save()
             return {"channelId": str(channel.id), "resourceKey": key}
 
     async def retire_voice(self, *, key):
-        parent = self._policy()
-        with self._claim(key, "voice") as (state, save):
+        parent = self._policy(voice=True)
+        with self._claim(key, "voice", reserve=False) as (state, save):
             channel = next((channel for channel in await self.guild.fetch_channels() if channel.id == state.get("channelId")), None)
             if channel is None:
                 state.pop("channelId", None)
+                state.pop("retiring", None)
                 state["reserved"] = False
                 save()
                 return True
             if not isinstance(channel, discord.VoiceChannel) or channel.guild.id != self.guild.id or channel.category_id != parent.id:
                 raise InvalidHostOperationError("Voice resource ownership changed.")
+            if state.get("retainLegacy"):
+                # Existing customer channels need separately approved cleanup.
+                return False
             if channel.members:
                 return False
+            state["retiring"] = True
+            save()
             await channel.delete(reason="Owned empty temporary Skill voice session completed")
             state.pop("channelId", None)
+            state.pop("retiring", None)
             state["reserved"] = False
             save()
             return True

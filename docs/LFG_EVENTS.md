@@ -13,6 +13,19 @@ Discord cards display state; they are not membership/capacity authority.
 
 ## Lifecycle
 
+New event creation exposes exactly **One-time Event** or **Recurring Event**.
+Recurring creation opens seven independent Monday–Sunday buttons, requires at
+least one weekday, and returns to the same draft before final preview/confirmation.
+The first selected date must match a selected weekday; persistence rechecks this
+before writing. Back discards weekday changes. Only the draft owner can edit it.
+Daily/weekly/weekend/custom primary modes and new finite-end modal settings are
+removed. Existing stored V1 frequencies and end conditions remain readable.
+
+This is an interim creation UX improvement. It does not implement V2 persistent
+event areas, full series editing or the legacy data cutover. See
+[Event Manager V2 status](skills/event-manager-v2.md); V1 live acceptance remains
+incomplete, and its materialization horizon limit is still an extraction blocker.
+
 1. `/lfg create`, the managed Looking for Group button and the managed Community Events button all open the same event builder. Validate a future start, optional game, title, capacity and voice reminder; confirm before publishing.
 2. Public events appear in the community/per-game flow. Private events use participant-restricted text and a share token/code. Public sharing links to Discord; private sharing can combine a server invite with an event access code.
 3. Invitations and joins are distinct persisted states. Final join rechecks active status, private authorization, exclusions and capacity transactionally. Discord access and any required game-role assignment accompany the feature flow.

@@ -40,6 +40,16 @@ class DockerSkillDeployment:
 
     def stage(self, *, release, wheel, deployment_id):
         self.work_root.mkdir(parents=True, exist_ok=True)
+        # BuildKit interprets a bare sha256 image ID in FROM as a registry name.
+        # Resolve approved local bytes, then use an owned tag checked on both
+        # sides of the build. The final candidate remains addressed by image ID.
+        base_id = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", self.base_image]).strip()
+        if not IMAGE.fullmatch(base_id):
+            raise ValueError("Approved base image must already be available locally.")
+        alias = "gamerhq-skill-stage-base:" + base_id.rsplit(":", 1)[-1]
+        self.run(["docker", "tag", base_id, alias])
+        if self.run(["docker", "image", "inspect", "--format", "{{.Id}}", alias]).strip() != base_id:
+            raise ValueError("Reviewed base image alias changed.")
         with tempfile.TemporaryDirectory(dir=self.work_root, prefix="skill-stage-") as directory:
             root = Path(directory)
             shutil.copyfile(wheel, root / "skill.whl")
@@ -50,11 +60,13 @@ class DockerSkillDeployment:
             verify_wheel(root / skill_name, distribution=release["distribution"], version=release["version"], sha256=release["sha256"])
             verify_wheel(root / self.sdk_wheel.name, distribution="gamerhq-skill-sdk", version=self.sdk_version, sha256=self.sdk_sha256)
             (root / "Dockerfile").write_text(
-                f"FROM {self.base_image}\nUSER root\nCOPY {skill_name} /opt/skill-release/{skill_name}\n"
+                f"FROM {alias}\nUSER root\nCOPY {skill_name} /opt/skill-release/{skill_name}\n"
                 f"COPY {self.sdk_wheel.name} /opt/skill-release/{self.sdk_wheel.name}\n"
                 f"RUN python -m pip install --no-index --no-deps --force-reinstall /opt/skill-release/{self.sdk_wheel.name} /opt/skill-release/{skill_name} && python -m pip check\n"
                 "USER 10001:10001\n", encoding="utf-8")
             self.run(["docker", "build", "--network", "none", "--iidfile", str(root / "image-id"), str(root)])
+            if self.run(["docker", "image", "inspect", "--format", "{{.Id}}", alias]).strip() != base_id:
+                raise ValueError("Reviewed base image alias changed during staging.")
             image = (root / "image-id").read_text().strip()
             if not IMAGE.fullmatch(image):
                 raise ValueError("Docker did not produce an immutable image identity.")

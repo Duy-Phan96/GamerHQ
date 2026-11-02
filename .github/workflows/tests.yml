@@ -58,3 +58,9 @@ jobs:
       - name: Build production image (no bot login)
         if: always() && matrix.python == '3.12'
         run: docker compose build
+      - name: Verify isolated Host-owned Skill staging with public fixture
+        if: success() && matrix.python == '3.12'
+        shell: bash
+        run: |
+          image=$(docker image inspect gamerhq-bot:local --format '{{.Id}}')
+          python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl

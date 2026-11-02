@@ -59,12 +59,37 @@ scheduled-row queries exclude Skill-owned guilds. Runtime mutation/enablement
 refuses to establish a second domain while unmigrated legacy data exists.
 
 Rollback only accepts an unchanged imported namespace with the Skill disabled.
+Import marks the installed Skill configured in the same transaction, allowing
+normal Web enablement immediately. Host-owned lifecycle checkpoints restore the
+previous configured flag during an otherwise verified unmodified rollback.
 Adopted resource mappings require explicit external verification and unchanged
 baseline hashes. Any new V2 data or resource effect blocks automatic rollback;
 a reviewed reverse migration or matched application/database restoration is then
 required. Code rollback does not restore database authority.
 
 ## Evidence and deployment boundary
+
+Every stored legacy voice ID also requires read-only Host identity/privacy
+verification and an occurrence-scoped managed binding in the cutover transaction.
+Adopted legacy voice channels carry `retainLegacy=true`: reconciliation reuses
+their IDs and never automatically deletes them, even when empty. Existing voice
+and text categories may differ; the trusted resource policy supports a separate
+`voiceCategoryId`. Missing, renamed or ambiguous legacy voice mappings block
+cutover for review instead of causing a replacement channel to be created.
+
+Fresh tenants use the public installation lifecycle. With no legacy Event/series
+rows, installation atomically claims the domain and installs legacy write barriers.
+Existing tenants install disabled and require the verified import before enablement.
+The installed-package acceptance tests exercise lifecycle restart, shared editor
+contracts and real Host adapter persistence against synthetic Discord fixtures.
+Run `python -m pytest tests/test_event_skill_end_to_end.py -q` with the approved
+Skill wheel installed; public CI skips this gate when that private artifact is absent.
+
+When Event Manager is present in the Runtime, startup loads `cogs.event_manager`.
+The schema-driven editor offers all Event fields and seven weekday toggles; slash
+commands handle listing, creation/editing, pause/resume and occurrence participants.
+Migrated join/leave button references resolve through the Skill API. If authority
+exists but its package is missing, startup does not restore legacy domain behavior.
 
 Offline tests exercise actual installed Skill plans locally, with realistic
 synthetic six-table SQLite fixtures, transactional source-change/backup/conflict

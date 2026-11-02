@@ -86,8 +86,14 @@ class GamerHQBot(commands.Bot):
         await self.load_extension("cogs.progression_activity")
         await self.load_extension("cogs.suggestions")
         await self.load_extension("cogs.tickets")
-        await self.load_extension("cogs.lfg")
-        await self.load_extension("cogs.lobby_admin")
+        # Event Manager adapters are selected by the installed public Skill,
+        # never by a second Host implementation of its domain.
+        from hosts.gamerhq.event_cutover import owns_events
+        if self.skill_runtime.registry.contains("event-manager") or owns_events(GUILD_ID):
+            await self.load_extension("cogs.event_manager")
+        else:
+            await self.load_extension("cogs.lfg")
+            await self.load_extension("cogs.lobby_admin")
         await self.load_extension("cogs.streamer")
 
         guild = discord.Object(id=GUILD_ID)
