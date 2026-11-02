@@ -299,7 +299,7 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         'XDG_CONFIG_HOME': str(HOME / '.config'), 'XDG_DATA_HOME': str(HOME / '.local/share'), 'XDG_CACHE_HOME': str(HOME / '.cache'),
         'DBUS_SESSION_BUS_ADDRESS': f'unix:path=/run/user/{uid}/bus'}
     def user(*args):
-        return run(['runuser', '-u', ACCOUNT, '--', 'env', *[k + '=' + v for k,v in values.items()], *args])
+        return run(['runuser', '-u', ACCOUNT, '--', 'env', '-i', *[k + '=' + v for k,v in values.items()], *args])
     if state['phase'] == 'DAEMON':
         # Check the actual new user's bus/manager, not the owner's root session.
         user('systemctl', '--user', 'start', 'dbus.socket')
