@@ -39,6 +39,17 @@ jobs:
           sudo bash /tmp/verified-staging-bootstrap.sh
           sudo bash /tmp/verified-staging-bootstrap.sh
           sudo env GITHUB_ACTIONS=true python3 -m tools.staging_access_smoke --key /tmp/staging-ci-key
+      - name: Inspect disposable rootless fixture failure without credentials
+        if: failure()
+        shell: bash
+        run: |
+          if id gamerhq-staging-bridge >/dev/null 2>&1; then
+            uid=$(id -u gamerhq-staging-bridge)
+            sudo journalctl --no-pager -u "user@$uid.service" -n 60
+            sudo runuser -u gamerhq-staging-bridge -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+              DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+              journalctl --user --no-pager -u docker.service -n 100
+          fi
   test:
     runs-on: ubuntu-latest
     strategy:

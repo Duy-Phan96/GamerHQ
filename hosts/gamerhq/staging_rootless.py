@@ -23,7 +23,7 @@ def verify_rootless(profile, *, run=subprocess.run):
     result = run(["docker", "info", "--format", "{{json .}}"], capture_output=True, text=True, timeout=30, check=True)
     info = json.loads(result.stdout)
     home = Path(profile["deploymentHome"]).resolve()
-    if not any("rootless" in item for item in info.get("SecurityOptions", [])) or not Path(info["DockerRootDir"]).resolve().is_relative_to(home):
+    if not any("rootless" in item for item in info.get("SecurityOptions") or []) or not Path(info["DockerRootDir"]).resolve().is_relative_to(home):
         raise PermissionError("Staging Docker is not its independent rootless daemon.")
     if info.get("CgroupDriver") != "systemd" or str(info.get("CgroupVersion")) != "2":
         raise PermissionError("Rootless staging needs enforced cgroup v2 resource limits.")

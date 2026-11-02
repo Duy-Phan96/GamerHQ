@@ -189,9 +189,9 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
             # Rootless container UID 10001 maps to subordinate start + 10000.
             acl = f'u:{uid}:rwx,u:{subuids[0]+10000}:rwx,d:u::rwx,d:u:{uid}:rwx,d:u:{subuids[0]+10000}:rwx,d:g::---,d:m::rwx,d:o::---'
             run(['setfacl', '-m', acl, str(ROOT / name)])
-        CONFIG.mkdir(mode=0o750, exist_ok=True); os.chown(CONFIG, 0, gid)
+        CONFIG.mkdir(mode=0o750, exist_ok=True); os.chown(CONFIG, 0, gid); CONFIG.chmod(0o750)
         settings = CONFIG / 'settings'; settings.mkdir(mode=0o700, exist_ok=True); os.chown(settings, uid, gid)
-        client = CONFIG / 'docker-client'; client.mkdir(mode=0o750, exist_ok=True); os.chown(client, 0, gid)
+        client = CONFIG / 'docker-client'; client.mkdir(mode=0o750, exist_ok=True); os.chown(client, 0, gid); client.chmod(0o750)
         if not (client / 'config.json').exists(): write_new(client / 'config.json', '{"currentContext":"default"}\n', 0o640)
         if not (CONFIG / 'gitconfig').exists(): write_new(CONFIG / 'gitconfig', '[safe]\n\tdirectory = ' + str(WORKER) + '\n', 0o640)
         for path in (client / 'config.json', CONFIG / 'gitconfig'): os.chown(path, 0, gid)
@@ -240,8 +240,16 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         user('systemctl', '--user', 'daemon-reload')
         user('systemctl', '--user', 'enable', '--now', 'docker.service')
         values.update(DOCKER_HOST=f'unix:///run/user/{uid}/docker.sock', DOCKER_CONFIG=str(CONFIG / 'docker-client'))
-        info = json.loads(user('docker', 'info', '--format', '{{json .}}'))
-        if not any('rootless' in item for item in info.get('SecurityOptions', [])) or info.get('CgroupDriver') != 'systemd' or str(info.get('CgroupVersion')) != '2':
+        info = {}
+        for _ in range(20):
+            try:
+                info = json.loads(user('docker', 'info', '--format', '{{json .}}'))
+                if info.get('ID') and info.get('SecurityOptions'):
+                    break
+            except RuntimeError:
+                pass
+            time.sleep(1)
+        if not any('rootless' in item for item in info.get('SecurityOptions') or []) or info.get('CgroupDriver') != 'systemd' or str(info.get('CgroupVersion')) != '2':
             raise RuntimeError('Rootless daemon/resource delegation did not verify; no rootful fallback is permitted.')
         profile = json.loads((WORKER / 'deploy/staging/profile.example.json').read_text())
         profile.update(configurationRoot=str(CONFIG), deploymentUid=uid, deploymentHome=str(HOME), dockerMode='rootless',
