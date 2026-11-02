@@ -12,6 +12,7 @@
   "releaseFile": "/etc/gamerhq/staging/event-manager.release.json",
   "sdkReleaseFile": "/etc/gamerhq/staging/sdk.release.json",
   "verificationFile": "/opt/gamerhq-staging/verification.json",
+  "offlineVerificationFile": "/opt/gamerhq-staging/offline-verification.json",
   "service": "gamerhq-staging",
   "container": "gamerhq-staging-bot",
   "dockerDaemonId": "REPLACE_WITH_APPROVED_VPS_DOCKER_DAEMON_ID",

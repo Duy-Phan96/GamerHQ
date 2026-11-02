@@ -83,10 +83,10 @@ of a matching application/database backup. Code rollback alone is insufficient.
 
 ## Current implementation and release gates
 
-Host #173 and #174 are merged into develop. The Skill #1/#2 and Web #66 are
+Host #173, #174, #175 and #176 are merged into develop. The Skill #1/#2 and Web #66 are
 merged into their main branches. Host #175 integrates the installed-Skill Discord
 editor, normal empty-domain installation, legacy barriers, resource hardening and
-combined acceptance tests. It still requires passing final-head CI before merge.
+combined acceptance tests and passed final-head CI before merge.
 
 The trusted Host now implements persistent area/card and temporary voice resources,
 atomic six-table import, verified text/voice adoption and one domain authority.
@@ -105,13 +105,16 @@ Remaining release gates:
 
 1. Approve private Skill artifact delivery and reviewed SDK/Skill release pins.
    The package is not bundled/enabled in production by these development merges.
-2. Provision an authorized staging Host/Discord identity/category, protected profile,
-   runner and approval environments. Host repository runner/variable/secret/environment
+2. Use the [consolidated owner setup](../../deploy/staging/OWNER_SETUP.md) to provision
+   isolated staging on the approved existing VPS, with a restricted SSH trigger,
+   dedicated Discord identity/categories, protected profile and approval environment.
+   No Docker-capable self-hosted runner is needed. Host runner/variable/secret/environment
    inventories were empty when inspected; no configuration was changed.
-3. Complete real Event Manager Docker/private-artifact and live Discord acceptance,
+3. Complete actual installed-wheel Docker/private-artifact and live Discord acceptance,
    with backed-up/anonymized existing six-table data, permission/restart/retry checks,
-   precise resource decisions and verified recovery limits. Public-fixture Docker CI
-   validates the generic staging mechanism, not live customer acceptance.
+   precise resource decisions and verified recovery limits. Skill #3 adds a private
+   built-wheel Host/Docker CI gate, pinned to public Host #178. Offline image probes
+   and synthetic migration tests do not establish live customer acceptance.
 4. Obtain separate approval for the exact production image and migration/cutover
    plan. No production database, Gateway, channel or credential was changed.
 

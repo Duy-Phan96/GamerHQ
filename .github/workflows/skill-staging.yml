@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [inspect, initialize, build-base, fetch, verify, build, bootstrap, install]
+        options: [inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
         required: true
       approval:
         description: Explicit operation approval; bootstrap starts only the dedicated staging Gateway
@@ -17,19 +17,20 @@ concurrency:
 jobs:
   prepare:
     if: vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true'
-    runs-on: [self-hosted, linux, gamerhq-deployment]
+    runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
-      - name: Invoke installed reviewed staging tool
-        working-directory: /opt/gamerhq-staging/deployment-worker
+      - uses: actions/checkout@v4
+      - name: Invoke restricted installed staging tool
         env:
           OPERATION: ${{ inputs.operation }}
           APPROVAL: ${{ inputs.approval }}
-          GAMERHQ_SKILL_RELEASE_TOKEN: ${{ secrets.GAMERHQ_SKILL_RELEASE_TOKEN }}
-          GAMERHQ_STAGING_WEB_API_SECRET: ${{ secrets.GAMERHQ_STAGING_WEB_API_SECRET }}
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT || '22' }}
+          GAMERHQ_STAGING_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_SSH_KEY }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
         shell: bash
         run: |
           set -euo pipefail
-          /opt/gamerhq-staging/deployment-worker/.venv/bin/python -m tools.skill_staging \
-            --profile /etc/gamerhq/staging/profile.json "$OPERATION" --approval "$APPROVAL"
+          python3 -m tools.staging_ssh_client --phase prepare --operation "$OPERATION" --approval "$APPROVAL"

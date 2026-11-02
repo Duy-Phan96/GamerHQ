@@ -17,10 +17,14 @@ unconfigured templates; no staging infrastructure or live bot has been created.
 
 ## Owner-controlled prerequisites
 
-Provisioning requires infrastructure authorization. A trusted administrator must
-prepare the dedicated paths, protected reviewed worker installation/venv and a
-runner labelled `gamerhq-deployment`. This runner must not accept untrusted PR
-jobs. Do not automatically add accounts to the Docker group or change VPS policy.
+Provisioning requires infrastructure authorization. Follow the single consolidated
+[owner handoff](OWNER_SETUP.md). The owner-run installer prepares a fresh reviewed
+worker checkout and a staging-only SSH forced command. GitHub-hosted runners carry
+only that restricted trigger key; release and staging API credentials stay in a
+root-private VPS file. No self-hosted runner or Docker-group membership is needed.
+Docker daemon access grants host-level authority; it is kept behind the reviewed
+root-owned dispatcher, never delegated as a general CI shell. See
+[Docker daemon protection](https://docs.docker.com/engine/security/protect-access/).
 The bot data/backup directories and new database need effective read/write access
 for UID 10001; retain private access and provision appropriate dedicated SELinux
 labels/ACLs. Verification checks access from an offline container before any Gateway
@@ -43,12 +47,12 @@ copy the live production database into staging or back over production.
 
 Record the approved local Docker daemon ID and an already-present immutable Host
 base image ID/digest. Remote Docker contexts are rejected. Set independent staging
-Web API credentials in the private bot environment and protected GitHub environment
-secret `GAMERHQ_STAGING_WEB_API_SECRET`; the verifier requires them to match.
+Web API credentials in the private bot environment and root-private
+`/etc/gamerhq/staging/worker.env` as `GAMERHQ_STAGING_WEB_API_SECRET`; the verifier requires them to match.
 
 For the private Skill repository, supply an approved read-only GitHub App installation
 token or fine-grained credential restricted to required release contents, as the
-`GAMERHQ_SKILL_RELEASE_TOKEN` environment secret. The public Host workflow token is
+`GAMERHQ_SKILL_RELEASE_TOKEN` in that same root-private worker file. The public Host workflow token is
 not assumed to have private access. No credential has been requested, created,
 copied, printed or configured by this implementation.
 
@@ -72,15 +76,18 @@ artifact directory; private Skill bytes are never uploaded to public Host CI.
 
 ## Prepared workflow, disabled by default
 
-`Isolated Skill staging preparation` invokes the fixed installed worker, with no
-repository checkout on the deployment runner. Its gate is
+`Isolated Skill staging preparation` invokes the fixed installed worker through a
+bounded SSH request. Only the GitHub-hosted client runner checks out source; the
+VPS executes the owner-installed immutable checkout. Its gate is
 `GAMERHQ_STAGING_PREPARATION_ENABLED`; no such variable currently exists. Protect the
 `staging` GitHub environment and supply approved credentials before enabling that
-preparation gate. The separate deployment worker gate also remains disabled.
+preparation gate. The separate `GAMERHQ_STAGING_UPDATES_ENABLED` gate also remains
+disabled. Neither staging gate enables `GAMERHQ_DEPLOYMENT_WORKER_ENABLED` or production.
 
 GitHub requires manual-dispatch definitions on the default branch. The separate
-workflow-only registration PR #177 prepares those two definitions on `main`;
-the worker implementation/templates remain in #176 on `develop`. Registration
+workflow-only registration PR #177 registered the initial definitions on `main`;
+#179 updates them and the restricted client for #178's owner-installed worker.
+The worker implementation/templates remain on `develop`. Registration
 does not enable either gate or deploy application code. See
 [GitHub dispatch requirements](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
 
@@ -93,12 +100,16 @@ Every operation uses the fixed profile above:
 | `build-base` | Require `BUILD ISOLATED STAGING BASE`, the approved daemon and exact clean reviewed worker source commit; build only `gamerhq-staging-base:<commit>`, report immutable bytes for review, start no Gateway |
 | `fetch` | Download reviewed GitHub Release SDK/Skill artifacts; never execute or install them |
 | `verify` | Read-only Docker/context/filesystem, Discord identity/membership/category permissions, credential agreement and release trust checks; write private verification evidence |
-| `build` | Require verification; build/probe the initial immutable candidate without credentials, network, production mounts or Gateway |
+| `verify-offline` | Verify reviewed local SDK/Skill wheel bytes, compatibility, migration policy and Docker isolation; no Discord credentials, no published-release claim |
+| `build` | Require fresh offline verification; build/probe the initial immutable candidate without credentials, network, production mounts or Gateway |
 | `bootstrap` | Require verification and `BOOTSTRAP ISOLATED STAGING`; refuse an existing staging container; start only the dedicated staging service and verify Host/package availability |
 | `install` | Require verification and `INSTALL IN ISOLATED STAGING`; use the same public Host installation API as other customers; leave configuration/enablement explicit |
 
 The worker profile starts with `workerEnabled=false`. Read-only verification never
-enables it. After reviewing actual verification evidence and authorizing staging,
+enables it. Offline verification is valid for 24 hours and binds image, SDK and
+Skill descriptors; it cannot authorize bootstrap/install/update. Adding the new
+staging Discord identity does not invalidate the built artifact. Live verification
+is a separate proof kind. After reviewing live verification evidence and authorizing staging,
 the owner may enable the protected profile and re-verify it. Evidence is valid for
 one hour and is bound to profile, Compose, private bot environment and both release
 descriptors. A change invalidates it. Actual daemon identity, layout and artifact

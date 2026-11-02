@@ -60,8 +60,8 @@ class DockerSkillDeployment:
             verify_wheel(root / skill_name, distribution=release["distribution"], version=release["version"], sha256=release["sha256"])
             verify_wheel(root / self.sdk_wheel.name, distribution="gamerhq-skill-sdk", version=self.sdk_version, sha256=self.sdk_sha256)
             (root / "Dockerfile").write_text(
-                f"FROM {alias}\nUSER root\nCOPY {skill_name} /opt/skill-release/{skill_name}\n"
-                f"COPY {self.sdk_wheel.name} /opt/skill-release/{self.sdk_wheel.name}\n"
+                f"FROM {alias}\nUSER root\nCOPY --chown=10001:10001 {skill_name} /opt/skill-release/{skill_name}\n"
+                f"COPY --chown=10001:10001 {self.sdk_wheel.name} /opt/skill-release/{self.sdk_wheel.name}\n"
                 f"RUN python -m pip install --no-index --no-deps --force-reinstall /opt/skill-release/{self.sdk_wheel.name} /opt/skill-release/{skill_name} && python -m pip check\n"
                 "USER 10001:10001\n", encoding="utf-8")
             self.run(["docker", "build", "--network", "none", "--iidfile", str(root / "image-id"), str(root)])
