@@ -85,8 +85,9 @@ preparation gate. The separate `GAMERHQ_STAGING_UPDATES_ENABLED` gate also remai
 disabled. Neither staging gate enables `GAMERHQ_DEPLOYMENT_WORKER_ENABLED` or production.
 
 GitHub requires manual-dispatch definitions on the default branch. The separate
-workflow-only registration PR #177 prepares those two definitions on `main`;
-the worker implementation/templates remain in #176 on `develop`. Registration
+workflow-only registration PR #177 registered the initial definitions on `main`;
+#179 updates them and the restricted client for #178's owner-installed worker.
+The worker implementation/templates remain on `develop`. Registration
 does not enable either gate or deploy application code. See
 [GitHub dispatch requirements](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
 

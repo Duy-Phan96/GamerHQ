@@ -43,23 +43,27 @@ bounded deployment results to authorized guild managers, without artifact paths,
 private evidence, credentials or approval controls. Apply is never a Web or Skill API.
 
 The opt-in `skill-deployment-worker.yml` workflow invokes a fixed, preinstalled
-Host worker, with no repository checkout on the deployment runner. Before enabling
-`GAMERHQ_DEPLOYMENT_WORKER_ENABLED`, the owner must provision a dedicated runner
-labelled `gamerhq-deployment`, install the reviewed worker at
-`/opt/gamerhq/deployment-worker` for production and the separate
-`/opt/gamerhq-staging/deployment-worker` for staging. Production uses
-`/etc/gamerhq/deployments/production.json`; staging uses
+Host worker. Staging uses a GitHub-hosted client with a bounded SSH forced command,
+the protected worker at `/opt/gamerhq-staging/deployment-worker`, and profile
 `/etc/gamerhq/staging/profile.json`. Follow the
-[isolated staging profile](../../deploy/staging/README.md) for separate identity,
-release trust and fresh verification gates, and protect both GitHub
-environments (production requires an independent reviewer). Production dispatch
-is restricted to main. Do not enable this on a runner accepting untrusted PR jobs.
+[consolidated owner setup](../../deploy/staging/OWNER_SETUP.md) for the approved
+existing VPS, new dedicated identity, release trust and fresh verification gates.
+No Docker-group membership or self-hosted deployment runner is required for staging.
+`GAMERHQ_STAGING_UPDATES_ENABLED` is separate from preparation and production gates.
+
+The independent production job remains disabled and restricted to main. Before
+enabling `GAMERHQ_DEPLOYMENT_WORKER_ENABLED`, the owner must separately authorize
+the dedicated `gamerhq-deployment` runner, worker `/opt/gamerhq/deployment-worker`
+and `/etc/gamerhq/deployments/production.json`. Protect its environment with an
+independent reviewer; never use a runner accepting untrusted PR jobs.
 This implementation does not change runner, repository, credential or environment
 settings and has not dispatched a deployment.
 
-Current external gates: this workstation has no Docker executable; private Event
-Manager artifact delivery to the public Host build is not yet approved/configured;
-no staging Discord identity/profile or protected deployment runner was supplied.
+Current external gates: VPS SSH/protected configuration have not been delegated;
+private GitHub Release access, published reviewed bytes and a dedicated staging
+Discord identity are not configured. Private Skill CI exercises its actual wheel
+against the public Host and Docker without a Gateway. This establishes offline
+integration evidence, not the VPS's live readiness or artifact publisher trust.
 Do not publish private wheel bytes in a public CI artifact to bypass that boundary.
 Live staging must verify installation through normal Runtime lifecycle, six-table
 backup/cutover, private permissions, one area/chat over multiple occurrences,
