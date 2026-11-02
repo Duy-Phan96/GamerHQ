@@ -243,10 +243,10 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         info = {}
         for _ in range(20):
             try:
-                info = json.loads(user('docker', 'info', '--format', '{{json .}}'))
+                info = json.loads(user('docker', 'info', '--format', '{{if .ID}}{{json .}}{{end}}'))
                 if info.get('ID') and info.get('SecurityOptions'):
                     break
-            except RuntimeError:
+            except (RuntimeError, json.JSONDecodeError):
                 pass
             time.sleep(1)
         if not any('rootless' in item for item in info.get('SecurityOptions') or []) or info.get('CgroupDriver') != 'systemd' or str(info.get('CgroupVersion')) != '2':

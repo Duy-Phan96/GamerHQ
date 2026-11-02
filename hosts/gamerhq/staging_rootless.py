@@ -20,7 +20,9 @@ def verify_identity(profile):
 
 def verify_rootless(profile, *, run=subprocess.run):
     verify_identity(profile)
-    result = run(["docker", "info", "--format", "{{json .}}"], capture_output=True, text=True, timeout=30, check=True)
+    # Mention a server field explicitly: some CLI releases optimize a bare JSON
+    # template into client-only output and leave server security fields null.
+    result = run(["docker", "info", "--format", "{{if .ID}}{{json .}}{{end}}"], capture_output=True, text=True, timeout=30, check=True)
     info = json.loads(result.stdout)
     home = Path(profile["deploymentHome"]).resolve()
     if not any("rootless" in item for item in info.get("SecurityOptions") or []) or not Path(info["DockerRootDir"]).resolve().is_relative_to(home):
