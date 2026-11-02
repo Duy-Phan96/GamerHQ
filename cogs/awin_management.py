@@ -201,7 +201,7 @@ class AwinConnectModal(discord.ui.Modal, title="Connect Awin"):
         label="Awin access token",
         placeholder="Paste the token from your Awin account",
         required=True,
-        max_length=4096,
+        max_length=4000,
     )
 
     def __init__(self, guild, actor_id):
