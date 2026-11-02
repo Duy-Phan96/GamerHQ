@@ -85,6 +85,13 @@ def prepare(commit, key, *, apply=False, approval=""):
     run(["git", "-C", str(WORKER), "checkout", "--detach", commit])
     if run(["git", "-C", str(WORKER), "rev-parse", "HEAD"]) != commit:
         raise ValueError("Worker source does not match the reviewed commit.")
+    # Git can honor shared-repository permission settings independently of umask.
+    # Normalize only this newly created checkout, never an existing Host checkout.
+    for path in [WORKER, *WORKER.rglob("*")]:
+        if path.is_symlink():
+            raise ValueError("Reviewed worker source must not contain symbolic links.")
+        os.chown(path, 0, 0)
+        path.chmod(path.stat().st_mode & 0o700)
     run([sys.executable, "-m", "venv", str(WORKER / ".venv")])
     python = str(WORKER / ".venv/bin/python")
     run([python, "-m", "pip", "install", "--disable-pip-version-check", "-r", str(WORKER / "requirements.lock")])

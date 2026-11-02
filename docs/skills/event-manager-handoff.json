@@ -20,7 +20,8 @@
     "hostLatestFocusedTests": 31,
     "hostLatestFocusedSubtests": 0,
     "skillTests": 42,
-    "webTests": 60
+    "webTests": 60,
+    "hostInstalledWheelAndStagingBoundaryTests": 53
   },
   "skillRepository": "Duy-Phan96/gamerhq-skill-event-manager",
   "skillBranch": "feat/portable-event-manager-v2",
@@ -43,7 +44,11 @@
   "productionApproved": false,
   "liveAcceptanceComplete": false,
   "v1CutoverComplete": false,
-  "status": "HOST_FOUNDATION_AND_UPDATER_MERGED_INTEGRATION_VALIDATION",
+  "status": "CODE_MERGED_ISOLATED_STAGING_PREPARATION_PENDING_OWNER_ACCESS",
   "hostIntegrationPR": "https://github.com/Duy-Phan96/GamerHQ/pull/175",
-  "skillPreservationPR": "https://github.com/Duy-Phan96/gamerhq-skill-event-manager/pull/2"
+  "skillPreservationPR": "https://github.com/Duy-Phan96/gamerhq-skill-event-manager/pull/2",
+  "stagingAccessPR": "https://github.com/Duy-Phan96/GamerHQ/pull/178",
+  "privateWheelIntegrationPR": "https://github.com/Duy-Phan96/gamerhq-skill-event-manager/pull/3",
+  "stagingOwnerProcedure": "deploy/staging/OWNER_SETUP.md",
+  "stagingDeploymentWorkerEnabled": false
 }
