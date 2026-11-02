@@ -61,6 +61,11 @@ def command_for(request, profile, *, current_version=None):
 def main():
     if os.geteuid() != 0:
         raise PermissionError("The staging dispatcher requires its fixed privileged launcher.")
+    import fcntl
+    # Preparation and update workflows share the same staging resources, including
+    # when requests originate outside Actions. Never overlap those operations.
+    lock = (WORKER.parent / "operation.lock").open("a")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     protected_file(PROFILE)
     protected_file(WORKER / "tools/staging_dispatch.py")
     if (WORKER / ".env").exists():
