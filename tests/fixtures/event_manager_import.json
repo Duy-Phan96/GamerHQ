@@ -1,0 +1,252 @@
+{
+  "schemaVersion": "event-manager-import.1",
+  "guildId": "1",
+  "skillId": "event-manager",
+  "sourceHash": "76ecc3ab3fb0ba13b8a7d69dbaff6507b2eb751cc7387f20d024ca4630a5ecd6",
+  "writes": {
+    "event.v2:series-1": {
+      "id": "series-1",
+      "ownerId": "10",
+      "revision": 1,
+      "status": "active",
+      "config": {
+        "name": "Private Raid",
+        "kind": "recurring",
+        "startDate": "2033-05-18",
+        "localTime": "05:33",
+        "timezone": "Europe/Berlin",
+        "weekdays": [
+          2
+        ],
+        "description": "",
+        "game": "",
+        "visibility": "private",
+        "maxPlayers": 5,
+        "durationMinutes": 120,
+        "autoEnroll": false,
+        "voiceEnabled": true,
+        "chatEnabled": true
+      },
+      "members": [
+        "10",
+        "20"
+      ],
+      "invited": [
+        "30"
+      ],
+      "resourceKey": "event:series-1",
+      "chat": {
+        "channelId": "100"
+      },
+      "createdAt": 1234567890,
+      "legacy": {
+        "id": 1,
+        "guild_id": 1,
+        "host_id": 10,
+        "title": "Private Raid",
+        "timezone_name": "Europe/Berlin",
+        "frequency": "weekly",
+        "weekdays_json": "[]",
+        "first_start_at": 2000000000,
+        "occurrence_limit": 4,
+        "until_at": null,
+        "max_players": 5,
+        "invite_lead_minutes": 15,
+        "duration_minutes": 120,
+        "visibility": "private",
+        "note": "",
+        "status": "active",
+        "created_at": 1234567890,
+        "updated_at": 1234567890,
+        "weekdays": []
+      },
+      "legacyEventIds": [
+        1
+      ],
+      "legacyRecurrence": {
+        "firstStartAt": 2000000000,
+        "untilAt": null,
+        "occurrenceLimit": 4,
+        "weekdays": [
+          2
+        ]
+      }
+    },
+    "occurrence.v2:series-1:2000000000": {
+      "id": "series-1:2000000000",
+      "eventId": "series-1",
+      "legacyEventId": 1,
+      "startAt": 2000000000,
+      "status": "scheduled",
+      "participants": [
+        "10",
+        "20"
+      ],
+      "attendance": [],
+      "voice": null,
+      "revision": 1,
+      "configSnapshot": {
+        "name": "Private Raid",
+        "kind": "recurring",
+        "startDate": "2033-05-18",
+        "localTime": "05:33",
+        "timezone": "Europe/Berlin",
+        "weekdays": [
+          2
+        ],
+        "description": "",
+        "game": "",
+        "visibility": "private",
+        "maxPlayers": 5,
+        "durationMinutes": 120,
+        "autoEnroll": false,
+        "voiceEnabled": true,
+        "chatEnabled": true
+      },
+      "legacy": {
+        "id": 1,
+        "guild_id": 1,
+        "game_id": 0,
+        "host_id": 10,
+        "title": "Private Raid",
+        "start_at": 2000000000,
+        "max_players": 5,
+        "invite_lead_minutes": 15,
+        "duration_minutes": 120,
+        "channel_id": 100,
+        "message_id": 200,
+        "status": "scheduled",
+        "voice_channel_id": null,
+        "voice_invite_sent": 0,
+        "visibility": "private",
+        "private_channel_id": 100,
+        "share_token": null,
+        "share_enabled": 1,
+        "series_id": 1,
+        "occurrence_index": 0,
+        "note": "",
+        "dashboard_channel_id": null,
+        "dashboard_message_id": null,
+        "ended_at": null
+      },
+      "legacyMembers": [
+        {
+          "event_id": 1,
+          "user_id": 10,
+          "status": "joined"
+        },
+        {
+          "event_id": 1,
+          "user_id": 20,
+          "status": "joined"
+        },
+        {
+          "event_id": 1,
+          "user_id": 30,
+          "status": "invited"
+        }
+      ]
+    },
+    "legacy.v1:series:0": {
+      "id": 1,
+      "guild_id": 1,
+      "host_id": 10,
+      "title": "Private Raid",
+      "timezone_name": "Europe/Berlin",
+      "frequency": "weekly",
+      "weekdays_json": "[]",
+      "first_start_at": 2000000000,
+      "occurrence_limit": 4,
+      "until_at": null,
+      "max_players": 5,
+      "invite_lead_minutes": 15,
+      "duration_minutes": 120,
+      "visibility": "private",
+      "note": "",
+      "status": "active",
+      "created_at": 1234567890,
+      "updated_at": 1234567890,
+      "weekdays": []
+    },
+    "legacy.v1:events:0": {
+      "id": 1,
+      "guild_id": 1,
+      "game_id": 0,
+      "host_id": 10,
+      "title": "Private Raid",
+      "start_at": 2000000000,
+      "max_players": 5,
+      "invite_lead_minutes": 15,
+      "duration_minutes": 120,
+      "channel_id": 100,
+      "message_id": 200,
+      "status": "scheduled",
+      "voice_channel_id": null,
+      "voice_invite_sent": 0,
+      "visibility": "private",
+      "private_channel_id": 100,
+      "share_token": null,
+      "share_enabled": 1,
+      "series_id": 1,
+      "occurrence_index": 0,
+      "note": "",
+      "dashboard_channel_id": null,
+      "dashboard_message_id": null,
+      "ended_at": null
+    },
+    "legacy.v1:members:0": {
+      "event_id": 1,
+      "user_id": 10,
+      "status": "joined"
+    },
+    "legacy.v1:members:1": {
+      "event_id": 1,
+      "user_id": 20,
+      "status": "joined"
+    },
+    "legacy.v1:members:2": {
+      "event_id": 1,
+      "user_id": 30,
+      "status": "invited"
+    },
+    "legacy.v1:messages:0": {
+      "event_id": 1,
+      "channel_id": 100,
+      "message_id": 200
+    },
+    "legacy.v1:voiceNotifications:0": {
+      "event_id": 1,
+      "user_id": 20,
+      "sent_at": 123
+    },
+    "legacy.v1:timeProposals:0": {
+      "id": 1,
+      "event_id": 1,
+      "proposer_id": 20,
+      "start_at": 2000100000,
+      "reason": "Later",
+      "status": "PENDING",
+      "created_at": 123
+    },
+    "legacy-reference.v1:1": {
+      "eventId": "series-1",
+      "startAt": 2000000000,
+      "legacyEventId": 1
+    },
+    "migration.v1": {
+      "schemaVersion": 1,
+      "guildId": "1",
+      "sourceHash": "76ecc3ab3fb0ba13b8a7d69dbaff6507b2eb751cc7387f20d024ca4630a5ecd6",
+      "counts": {
+        "series": 1,
+        "events": 1,
+        "members": 3,
+        "messages": 1,
+        "voiceNotifications": 1,
+        "timeProposals": 1
+      }
+    }
+  },
+  "targetHash": "57e992360609ffb4c44a583f2a02a514f0e6f122dbe98ed836d0b03cc24ee973",
+  "deleteChannels": []
+}

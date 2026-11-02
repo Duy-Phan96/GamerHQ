@@ -10,6 +10,10 @@ from skill_runtime.contracts.public_api import PublicApiContract
 
 
 class SkillContractTests(unittest.TestCase):
+    def test_internal_collections_can_expose_editing_without_creating_domain_entities(self):
+        operations = ManagementCollectionOperations(list_contract="events.occurrences-list.v1", update_contract="events.occurrences-update.v1")
+        self.assertIsNone(operations.create_contract)
+        self.assertEqual(operations.contract_ids(), ("events.occurrences-list.v1", "events.occurrences-update.v1"))
     def test_collection_revision_and_preview_bindings_fail_closed(self):
         operations = ManagementCollectionOperations(list_contract="events.list.v1", create_contract="events.create.v1")
         for extra in ({"revision_path": "revision"}, {"expected_revision_key": "revision"},

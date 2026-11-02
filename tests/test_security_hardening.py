@@ -287,12 +287,21 @@ class TicketStaleStaffTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BackgroundRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unavailable_authority_never_runs_legacy_effects(self):
+        import sqlite3
+        from cogs.lfg import LFG
+        cog = object.__new__(LFG)
+        cog.bot = SimpleNamespace(guilds=[SimpleNamespace(id=1)])
+        with patch('hosts.gamerhq.event_cutover.owns_events', side_effect=sqlite3.OperationalError('busy')), patch('cogs.lfg.cleanup_ended', new_callable=AsyncMock) as cleanup:
+            with self.assertLogs('cogs.lfg', level='ERROR'):
+                await LFG.voice_scheduler.coro(cog)
+            cleanup.assert_not_awaited()
     async def test_lfg_inventory_database_failure_does_not_stop_next_cycle(self):
         import sqlite3
         from cogs.lfg import LFG
         cog = object.__new__(LFG)
         cog.bot = SimpleNamespace(guilds=[SimpleNamespace(id=1)])
-        with patch('cogs.lfg.cleanup_ended', new_callable=AsyncMock), patch.object(
+        with patch('hosts.gamerhq.event_cutover.owns_events', return_value=False), patch('cogs.lfg.cleanup_ended', new_callable=AsyncMock), patch.object(
                 db, 'get_active_lfg_events', side_effect=[sqlite3.OperationalError('busy'), []]) as inventory:
             with self.assertLogs('cogs.lfg', level='ERROR'):
                 await LFG.voice_scheduler.coro(cog)

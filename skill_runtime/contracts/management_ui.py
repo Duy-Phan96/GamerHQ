@@ -57,7 +57,7 @@ class ManagementFieldOption:
 @dataclass(frozen=True, slots=True)
 class ManagementCollectionOperations:
     list_contract: str
-    create_contract: str
+    create_contract: str | None = None
     get_contract: str | None = None
     validate_contract: str | None = None
     update_contract: str | None = None
@@ -67,8 +67,8 @@ class ManagementCollectionOperations:
     describe_contract: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.list_contract or not self.create_contract:
-            raise ValueError("Management collection requires list and create contracts.")
+        if not self.list_contract or self.create_contract == "":
+            raise ValueError("Management collection requires list and a valid optional create contract.")
 
     def contract_ids(self) -> tuple[str, ...]:
         return tuple(
