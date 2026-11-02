@@ -1,0 +1,46 @@
+name: Protected staging configuration and access
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [health, initial, release, authorize-live, revoke]
+        required: true
+      approval:
+        description: Exact operation approval from the bootstrap guide
+        type: string
+      release_descriptor:
+        description: For release only, reviewed skillRelease JSON object; no credentials
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: isolated-staging-configuration
+  cancel-in-progress: false
+jobs:
+  configure:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Invoke bounded unprivileged Host configuration
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVAL: ${{ inputs.approval }}
+          INITIAL_CONFIGURATION: ${{ inputs.operation == 'initial' && secrets.GAMERHQ_STAGING_CONFIGURATION || '' }}
+          RELEASE_DESCRIPTOR: ${{ inputs.release_descriptor }}
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT || '22' }}
+          GAMERHQ_STAGING_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_SSH_KEY }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$OPERATION" == initial ]]; then
+            export GAMERHQ_STAGING_CONFIGURATION="$INITIAL_CONFIGURATION"
+          elif [[ "$OPERATION" == release ]]; then
+            export GAMERHQ_STAGING_CONFIGURATION="$RELEASE_DESCRIPTOR"
+          fi
+          python3 -m tools.staging_ssh_client --phase configure --operation "$OPERATION" --approval "$APPROVAL"
