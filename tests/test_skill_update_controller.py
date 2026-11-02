@@ -146,6 +146,8 @@ def test_docker_stage_has_no_production_mounts_credentials_network_or_gateway(fi
     calls = []
     def run(args):
         calls.append(args)
+        if args[1:3] == ["image", "inspect"]:
+            return "sha256:" + "a" * 64
         if args[1] == "build":
             Path(args[args.index("--iidfile") + 1]).write_text("sha256:" + "b" * 64)
             return ""

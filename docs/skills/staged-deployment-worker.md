@@ -20,6 +20,9 @@ approvedCapabilities (map of Skill ID to capabilities), and optional updatePolic
 Use dedicated staging paths, database, category and Discord application. Keep the
 profile, Compose files, artifact directory and worker installation writable only by
 the deployment administrator. Never accept their contents from a portable Skill.
+The reviewed base image must already exist in the local Docker daemon. BuildKit
+receives an owned local alias, verified against the immutable image ID before and
+after build; the output candidate and deployment record use immutable image IDs.
 
 `apply --id <READY-id> --approval "APPROVE <READY-id>"` is a separate operation.
 Production additionally requires the protected production approval environment.

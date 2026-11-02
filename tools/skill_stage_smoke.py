@@ -29,6 +29,14 @@ def main():
         backend = DockerSkillDeployment(base_image=args.base_image, sdk_wheel=args.sdk_wheel,
             sdk_version="0.3.0", sdk_sha256=hashlib.sha256(args.sdk_wheel.read_bytes()).hexdigest(),
             compose_file=root / "unused-compose.json", service="unused", container="unused", work_root=root / "stage")
+        def fixture_run(command):
+            # Only this public fixture opts into diagnostics. The production
+            # worker continues to suppress potentially private Docker stderr.
+            value = subprocess.run(command, capture_output=True, text=True, timeout=600)
+            if value.returncode:
+                raise RuntimeError("Public fixture Docker failure:\n" + value.stderr[-10000:])
+            return value.stdout
+        backend.run = fixture_run
         result = backend.stage(release=release, wheel=wheel, deployment_id="isolated-ci")
         try:
             assert result["healthy"] is True and result["isolated"] is True
