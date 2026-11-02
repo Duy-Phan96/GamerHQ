@@ -408,6 +408,9 @@ class LobbyAdmin(commands.Cog):
     @tasks.loop(seconds=60)
     async def refresh(self):
         for guild in self.bot.guilds:
+            from hosts.gamerhq.event_cutover import owns_events
+            if owns_events(guild.id):
+                continue
             if guild.unavailable:
                 continue
             try:

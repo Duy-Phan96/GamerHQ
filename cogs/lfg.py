@@ -1468,6 +1468,9 @@ class LFG(commands.Cog):
     async def voice_scheduler(self):
         now = int(datetime.now(SERVER_TZ).timestamp())
         for guild in self.bot.guilds:
+            from hosts.gamerhq.event_cutover import owns_events
+            if owns_events(guild.id):
+                continue
             try:
                 await cleanup_ended(guild, reconcile=self.voice_scheduler.current_loop % 10 == 0)
             except Exception:

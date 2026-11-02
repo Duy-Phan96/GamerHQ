@@ -299,6 +299,37 @@ class GamerHQSkillStorage:
             ).fetchall()
         return tuple(row["storage_key"] for row in rows)
 
+    async def transact(self, *, checks, writes) -> bool:
+        self.permissions.require(SkillCapability.STORAGE_SKILL.value)
+        self.permissions.require(SkillCapability.STORAGE_ATOMIC.value)
+        if not isinstance(checks, Mapping) or not isinstance(writes, Mapping) or len(set(checks) | set(writes)) > 10000:
+            raise ValueError("Atomic storage requires bounded key mappings.")
+        def encode(value):
+            encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            if len(encoded.encode()) > _MAX_STORAGE_JSON_BYTES:
+                raise ValueError("Skill storage value exceeds the 64 KiB host limit.")
+            return encoded
+        expected = {self._key(key): encode(value) if value is not None else None for key, value in checks.items()}
+        encoded = {self._key(key): encode(value) if value is not None else None for key, value in writes.items()}
+        if sum(len(value or "") for value in (*expected.values(), *encoded.values())) > 16 * 1024 * 1024:
+            raise ValueError("Atomic storage transaction exceeds 16 MiB.")
+        with db.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for key, value in expected.items():
+                row = conn.execute("SELECT value_json FROM skill_storage WHERE guild_id=? AND skill_id=? AND storage_key=?",
+                                   (self.guild_id, self.skill_id, key)).fetchone()
+                if (row is None) != (value is None) or (row is not None and encode(json.loads(row["value_json"])) != value):
+                    return False
+            for key, value in encoded.items():
+                if value is None:
+                    conn.execute("DELETE FROM skill_storage WHERE guild_id=? AND skill_id=? AND storage_key=?",
+                                 (self.guild_id, self.skill_id, key))
+                else:
+                    conn.execute("INSERT INTO skill_storage VALUES(?,?,?,?,?) ON CONFLICT(guild_id,skill_id,storage_key) "
+                                 "DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",
+                                 (self.guild_id, self.skill_id, key, value, int(time.time())))
+        return True
+
     async def delete(self, key: str) -> None:
         self.permissions.require(SkillCapability.STORAGE_SKILL.value)
         key = self._key(key)

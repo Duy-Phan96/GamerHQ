@@ -65,3 +65,16 @@ def test_capability_size_and_json_validation(storage_factory):
                 await storage_factory().list_keys(prefix="key", limit=limit)
         assert await storage_factory().get("key") is None
     asyncio.run(scenario())
+
+
+def test_transaction_conflict_rolls_back_every_key_and_scopes_checks(storage_factory):
+    async def scenario():
+        storage = storage_factory()
+        assert await storage.transact(checks={"a": None, "b": None}, writes={"a": {"revision": 1}, "b": [2]})
+        assert not await storage.transact(checks={"a": {"revision": 0}}, writes={"a": {}, "b": None})
+        assert await storage.get("a") == {"revision": 1}
+        assert await storage.get("b") == [2]
+        assert await storage_factory(2).transact(checks={"a": None}, writes={"a": {"other": True}})
+        assert await storage.transact(checks={"a": {"revision": 1}}, writes={"a": {"revision": 2}, "b": None})
+        assert await storage.get("b") is None
+    asyncio.run(scenario())
