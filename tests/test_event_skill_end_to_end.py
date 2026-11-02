@@ -14,6 +14,7 @@ from database import db
 from hosts.gamerhq.event_cutover import owns_events
 from hosts.gamerhq.skill_packages import load_external_skill_packages
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+from hosts.gamerhq.web_platform import GamerHQWebPlatformService
 from test_skill_managed_resources import fixture as resources
 from test_event_authority_cutover import fixture as legacy, prepare, commit
 
@@ -77,6 +78,9 @@ def test_legacy_install_requires_transactional_cutover_before_domain_enable(lega
             await legacy.runtime.enable_skill(guild_id=1, skill_id="event-manager")
         plan = await prepare(legacy.runtime, guild_id=1)
         assert commit(legacy, plan)
+        web = GamerHQWebPlatformService(bot=legacy.runtime.bot, skill_runtime=legacy.runtime)
+        public_status = await web.get_skill(guild_id=1, skill_id="event-manager", authorized_guild_ids=[1])
+        assert public_status["state"]["configured"] is True
         await legacy.runtime.enable_skill(guild_id=1, skill_id="event-manager")
         rows = await legacy.runtime.call_management(guild_id=1, skill_id="event-manager",
             contract_id="event-manager.list.v1", payload={})

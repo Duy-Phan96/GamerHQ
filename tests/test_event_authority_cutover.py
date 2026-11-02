@@ -92,6 +92,7 @@ def test_cutover_preserves_six_tables_freezes_legacy_and_is_retry_safe(fixture):
     assert commit(fixture, plan)
     assert not commit(fixture, plan)
     assert owns_events(1) and not owns_events(2)
+    assert asyncio.run(fixture.runtime.status(guild_id=1, skill_id="event-manager")).configured is True
     assert db.get_active_lfg_events(1) == []
     with db.connect() as conn:
         assert snapshot_for_guild(conn, 1) == before
@@ -124,6 +125,7 @@ def test_verified_unmodified_rollback_restores_legacy_and_refuses_new_writes(fix
     commit(fixture, plan)
     assert rollback_unmodified(guild_id=1, resources_verified=True)
     assert not owns_events(1)
+    assert asyncio.run(fixture.runtime.status(guild_id=1, skill_id="event-manager")).configured is False
     db.set_lfg_event_member(fixture.event["id"], 20, "joined")  # original value; source unchanged
     commit(fixture, plan)
     with db.connect() as conn:
@@ -142,6 +144,14 @@ def test_namespace_conflicts_and_unverified_backups_fail_closed(fixture):
     with pytest.raises(ValueError, match="empty"):
         commit(fixture, plan)
     assert not owns_events(1)
+
+
+def test_unmodified_rollback_restores_the_original_lifecycle_configuration(fixture):
+    asyncio.run(fixture.runtime.state.set_configured(guild_id=1, skill_id="event-manager", configured=True, version="0.1.0"))
+    plan = asyncio.run(prepare(fixture.runtime, guild_id=1))
+    assert commit(fixture, plan)
+    assert rollback_unmodified(guild_id=1, resources_verified=True)
+    assert asyncio.run(fixture.runtime.status(guild_id=1, skill_id="event-manager")).configured is True
 
 
 def test_normal_install_claims_empty_tenant_and_blocks_new_legacy_authority(fixture):

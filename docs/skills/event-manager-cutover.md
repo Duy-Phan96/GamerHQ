@@ -59,6 +59,9 @@ scheduled-row queries exclude Skill-owned guilds. Runtime mutation/enablement
 refuses to establish a second domain while unmigrated legacy data exists.
 
 Rollback only accepts an unchanged imported namespace with the Skill disabled.
+Import marks the installed Skill configured in the same transaction, allowing
+normal Web enablement immediately. Host-owned lifecycle checkpoints restore the
+previous configured flag during an otherwise verified unmodified rollback.
 Adopted resource mappings require explicit external verification and unchanged
 baseline hashes. Any new V2 data or resource effect blocks automatic rollback;
 a reviewed reverse migration or matched application/database restoration is then
