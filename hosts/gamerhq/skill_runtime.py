@@ -234,7 +234,8 @@ class GamerHQSkillRuntime:
                 skill_id=skill_id,
             ),
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
-            resources=GamerHQManagedResources(guild=guild, skill_id=skill_id, permissions=permissions, policy=policy),
+            resources=GamerHQManagedResources(guild=guild, skill_id=skill_id, permissions=permissions, policy=policy,
+                user_lookup=getattr(self.bot, "fetch_user", None)),
             actor_id=_MANAGEMENT_ACTOR.get(),
         )
 

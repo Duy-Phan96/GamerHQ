@@ -25,6 +25,9 @@ def secret_findings(text):
         if pattern.search(text): found.add(label)
     for match in ASSIGNMENT.finditer(text):
         value=match.group(2)
+        # Public lazy-export symbol -> module mapping, not credential material.
+        # Keep this exact pair narrow, including historical versions of the file.
+        if match.group(1) == 'GamerHQSkillSecrets' and value == 'skill_secrets':continue
         if len(value)<8 or value.casefold() in PLACEHOLDERS: continue
         if value.startswith(('os.','values.','self.','str(','(','<','$','env.','discord.')):continue
         if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_','must-not-appear','must-not-render')):continue

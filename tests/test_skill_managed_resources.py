@@ -138,3 +138,33 @@ def test_policy_membership_and_ambiguity_fail_without_publication(fixture):
             await fixture.adapter().ensure_area(**spec())
         assert fixture.channels[0].send.await_count == 1
     asyncio.run(scenario())
+
+
+def test_uncached_or_departed_members_are_revoked_without_forgetting_their_overrides(fixture):
+    async def scenario():
+        await fixture.adapter().ensure_area(**spec())
+        fixture.guild.get_member.side_effect = lambda ident: None
+        adapter = fixture.adapter()
+        with pytest.raises(TransientHostError, match="retained"):
+            await adapter.ensure_area(**spec(member_ids=()))
+        assert (await adapter.health())["state"] == "DEGRADED"
+        adapter.user_lookup = AsyncMock(return_value=fixture.member)
+        await adapter.ensure_area(**spec(member_ids=()))
+        assert fixture.channels[0].test_overrides[fixture.member].view_channel is None
+        adapter.user_lookup.assert_awaited_once_with(50)
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())
+
+
+def test_reusing_retired_resource_keys_cannot_bypass_the_active_quota(fixture):
+    adapter = fixture.adapter(policy={"categoryId": 10, "maxResources": 1})
+    with adapter._claim("retired", "voice") as (state, save):
+        state["reserved"] = False
+        save()
+    with adapter._claim("active", "text"):
+        with pytest.raises(InvalidHostOperationError, match="quota"):
+            with adapter._claim("retired", "voice"):
+                pytest.fail("A retired key bypassed the resource quota")
+        # Idempotent retirement does not reserve a new active resource.
+        with adapter._claim("retired", "voice", reserve=False):
+            pass

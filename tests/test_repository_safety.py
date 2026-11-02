@@ -68,6 +68,8 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertFalse(secret_findings('shared_secret = "test-secret"'))
         self.assertFalse(secret_findings('SECRETS_SKILL = "secrets.skill"'))
         self.assertTrue(secret_findings('secret = "literal-production-credential-value"'))
+        self.assertFalse(secret_findings('"GamerHQSkillSecrets": "skill_secrets"'))
+        self.assertTrue(secret_findings('"GamerHQSkillSecrets": "literal-production-credential-value"'))
         self.assertTrue(private_path('transcripts/private.txt'))
         self.assertFalse(private_path('.env.example'))
         self.assertFalse(private_path('skill_runtime/runtime/manager.py'))
