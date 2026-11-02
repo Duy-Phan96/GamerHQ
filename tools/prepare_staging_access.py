@@ -286,12 +286,17 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
             writable = [f'/run/user/{uid}', *[str(HOME / name) for name in ('.config', '.local', '.cache', '.docker')],
                 *[str(ROOT / name) for name in ('data', 'backups', 'artifacts', 'worker')], str(CONFIG / 'settings')]
             write_new(dropin / 'gamerhq-staging.conf', '[Service]\nDelegate=cpu cpuset io memory pids\nMemoryMax=1G\nCPUQuota=50%\nTasksMax=2048\n'
+                'Environment=HOME=' + str(HOME) + '\nEnvironment=XDG_RUNTIME_DIR=/run/user/' + str(uid) + '\n'
+                'Environment=XDG_CONFIG_HOME=' + str(HOME / '.config') + '\nEnvironment=XDG_DATA_HOME=' + str(HOME / '.local/share') + '\n'
+                'Environment=XDG_CACHE_HOME=' + str(HOME / '.cache') + '\n'
+                'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus\n'
                 'ProtectSystem=strict\nPrivateTmp=yes\nReadWritePaths=' + ' '.join('-' + p for p in writable) + '\nInaccessiblePaths=' + ' '.join('-' + p for p in BLOCKED) + '\n', 0o644)
         run(['systemctl', 'daemon-reload'])  # no production service restart
         run(['loginctl', 'enable-linger', ACCOUNT])
         run(['systemctl', 'start', f'user@{uid}.service'])
         state['phase'] = 'DAEMON'; record(state)
     values = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(HOME), 'XDG_RUNTIME_DIR': f'/run/user/{uid}',
+        'XDG_CONFIG_HOME': str(HOME / '.config'), 'XDG_DATA_HOME': str(HOME / '.local/share'), 'XDG_CACHE_HOME': str(HOME / '.cache'),
         'DBUS_SESSION_BUS_ADDRESS': f'unix:path=/run/user/{uid}/bus'}
     def user(*args):
         return run(['runuser', '-u', ACCOUNT, '--', 'env', *[k + '=' + v for k,v in values.items()], *args])
@@ -300,7 +305,8 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         user('systemctl', '--user', 'start', 'dbus.socket')
         user('systemctl', '--user', 'is-active', 'dbus.socket')
         user('systemctl', '--user', 'show-environment')
-        user('systemd-run', '--user', '--wait', '--pipe', '--collect', '--quiet', 'rootlesskit', '--net=none', '/bin/true')
+        user('systemd-run', '--user', '--wait', '--pipe', '--collect', '--quiet',
+            *['--setenv=' + k + '=' + v for k, v in values.items()], 'rootlesskit', '--net=none', '/bin/true')
         # Use the exact vendored upstream launcher with the existing daemon binary.
         # No Docker CE package repository or rootful daemon replacement is needed.
         vendor = WORKER / 'deploy/staging/rootless'
