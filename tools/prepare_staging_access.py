@@ -289,7 +289,9 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
                 'Environment=HOME=' + str(HOME) + '\nEnvironment=XDG_RUNTIME_DIR=/run/user/' + str(uid) + '\n'
                 'Environment=XDG_CONFIG_HOME=' + str(HOME / '.config') + '\nEnvironment=XDG_DATA_HOME=' + str(HOME / '.local/share') + '\n'
                 'Environment=XDG_CACHE_HOME=' + str(HOME / '.cache') + '\n'
-                'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus\n'
+                # dbus.socket startup uses the manager's private transport. A
+                # pre-set session-bus address can deadlock socket activation.
+                'UnsetEnvironment=DBUS_SESSION_BUS_ADDRESS\n'
                 'ProtectSystem=strict\nPrivateTmp=yes\nReadWritePaths=' + ' '.join('-' + p for p in writable) + '\nInaccessiblePaths=' + ' '.join('-' + p for p in BLOCKED) + '\n', 0o644)
         run(['systemctl', 'daemon-reload'])  # no production service restart
         run(['loginctl', 'enable-linger', ACCOUNT])
