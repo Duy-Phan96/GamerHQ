@@ -23,12 +23,21 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-server
+          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns docker-ce-rootless-extras
+          sudo systemctl start ssh
+          sudo mkdir -p /opt/gamerhq/data
+          printf 'synthetic production sentinel\n' | sudo tee /opt/gamerhq/data/production-fixture >/dev/null
+          sudo chmod 755 /opt/gamerhq /opt/gamerhq/data
+          sudo chmod 644 /opt/gamerhq/data/production-fixture
+          docker run -d --name gamerhq-production-fixture alpine:3.21 sleep 1200
+          docker inspect --format '{{.Id}}' gamerhq-production-fixture > /tmp/production-fixture-id
           ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-ci-key
           commit="$REVIEWED_COMMIT"
           sudo python3 -m tools.prepare_staging_access --commit "$commit" --public-key-file /tmp/staging-ci-key.pub
-          sudo python3 -m tools.prepare_staging_access --commit "$commit" --public-key-file /tmp/staging-ci-key.pub \
-            --apply --approval 'PREPARE ISOLATED STAGING'
+          git fetch origin "$commit"
+          python3 -m tools.bootstrap_command --commit "$commit" --public-key-file /tmp/staging-ci-key.pub --output /tmp/verified-staging-bootstrap.sh
+          sudo bash /tmp/verified-staging-bootstrap.sh
+          sudo bash /tmp/verified-staging-bootstrap.sh
           sudo env GITHUB_ACTIONS=true python3 -m tools.staging_access_smoke --key /tmp/staging-ci-key
   test:
     runs-on: ubuntu-latest

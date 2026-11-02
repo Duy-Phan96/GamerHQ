@@ -25,9 +25,10 @@ def write_record(target, value):
     if target.is_symlink():
         raise ValueError("Protected staging records cannot be symbolic links.")
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(".new")
-    with temporary.open("x", encoding="utf-8") as output:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, prefix=target.name + ".", delete=False) as output:
         json.dump(value, output, sort_keys=True)
+        output.flush(); os.fsync(output.fileno())
+        temporary = Path(output.name)
     temporary.chmod(0o600)
     temporary.replace(target)
 
@@ -118,6 +119,10 @@ def bootstrap(profile, approval):
     if proof.get("fingerprint") != artifact_fingerprint(profile) or proof.get("gatewayStarted") is not False or not IMAGE.fullmatch(proof.get("image", "")):
         raise ValueError("Initial staging image is unverified or stale.")
     def available(version):
+        heartbeat = subprocess.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", profile["container"]],
+            capture_output=True, text=True, timeout=30, check=True)
+        if heartbeat.stdout.strip() != "healthy":
+            return False
         state = host_request(profile, f"/api/v1/servers/{profile['stagingGuildId']}/skills/{release['skillId']}")
         # Availability precedes normal per-guild installation/configuration.
         return state.get("version") == version and not state.get("missingCapabilities")

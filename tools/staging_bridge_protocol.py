@@ -18,7 +18,12 @@ def validate(value):
     approval, deployment = value.get("approval", ""), value.get("deploymentId", "")
     if not isinstance(approval, str) or len(approval) > 80 or not isinstance(deployment, str):
         raise ValueError("Invalid staging request.")
-    if phase == "prepare" and operation in PREPARE:
+    if phase == "configure" and operation in {"initial", "release", "authorize-live", "revoke", "health"}:
+        expected = {"initial": "CONFIGURE ISOLATED STAGING", "release": "APPROVE STAGING RELEASE",
+            "authorize-live": "AUTHORIZE ISOLATED STAGING", "revoke": "REVOKE STAGING ACCESS", "health": ""}[operation]
+        if approval != expected or deployment:
+            raise ValueError("Explicit staging configuration approval is required.")
+    elif phase == "prepare" and operation in PREPARE:
         if approval != APPROVALS.get(operation, "") or deployment:
             raise ValueError("Explicit staging operation approval is required.")
     elif phase == "update" and operation in {"stage", "apply", "history"}:

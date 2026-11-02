@@ -50,7 +50,7 @@ def test_root_dispatcher_uses_only_fixed_staging_paths_and_protected_release(tmp
     release.write_text(json.dumps({"skillId": "event-manager", "distribution": "gamerhq-skill-event-manager", "version": "0.2.0"}))
     profile = {"environment": "staging", "releaseFile": str(release)}
     command = command_for(request(phase="update", operation="stage"), profile, current_version="0.1.0")
-    assert Path(command[command.index("--profile") + 1]).as_posix() == "/etc/gamerhq/staging/profile.json"
+    assert Path(command[command.index("--profile") + 1]).as_posix() == "/etc/gamerhq-staging/settings/profile.json"
     assert command[command.index("--wheel") + 1] == "gamerhq_skill_event_manager-0.2.0-py3-none-any.whl"
     assert command[command.index("--current-version") + 1] == "0.1.0"
     with pytest.raises(PermissionError): command_for(request(), {"environment": "production"})
@@ -60,7 +60,7 @@ def test_worker_environment_cannot_import_discord_or_process_configuration(tmp_p
     path = tmp_path / "worker.env"
     path.write_text("DISCORD_TOKEN=fixture\n")
     path.chmod(0o600)
-    with patch("tools.staging_dispatch.protected_file"):
+    with patch("tools.staging_dispatch.protected_file"), patch("os.geteuid", return_value=1001, create=True):
         with pytest.raises(ValueError): environment(path)
         path.write_text("GAMERHQ_STAGING_WEB_API_SECRET=fixture\n")
         values = environment(path)
@@ -71,7 +71,8 @@ def test_owner_setup_requires_dedicated_public_key_and_explicit_apply_approval()
     key = "ssh-ed25519 " + base64.b64encode(b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20" + b"a" * 32).decode()
     assert public_key(key + " dedicated") == key
     with pytest.raises(ValueError): public_key('command="bash" ' + key)
-    with patch("tools.prepare_staging_access.preflight", return_value="fixture-daemon"):
+    with patch("tools.prepare_staging_access.preflight", return_value={"workerEnabled": False, "gatewayStarted": False}), patch(
+            "tools.prepare_staging_access.prerequisites", return_value="fixture-python"):
         plan = prepare("a" * 40, key)
         assert plan["workerEnabled"] is False and plan["gatewayStarted"] is False
         with pytest.raises(PermissionError): prepare("a" * 40, key, apply=True)
