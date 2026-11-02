@@ -307,8 +307,9 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         user('systemctl', '--user', 'start', 'dbus.socket')
         user('systemctl', '--user', 'is-active', 'dbus.socket')
         user('systemctl', '--user', 'show-environment')
-        user('systemd-run', '--user', '--wait', '--pipe', '--collect', '--quiet',
-            *['--setenv=' + k + '=' + v for k, v in values.items()], 'rootlesskit', '--net=none', '/bin/true')
+        # The real sandboxed daemon below exercises RootlessKit, UID/GID maps,
+        # networking and storage together. A bare RootlessKit transient unit
+        # lacks the launcher's copy-up mounts and is not a valid daemon probe.
         # Use the exact vendored upstream launcher with the existing daemon binary.
         # No Docker CE package repository or rootful daemon replacement is needed.
         vendor = WORKER / 'deploy/staging/rootless'

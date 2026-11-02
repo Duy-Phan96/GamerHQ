@@ -44,9 +44,9 @@ branch, curl pipe, production credential or GitHub access token is involved.
   Docker service. Production Docker is never stopped, disabled or reconfigured.
   A UID-specific systemd sandbox hides `/opt/gamerhq`, `/etc/gamerhq`, `/root`,
   `/var/lib/docker` and the production Docker socket from deployment jobs/daemon.
-  Before starting its daemon, setup verifies the new user's real D-Bus socket,
-  systemd user session and an actual RootlessKit user namespace. It verifies the
-  daemon's cgroup-v2 delegation, storage driver and staging-only storage location.
+  Before starting its daemon, setup verifies the new user's real D-Bus socket
+  and systemd user session. The actual sandboxed daemon then verifies RootlessKit
+  user namespaces, cgroup-v2 delegation, storage and staging-only storage location.
   SELinux state is checked before and after startup and recorded in the root-private
   capability receipt. No SELinux policy, booleans, permissive domains, global labels,
   sysctls or system-default Python are changed. If enforcing policy blocks startup,
