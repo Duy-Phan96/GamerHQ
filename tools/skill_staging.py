@@ -6,9 +6,11 @@ import os
 from pathlib import Path
 import subprocess
 import time
+import tempfile
+import re
 from urllib.request import Request, build_opener
 
-from hosts.gamerhq.skill_staging import validate_profile, verify_remote, require_verification, fingerprint, NoRedirects
+from hosts.gamerhq.skill_staging import validate_profile, verify_remote, require_verification, fingerprint, NoRedirects, verify_daemon
 from hosts.gamerhq.skill_release_artifacts import fetch_release
 from hosts.gamerhq.skill_deployment_docker import DockerSkillDeployment, IMAGE
 
@@ -73,6 +75,32 @@ def backend_for(profile, health):
         service=profile["service"], container=profile["container"], work_root=profile["workRoot"], health_probe=health)
 
 
+def build_base(profile, approval):
+    validate_profile(profile)
+    if approval != "BUILD ISOLATED STAGING BASE":
+        raise PermissionError("Explicit isolated image-build authorization is required.")
+    source = Path(__file__).resolve().parents[1]
+    expected = profile.get("hostSourceCommit", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", expected) or (source / ".env").exists():
+        raise ValueError("A reviewed clean worker checkout without local runtime credentials is required.")
+    def git(*args):
+        return subprocess.run(["git", "-C", str(source), *args], capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+    if git("rev-parse", "HEAD") != expected or git("status", "--porcelain") or git("remote", "get-url", "origin") != "https://github.com/Duy-Phan96/GamerHQ.git":
+        raise ValueError("Host source differs from the reviewed immutable worker checkout.")
+    verify_daemon(profile)
+    root = Path(profile["workRoot"])
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=root, prefix="base-image-") as directory:
+        identity = Path(directory) / "image-id"
+        subprocess.run(["docker", "build", "--iidfile", str(identity), "--build-arg", "VCS_REF=" + expected,
+            "--tag", "gamerhq-staging-base:" + expected, str(source)], capture_output=True, text=True, check=True, timeout=1200)
+        image = identity.read_text().strip()
+    if not IMAGE.fullmatch(image):
+        raise ValueError("Staging base build did not produce an immutable image.")
+    write_record(root / "base-candidate.json", {"image": image, "sourceCommit": expected, "gatewayStarted": False})
+    return image
+
+
 def bootstrap(profile, approval):
     require_verification(profile)
     if approval != "BOOTSTRAP ISOLATED STAGING":
@@ -102,13 +130,15 @@ def bootstrap(profile, approval):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", type=Path, required=True)
-    parser.add_argument("operation", choices=("inspect", "initialize", "fetch", "verify", "build", "bootstrap", "install"))
+    parser.add_argument("operation", choices=("inspect", "initialize", "build-base", "fetch", "verify", "build", "bootstrap", "install"))
     parser.add_argument("--approval", default="")
     args = parser.parse_args()
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
     validate_profile(profile)
     if args.operation == "initialize":
         initialize(profile, args.approval)
+    elif args.operation == "build-base":
+        print(json.dumps({"reviewCandidateImage": build_base(profile, args.approval), "gatewayStarted": False}))
     elif args.operation == "fetch":
         release = release_for(profile)
         if profile.get("privateArtifactSource") and not os.environ.get(profile["releaseTokenEnv"]):

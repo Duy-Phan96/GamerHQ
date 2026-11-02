@@ -84,6 +84,7 @@ Every operation uses the fixed profile above:
 | --- | --- |
 | `inspect` | Validate isolation layout only; no readiness or credential claim |
 | `initialize` | Create an empty staging SQLite database exclusively; requires `INITIALIZE ISOLATED STAGING`; refuses existing data |
+| `build-base` | Require `BUILD ISOLATED STAGING BASE`, the approved daemon and exact clean reviewed worker source commit; build only `gamerhq-staging-base:<commit>`, report immutable bytes for review, start no Gateway |
 | `fetch` | Download reviewed GitHub Release SDK/Skill artifacts; never execute or install them |
 | `verify` | Read-only Docker/context/filesystem, Discord identity/membership/category permissions, credential agreement and release trust checks; write private verification evidence |
 | `build` | Require verification; build/probe the initial immutable candidate without credentials, network, production mounts or Gateway |
@@ -96,6 +97,12 @@ the owner may enable the protected profile and re-verify it. Evidence is valid f
 one hour and is bound to profile, Compose, private bot environment and both release
 descriptors. A change invalidates it. Actual daemon identity, layout and artifact
 bytes are checked again before worker actions.
+
+If the reviewed Host base is not already available, use `build-base` through the
+prepared workflow, review its reported immutable ID, record that ID as `baseImage`
+and re-verify. The build uses the installed reviewed source and public locked Host
+dependencies, without production volumes, secrets or container replacement. This
+prepares the initial Host image without routine manual VPS build commands.
 
 Bootstrap is distinct from updates because no previous staging Host exists yet.
 It checks container nonexistence and package availability before normal per-guild

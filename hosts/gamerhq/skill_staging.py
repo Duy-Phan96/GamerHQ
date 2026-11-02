@@ -100,16 +100,24 @@ class NoRedirects(HTTPRedirectHandler):
         raise ValueError("Discord identity verification cannot follow redirects.")
 
 
-def verify_docker(profile):
+def verify_daemon(profile):
     if os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT", "default") != "default":
         raise ValueError("Staging must use the approved local VPS Docker context.")
     expected = profile.get("dockerDaemonId", "")
-    if not expected or expected.startswith("REPLACE") or not IMAGE.fullmatch(profile["baseImage"]):
-        raise ValueError("Reviewed Docker daemon and immutable base identity are required.")
+    if not expected or expected.startswith("REPLACE"):
+        raise ValueError("Reviewed Docker daemon identity is required.")
     def run(command, **kwargs):
         return subprocess.run(command, capture_output=True, text=True, timeout=30, check=True, **kwargs).stdout.strip()
     if run(["docker", "context", "show"]) != "default" or run(["docker", "info", "--format", "{{.ID}}"] ) != expected:
         raise ValueError("Docker daemon identity differs from the approved staging VPS.")
+
+
+def verify_docker(profile):
+    verify_daemon(profile)
+    if not IMAGE.fullmatch(profile["baseImage"]):
+        raise ValueError("Reviewed immutable base identity is required.")
+    def run(command, **kwargs):
+        return subprocess.run(command, capture_output=True, text=True, timeout=30, check=True, **kwargs).stdout.strip()
     environment = {**os.environ, "GAMERHQ_STAGING_IMAGE": profile["baseImage"]}
     run(["docker", "compose", "--file", profile["composeFile"], "--profile", "live-acceptance", "config", "--quiet"], env=environment)
     database, backups = Path(profile["database"]), Path(profile["backupRoot"])

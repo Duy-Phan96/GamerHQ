@@ -15,6 +15,7 @@
   "service": "gamerhq-staging",
   "container": "gamerhq-staging-bot",
   "dockerDaemonId": "REPLACE_WITH_APPROVED_VPS_DOCKER_DAEMON_ID",
+  "hostSourceCommit": "REPLACE_WITH_REVIEWED_HOST_SOURCE_COMMIT",
   "baseImage": "REPLACE_WITH_REVIEWED_LOCAL_IMMUTABLE_HOST_IMAGE",
   "sdkWheel": "gamerhq_skill_sdk-0.3.0-py3-none-any.whl",
   "sdkVersion": "0.3.0",

@@ -4,7 +4,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [inspect, initialize, fetch, verify, build, bootstrap, install]
+        options: [inspect, initialize, build-base, fetch, verify, build, bootstrap, install]
         required: true
       approval:
         description: Explicit operation approval; bootstrap starts only the dedicated staging Gateway

@@ -10,7 +10,7 @@ from zipfile import ZipFile
 import discord
 import pytest
 from hosts.gamerhq.skill_staging import validate_profile, verify_remote, require_verification, fingerprint, category_permissions, verify_docker
-from tools.skill_staging import initialize, bootstrap
+from tools.skill_staging import initialize, bootstrap, build_base
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -153,3 +153,13 @@ def test_docker_readiness_checks_staging_uid_access_without_gateway_or_credentia
     assert command[command.index("--network") + 1] == "none"
     assert command[command.index("--user") + 1] == "10001:10001"
     assert "--env-file" not in command and "bot.py" not in command
+
+
+def test_base_build_requires_authorization_and_the_exact_reviewed_source(staging):
+    profile, _, _, _ = staging
+    with patch("tools.skill_staging.subprocess.run", return_value=SimpleNamespace(stdout="different-source")) as run:
+        with pytest.raises(PermissionError): build_base(profile, "yes")
+        run.assert_not_called()
+        profile["hostSourceCommit"] = "a" * 40
+        with pytest.raises(ValueError): build_base(profile, "BUILD ISOLATED STAGING BASE")
+        assert all(call.args[0][0] == "git" for call in run.call_args_list)
