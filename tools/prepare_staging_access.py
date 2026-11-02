@@ -210,7 +210,10 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         if not (dropin / 'gamerhq-staging.conf').exists():
             if subprocess.run(['systemctl', 'is-active', '--quiet', f'user@{uid}.service']).returncode == 0:
                 raise PermissionError('An existing user manager already uses the new UID; refusing to change another session')
-            write_new(dropin / 'gamerhq-staging.conf', '[Service]\nDelegate=cpu cpuset io memory pids\nMemoryMax=1G\nCPUQuota=50%\nTasksMax=2048\nInaccessiblePaths=' + ' '.join('-' + p for p in BLOCKED) + '\n', 0o644)
+            writable = [f'/run/user/{uid}', *[str(HOME / name) for name in ('.config', '.local', '.cache', '.docker')],
+                *[str(ROOT / name) for name in ('data', 'backups', 'artifacts', 'worker')], str(CONFIG / 'settings')]
+            write_new(dropin / 'gamerhq-staging.conf', '[Service]\nDelegate=cpu cpuset io memory pids\nMemoryMax=1G\nCPUQuota=50%\nTasksMax=2048\n'
+                'ProtectSystem=strict\nPrivateTmp=yes\nReadWritePaths=' + ' '.join('-' + p for p in writable) + '\nInaccessiblePaths=' + ' '.join('-' + p for p in BLOCKED) + '\n', 0o644)
         run(['systemctl', 'daemon-reload'])  # no production service restart
         run(['loginctl', 'enable-linger', ACCOUNT])
         run(['systemctl', 'start', f'user@{uid}.service'])

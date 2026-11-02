@@ -46,6 +46,11 @@ jobs:
           if id gamerhq-staging-bridge >/dev/null 2>&1; then
             uid=$(id -u gamerhq-staging-bridge)
             sudo journalctl --no-pager -u "user@$uid.service" -n 60
+            sudo systemctl show "user@$uid.service" -p User -p ProtectSystem -p ReadWritePaths -p InaccessiblePaths -p MainPID
+            manager=$(sudo systemctl show "user@$uid.service" -p MainPID --value)
+            if [[ "$manager" != 0 ]]; then
+              sudo nsenter -t "$manager" -m -- stat -c '%u:%g %a %n' "/run/user/$uid"
+            fi
             sudo runuser -u gamerhq-staging-bridge -- env XDG_RUNTIME_DIR="/run/user/$uid" \
               DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
               journalctl --user --no-pager -u docker.service -n 100
