@@ -86,5 +86,6 @@ jobs:
         if: success() && matrix.python == '3.12'
         shell: bash
         run: |
+          umask 077
           image=$(docker image inspect gamerhq-bot:local --format '{{.Id}}')
           python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl
