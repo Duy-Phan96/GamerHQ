@@ -46,6 +46,13 @@ def main():
                     break
                 time.sleep(0.2)
             if result.returncode:
+                # Only this disposable fixture has blank credential templates.
+                # Diagnose locally as root; the real bridge never exposes stderr.
+                diagnostic = run(["/opt/gamerhq-staging/deployment-worker/.venv/bin/python", "-c",
+                    "import sys; sys.path.insert(0, '/opt/gamerhq-staging/deployment-worker'); "
+                    "from tools.skill_staging import main; "
+                    "sys.argv=['staging', '--profile', '/etc/gamerhq/staging/profile.json', 'inspect']; main()"])
+                print("Disposable fixture local inspection:", diagnostic.stdout, diagnostic.stderr)
                 raise RuntimeError("Restricted SSH inspect failed: " + result.stderr[-1500:])
             assert json.loads(result.stdout)["productionChanged"] is False
             for rejected in ("id", "bash", encode({"version": 1, "phase": "prepare", "operation": "build"}),
