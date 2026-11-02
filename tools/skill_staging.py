@@ -10,7 +10,8 @@ import tempfile
 import re
 from urllib.request import Request, build_opener
 
-from hosts.gamerhq.skill_staging import validate_profile, verify_remote, require_verification, fingerprint, NoRedirects, verify_daemon
+from hosts.gamerhq.skill_staging import (validate_profile, verify_remote, require_verification, fingerprint,
+    NoRedirects, verify_daemon, verify_offline, require_offline_verification, artifact_fingerprint)
 from hosts.gamerhq.skill_release_artifacts import fetch_release
 from hosts.gamerhq.skill_deployment_docker import DockerSkillDeployment, IMAGE
 
@@ -66,6 +67,9 @@ def initialize(profile, approval):
             "allowPublic": False, "maxResources": 30}))
     finally:
         db.DB_PATH = previous
+    if os.name == "posix" and os.geteuid() == 0:
+        os.chown(database, 10001, 10001)
+        database.chmod(0o660)
 
 
 def backend_for(profile, health):
@@ -111,7 +115,7 @@ def bootstrap(profile, approval):
         raise ValueError("Staging already exists; use the reviewed update lifecycle, never bootstrap over it.")
     proof = json.loads((Path(profile["workRoot"]) / "initial-candidate.json").read_text())
     release = release_for(profile)
-    if proof.get("fingerprint") != fingerprint(profile) or proof.get("gatewayStarted") is not False or not IMAGE.fullmatch(proof.get("image", "")):
+    if proof.get("fingerprint") != artifact_fingerprint(profile) or proof.get("gatewayStarted") is not False or not IMAGE.fullmatch(proof.get("image", "")):
         raise ValueError("Initial staging image is unverified or stale.")
     def available(version):
         state = host_request(profile, f"/api/v1/servers/{profile['stagingGuildId']}/skills/{release['skillId']}")
@@ -130,7 +134,7 @@ def bootstrap(profile, approval):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", type=Path, required=True)
-    parser.add_argument("operation", choices=("inspect", "initialize", "build-base", "fetch", "verify", "build", "bootstrap", "install"))
+    parser.add_argument("operation", choices=("inspect", "initialize", "build-base", "fetch", "verify-offline", "verify", "build", "bootstrap", "install"))
     parser.add_argument("--approval", default="")
     args = parser.parse_args()
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
@@ -159,15 +163,17 @@ def main():
     elif args.operation == "verify":
         proof = verify_remote(profile)
         write_record(profile["verificationFile"], proof)
+    elif args.operation == "verify-offline":
+        write_record(profile["offlineVerificationFile"], verify_offline(profile))
     elif args.operation == "build":
-        require_verification(profile)
+        require_offline_verification(profile)
         release = release_for(profile)
         wheel = Path(profile["artifactRoot"]) / (release["distribution"].replace("-", "_") + "-" + release["version"] + "-py3-none-any.whl")
         backend = backend_for(profile, None)
         proof = backend.stage(release=release, wheel=wheel, deployment_id="initial-staging")
         if proof.get("healthy") is not True or proof.get("isolated") is not True or proof.get("gatewayStarted") is not False or proof.get("artifactSha256") != release["sha256"] or proof.get("runtimeApi") != release["runtimeApi"] or not set(proof.get("capabilities", [])) <= set(release["capabilities"]) or not set(proof.get("capabilities", [])) <= set(profile["approvedCapabilities"].get(release["skillId"], [])):
             raise ValueError("Staging candidate does not satisfy the approved artifact/runtime/capability contract.")
-        proof.update(fingerprint=fingerprint(profile), createdAt=int(time.time()))
+        proof.update(fingerprint=artifact_fingerprint(profile), createdAt=int(time.time()))
         write_record(Path(profile["workRoot"]) / "initial-candidate.json", proof)
     elif args.operation == "bootstrap":
         bootstrap(profile, args.approval)

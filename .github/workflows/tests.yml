@@ -11,6 +11,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  staging-access:
+    # This provisions only the disposable hosted runner, never the GamerHQ VPS.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test owner preparation and restricted SSH on disposable runner
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server
+          ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-ci-key
+          commit="$REVIEWED_COMMIT"
+          sudo python3 -m tools.prepare_staging_access --commit "$commit" --public-key-file /tmp/staging-ci-key.pub
+          sudo python3 -m tools.prepare_staging_access --commit "$commit" --public-key-file /tmp/staging-ci-key.pub \
+            --apply --approval 'PREPARE ISOLATED STAGING'
+          sudo env GITHUB_ACTIONS=true python3 -m tools.staging_access_smoke --key /tmp/staging-ci-key
   test:
     runs-on: ubuntu-latest
     strategy:

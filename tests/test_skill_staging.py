@@ -20,7 +20,7 @@ def staging(tmp_path):
     profile = json.loads((ROOT / "deploy/staging/profile.example.json").read_text())
     root, config = tmp_path / "staging", tmp_path / "configuration"
     root.mkdir(); config.mkdir()
-    for key in ("root", "database", "artifactRoot", "workRoot", "backupRoot", "verificationFile"):
+    for key in ("root", "database", "artifactRoot", "workRoot", "backupRoot", "verificationFile", "offlineVerificationFile"):
         profile[key] = profile[key].replace("/opt/gamerhq-staging", root.as_posix())
     for key in ("configurationRoot", "composeFile", "botEnvFile", "releaseFile", "sdkReleaseFile"):
         profile[key] = profile[key].replace("/etc/gamerhq/staging", config.as_posix())
@@ -40,7 +40,11 @@ def staging(tmp_path):
         archive.writestr("gamerhq_skill_event_manager-0.1.0.dist-info/METADATA", "Name: gamerhq-skill-event-manager\nVersion: 0.1.0\n")
     release.update(sourceReviewed=True, reviewedCommit="a" * 40, sha256=hashlib.sha256(wheel.read_bytes()).hexdigest())
     Path(profile["releaseFile"]).write_text(json.dumps(release))
-    sdk = {"distribution": "gamerhq-skill-sdk", "version": "0.3.0", "sha256": "c" * 64}
+    sdk = json.loads((ROOT / "deploy/staging/sdk.release.example.json").read_text())
+    sdk_wheel = artifact / "gamerhq_skill_sdk-0.3.0-py3-none-any.whl"
+    with ZipFile(sdk_wheel, "w") as archive:
+        archive.writestr("gamerhq_skill_sdk-0.3.0.dist-info/METADATA", "Name: gamerhq-skill-sdk\nVersion: 0.3.0\n")
+    sdk.update(sourceReviewed=True, reviewedCommit="b" * 40, sha256=hashlib.sha256(sdk_wheel.read_bytes()).hexdigest())
     profile["sdkSha256"] = sdk["sha256"]
     Path(profile["sdkReleaseFile"]).write_text(json.dumps(sdk))
     with patch("hosts.gamerhq.skill_staging.verify_docker"):
@@ -52,6 +56,22 @@ def test_templates_remain_disabled_and_have_no_usable_credentials():
     assert profile["workerEnabled"] is False
     assert json.loads((ROOT / "deploy/staging/event-manager.release.example.json").read_text())["sourceReviewed"] is False
     assert "DISCORD_TOKEN=\n" in (ROOT / "deploy/staging/bot.env.example").read_text()
+
+
+def test_offline_proof_can_build_without_discord_but_never_authorizes_live(staging):
+    from hosts.gamerhq.skill_staging import verify_offline, require_offline_verification
+    profile, _, _, wheel = staging
+    Path(profile["botEnvFile"]).unlink()
+    proof = verify_offline(profile)
+    assert proof["liveIdentityVerified"] is False and proof["publishedReleaseVerified"] is False
+    Path(profile["offlineVerificationFile"]).write_text(json.dumps(proof))
+    require_offline_verification(profile, now=proof["verifiedAt"])
+    with pytest.raises(PermissionError): require_offline_verification(profile, now=proof["verifiedAt"] + 86401)
+    profile["workerEnabled"] = True
+    Path(profile["verificationFile"]).write_text(json.dumps(proof))
+    with pytest.raises(PermissionError): require_verification(profile)
+    wheel.write_bytes(b"changed")
+    with pytest.raises(ValueError): require_offline_verification(profile)
 
 
 @pytest.mark.parametrize("mutation", ["production-root", "production-mount", "network", "restart", "socket", "gateway-default", "credentials", "verification-mount"])

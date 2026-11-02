@@ -30,8 +30,30 @@ concurrency:
   group: host-skill-deployment
   cancel-in-progress: false
 jobs:
+  staging:
+    if: inputs.environment == 'staging' && vars.GAMERHQ_STAGING_UPDATES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Invoke restricted staging update lifecycle
+        env:
+          OPERATION: ${{ inputs.operation }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT || '22' }}
+          GAMERHQ_STAGING_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_SSH_KEY }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          approval=''
+          if [[ "$OPERATION" == apply ]]; then approval="APPROVE $DEPLOYMENT_ID"; fi
+          python3 -m tools.staging_ssh_client --phase update --operation "$OPERATION" \
+            --deployment-id "$DEPLOYMENT_ID" --approval "$approval"
   worker:
-    if: vars.GAMERHQ_DEPLOYMENT_WORKER_ENABLED == 'true' && (inputs.environment != 'production' || github.ref == 'refs/heads/main')
+    if: inputs.environment == 'production' && vars.GAMERHQ_DEPLOYMENT_WORKER_ENABLED == 'true' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, gamerhq-deployment]
     environment: ${{ inputs.environment }}
     timeout-minutes: 30

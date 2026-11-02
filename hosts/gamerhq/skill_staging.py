@@ -28,14 +28,14 @@ def validate_profile(profile):
     for directory in (root, config):
         if directory.is_relative_to(production) or production.is_relative_to(directory):
             raise ValueError("Staging cannot overlap the production filesystem.")
-    for key in ("database", "artifactRoot", "workRoot", "backupRoot", "verificationFile"):
+    for key in ("database", "artifactRoot", "workRoot", "backupRoot", "verificationFile", "offlineVerificationFile"):
         if not Path(profile[key]).resolve().is_relative_to(root):
             raise ValueError("Mutable staging paths must stay inside their dedicated root.")
     for key in ("composeFile", "botEnvFile", "releaseFile", "sdkReleaseFile"):
         if not Path(profile[key]).resolve().is_relative_to(config):
             raise ValueError("Staging configuration paths must stay inside their protected root.")
     mounted = (Path(profile["database"]).resolve().parent, Path(profile["backupRoot"]).resolve())
-    if any(Path(profile[key]).resolve().is_relative_to(directory) for key in ("artifactRoot", "workRoot", "verificationFile") for directory in mounted):
+    if any(Path(profile[key]).resolve().is_relative_to(directory) for key in ("artifactRoot", "workRoot", "verificationFile", "offlineVerificationFile") for directory in mounted):
         raise ValueError("Artifacts, worker and verification must not be mounted into the bot.")
     compose = json.loads(Path(profile["composeFile"]).read_text(encoding="utf-8"))
     if compose.get("name") != "gamerhq-staging" or set(compose.get("services", {})) != {"gamerhq-staging"}:
@@ -79,6 +79,54 @@ def fingerprint(profile):
     return hasher.hexdigest()
 
 
+def artifact_fingerprint(profile):
+    fields = {key: profile[key] for key in ("baseImage", "sdkVersion", "sdkWheel", "sdkSha256", "hostSourceCommit", "approvedCapabilities")}
+    hasher = hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode())
+    for key in ("releaseFile", "sdkReleaseFile"):
+        hasher.update(Path(profile[key]).read_bytes())
+    return hasher.hexdigest()
+
+
+def verify_local_artifacts(profile):
+    release = json.loads(Path(profile["releaseFile"]).read_text(encoding="utf-8"))
+    sdk = json.loads(Path(profile["sdkReleaseFile"]).read_text(encoding="utf-8"))
+    for descriptor in (release, sdk):
+        if descriptor.get("sourceReviewed") is not True or descriptor.get("repository") not in profile["trustedRepositories"] or not re.fullmatch(r"[0-9a-f]{40}", descriptor.get("reviewedCommit", "")):
+            raise ValueError("Offline candidates require reviewed source descriptors.")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", descriptor.get("distribution", "")):
+            raise ValueError("Invalid reviewed distribution.")
+        name = descriptor["distribution"].replace("-", "_") + "-" + descriptor["version"] + "-py3-none-any.whl"
+        target = Path(profile["artifactRoot"]) / name
+        if target.is_symlink():
+            raise ValueError("Local artifacts cannot be symbolic links.")
+        verify_wheel(target, distribution=descriptor["distribution"], version=descriptor["version"], sha256=descriptor["sha256"])
+    if sdk["distribution"] != "gamerhq-skill-sdk" or sdk["version"] != profile["sdkVersion"] or sdk["sha256"] != profile["sdkSha256"] or profile["sdkWheel"] != "gamerhq_skill_sdk-" + sdk["version"] + "-py3-none-any.whl":
+        raise ValueError("SDK bytes do not match the protected profile.")
+    from skill_runtime.contracts.capabilities import KNOWN_CAPABILITIES
+    capabilities = release.get("capabilities")
+    if release.get("runtimeApi") != "1" or not isinstance(capabilities, list) or not set(capabilities) <= KNOWN_CAPABILITIES or not set(capabilities) <= set(profile["approvedCapabilities"].get(release["skillId"], [])) or release.get("migrationMode") not in ("none", "backward-compatible"):
+        raise ValueError("Offline release compatibility/capability/migration review did not pass.")
+
+
+def verify_offline(profile):
+    validate_profile(profile)
+    verify_docker(profile)
+    verify_local_artifacts(profile)
+    return {"schemaVersion": 1, "kind": "offline-local-artifact", "verifiedAt": int(time.time()),
+        "fingerprint": artifact_fingerprint(profile), "verified": True, "gatewayStarted": False,
+        "liveIdentityVerified": False, "publishedReleaseVerified": False}
+
+
+def require_offline_verification(profile, *, now=None):
+    validate_profile(profile)
+    verify_docker(profile)
+    verify_local_artifacts(profile)
+    proof = json.loads(Path(profile["offlineVerificationFile"]).read_text(encoding="utf-8"))
+    age = (time.time() if now is None else now) - proof.get("verifiedAt", 0)
+    if proof.get("kind") != "offline-local-artifact" or proof.get("schemaVersion") != 1 or proof.get("verified") is not True or proof.get("gatewayStarted") is not False or not 0 <= age <= 86400 or proof.get("fingerprint") != artifact_fingerprint(profile):
+        raise PermissionError("Offline artifact verification is absent, expired or changed.")
+
+
 def require_verification(profile, *, now=None):
     validate_profile(profile)
     if profile.get("workerEnabled") is not True:
@@ -86,7 +134,7 @@ def require_verification(profile, *, now=None):
     verify_docker(profile)
     proof = json.loads(Path(profile["verificationFile"]).read_text(encoding="utf-8"))
     age = (time.time() if now is None else now) - proof.get("verifiedAt", 0)
-    if proof.get("schemaVersion") != 1 or not 0 <= age <= 3600 or proof.get("fingerprint") != fingerprint(profile) or proof.get("gatewayStarted") is not False or proof.get("verified") is not True:
+    if proof.get("schemaVersion") != 1 or proof.get("kind") != "live" or not 0 <= age <= 3600 or proof.get("fingerprint") != fingerprint(profile) or proof.get("gatewayStarted") is not False or proof.get("verified") is not True:
         raise PermissionError("Staging trust/identity verification is absent, expired or changed.")
     release = json.loads(Path(profile["releaseFile"]).read_text(encoding="utf-8"))
     wheel = Path(profile["artifactRoot"]) / (release["distribution"].replace("-", "_") + "-" + release["version"] + "-py3-none-any.whl")
@@ -217,4 +265,5 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
         raise ValueError("SDK release differs from the reviewed staging profile.")
     fetch(sdk, artifact_root=profile["artifactRoot"], trusted_repositories=profile["trustedRepositories"],
         token=os.environ.get(profile["releaseTokenEnv"]))
-    return {"schemaVersion": 1, "verifiedAt": int(time.time()), "fingerprint": fingerprint(profile), "verified": True, "gatewayStarted": False}
+    verify_local_artifacts(profile)
+    return {"schemaVersion": 1, "kind": "live", "verifiedAt": int(time.time()), "fingerprint": fingerprint(profile), "verified": True, "gatewayStarted": False}
