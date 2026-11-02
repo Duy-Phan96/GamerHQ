@@ -168,3 +168,43 @@ def test_reusing_retired_resource_keys_cannot_bypass_the_active_quota(fixture):
         # Idempotent retirement does not reserve a new active resource.
         with adapter._claim("retired", "voice", reserve=False):
             pass
+
+
+def test_occupied_voice_is_retained_and_empty_owned_voice_is_retired(fixture):
+    async def scenario():
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.id, voice.guild, voice.category_id, voice.members = 300, fixture.guild, 10, [fixture.member]
+        fixture.channels.append(voice)
+        adapter = fixture.adapter()
+        with adapter._claim("voice:session", "voice") as (state, save):
+            state["channelId"] = voice.id
+            save()
+        assert await adapter.retire_voice(key="voice:session") is False
+        voice.delete.assert_not_awaited()
+        voice.members = []
+        assert await adapter.retire_voice(key="voice:session") is True
+        voice.delete.assert_awaited_once()
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())
+
+
+def test_uncertain_voice_retirement_recovers_without_deleting_another_channel(fixture):
+    async def scenario():
+        voice = MagicMock(spec=discord.VoiceChannel)
+        voice.id, voice.guild, voice.category_id, voice.members = 300, fixture.guild, 10, []
+        fixture.channels.append(voice)
+        adapter = fixture.adapter()
+        with adapter._claim("voice:session", "voice") as (state, save):
+            state["channelId"] = voice.id
+            save()
+        async def uncertain(**kwargs):
+            fixture.channels.remove(voice)
+            raise TimeoutError("Synthetic response loss after remote deletion")
+        voice.delete.side_effect = uncertain
+        with pytest.raises(TimeoutError):
+            await adapter.retire_voice(key="voice:session")
+        assert (await adapter.health())["state"] == "DEGRADED"
+        assert await adapter.retire_voice(key="voice:session") is True
+        voice.delete.assert_awaited_once()
+        assert (await adapter.health())["state"] == "PASS"
+    asyncio.run(scenario())
