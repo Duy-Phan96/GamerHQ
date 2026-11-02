@@ -24,6 +24,8 @@ the deployment administrator. Never accept their contents from a portable Skill.
 `apply --id <READY-id> --approval "APPROVE <READY-id>"` is a separate operation.
 Production additionally requires the protected production approval environment.
 The controller serializes applications, stops the old Gateway, backs up SQLite,
+and refuses READY records after any intervening application or Host image change.
+Re-stage against the current image after such a change. It then
 starts the reviewed image, then checks both container and installed tenant health.
 On failure it stops the candidate. Automatic image rollback is allowed only when
 the complete application schema/data fingerprint remains unchanged. Otherwise it

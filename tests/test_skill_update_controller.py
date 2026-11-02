@@ -100,6 +100,25 @@ def test_failed_health_rolls_back_only_when_application_state_is_unchanged(fixtu
     assert backend.calls[-2:] == [("activate", "sha256:" + "a" * 64), ("health", "1.0.0")]
 
 
+def test_staged_candidate_cannot_apply_after_out_of_band_image_change(fixture):
+    controller, backend, _, _, _ = fixture
+    record = stage(fixture)
+    with patch.object(backend, "current_image", return_value="sha256:" + "c" * 64):
+        with pytest.raises(ValueError, match="changed after staging"):
+            controller.apply(record["id"], approval="APPROVE " + record["id"])
+    assert backend.calls == ["stage"] and controller.get(record["id"])["state"] == "READY"
+
+
+def test_any_intervening_application_invalidates_other_ready_candidates(fixture):
+    controller, backend, _, _, _ = fixture
+    first, second = stage(fixture), stage(fixture)
+    controller.apply(first["id"], approval="APPROVE " + first["id"])
+    before = list(backend.calls)
+    with pytest.raises(ValueError, match="changed after staging"):
+        controller.apply(second["id"], approval="APPROVE " + second["id"])
+    assert backend.calls == before
+
+
 def test_failed_update_that_wrote_data_stops_without_unsafe_code_or_database_rollback(fixture):
     controller, backend, _, _, _ = fixture
     backend.health, backend.mutate = [False], True
