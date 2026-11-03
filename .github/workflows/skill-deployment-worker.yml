@@ -7,8 +7,9 @@ on:
         options: [staging, production]
         required: true
       operation:
+        description: auto is staging-only; production requires explicit security review
         type: choice
-        options: [stage, apply, history]
+        options: [auto, stage, apply, history]
         required: true
       release:
         description: Reviewed release filename in protected artifact directory
@@ -30,8 +31,14 @@ concurrency:
   group: host-skill-deployment
   cancel-in-progress: false
 jobs:
+  production-review:
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'production' && inputs.operation != 'auto' && vars.GAMERHQ_DEPLOYMENT_WORKER_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    steps:
+      - run: echo 'Explicit production operation approved.'
   staging:
-    if: inputs.environment == 'staging' && vars.GAMERHQ_STAGING_UPDATES_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_UPDATES_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.environment == 'staging'
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 40
@@ -48,12 +55,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$OPERATION" == auto ]]; then
+            python3 -m tools.staging_auto_update
+            exit 0
+          fi
           approval=''
           if [[ "$OPERATION" == apply ]]; then approval="APPROVE $DEPLOYMENT_ID"; fi
           python3 -m tools.staging_ssh_client --phase update --operation "$OPERATION" \
             --deployment-id "$DEPLOYMENT_ID" --approval "$approval"
   worker:
-    if: inputs.environment == 'production' && vars.GAMERHQ_DEPLOYMENT_WORKER_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: production-review
+    if: inputs.environment == 'production' && inputs.operation != 'auto' && vars.GAMERHQ_DEPLOYMENT_WORKER_ENABLED == 'true' && github.ref == 'refs/heads/main' && needs['production-review'].result == 'success'
     runs-on: [self-hosted, linux, gamerhq-deployment]
     environment: ${{ inputs.environment }}
     timeout-minutes: 30

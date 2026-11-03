@@ -62,9 +62,13 @@ independent reviewer; never use a runner accepting untrusted PR jobs.
 This implementation does not change runner, repository, credential or environment
 settings and has not dispatched a deployment.
 
-Current external gates: VPS SSH/protected configuration have not been delegated;
-private GitHub Release access, published reviewed bytes and a dedicated staging
-Discord identity are not configured. Private Skill CI exercises its actual wheel
+The 2026-11-03 staging checkpoint verifies restricted VPS SSH health, protected
+configuration, published SDK/Skill artifact fetching and exclusive initialization
+of a new staging database. The real VPS rejects build-base inside the immutable
+installed worker; no underlying Docker cause has yet been established. Gateway
+activation, live verification and staging updates remain disabled. Routine staging
+operations now follow the [automation policy](../STAGING_AUTOMATION_POLICY.md).
+Private Skill CI exercises its actual wheel
 against the public Host and Docker without a Gateway. This establishes offline
 integration evidence, not the VPS's live readiness or artifact publisher trust.
 Do not publish private wheel bytes in a public CI artifact to bypass that boundary.
