@@ -26,7 +26,9 @@ prerequisite. SSH restrictions follow [OpenSSH forced-command guidance](https://
 
 Protected configuration, candidate selection, build, installation and future updates
 run through the prepared Host-owned workflows. Credentials travel on SSH stdin;
-GitHub environment approval and explicit live/apply approvals stay separate.
+Routine staging operations run automatically; credential/security changes,
+first Gateway activation and production retain explicit protected owner review.
+See the [automation policy](../../docs/STAGING_AUTOMATION_POLICY.md).
 See the owner procedure for the complete initial sequence and revocation/failure
 handling. Do not use the obsolete placeholder command or create a general deployment
 runner with production Docker/root authority.

@@ -85,8 +85,13 @@ release, Discord application or guild.
 
 ## One-time inputs that cannot be invented
 
-The repository's protected `staging` environment must require owner review, deny
-admin bypass and allow only `main`. `GAMERHQ_STAGING_PREPARATION_ENABLED` and
+The protected `staging` environment allows routine operations automatically,
+denies admin bypass and allows only `main`. The separate `deployment-security`
+environment requires owner review for credential/security changes, first Gateway
+activation and production operations. Create its protection and merge all workflow
+guards before removing routine staging reviews; see the
+[automation policy](../../docs/STAGING_AUTOMATION_POLICY.md).
+`GAMERHQ_STAGING_PREPARATION_ENABLED` and
 `GAMERHQ_STAGING_UPDATES_ENABLED` are **repository variables**, initially `false`.
 The dedicated private key belongs only in environment secret
 `GAMERHQ_STAGING_SSH_KEY`; never send it to chat or put it in source/on the VPS.
@@ -119,8 +124,9 @@ repository first; do not substitute a moving branch or unverified local wheel.
 ## Host-owned operations after enrollment
 
 After restricted reachability/health is verified, enable the preparation repository
-variable. All following operations are reviewed GitHub workflows using the installed
-Host worker; no manual VPS command is needed:
+variable. Routine operations use the installed Host worker automatically, without
+repeated owner review or manual VPS commands. Exact operation acknowledgments
+still restrict the protocol; they do not replace the separate security review:
 
 1. Preparation `build-base`, approval `BUILD ISOLATED STAGING BASE`: build exact
    installed Host source inside the rootless daemon and record its immutable image
@@ -140,9 +146,12 @@ Host worker; no manual VPS command is needed:
 5. Enable the separate staging-updates repository variable only after acceptance.
 
 For each future Skill release, use configuration `release` with the exact approved
-`{"skillRelease": ...}` descriptor and `APPROVE STAGING RELEASE`; then preparation
-`fetch`, `verify`, followed by the existing worker `stage`, inspect READY/history,
-then explicitly `apply` that deployment ID. Version is read from the running Host;
+`{"skillRelease": ...}` descriptor and `APPROVE STAGING RELEASE`. After successful
+selection, the enabled staging update workflow automatically checks live health,
+fetches/verifies, stages and applies only its verified READY deployment ID.
+A stopped/offline Host cannot reach application; the automatic path never starts
+the first Gateway. Individual stage/history/apply operations remain available.
+Version is read from the running Host;
 paths/publishers/capabilities cannot be supplied as arbitrary SSH arguments. Every
 release still needs source/trust review; this is not unattended production deployment.
 New descriptors invalidate old verification evidence. Renew private release access by updating the
