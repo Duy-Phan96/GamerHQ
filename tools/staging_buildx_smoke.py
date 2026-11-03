@@ -21,7 +21,8 @@ with tempfile.TemporaryDirectory(dir=work,prefix='buildx-ci-') as directory:
  (root/'Dockerfile').write_text('FROM scratch\nLABEL gamerhq.fixture="buildx-permissions"\n')
  command=['docker','build','--progress=plain','--iidfile',str(root/'image-id'),str(root)]
  legacy=subprocess.run(command,env=environment,capture_output=True,text=True,timeout=180)
- blocked=legacy.returncode != 0 and 'buildx' in legacy.stderr.lower() and 'permission denied' in legacy.stderr.lower()
+ blocked=legacy.returncode != 0 and 'buildx' in legacy.stderr.lower() and any(
+  text in legacy.stderr.lower() for text in ('permission denied','read-only file system'))
  if not blocked:
   raise RuntimeError('Disposable legacy reproduction differed: '+legacy.stderr[-2000:])
  state=work/'buildx';state.mkdir(mode=0o700,exist_ok=True)
