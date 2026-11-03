@@ -1,13 +1,14 @@
 name: Isolated Skill staging preparation
+run-name: Staging preparation - ${{ inputs.operation }}
 on:
   workflow_dispatch:
     inputs:
       operation:
         type: choice
-        options: [inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
+        options: [prepare-offline, inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
         required: true
       approval:
-        description: Explicit operation approval; bootstrap starts only the dedicated staging Gateway
+        description: Offline bundle requires PREPARE ISOLATED STAGING OFFLINE; bootstrap is a separate Gateway approval
         type: string
 permissions:
   contents: read
@@ -33,4 +34,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m tools.staging_ssh_client --phase prepare --operation "$OPERATION" --approval "$APPROVAL"
+          invoke_prepare() {
+            python3 -m tools.staging_ssh_client --phase prepare --operation "$1" --approval "$2"
+          }
+          if [[ "$OPERATION" == prepare-offline ]]; then
+            [[ "$APPROVAL" == 'PREPARE ISOLATED STAGING OFFLINE' ]] || {
+              echo 'The offline bundle requires its exact operation approval.' >&2
+              exit 1
+            }
+            # Only existing bounded operations; no live authorization or Gateway.
+            # If interrupted after initialization, resume at the failed operation
+            # using its existing individual choice; never overwrite a database.
+            invoke_prepare build-base 'BUILD ISOLATED STAGING BASE'
+            invoke_prepare initialize 'INITIALIZE ISOLATED STAGING'
+            invoke_prepare fetch ''
+            invoke_prepare verify-offline ''
+            invoke_prepare build ''
+          else
+            invoke_prepare "$OPERATION" "$APPROVAL"
+          fi
