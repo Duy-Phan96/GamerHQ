@@ -10,17 +10,26 @@ import sys
 import tempfile
 
 from .staging_bridge_protocol import encode
+from .staging_errors import decode_evidence
 
 
 class StagingAccessError(RuntimeError):
     """Public categorical evidence only; never retain remote output or payloads."""
-    def __init__(self, code, request, *, exit_code=None, authenticated=False):
+    def __init__(self, code, request, *, exit_code=None, authenticated=False, worker_evidence=None):
         self.evidence = {"stagingError": code, "phase": request["phase"], "operation": request["operation"],
             "sshExitCode": exit_code, "authenticated": authenticated}
+        if worker_evidence:
+            checked = decode_evidence(json.dumps(worker_evidence))
+            if checked:
+                self.evidence.update(workerFailure=checked['stagingFailure'],workerStep=checked['step'])
+                if 'exitCode' in checked:self.evidence['workerExitCode']=checked['exitCode']
+                if 'auditId' in checked:self.evidence['workerAuditId']=checked['auditId']
         super().__init__(json.dumps(self.evidence, separators=(",", ":")))
 
 
 def failure_code(returncode, stderr):
+    if decode_evidence(stderr):
+        return 'REMOTE_WORKER_REJECTED'
     if returncode == 255:
         if "Host key verification failed" in stderr or "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr:
             return "SSH_HOST_KEY_REJECTED"
@@ -72,7 +81,7 @@ def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=s
         authenticated = bool(re.search(r'^Authenticated to .+ using "publickey"', stderr, re.MULTILINE))
         if result.returncode:
             raise StagingAccessError(failure_code(result.returncode, stderr), request,
-                exit_code=result.returncode, authenticated=authenticated)
+                exit_code=result.returncode, authenticated=authenticated,worker_evidence=decode_evidence(stderr))
         if len(result.stdout.encode()) > 65536:
             raise StagingAccessError("REMOTE_OUTPUT_LIMIT", request, exit_code=0, authenticated=authenticated)
         return result.stdout

@@ -35,7 +35,8 @@ class DockerSkillDeployment:
         # Never log raw subprocess stderr: it can contain deployment details.
         result = subprocess.run(args, capture_output=True, text=True, timeout=600, check=False)
         if result.returncode:
-            raise RuntimeError("Host Docker operation failed; inspect private worker diagnostics.")
+            from tools.staging_errors import docker_failure
+            raise docker_failure(subprocess.CalledProcessError(result.returncode,args,stderr=result.stderr)) from None
         return result.stdout
 
     def stage(self, *, release, wheel, deployment_id):

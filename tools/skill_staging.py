@@ -14,6 +14,7 @@ from hosts.gamerhq.skill_staging import (validate_profile, verify_remote, requir
     NoRedirects, verify_daemon, verify_offline, require_offline_verification, artifact_fingerprint)
 from hosts.gamerhq.skill_release_artifacts import fetch_release
 from hosts.gamerhq.skill_deployment_docker import DockerSkillDeployment, IMAGE
+from tools.staging_errors import StagingFailure, docker_failure
 
 
 def release_for(profile):
@@ -97,8 +98,11 @@ def build_base(profile, approval):
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=root, prefix="base-image-") as directory:
         identity = Path(directory) / "image-id"
-        subprocess.run(["docker", "build", "--iidfile", str(identity), "--build-arg", "VCS_REF=" + expected,
-            "--tag", "gamerhq-staging-base:" + expected, str(source)], capture_output=True, text=True, check=True, timeout=1200)
+        try:
+            subprocess.run(["docker", "build", "--iidfile", str(identity), "--build-arg", "VCS_REF=" + expected,
+                "--tag", "gamerhq-staging-base:" + expected, str(source)], capture_output=True, text=True, check=True, timeout=1200)
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError) as error:
+            raise docker_failure(error,'docker-build') from None
         image = identity.read_text().strip()
     if not IMAGE.fullmatch(image):
         raise ValueError("Staging base build did not produce an immutable image.")
@@ -195,5 +199,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except StagingFailure as error:
+        raise SystemExit(str(error)) from None
     except Exception:
-        raise SystemExit("Isolated staging operation failed. Review protected configuration/trust/identity evidence; no credentials were logged.") from None
+        raise SystemExit(str(StagingFailure('PREPARATION_REJECTED','prepare'))) from None

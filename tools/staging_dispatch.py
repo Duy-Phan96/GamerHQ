@@ -15,6 +15,7 @@ ENVIRONMENT = CONTROL / "settings/worker.env"
 if __name__ == "__main__":
     sys.path.insert(0, str(WORKER))
 from tools.staging_bridge_protocol import validate
+from tools.staging_errors import StagingFailure, decode_evidence
 
 
 def protected_file(path, *, private=False, uid=0):
@@ -25,13 +26,33 @@ def protected_file(path, *, private=False, uid=0):
         raise PermissionError("Staging worker credentials must be private.")
 
 
-def environment(path=ENVIRONMENT):
-    protected_file(path, private=True, uid=os.geteuid())
+def buildx_state(path, uid):
+    if path.parent.is_symlink() or path.is_symlink():
+        raise PermissionError('Buildx state cannot be redirected.')
+    parent = path.parent.stat()
+    if parent.st_uid != uid or parent.st_mode & 0o077:
+        raise PermissionError('Buildx state needs its private staging parent.')
+    info = path.stat()
+    if not path.is_dir() or info.st_uid != uid or info.st_mode & 0o077:
+        raise PermissionError('Buildx state must remain private to staging.')
+    return str(path)
+
+
+def base_environment():
     uid = os.geteuid()
+    if uid <= 0:
+        raise PermissionError('Staging tools cannot run as root.')
     result = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/var/lib/gamerhq-staging-bridge", "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
         "DOCKER_HOST": f"unix:///run/user/{uid}/docker.sock", "DOCKER_CONFIG": str(CONTROL / "docker-client"),
+        "BUILDX_CONFIG": buildx_state(WORKER.parent / 'worker/buildx', uid),
         "GIT_CONFIG_GLOBAL": str(CONTROL / "gitconfig"), "GIT_OPTIONAL_LOCKS": "0",
         "XDG_RUNTIME_DIR": f"/run/user/{uid}", "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus"}
+    return result
+
+
+def environment(path=ENVIRONMENT):
+    protected_file(path, private=True, uid=os.geteuid())
+    result = base_environment()
     permitted = {"GAMERHQ_SKILL_RELEASE_TOKEN", "GAMERHQ_STAGING_WEB_API_SECRET"}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
@@ -114,15 +135,21 @@ def main():
         release = release_for(profile)
         current = host_request(profile, f"/api/v1/servers/{profile['stagingGuildId']}/skills/{release['skillId']}")["version"]
     command = command_for(request, profile, current_version=current)
-    audit(request["operation"], "STARTED")
+    audit_id = audit(request["operation"], "STARTED")
     try:
         result = subprocess.run(command, cwd=WORKER, env=values, capture_output=True, text=True, timeout=2100)
-        if result.returncode or len(result.stdout.encode()) > 65536:
-            raise RuntimeError("The staging operation failed; production was not targeted.")
+        if len(result.stdout.encode()) > 65536:
+            raise StagingFailure('WORKER_OUTPUT_LIMIT','worker-command',audit_id=audit_id)
+        if result.returncode:
+            evidence = decode_evidence(result.stderr)
+            if evidence:
+                raise StagingFailure(evidence['stagingFailure'],evidence['step'],
+                    exit_code=evidence.get('exitCode'),audit_id=audit_id)
+            raise StagingFailure('WORKER_COMMAND_FAILED','worker-command',exit_code=result.returncode,audit_id=audit_id)
     except Exception:
-        audit(request["operation"], "FAILED")
+        audit(request["operation"], "FAILED", audit_id=audit_id)
         raise
-    audit(request["operation"], "PASS")
+    audit(request["operation"], "PASS", audit_id=audit_id)
     if request["operation"] == "build-base":
         from hosts.gamerhq.skill_deployment_docker import IMAGE
         evidence = json.loads((Path(profile["workRoot"]) / "base-candidate.json").read_text())
@@ -136,5 +163,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except StagingFailure as error:
+        raise SystemExit(str(error)) from None
     except Exception:
         raise SystemExit("Staging bridge rejected or failed the operation. No private error or credential values were logged.") from None

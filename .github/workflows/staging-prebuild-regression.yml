@@ -1,7 +1,7 @@
 name: Installed staging pre-build regression
 on:
   pull_request:
-    paths: ['tools/staging_prebuild_diagnostics.py', '.github/workflows/staging-prebuild-regression.yml']
+    paths: ['tools/staging_prebuild_diagnostics.py', 'tools/staging_buildx_smoke.py', 'tools/upgrade_staging_worker.py', 'tools/staging_worker_revision_smoke.py', 'tools/staging_dispatch.py', 'tools/staging_errors.py', '.github/workflows/staging-prebuild-regression.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,3 +41,10 @@ jobs:
           assert p['preBuildChecksPassed'], p
           assert not any(p[k] for k in ('dockerBuildInvoked','gatewayStarted','credentialFilesOpened','productionChanged'))
           PY
+      - name: Reproduce read-only Buildx failure and verify isolated writable state
+        run: sudo env GITHUB_ACTIONS=true python3 tools/staging_buildx_smoke.py
+      - name: Verify reviewed source revision and real restricted SSH error reporting
+        if: hashFiles('tools/upgrade_staging_worker.py') != ''
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_worker_revision_smoke --commit "$REVIEWED_COMMIT"
