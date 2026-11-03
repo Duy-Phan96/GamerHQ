@@ -117,7 +117,10 @@ def main():
 
 
 if __name__ == "__main__":
+    from tools.staging_errors import StagingFailure
     try:
         main()
+    except StagingFailure as error:
+        raise SystemExit(str(error)) from None
     except Exception:
         raise SystemExit("Host Skill worker failed. Review the private deployment record and validated profile; no credentials were logged.") from None

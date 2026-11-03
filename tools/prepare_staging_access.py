@@ -258,6 +258,9 @@ def prepare(commit, key, *, apply=False, approval='', install_prerequisites=Fals
         ROOT.chmod(0o750); os.chown(ROOT, 0, gid)
         for name in ('data', 'backups', 'artifacts', 'worker'):
             path = ROOT / name; path.mkdir(mode=0o700, exist_ok=True); os.chown(path, uid, gid)
+        buildx = ROOT / 'worker/buildx'
+        if buildx.is_symlink(): raise PermissionError('Buildx state cannot be redirected.')
+        buildx.mkdir(mode=0o700, exist_ok=True); os.chown(buildx, uid, gid); buildx.chmod(0o700)
         for name in ('data', 'backups'):
             # Rootless container UID 10001 maps to subordinate start + 10000.
             acl = f'u:{uid}:rwx,u:{subuids[0]+10000}:rwx,d:u::rwx,d:u:{uid}:rwx,d:u:{subuids[0]+10000}:rwx,d:g::---,d:m::rwx,d:o::---'

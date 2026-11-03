@@ -60,7 +60,7 @@ def test_worker_environment_cannot_import_discord_or_process_configuration(tmp_p
     path = tmp_path / "worker.env"
     path.write_text("DISCORD_TOKEN=fixture\n")
     path.chmod(0o600)
-    with patch("tools.staging_dispatch.protected_file"), patch("os.geteuid", return_value=1001, create=True):
+    with patch("tools.staging_dispatch.protected_file"), patch("tools.staging_dispatch.buildx_state",return_value='/fixture/buildx'), patch("os.geteuid", return_value=1001, create=True):
         with pytest.raises(ValueError): environment(path)
         path.write_text("GAMERHQ_STAGING_WEB_API_SECRET=fixture\n")
         values = environment(path)

@@ -10,11 +10,15 @@ import uuid
 CAPABILITIES = {"storage.skill", "storage.atomic", "scheduler.jobs", "discord.resources.manage"}
 
 
-def audit(operation, state):
+def audit(operation, state, *, audit_id=None):
     # No payload, credential, subprocess output or exception message is logged.
     import syslog
+    audit_id = audit_id or uuid.uuid4().hex
+    if not re.fullmatch('[0-9a-f]{32}',audit_id):
+        raise ValueError('Invalid audit identifier.')
     syslog.openlog("gamerhq-staging", syslog.LOG_PID, syslog.LOG_AUTHPRIV)
-    syslog.syslog(syslog.LOG_NOTICE, json.dumps({"operation": operation, "state": state, "id": uuid.uuid4().hex, "uid": os.geteuid()}))
+    syslog.syslog(syslog.LOG_NOTICE, json.dumps({"operation": operation, "state": state, "id": audit_id, "uid": os.geteuid()}))
+    return audit_id
 
 
 def validate_binding(profile, policy):
