@@ -52,3 +52,20 @@ jobs:
             export GAMERHQ_STAGING_CONFIGURATION="$RELEASE_DESCRIPTOR"
           fi
           python3 -m tools.staging_ssh_client --phase configure --operation "$OPERATION" --approval "$APPROVAL"
+  automatic-update:
+    needs: configure
+    # Keep the originating main ref. workflow_run would execute on the default
+    # develop ref and be denied by the main-only staging environment policy.
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'release' && vars.GAMERHQ_STAGING_UPDATES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and apply the selected immutable staging release
+        env:
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT || '22' }}
+          GAMERHQ_STAGING_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_SSH_KEY }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+        run: python3 -m tools.staging_auto_update
