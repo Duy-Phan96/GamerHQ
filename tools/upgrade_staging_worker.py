@@ -37,9 +37,12 @@ def atomic(path,value,uid,gid,mode):
     if path.is_symlink() or path.parent.is_symlink():raise PermissionError('METADATA_REDIRECTION_REJECTED')
     with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,prefix='.worker-revision-',delete=False) as output:
         temporary=Path(output.name)
+        # Operate on the open inode; staging-owned settings/state directories
+        # must never turn a pathname swap into a privileged chown/chmod.
+        os.fchown(output.fileno(),uid,gid);os.fchmod(output.fileno(),mode)
         json.dump(value,output,sort_keys=True);output.flush();os.fsync(output.fileno())
     try:
-        os.chown(temporary,uid,gid);temporary.chmod(mode);temporary.replace(path)
+        temporary.replace(path)
         descriptor=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
         try:os.fsync(descriptor)
         finally:os.close(descriptor)
