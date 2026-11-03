@@ -1,4 +1,5 @@
 name: Protected staging configuration and access
+run-name: Staging configuration - ${{ inputs.operation }}
 on:
   workflow_dispatch:
     inputs:
@@ -18,8 +19,15 @@ concurrency:
   group: isolated-staging-configuration
   cancel-in-progress: false
 jobs:
+  security-review:
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["initial","credentials","authorize-live","revoke"]'), inputs.operation)
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    steps:
+      - run: echo 'Explicit staging credential or security operation approved.'
   configure:
-    if: github.ref == 'refs/heads/main'
+    needs: security-review
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs['security-review'].result == 'success' || (needs['security-review'].result == 'skipped' && contains(fromJSON('["health","release"]'), inputs.operation))) }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 40
