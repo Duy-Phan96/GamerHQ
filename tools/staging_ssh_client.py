@@ -6,9 +6,36 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 from .staging_bridge_protocol import encode
+
+
+class StagingAccessError(RuntimeError):
+    """Public categorical evidence only; never retain remote output or payloads."""
+    def __init__(self, code, request, *, exit_code=None, authenticated=False):
+        self.evidence = {"stagingError": code, "phase": request["phase"], "operation": request["operation"],
+            "sshExitCode": exit_code, "authenticated": authenticated}
+        super().__init__(json.dumps(self.evidence, separators=(",", ":")))
+
+
+def failure_code(returncode, stderr):
+    if returncode == 255:
+        if "Host key verification failed" in stderr or "REMOTE HOST IDENTIFICATION HAS CHANGED" in stderr:
+            return "SSH_HOST_KEY_REJECTED"
+        if "Permission denied" in stderr:
+            return "SSH_AUTHENTICATION_REJECTED"
+        if any(text in stderr for text in ("Connection refused", "Connection timed out", "Could not resolve hostname", "No route to host")):
+            return "SSH_CONNECTION_FAILED"
+        return "SSH_SESSION_FAILED"
+    if "Staging bridge rejected or failed the operation" in stderr:
+        return "REMOTE_WORKER_REJECTED"
+    if "Unsupported or unavailable isolated staging request" in stderr:
+        return "REMOTE_ENTRY_REJECTED"
+    if "Isolated staging operation failed" in stderr:
+        return "REMOTE_PREPARATION_FAILED"
+    return "REMOTE_COMMAND_FAILED"
 
 
 def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=subprocess.run):
@@ -27,16 +54,27 @@ def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=s
         key.write_text(private_key.rstrip() + "\n", encoding="utf-8")
         hosts.write_text(known_hosts.rstrip() + "\n", encoding="utf-8")
         key.chmod(0o600); hosts.chmod(0o600)
-        args = ["ssh", "-F", "/dev/null", "-T", "-p", str(port), "-i", str(key), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+        # Capture verbose authentication evidence privately, then emit only
+        # categorical facts. Raw stderr, keys and stdin are never logged.
+        args = ["ssh", "-v", "-F", "/dev/null", "-T", "-p", str(port), "-i", str(key), "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+            "-o", "IdentityAgent=none", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
             "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "GlobalKnownHostsFile=/dev/null", "-o", "PreferredAuthentications=publickey",
             "-o", "UserKnownHostsFile=" + str(hosts), "gamerhq-staging-bridge@" + host, command]
         body = json.dumps(payload) if payload is not None else ""
         if len(body.encode()) > 16384:
             raise ValueError("Staging configuration exceeds its bound.")
-        result = run(args, input=body, capture_output=True, text=True, timeout=2100)
-        if result.returncode or len(result.stdout.encode()) > 65536:
-            raise RuntimeError("Staging bridge operation failed; inspect protected operation evidence.")
+        try:
+            result = run(args, input=body, capture_output=True, text=True, timeout=2100)
+        except subprocess.TimeoutExpired:
+            raise StagingAccessError("SSH_OPERATION_TIMEOUT", request) from None
+        stderr = getattr(result, "stderr", "") or ""
+        authenticated = bool(re.search(r'^Authenticated to .+ using "publickey"', stderr, re.MULTILINE))
+        if result.returncode:
+            raise StagingAccessError(failure_code(result.returncode, stderr), request,
+                exit_code=result.returncode, authenticated=authenticated)
+        if len(result.stdout.encode()) > 65536:
+            raise StagingAccessError("REMOTE_OUTPUT_LIMIT", request, exit_code=0, authenticated=authenticated)
         return result.stdout
 
 
@@ -60,5 +98,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except StagingAccessError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1) from None
     except Exception:
-        raise SystemExit("Staging access is unavailable or the request was rejected. No credential values were logged.") from None
+        raise SystemExit('{"stagingError":"CLIENT_CONFIGURATION_OR_PROTOCOL_REJECTED"}') from None
