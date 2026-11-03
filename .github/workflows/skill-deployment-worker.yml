@@ -1,9 +1,5 @@
 name: Approved Host Skill worker
 on:
-  workflow_run:
-    workflows: [Protected staging configuration and access]
-    branches: [main]
-    types: [completed]
   workflow_dispatch:
     inputs:
       environment:
@@ -42,7 +38,7 @@ jobs:
     steps:
       - run: echo 'Explicit production operation approved.'
   staging:
-    if: ${{ github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_UPDATES_ENABLED == 'true' && ((github.event_name == 'workflow_dispatch' && inputs.environment == 'staging') || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.display_title == 'Staging configuration - release')) }}
+    if: github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_UPDATES_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.environment == 'staging'
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 40
@@ -50,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Invoke restricted staging update lifecycle
         env:
-          OPERATION: ${{ github.event_name == 'workflow_run' && 'auto' || inputs.operation }}
+          OPERATION: ${{ inputs.operation }}
           DEPLOYMENT_ID: ${{ inputs.deployment_id }}
           GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
           GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT || '22' }}

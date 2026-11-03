@@ -1,0 +1,43 @@
+name: Installed staging pre-build regression
+on:
+  pull_request:
+    paths: ['tools/staging_prebuild_diagnostics.py', '.github/workflows/staging-prebuild-regression.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  immutable-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 2e6a0ea40c40447fd3bae1a3b14fb845d6675b77
+          path: installed-worker-source
+      - name: Provision exact installed worker on disposable runner only
+        working-directory: installed-worker-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
+          sudo systemctl start ssh
+          ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-prebuild-ci-key
+          sudo python3 -m tools.prepare_staging_access \
+            --commit 2e6a0ea40c40447fd3bae1a3b14fb845d6675b77 \
+            --public-key-file /tmp/staging-prebuild-ci-key.pub \
+            --apply --install-prerequisites --approval 'PREPARE ISOLATED STAGING'
+      - name: Exercise installed pre-build boundary without a build or credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 tools/staging_prebuild_diagnostics.py \
+            --expected-worker-commit 2e6a0ea40c40447fd3bae1a3b14fb845d6675b77 > /tmp/prebuild-evidence.json
+          cat /tmp/prebuild-evidence.json
+          python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/prebuild-evidence.json'))
+          assert p['preBuildChecksPassed'], p
+          assert not any(p[k] for k in ('dockerBuildInvoked','gatewayStarted','credentialFilesOpened','productionChanged'))
+          PY

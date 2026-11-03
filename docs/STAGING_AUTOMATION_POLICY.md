@@ -47,6 +47,11 @@ guarded image rollback. Destructive migration modes remain rejected. Failed or
 mismatched application is never reported as success; no automatic database
 replacement is permitted.
 
+Release selection and its automatic-update job share the originating `main`
+workflow. Do not replace this dependency with `workflow_run`: this repository's
+default branch is `develop`, so that event's ref cannot enter the main-only
+staging environment. A failed release-selection job cannot trigger application.
+
 ## Diagnostics and audit
 
 The SSH client captures verbose connection evidence privately and emits only a
