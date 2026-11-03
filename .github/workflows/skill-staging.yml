@@ -5,7 +5,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [prepare-offline, inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
+        options: [prepare-offline, diagnose, inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
         required: true
       approval:
         description: Offline bundle requires PREPARE ISOLATED STAGING OFFLINE; bootstrap is a separate Gateway approval
@@ -16,8 +16,15 @@ concurrency:
   group: isolated-skill-staging
   cancel-in-progress: false
 jobs:
+  gateway-review:
+    if: github.ref == 'refs/heads/main' && inputs.operation == 'bootstrap'
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    steps:
+      - run: echo 'Explicit first staging Gateway activation approved.'
   prepare:
-    if: vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true'
+    needs: gateway-review
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true' && (needs['gateway-review'].result == 'success' || (needs['gateway-review'].result == 'skipped' && contains(fromJSON('["prepare-offline","diagnose","inspect","initialize","build-base","fetch","verify-offline","verify","build","install"]'), inputs.operation))) }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 40
@@ -37,7 +44,11 @@ jobs:
           invoke_prepare() {
             python3 -m tools.staging_ssh_client --phase prepare --operation "$1" --approval "$2"
           }
-          if [[ "$OPERATION" == prepare-offline ]]; then
+          if [[ "$OPERATION" == diagnose ]]; then
+            python3 -m tools.staging_ssh_client --phase configure --operation health
+            invoke_prepare inspect ''
+            invoke_prepare build-base 'BUILD ISOLATED STAGING BASE'
+          elif [[ "$OPERATION" == prepare-offline ]]; then
             [[ "$APPROVAL" == 'PREPARE ISOLATED STAGING OFFLINE' ]] || {
               echo 'The offline bundle requires its exact operation approval.' >&2
               exit 1
