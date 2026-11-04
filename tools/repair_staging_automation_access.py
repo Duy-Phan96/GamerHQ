@@ -37,6 +37,19 @@ def restore_directories(directories, gid):
     return before
 
 
+def require_inactive_state(path, uid):
+    try: fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError: return
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_mode & 0o077 or info.st_size > 131072:
+            raise ValueError('PRIVATE_STATE_REQUIRED')
+        body = os.read(fd, 131073)
+        if len(body) > 131072: raise ValueError('PRIVATE_STATE_REQUIRED')
+        if json.loads(body).get('enabled'): raise ValueError('INACTIVE_ENROLLMENT_REQUIRED')
+    finally: os.close(fd)
+
+
 def repair(commit, approval):
     import pwd
     if os.geteuid() != 0 or approval != 'RESTORE REVIEWED STAGING CODE ACCESS': raise ValueError('OWNER_APPROVAL_REQUIRED')
@@ -47,11 +60,7 @@ def repair(commit, approval):
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022: raise ValueError('PROTECTED_PARENT_REQUIRED')
     policy = json.loads(protected(Path('/etc/gamerhq-staging/automation-policy.json')))
     if policy['controllerCommit'] != ENROLLED or policy['legacyWorkerCommit'] != LEGACY: raise ValueError('REVIEWED_ENROLLMENT_REQUIRED')
-    state = ROOT / 'worker/automation-state.json'
-    if state.exists():
-        info = state.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != account.pw_uid or info.st_mode & 0o077 or info.st_size > 131072: raise ValueError('PRIVATE_STATE_REQUIRED')
-        if json.loads(state.read_text()).get('enabled'): raise ValueError('INACTIVE_ENROLLMENT_REQUIRED')
+    require_inactive_state(ROOT / 'worker/automation-state.json', account.pw_uid)
     env = {'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/nonexistent',
         'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
     def run(args): return subprocess.run(args, env=env, capture_output=True, check=True, timeout=180).stdout
