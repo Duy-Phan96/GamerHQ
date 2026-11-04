@@ -10,6 +10,7 @@ import time
 import re
 import subprocess
 from urllib.request import Request, HTTPRedirectHandler, build_opener
+from urllib.error import HTTPError, URLError
 
 import discord
 from .skill_deployment_docker import IMAGE
@@ -197,7 +198,8 @@ def verify_docker(profile):
 
 
 def discord_read(path, token):
-    request = Request("https://discord.com/api/v10" + path)
+    request = Request("https://discord.com/api/v10" + path, headers={
+        "User-Agent": "DiscordBot (https://github.com/Duy-Phan96/GamerHQ, staging-1)"}, method="GET")
     request.add_unredirected_header("Authorization", "Bot " + token)
     with build_opener(NoRedirects()).open(request, timeout=15) as response:
         body = response.read(262145)
@@ -257,32 +259,43 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
         raise ValueError("Approved private release access is not configured.")
     if os.name == "posix" and Path(profile["botEnvFile"]).stat().st_mode & 0o077:
         raise ValueError("Staging credential file must be private (mode 600).")
-    if read("/users/@me", values["DISCORD_TOKEN"]).get("id") != ids["stagingBotId"]:
-        raise ValueError("Staging token does not identify the approved staging bot.")
-    guilds = read("/users/@me/guilds?limit=200", values["DISCORD_TOKEN"])
+    def read_step(path, step):
+        try:
+            return read(path, values["DISCORD_TOKEN"])
+        except HTTPError as error:
+            code = {401: 'DISCORD_UNAUTHORIZED', 403: 'DISCORD_FORBIDDEN', 404: 'DISCORD_NOT_FOUND',
+                429: 'DISCORD_RATE_LIMITED'}.get(error.code, 'DISCORD_HTTP_REJECTED')
+            raise VerificationFailure(code, step) from None
+        except (URLError, TimeoutError, OSError):
+            raise VerificationFailure('DISCORD_NETWORK_REJECTED', step) from None
+        except Exception:
+            raise VerificationFailure('DISCORD_RESPONSE_REJECTED', step) from None
+    if read_step("/users/@me", 'bot-identity').get("id") != ids["stagingBotId"]:
+        raise VerificationFailure('STAGING_BOT_IDENTITY_REJECTED', 'bot-identity')
+    guilds = read_step("/users/@me/guilds?limit=200", 'guild-membership')
     if not isinstance(guilds, list) or {str(row["id"]) for row in guilds} != {ids["stagingGuildId"]}:
-        raise ValueError("The dedicated staging bot must belong only to its approved staging guild.")
+        raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
     guild_id = ids["stagingGuildId"]
-    guild = read("/guilds/" + guild_id, values["DISCORD_TOKEN"])
+    guild = read_step("/guilds/" + guild_id, 'guild-identity')
     if str(guild.get("id")) != guild_id:
-        raise ValueError("Staging guild identity did not verify.")
-    member = read(f"/guilds/{guild_id}/members/{ids['stagingBotId']}", values["DISCORD_TOKEN"])
-    roles = read(f"/guilds/{guild_id}/roles", values["DISCORD_TOKEN"])
+        raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-identity')
+    member = read_step(f"/guilds/{guild_id}/members/{ids['stagingBotId']}", 'bot-membership')
+    roles = read_step(f"/guilds/{guild_id}/roles", 'guild-roles')
     for kind, key in (("text", "categoryId"), ("voice", "voiceCategoryId")):
-        category = read("/channels/" + ids[key], values["DISCORD_TOKEN"])
+        category = read_step("/channels/" + ids[key], kind + '-category')
         if str(category.get("guild_id")) != guild_id or category.get("type") != 4:
-            raise ValueError("A staging category does not belong to the staging guild.")
+            raise VerificationFailure('STAGING_CATEGORY_IDENTITY_REJECTED', kind + '-category')
         required = discord.Permissions(view_channel=True, manage_channels=True, manage_roles=True,
             **({"send_messages": True, "read_message_history": True} if kind == "text" else {"connect": True})).value
         if category_permissions(guild_id, ids["stagingBotId"], member, roles, category) & required != required:
-            raise ValueError("Staging bot lacks the required category permissions.")
+            raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', kind + '-category')
     release = json.loads(Path(profile["releaseFile"]).read_text(encoding="utf-8"))
-    fetch(release, artifact_root=profile["artifactRoot"], trusted_repositories=profile["trustedRepositories"],
-        token=os.environ.get(profile["releaseTokenEnv"]))
+    verified_check('STAGING_RELEASE_REJECTED', 'skill-release', lambda: fetch(release, artifact_root=profile["artifactRoot"],
+        trusted_repositories=profile["trustedRepositories"], token=os.environ.get(profile["releaseTokenEnv"])))
     sdk = json.loads(Path(profile["sdkReleaseFile"]).read_text(encoding="utf-8"))
     if sdk.get("distribution") != "gamerhq-skill-sdk" or sdk.get("version") != profile["sdkVersion"] or sdk.get("sha256") != profile["sdkSha256"]:
         raise ValueError("SDK release differs from the reviewed staging profile.")
-    fetch(sdk, artifact_root=profile["artifactRoot"], trusted_repositories=profile["trustedRepositories"],
-        token=os.environ.get(profile["releaseTokenEnv"]))
+    verified_check('STAGING_RELEASE_REJECTED', 'sdk-release', lambda: fetch(sdk, artifact_root=profile["artifactRoot"],
+        trusted_repositories=profile["trustedRepositories"], token=os.environ.get(profile["releaseTokenEnv"])))
     verify_local_artifacts(profile)
     return {"schemaVersion": 1, "kind": "live", "verifiedAt": int(time.time()), "fingerprint": fingerprint(profile), "verified": True, "gatewayStarted": False}

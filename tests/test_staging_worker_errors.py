@@ -27,15 +27,16 @@ def test_worker_evidence_rejects_unbounded_or_private_fields(extra):
     value={'stagingFailure':'DOCKER_BUILD_FAILED','step':'docker-build',**extra}
     assert decode_evidence(json.dumps(value)) is None
 
-def test_worker_evidence_survives_verbose_ssh_without_exposing_remote_text():
+@pytest.mark.parametrize('code,step',[('BUILDX_STATE_NOT_WRITABLE','docker-build'),('DISCORD_FORBIDDEN','bot-identity')])
+def test_worker_evidence_survives_verbose_ssh_without_exposing_remote_text(code,step):
     request={'version':1,'phase':'prepare','operation':'build-base','approval':'BUILD ISOLATED STAGING BASE'}
-    safe=StagingFailure('BUILDX_STATE_NOT_WRITABLE','docker-build',exit_code=1,audit_id='a'*32)
+    safe=StagingFailure(code,step,exit_code=1,audit_id='a'*32)
     def run(args,**kwargs):
         return SimpleNamespace(returncode=1,stdout='',stderr='private-server-line\nAuthenticated to fixture using "publickey".\n'+str(safe)+'\n')
     with pytest.raises(StagingAccessError) as caught:
         invoke(request,host='fixture.example',port=22,private_key='private-key',known_hosts='owner-pin',run=run)
     value=json.loads(str(caught.value))
-    assert value['authenticated'] is True and value['workerFailure']=='BUILDX_STATE_NOT_WRITABLE'
+    assert value['authenticated'] is True and value['workerFailure']==code and value['workerStep']==step
     assert value['workerAuditId']=='a'*32 and value['workerExitCode']==1
     assert not any(secret in str(caught.value) for secret in ('private-server-line','private-key','owner-pin'))
 

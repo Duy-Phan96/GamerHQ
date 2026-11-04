@@ -53,7 +53,8 @@ def main():
 sys.path.insert(0,'/opt/gamerhq-staging/deployment-worker')
 from tools.skill_staging import write_record
 try:write_record('/opt/gamerhq-staging/offline-verification.json',{'publicFixture':True})
-except OSError as error:assert error.errno in (1,13,30)
+except Exception as error:
+ assert getattr(error,'errno',None) in (1,13,30) or getattr(error,'evidence',{}).get('stagingFailure')=='STAGING_RECORD_PERSISTENCE_FAILED'
 else:raise AssertionError('Original root-owned proof destination must be unwritable')
 print('ORIGINAL_RECORD_LOCATION_REJECTED')
 """

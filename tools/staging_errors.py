@@ -9,9 +9,14 @@ CODES = frozenset({'BUILDX_STATE_NOT_WRITABLE','DOCKER_BUILD_FAILED','DOCKER_COM
     'WORKER_OUTPUT_LIMIT','STAGING_PROFILE_REJECTED','STAGING_DAEMON_REJECTED','STAGING_BASE_IMAGE_MISSING',
     'STAGING_COMPOSE_CONFIG_REJECTED','STAGING_STORAGE_MISSING','STAGING_STORAGE_PROBE_FAILED',
     'STAGING_DATA_ACCESS_REJECTED','STAGING_DATABASE_ACCESS_REJECTED','STAGING_BACKUPS_ACCESS_REJECTED',
-    'STAGING_ARTIFACT_REJECTED','STAGING_RECORD_PERSISTENCE_FAILED'})
+    'STAGING_ARTIFACT_REJECTED','STAGING_RECORD_PERSISTENCE_FAILED','CONFIGURATION_REJECTED',
+    'DISCORD_UNAUTHORIZED','DISCORD_FORBIDDEN','DISCORD_NOT_FOUND','DISCORD_RATE_LIMITED',
+    'DISCORD_HTTP_REJECTED','DISCORD_NETWORK_REJECTED','DISCORD_RESPONSE_REJECTED',
+    'STAGING_BOT_IDENTITY_REJECTED','STAGING_GUILD_IDENTITY_REJECTED','STAGING_CATEGORY_IDENTITY_REJECTED',
+    'STAGING_CATEGORY_PERMISSIONS_REJECTED','STAGING_RELEASE_REJECTED'})
 STEPS = frozenset({'docker-build','docker-command','prepare','worker-command','profile','daemon','base-image',
-    'compose-config','storage-probe','artifact','record'})
+    'compose-config','storage-probe','artifact','record','configure','bot-identity','guild-membership',
+    'guild-identity','bot-membership','guild-roles','text-category','voice-category','sdk-release','skill-release'})
 
 def decode_evidence(text):
     if not isinstance(text,str) or len(text.encode()) > 65536:
