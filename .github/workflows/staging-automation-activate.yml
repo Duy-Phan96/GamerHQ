@@ -1,0 +1,49 @@
+name: Owner activation of staging automation
+run-name: Staging policy - ${{ inputs.operation }}
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [activate, deactivate]
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: host-staging-automation
+  cancel-in-progress: false
+jobs:
+  prerequisites:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Require enrollment and completed original bootstrap
+        env:
+          ENROLLED: ${{ vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$ENROLLED" = true
+          test "$(gh api repos/Duy-Phan96/GamerHQ/actions/runs/41850674216 --jq .conclusion)" = success
+          gh api repos/Duy-Phan96/GamerHQ/environments/staging --jq '(.can_admins_bypass == false) and any(.protection_rules[]; .type == "required_reviewers" and any(.reviewers[]; .reviewer.id == 272528289))' | grep -qx true
+  activate:
+    needs: prerequisites
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Apply the owner-reviewed policy activation
+        env:
+          OPERATION: ${{ inputs.operation }}
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+          GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
+        run: python3 -m tools.staging_automation_client "$OPERATION"
