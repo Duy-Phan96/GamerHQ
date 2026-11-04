@@ -52,6 +52,17 @@ def verify_packet(packet, *, read, permissions, required, validate_release, fetc
         if read('/users/@me', token).get('id') != packet['stagingBotId']:
             raise PreflightFailure('BOT_IDENTITY_MISMATCH', 'bot-identity')
     stage('bot-identity', bot_identity)
+    def gateway_members_intent():
+        # The pinned Host requests Intents.members; message content is disabled.
+        # Application flags 14/15 cover approved and limited GUILD_MEMBERS access.
+        # https://github.com/discord/discord-api-docs/blob/main/developers/resources/application.mdx#application-flags
+        application = read('/oauth2/applications/@me', token)
+        flags = application.get('flags', 0)
+        if type(flags) is not int or flags < 0:
+            raise PreflightFailure('APPLICATION_FLAGS_REJECTED', 'gateway-members-intent')
+        if not flags & ((1 << 14) | (1 << 15)):
+            raise PreflightFailure('GATEWAY_MEMBERS_INTENT_REQUIRED', 'gateway-members-intent')
+    stage('gateway-members-intent', gateway_members_intent)
     def guild_membership():
         guilds = read('/users/@me/guilds?limit=200', token)
         if not isinstance(guilds, list) or {str(row['id']) for row in guilds} != {packet['stagingGuildId']}:
@@ -78,6 +89,7 @@ def verify_packet(packet, *, read, permissions, required, validate_release, fetc
         stage('sdk-release' if key == 'sdkRelease' else 'skill-release', lambda: fetch(packet[key], packet['releaseToken']))
     return {'state': 'LIVE_PREFLIGHT_PASS', 'completed': completed, 'gatewayStarted': False,
         'productionChanged': False, 'workerAuthorizationChanged': False, 'vpsConfigurationChanged': False,
+        'gatewayMembersIntentVerified': True,
         'scope': 'GitHub-runner-only; does not attest VPS network, persisted credentials or live proof'}
 
 
