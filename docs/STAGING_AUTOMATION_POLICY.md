@@ -54,6 +54,15 @@ staging environment. A failed release-selection job cannot trigger application.
 
 ## Diagnostics and audit
 
+The routine `resume-offline` Actions operation uses the installed version-one SSH
+contract. Read-only health, existing storage and writable verification parents
+must pass before any build. The fixed sequence never includes initialization,
+source replacement, live authorization or deployment. Repeating it reuses the
+existing database and immutable release descriptors. This client-side orchestration
+needs no VPS code installation. Routine Skill package updates continue through
+the Host controller; changes to root-owned control code or its security policy
+remain separately reviewed owner operations.
+
 The SSH client captures verbose connection evidence privately and emits only a
 fixed error category, phase, operation, exit status and public-key authentication
 fact. It never echoes raw stderr, secret stdin, keys or configuration. Host-key,
