@@ -35,11 +35,8 @@ def main():
         installer = tmp / 'original-enrollment.py'; installer.write_bytes(old_installer)
         for _ in range(2):
             # Reproduce the exact published owner command, including umask 077.
-            saved_umask = os.umask(0o077)
-            try:
-                result = subprocess.run(['python3', str(installer), '--commit', enrolled_commit, '--public-key', public,
-                    '--approval', 'ENROLL RESTRICTED STAGING AUTOMATION'], capture_output=True, text=True, check=True)
-            finally: os.umask(saved_umask)
+            result = subprocess.run(['python3', str(installer), '--commit', enrolled_commit, '--public-key', public,
+                '--approval', 'ENROLL RESTRICTED STAGING AUTOMATION'], capture_output=True, text=True, check=True, umask=0o077)
             receipt = json.loads(result.stdout)
             assert receipt['state'] == 'ENROLLED_INACTIVE' and receipt['legacyWorkerCommit'] == profile['hostSourceCommit']
             assert not any(receipt[k] for k in ('automationEnabled', 'gatewayStarted', 'productionChanged', 'existingCredentialsChanged', 'legacySshEntryChanged', 'sandboxChanged', 'workerSourceChanged'))
@@ -76,8 +73,10 @@ def main():
                 'stdoutControllerPath': 'automation-controller/entry.py' in denied.stdout,
                 'legacyEntryRejected': 'Unsupported or unavailable isolated staging request' in denied.stderr,
                 'routerRejected': 'SSH_AUTHENTICATED_ROUTE_REJECTED' in denied.stderr}
-            assert (root / 'automation-controller').stat().st_mode & 0o777 == 0o700
-            assert (root / 'automation-controller/staging_automation').stat().st_mode & 0o777 == 0o700
+            denied_evidence['controllerMode'] = oct((root / 'automation-controller').stat().st_mode & 0o777)
+            denied_evidence['packageMode'] = oct((root / 'automation-controller/staging_automation').stat().st_mode & 0o777)
+            assert denied_evidence['controllerMode'] == '0o700', denied_evidence
+            assert denied_evidence['packageMode'] == '0o700', denied_evidence
             # systemd versions differ in forwarding the child's stderr. Check
             # failed access then successful access after changing only modes.
             assert denied.returncode == 2, denied_evidence
