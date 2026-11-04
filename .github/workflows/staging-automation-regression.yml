@@ -1,0 +1,30 @@
+name: Scoped staging automation regression
+on:
+  pull_request:
+    paths: ['tools/staging_automation/**', 'tools/enroll_staging_automation.py', 'tools/staging_automation_smoke.py', '.github/workflows/staging-automation*.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scoped-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 92db47042d58055cb0debdfd83f11f8508e19809
+          path: installed-worker-source
+      - name: Provision the current installed worker on this disposable runner
+        working-directory: installed-worker-source
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
+          sudo systemctl start ssh
+          ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-legacy-ci-key
+          sudo python3 -m tools.prepare_staging_access --commit 92db47042d58055cb0debdfd83f11f8508e19809 --public-key-file /tmp/staging-legacy-ci-key.pub --apply --install-prerequisites --approval 'PREPARE ISOLATED STAGING'
+      - name: Verify enrollment, unchanged legacy state and actual forced-command SSH
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_automation_smoke --commit "$REVIEWED_COMMIT"

@@ -1,0 +1,18 @@
+name: Staging health and bounded recovery schedule
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dispatch-main:
+    if: vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch only the fixed main routine operation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run staging-automation.yml --repo Duy-Phan96/GamerHQ --ref main -f operation=reconcile
