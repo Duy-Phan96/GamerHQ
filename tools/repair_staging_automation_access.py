@@ -4,6 +4,7 @@ No worker upgrade, SSH policy change, credential access, database migration,
 container operation or activation. Owner-only fixed paths and immutable source.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -64,6 +65,21 @@ def repair(commit, approval):
         for name in ('__init__.py', 'policy.py', 'oidc.py', 'backend.py', 'bridge.py'):
             if protected(CONTROL / 'staging_automation' / name) != git('show', ENROLLED + ':tools/staging_automation/' + name):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
+        routing_commit = '62d01d5b28383bab236435842915a623ae0536dd'
+        git('fetch', '--quiet', '--depth=1', 'origin', routing_commit)
+        router = protected(Path('/usr/local/libexec/gamerhq-staging-ssh-router'))
+        if router != git('show', routing_commit + ':tools/staging_ssh_router.py'): raise ValueError('REVIEWED_SSH_ROUTER_REQUIRED')
+        scope = {'__name__': 'verified_router'}; exec(compile(router, 'verified_router', 'exec'), scope)
+        mapping = scope['routes'](protected(Path(account.pw_dir) / '.ssh/authorized_keys').decode(), policy['publicKeySha256'])
+        if mapping.get(policy['publicKeySha256']) != scope['AUTOMATION'] or scope['LEGACY'] not in mapping.values():
+            raise ValueError('AUTHENTICATED_SSH_MAPPING_REJECTED')
+        if hashlib.sha256(protected(Path(scope['LEGACY']))).hexdigest() != '2d46ffea5ab9883b22146899b5d6ab113bdd3aec6e98c6af9c6a0b4237ac52c2':
+            raise ValueError('REVIEWED_LEGACY_ENTRY_REQUIRED')
+        effective = run(['/usr/sbin/sshd', '-T', '-C', 'user=' + account.pw_name + ',host=localhost,addr=127.0.0.1']).decode().splitlines()
+        required = ['forcecommand /usr/local/libexec/gamerhq-staging-ssh-router', 'authenticationmethods publickey',
+            'passwordauthentication no', 'kbdinteractiveauthentication no', 'disableforwarding yes', 'permittty no',
+            'permittunnel no', 'permituserrc no', 'permituserenvironment no', 'exposeauthinfo yes']
+        if any(line not in effective for line in required): raise ValueError('EFFECTIVE_SSH_RESTRICTIONS_REQUIRED')
     launch = ("import sys\nsys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']\n"
         "from staging_automation.bridge import entry\nentry()\n").encode()
     if protected(CONTROL / 'entry.py') != launch: raise ValueError('INSTALLED_LAUNCHER_MISMATCH')
@@ -88,6 +104,7 @@ def repair(commit, approval):
         'controllerCommit': ENROLLED, 'publicKeySha256': policy['publicKeySha256'],
         'previousDirectoryModes': [oct(mode) for mode in before], 'directoryModes': ['0o750', '0o750'],
         'restrictedSandboxStatus': 'NOT_ACTIVATED', 'automationEnabled': False,
+        'legacyKeyMappingVerified': True, 'automationKeyMappingVerified': True, 'sshRestrictionsVerified': True,
         'sshPolicyChanged': False, 'credentialsChanged': False, 'databaseChanged': False,
         'containersChanged': False, 'workerSourceChanged': False, 'productionChanged': False}
 
