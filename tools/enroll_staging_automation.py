@@ -109,6 +109,9 @@ def enroll(commit, public_key, approval):
             info = directory.lstat()
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022: raise ValueError('PROTECTED_DIRECTORY_REQUIRED')
         else: directory.mkdir(mode=0o750); os.chown(directory, 0, gid)
+        # The verified operator command deliberately uses umask 077. mkdir's
+        # mode is masked; restore the reviewed read/traverse-only group access.
+        directory.chmod(0o750)
     for name, body in blobs.items(): atomic(DEST / 'staging_automation' / name, body, gid, 0o640)
     launch = ("import sys\nsys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']\n"
         "from staging_automation.bridge import entry\nentry()\n")

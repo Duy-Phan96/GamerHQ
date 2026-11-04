@@ -15,8 +15,8 @@ import time
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--commit', required=True); args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.geteuid() != 0: raise PermissionError('DISPOSABLE_CI_ONLY')
-    from tools.enroll_staging_automation import enroll
     from tools.repair_staging_ssh_routing import repair, REPAIRED
+    from tools.repair_staging_automation_access import repair as repair_access
     enrolled_commit = 'a1b50573850921e478a2f838e72868853bde6dd7'
     account = pwd.getpwnam('gamerhq-staging-bridge')
     root = Path('/opt/gamerhq-staging'); config = Path('/etc/gamerhq-staging')
@@ -31,14 +31,23 @@ def main():
         for name in ('client', 'host'):
             subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(tmp / name)], check=True)
         public = ' '.join((tmp / 'client.pub').read_text().split()[:2])
+        old_installer = subprocess.check_output(['git', 'show', enrolled_commit + ':tools/enroll_staging_automation.py'])
+        installer = tmp / 'original-enrollment.py'; installer.write_bytes(old_installer)
         for _ in range(2):
-            receipt = enroll(enrolled_commit, public, 'ENROLL RESTRICTED STAGING AUTOMATION')
+            # Reproduce the exact published owner command, including umask 077.
+            result = subprocess.run(['python3', str(installer), '--commit', enrolled_commit, '--public-key', public,
+                '--approval', 'ENROLL RESTRICTED STAGING AUTOMATION'], capture_output=True, text=True, check=True, umask=0o077)
+            receipt = json.loads(result.stdout)
             assert receipt['state'] == 'ENROLLED_INACTIVE' and receipt['legacyWorkerCommit'] == profile['hostSourceCommit']
             assert not any(receipt[k] for k in ('automationEnabled', 'gatewayStarted', 'productionChanged', 'existingCredentialsChanged', 'legacySshEntryChanged', 'sandboxChanged', 'workerSourceChanged'))
         for name, body in originals.items():
             current = Path(name).read_bytes()
             if name.endswith('authorized_keys'): assert current.startswith(body) and current.count(public.encode()) == 1
             else: assert current == body
+        # Existing installations may have restrictive code directories; model
+        # that state explicitly, independent of runner ACLs/pre-existing modes.
+        for directory in (root / 'automation-controller', root / 'automation-controller/staging_automation'):
+            directory.chmod(0o700)
         host = ' '.join((tmp / 'host.pub').read_text().split()[:2]); known = tmp / 'known_hosts'; known.write_text('[127.0.0.1]:22225 ' + host + '\n')
         sshd = tmp / 'sshd_config'
         sshd.write_text('Port 22225\nListenAddress 127.0.0.1\nHostKey '+str(tmp / 'host')+'\nPidFile '+str(tmp / 'pid')+'\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers gamerhq-staging-bridge\nStrictModes yes\nPermitUserRC no\nDisableForwarding yes\nInclude /etc/ssh/sshd_config.d/90-gamerhq-staging.conf\n')
@@ -60,6 +69,24 @@ def main():
             assert Path('/etc/ssh/sshd_config.d/90-gamerhq-staging.conf').read_bytes() == REPAIRED
             server.send_signal(__import__('signal').SIGHUP)
             time.sleep(.5)
+            denied = call('status')
+            denied_evidence = {'exitCode': denied.returncode,
+                'stderrPermissionDenied': 'Permission denied' in denied.stderr,
+                'stdoutPermissionDenied': 'Permission denied' in denied.stdout,
+                'stderrControllerPath': 'automation-controller/entry.py' in denied.stderr,
+                'stdoutControllerPath': 'automation-controller/entry.py' in denied.stdout,
+                'legacyEntryRejected': 'Unsupported or unavailable isolated staging request' in denied.stderr,
+                'routerRejected': 'SSH_AUTHENTICATED_ROUTE_REJECTED' in denied.stderr}
+            denied_evidence['controllerMode'] = oct((root / 'automation-controller').stat().st_mode & 0o777)
+            denied_evidence['packageMode'] = oct((root / 'automation-controller/staging_automation').stat().st_mode & 0o777)
+            assert denied_evidence['controllerMode'] == '0o700', denied_evidence
+            assert denied_evidence['packageMode'] == '0o700', denied_evidence
+            # systemd versions differ in forwarding the child's stderr. Check
+            # failed access then successful access after changing only modes.
+            assert denied.returncode == 2, denied_evidence
+            for _ in range(2):
+                fixed = repair_access(args.commit, 'RESTORE REVIEWED STAGING CODE ACCESS')
+                assert fixed['directoryModes'] == ['0o750', '0o750'] and fixed['restrictedSandboxStatus'] == 'NOT_ACTIVATED'
             status = call('status'); assert status.returncode == 0, status.stderr
             value = json.loads(status.stdout); assert value['state'] == 'NOT_ACTIVATED' and value['controllerCommit'] == enrolled_commit
             assert call('bootstrap').returncode != 0
@@ -97,6 +124,7 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
         'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
+        'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',
         'gatewayStarted': False, 'productionChanged': False}))
 
 

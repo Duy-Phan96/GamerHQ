@@ -187,6 +187,35 @@ def test_client_binds_fresh_challenge_to_token_and_never_echoes_secrets():
     assert error.evidence['stagingError'] == 'SSH_AUTHENTICATION_REJECTED' and 'private-key' not in str(error)
 
 
+@pytest.mark.parametrize('path,phase', [
+    ('/usr/local/libexec/gamerhq-staging-ssh-router', 'SSH_ROUTER'),
+    ('/usr/local/libexec/gamerhq-staging-automation-entry', 'SSH_AUTOMATION_ENTRY'),
+    ('/opt/gamerhq-staging/automation-controller/entry.py', 'AUTOMATION_CONTROLLER'),
+])
+@pytest.mark.parametrize('reason,code', [('No such file or directory', 'NOT_FOUND'), ('Permission denied', 'NOT_READABLE')])
+def test_launcher_diagnostics_report_only_known_phase_and_reason(path, phase, reason, code):
+    stderr = f"private-token\n/usr/bin/python3: can't open file '{path}': [Errno 2] {reason}\nprivate-key"
+    error = failure({'phase': 'automation', 'operation': 'status'}, 2, True, stderr)
+    assert error.evidence['automationFailure'] == phase + '_' + code
+    assert 'private-token' not in str(error) and 'private-key' not in str(error) and path not in str(error)
+
+
+def test_launcher_diagnostics_do_not_echo_unknown_paths_or_oversized_output():
+    for stderr in ["can't open file '/private/token': Permission denied", 'x' * 65537]:
+        error = failure({'phase': 'automation', 'operation': 'status'}, 2, True, stderr)
+        assert error.evidence['automationFailure'] == 'AUTOMATION_REQUEST_REJECTED'
+
+
+@pytest.mark.parametrize('stdout,expected', [
+    ("private-token\npython: can't open file '/opt/gamerhq-staging/automation-controller/entry.py': Permission denied", 'AUTOMATION_CONTROLLER_NOT_READABLE'),
+    ('private-token\n{"automationError":"SSH_AUTHENTICATED_ROUTE_REJECTED"}', 'SSH_AUTHENTICATED_ROUTE_REJECTED'),
+])
+def test_launcher_stdout_is_sanitized_as_strictly_as_stderr(stdout, expected):
+    error = failure({'phase': 'automation', 'operation': 'status'}, 2, True, '', stdout=stdout)
+    assert error.evidence['automationFailure'] == expected
+    assert 'private-token' not in str(error) and '/opt/' not in str(error)
+
+
 def container():
     return {'Name': '/gamerhq-staging-bot', 'Image': 'sha256:' + 'a' * 64,
         'Config': {'User': '10001:10001', 'Labels': {'com.docker.compose.project': 'gamerhq-staging', 'com.docker.compose.service': 'gamerhq-staging'}},
