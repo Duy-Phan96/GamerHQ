@@ -77,3 +77,17 @@ def test_restrictive_owner_umask_is_restored_only_on_reviewed_code_directories(t
     assert second.stat().st_mode & 0o777 == 0o750
     first.chmod(0o770)
     with pytest.raises(ValueError): restore_directories((first, second), os.getgid())
+
+
+@pytest.mark.skipif(__import__('os').name != 'posix', reason='POSIX no-follow private-state access')
+def test_owner_access_repair_never_follows_user_state_symlink_or_reads_unbounded_state(tmp_path):
+    import os
+    from tools.repair_staging_automation_access import require_inactive_state
+    state = tmp_path / 'state.json'; state.write_text('{"enabled": false}'); state.chmod(0o600)
+    require_inactive_state(state, os.getuid())
+    link = tmp_path / 'redirect'; link.symlink_to(state)
+    with pytest.raises(OSError): require_inactive_state(link, os.getuid())
+    state.write_text('x' * 131073)
+    with pytest.raises(ValueError, match='PRIVATE_STATE'): require_inactive_state(state, os.getuid())
+    state.write_text('{"enabled": true}')
+    with pytest.raises(ValueError, match='INACTIVE_ENROLLMENT'): require_inactive_state(state, os.getuid())
