@@ -57,7 +57,7 @@ def verify_packet(packet, *, read, permissions, required, validate_release, fetc
         # Application flags 14/15 cover approved and limited GUILD_MEMBERS access.
         # https://github.com/discord/discord-api-docs/blob/main/developers/resources/application.mdx#application-flags
         application = read('/oauth2/applications/@me', token)
-        flags = application.get('flags')
+        flags = application.get('flags', 0)
         if type(flags) is not int or flags < 0:
             raise PreflightFailure('APPLICATION_FLAGS_REJECTED', 'gateway-members-intent')
         if not flags & ((1 << 14) | (1 << 15)):

@@ -99,3 +99,11 @@ def test_missing_or_malformed_intent_flags_stop_before_guild_data_and_release_fe
     assert error.value.evidence['step'] == 'gateway-members-intent'
     assert calls == ['/users/@me', '/oauth2/applications/@me'] and not fetched
     assert 'gateway-members-intent' not in [row['livePreflightStep'] for row in progress]
+
+
+def test_omitted_optional_application_flags_mean_no_privileged_access():
+    packet, rows, _, _, _, kwargs = fixture()
+    rows['/oauth2/applications/@me'].pop('flags')
+    with pytest.raises(PreflightFailure) as error:
+        verify_packet(packet, **kwargs)
+    assert error.value.evidence['stagingPreflightError'] == 'GATEWAY_MEMBERS_INTENT_REQUIRED'
