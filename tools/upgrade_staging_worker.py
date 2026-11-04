@@ -25,7 +25,8 @@ POLICY=CONTROL/'policy.json'
 STATE=Path('/var/lib/gamerhq-staging-bootstrap/worker-upgrades')
 OLD='2e6a0ea40c40447fd3bae1a3b14fb845d6675b77'
 PREVIOUS='1c8ec294491f089c85a4f919a8bea5bf74e8f1f8'
-SUPPORTED_PREVIOUS=frozenset((OLD,PREVIOUS))
+VERIFIER='8390d4aefdbb48f2ed1f27717320f14401166bec'
+SUPPORTED_PREVIOUS=frozenset((OLD,PREVIOUS,VERIFIER))
 REPOSITORY='https://github.com/Duy-Phan96/GamerHQ.git'
 
 def protected(path,uid,private=False):
@@ -185,7 +186,9 @@ def apply_locked(commit,account):
         atomic(POLICY,{**policy,'hostSourceCommit':commit},0,gid,0o640)
         # Retain the old image/data, but never present its previous source
         # binding as a freshly verified base for this worker revision.
-        atomic(PROFILE,{**profile,'hostSourceCommit':commit,'baseImage':'REQUIRES_REVIEWED_BASE_REBUILD'},uid,gid,0o600)
+        atomic(PROFILE,{**profile,'hostSourceCommit':commit,'baseImage':'REQUIRES_REVIEWED_BASE_REBUILD',
+            'verificationFile':str(ROOT/'worker/verification.json'),
+            'offlineVerificationFile':str(ROOT/'worker/offline-verification.json')},uid,gid,0o600)
         if git('status','--porcelain'):raise RuntimeError('REVISED_SOURCE_NOT_CLEAN')
         verify_fixed(account,commit)
     except Exception:

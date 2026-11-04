@@ -20,7 +20,7 @@ SHA256-verified command generated from the reviewed immutable revision, in the
 existing infrastructure-owner root session. This is a security/source revision,
 not a routine Skill installation or update. Do not rerun the original bootstrap.
 
-`tools/upgrade_staging_worker.py` supports only the known original and `1c8ec294`
+`tools/upgrade_staging_worker.py` supports only the known original, `1c8ec294` and `8390d4ae`
 workers, while
 offline. It verifies delivery against the exact public Git tree, unchanged
 dependency/image definitions and a bounded source-only diff. It locks operations,
@@ -92,3 +92,30 @@ the specific error code over real forced-command SSH, and verification after
 restoring only that synthetic fixture's ACL mask. Real VPS candidate-image and
 offline verification acceptance remain pending the reviewed worker revision.
 Staging updates and the Gateway remain disabled; production is unchanged.
+
+## Verification proof persistence
+
+The `8390d4ae` worker passed fresh health, inspection, pinned base rebuild and
+release verification, but run
+[41808402522](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41808402522)
+again returned a generic error after guarded checks. Its configured verification
+records still targeted the root-owned staging root. That directory is intentionally
+read-only to the staging identity and absent from its writable systemd paths.
+The following proof write was outside the earlier phase-specific handlers.
+
+Both live and offline verification records now reside in the existing private
+`/opt/gamerhq-staging/worker` state directory. Fresh profiles and reviewed source
+upgrades select these exact paths; validation rejects legacy root-level paths.
+The root directory, SSH and sandbox permissions remain unchanged. Existing data,
+artifacts and historical root-level records are retained. Record creation errors
+emit `STAGING_RECORD_PERSISTENCE_FAILED` at step `record` without private output.
+Inspection also reports whether proof parents are writable.
+
+The disposable rootless CI matrix reproduces rejected writes to the original
+root-level path, then tests the complete bounded SSH sequence: build the pinned
+Host base, verify offline and persist the proof, build the candidate image and
+run the isolated package probe. It uses only public SDK/example wheels, keeps
+the synthetic dataset byte-identical and starts no Gateway. Published private
+release verification remains a separate VPS operation. This tests the actual
+filesystem and service permissions instead of only unit verification in writable
+temporary directories.

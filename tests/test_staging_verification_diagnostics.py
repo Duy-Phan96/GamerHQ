@@ -10,6 +10,7 @@ import pytest
 from hosts.gamerhq.skill_staging import verify_docker,verify_offline
 from tools.staging_errors import StagingFailure,decode_evidence
 from tools.staging_inspect import inspect_staging
+from tools.skill_staging import write_record
 from test_skill_staging import staging
 
 def prepare_storage(profile):
@@ -81,3 +82,18 @@ def test_inspection_does_not_read_credentials_or_database_contents(staging):
     assert report['gatewayStarted'] is False and report['productionChanged'] is False
     assert database.stat().st_mtime_ns==before
     assert 'retained-private-dataset' not in json.dumps(report)
+
+def test_record_failure_is_specific_and_preserves_existing_proof(staging):
+    profile,_,_,_=staging
+    path=Path(profile['offlineVerificationFile']);path.write_text('{"previous":true}')
+    previous=path.read_bytes()
+    with patch('tools.skill_staging.tempfile.NamedTemporaryFile',side_effect=PermissionError('private filesystem detail')):
+        with pytest.raises(StagingFailure) as caught:write_record(path,{'verified':True})
+    assert caught.value.evidence=={'stagingFailure':'STAGING_RECORD_PERSISTENCE_FAILED','step':'record'}
+    assert 'private filesystem detail' not in str(caught.value) and path.read_bytes()==previous
+
+def test_root_owned_legacy_proof_location_is_rejected(staging):
+    from hosts.gamerhq.skill_staging import validate_profile
+    profile,_,_,_=staging
+    profile['offlineVerificationFile']=str(Path(profile['root'])/'offline-verification.json')
+    with pytest.raises(ValueError,match='private writable worker state'):validate_profile(profile)

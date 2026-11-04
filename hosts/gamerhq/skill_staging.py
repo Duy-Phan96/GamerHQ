@@ -32,6 +32,9 @@ def validate_profile(profile):
     for key in ("database", "artifactRoot", "workRoot", "backupRoot", "verificationFile", "offlineVerificationFile"):
         if not Path(profile[key]).resolve().is_relative_to(root):
             raise ValueError("Mutable staging paths must stay inside their dedicated root.")
+    for key,name in (('verificationFile','verification.json'),('offlineVerificationFile','offline-verification.json')):
+        if Path(profile[key]).resolve() != Path(profile['workRoot']).resolve() / name:
+            raise ValueError('Verification records must use the private writable worker state directory.')
     for key in ("composeFile", "botEnvFile", "releaseFile", "sdkReleaseFile"):
         if not Path(profile[key]).resolve().is_relative_to(config):
             raise ValueError("Staging configuration paths must stay inside their protected root.")

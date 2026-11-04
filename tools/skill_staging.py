@@ -14,7 +14,7 @@ from hosts.gamerhq.skill_staging import (validate_profile, verify_remote, requir
     NoRedirects, verify_daemon, verify_offline, require_offline_verification, artifact_fingerprint)
 from hosts.gamerhq.skill_release_artifacts import fetch_release
 from hosts.gamerhq.skill_deployment_docker import DockerSkillDeployment, IMAGE
-from tools.staging_errors import StagingFailure, docker_failure
+from tools.staging_errors import StagingFailure, VerificationFailure, docker_failure
 
 
 def release_for(profile):
@@ -23,15 +23,23 @@ def release_for(profile):
 
 def write_record(target, value):
     target = Path(target)
-    if target.is_symlink():
-        raise ValueError("Protected staging records cannot be symbolic links.")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, prefix=target.name + ".", delete=False) as output:
-        json.dump(value, output, sort_keys=True)
-        output.flush(); os.fsync(output.fileno())
-        temporary = Path(output.name)
-    temporary.chmod(0o600)
-    temporary.replace(target)
+    temporary = None
+    try:
+        if target.is_symlink():raise ValueError('Record redirection rejected.')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, prefix=target.name + ".", delete=False) as output:
+            temporary = Path(output.name)
+            if os.name == 'posix':os.fchmod(output.fileno(),0o600)
+            json.dump(value, output, sort_keys=True)
+            output.flush(); os.fsync(output.fileno())
+        temporary.chmod(0o600)
+        temporary.replace(target);temporary=None
+    except Exception:
+        raise VerificationFailure('STAGING_RECORD_PERSISTENCE_FAILED','record') from None
+    finally:
+        if temporary is not None:
+            try:temporary.unlink(missing_ok=True)
+            except OSError:pass
 
 
 def host_request(profile, path, *, payload=None):

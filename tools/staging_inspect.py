@@ -42,6 +42,7 @@ def inspect_staging(profile):
         selinux={'1':'Enforcing','0':'Permissive'}.get(value,'Unknown')
     except OSError:selinux='Unavailable'
     return {'schemaVersion':1,'baseImageConfigured':bool(IMAGE.fullmatch(profile['baseImage'])),
+        'verificationParentsWritable':all(os.access(Path(profile[key]).parent,os.W_OK) for key in ('verificationFile','offlineVerificationFile')),
         'subordinateMappingPresent':mapped is not None,'selinuxObserved':selinux,
         'storage':{name:_storage(path,profile['deploymentUid'],mapped) for name,path in (
             ('data',Path(profile['database']).parent),('database',Path(profile['database'])),('backups',Path(profile['backupRoot'])))},
