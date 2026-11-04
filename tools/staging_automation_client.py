@@ -90,7 +90,7 @@ def perform(operation, release=None, *, call=exchange, get_token=token):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'reconcile', 'identity-check'])
+    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check'])
     args = parser.parse_args()
     if args.operation == 'identity-check':
         from tools.staging_automation.oidc import verify
@@ -100,6 +100,11 @@ def main():
         verify(token('gamerhq-staging-automation:1375800851:' + nonce), policy, 'health', nonce)
         result = {'state': 'WORKLOAD_IDENTITY_VERIFIED', 'vpsAccess': False, 'gatewayStarted': False, 'productionChanged': False}
     elif args.operation == 'status': result = exchange('status')
+    elif args.operation == 'host-promote':
+        status = exchange('status')
+        if status.get('state') != 'ACTIVE' or status.get('hostPromotionSupported') is not True or status.get('bootstrapVerified') is not True:
+            raise Denied('HOST_PROMOTION_NOT_INSTALLED')
+        result = perform('host-promote')
     elif args.operation == 'reconcile':
         status = exchange('status')
         if status.get('state') != 'ACTIVE': result = status
