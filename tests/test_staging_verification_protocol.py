@@ -12,6 +12,7 @@ from tools.staging_ssh_client import invoke,StagingAccessError
     ('STAGING_BACKUPS_ACCESS_REJECTED','storage-probe',43),
     ('STAGING_ARTIFACT_REJECTED','artifact',None),
     ('STAGING_BASE_IMAGE_MISSING','base-image',None),
+    ('STAGING_RECORD_PERSISTENCE_FAILED','record',None),
 ])
 def test_new_verifier_evidence_survives_actions_client_without_private_output(code,step,status):
     evidence={'stagingFailure':code,'step':step,'auditId':'b'*32}
