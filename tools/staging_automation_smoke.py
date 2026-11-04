@@ -96,15 +96,45 @@ def main():
             challenge = json.loads(call('challenge', {'operation': 'activate'}).stdout)
             assert call('activate', {'token': 'invalid-jwt', 'challenge': challenge['challenge']}).returncode != 0
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
+            # Install the reviewed extension under the same restrictive umask,
+            # retaining keys, state, legacy worker, DB and sandbox. No apply.
+            from tools.extend_staging_host_promotion import extension
+            lock_info = (root / 'worker/operation.lock').lstat()
+            print(json.dumps({'extensionLock': {'uid': lock_info.st_uid, 'gid': lock_info.st_gid,
+                'mode': oct(lock_info.st_mode & 0o777), 'links': lock_info.st_nlink,
+                'expectedUid': account.pw_uid, 'expectedGid': account.pw_gid}}), flush=True)
+            for _ in range(2):
+                previous = os.umask(0o077)
+                try: extended = extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')
+                finally: os.umask(previous)
+                assert extended['state'] == 'INSTALLED' and extended['automationEnabled'] is False
+                assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
+            extended_status = json.loads(call('status').stdout)
+            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionSupported'] is True
+            assert extended_status['state'] == 'NOT_ACTIVATED'
+            assert call('host-promote', {'token': 'invalid-jwt', 'challenge': 'invalid'}).returncode != 0
+            state_path = root / 'worker/automation-state.json'
+            inactive_bytes = state_path.read_bytes()
+            active = json.loads(inactive_bytes); active.update(enabled=True, bootstrapVerified=True, approvedImage='sha256:'+'a'*64)
+            state_path.write_text(json.dumps(active)); os.chown(state_path, account.pw_uid, account.pw_gid)
+            active_bytes = state_path.read_bytes()
+            assert extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')['automationEnabled'] is True
+            assert state_path.read_bytes() == active_bytes
+            state_path.write_bytes(inactive_bytes)
         finally: server.terminate(); server.wait(timeout=10)
     assert hashlib.sha256(database.read_bytes()).hexdigest() == digest
     # Verify actual Docker normalization, not only a hand-written inspect fixture.
     # This is a disposable sleep container, never the Discord application.
     child = '''import os,sys,json,subprocess
-sys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']
+sys.path[:0]=['/opt/gamerhq-staging/automation-controller/revisions/REVIEWED_EXTENSION','/opt/gamerhq-staging/deployment-worker']
 from tools.staging_dispatch import environment
 os.environ.clear();os.environ.update(environment())
 from staging_automation.backend import HostBackend
+from staging_automation.host_promotion import COMMIT
+from staging_automation.deployment import SkillUpdateController
+import inspect
+assert 'host_source_commit' in inspect.signature(SkillUpdateController.stage).parameters
+assert COMMIT=='6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
 p=json.load(open('/etc/gamerhq-staging/settings/profile.json'))
 def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=180)
 run(['docker','network','create','gamerhq-staging-private'],False)
@@ -115,6 +145,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
+    child = child.replace('REVIEWED_EXTENSION', args.commit)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']

@@ -1,0 +1,72 @@
+# Reviewed staging Host promotion
+
+Owner authorization covers only application commit
+`6a2c74a234d693abe70f5f69dfbb41dbce38bc75`. It does not authorize production,
+new credentials, broader SSH/Docker privileges or a destructive migration.
+
+The existing scoped controller gains one `host-promote` operation. A separate
+`staging-host-promotion.yml` job runs in `deployment-security`; GitHub must record
+an actual owner approval. The VPS verifies signed short-lived OIDC identity,
+repository/owner IDs, main ref, exact workflow bytes, nonce/replay protection and
+the review. Routine workflow identities cannot invoke this operation. Its source
+is fixed in root-owned policy; there is no user-supplied URL, commit, image or path.
+It shares existing locks, audit logs, request/build/restart limits and revocation.
+
+## Preparation and safety
+
+The current image must report baseline Host source
+`92db47042d58055cb0debdfd83f11f8508e19809` and be the approved staging container.
+The immutable application archive SHA256 is
+`ca3c9acbf7087d59881f130c903bf13b2c47fed1f2157933f6ca08e07df2fc97`.
+Schema, dependency locks, Dockerfile, Runtime contracts and portable/Host service
+trees must match the baseline. Public Host CI must still report success for the
+exact target. Private-wheel compatibility CI is recorded in Host PR #209.
+
+An application-only overlay uses the existing image's dependencies, then the
+existing Docker staging adapter verifies/reinstalls the same published SDK and
+Event Manager 0.1.0 bytes and probes with no credentials, mounts, network or Gateway.
+Build source never replaces root-owned controller/worker code. BUILD_COMMIT and
+the image revision identify the exact approved application commit.
+
+Application uses the canonical `SkillUpdateController`, with an explicit reviewed
+same-Skill-version Host promotion. It stops the old Gateway before replacement,
+takes an exclusive 0600 consistent SQLite backup, verifies integrity and restores
+into a disposable clone, checks the clone fingerprint, then applies the staged
+immutable image. Skill installation/enablement, authoritative ownership and all
+existing Event configuration/membership/history/resource identities are checked
+against the backup after health. Scheduler status may naturally advance; retained
+Event data must not disappear or change. No live database restore is automatic.
+
+Failed startup can restore the old image only if application data is unchanged.
+Otherwise the controller stops and records RECOVERY_REQUIRED. A successful apply
+records the source and updates the staging profile's base image, so subsequent
+approved Skill patches retain the restored UI. The trusted legacy worker binding
+is unchanged. An interrupted application requires reviewed recovery; it is not
+silently retried. Historical deployment/backup evidence stays in existing storage.
+
+## Installing the capability
+
+The existing SSH identity intentionally cannot replace trusted root-owned code.
+`tools/extend_staging_host_promotion.py` installs a versioned controller bundle and
+atomically selects it under the existing operation lock, preserving enabled state.
+It verifies original source, immutable delivery and the existing workflow hashes.
+The bundle includes exact canonical deployment-controller source, not a forked
+implementation. The installer is Python 3.9 compatible, restores 0750/0640 modes
+under umask 077, preserves existing SELinux labels and restores new-path contexts.
+Retries install only the same immutable revision. SSH routing, keys, sandbox,
+worker, database, configuration secrets and containers remain unchanged.
+
+The owner must install that reviewed capability once because this Codex environment
+has no root VPS access. The published operator command must use a real immutable
+commit and SHA256; do not run the legacy source-only worker repair for a UI change.
+After the public installation receipt, verify controller status and dispatch the
+protected Host promotion workflow. The owner reviews that run in GitHub. Do not
+claim installation or deployment before its actual receipt/result is verified.
+
+## Acceptance
+
+Record actual deployed image/source, Skill 0.1.0 installation, backup/restore probe,
+authority/data retention and HOST_READY after application, then run scoped health
+and smoke. The owner will manually test Discord and provide screenshots. Automated
+component snapshots and offline image probes do not establish live UX acceptance.
+Both legacy deployment gates and production remain unchanged.

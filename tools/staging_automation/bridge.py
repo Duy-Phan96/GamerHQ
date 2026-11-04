@@ -15,7 +15,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     charge(state, operation, now); save(state)
     if operation == 'status':
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
-        return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired'))}
+        return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy}
     if operation == 'challenge':
         if not isinstance(payload, dict) or set(payload) != {'operation'} or payload['operation'] in PUBLIC:
             raise Denied('PAYLOAD_REJECTED')
@@ -46,6 +46,11 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         if operation == 'update':
             result = backend.update()
             if result.get('image'): state['approvedImage'] = result.pop('image'); save(state)
+            return result
+        if operation == 'host-promote':
+            from .host_promotion import promote
+            result = promote(backend, expected_image=state['approvedImage'])
+            state['approvedImage'] = result.pop('image'); save(state)
             return result
         if operation in ('restart', 'recover'): return backend.restart(state['approvedImage'], recover=operation == 'recover')
         if operation == 'history': return backend.history()
