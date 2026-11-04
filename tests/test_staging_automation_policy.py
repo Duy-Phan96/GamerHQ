@@ -234,6 +234,7 @@ def test_activation_requires_original_success_and_owner_protected_legacy_environ
     monkeypatch.setattr(module, 'github', lambda *args: {'conclusion': None})
     with pytest.raises(Denied, match='INITIAL_BOOTSTRAP'): host.activate()
     host.fresh_verify.assert_not_called()
+
     def github(p, path):
         if path.endswith('/approvals'): return [{'state': 'approved', 'user': {'id': 272528289}, 'environments': [{'name': 'deployment-security'}]}]
         if path.endswith('/environments/staging'): return {'can_admins_bypass': False, 'protection_rules': []}
@@ -241,3 +242,19 @@ def test_activation_requires_original_success_and_owner_protected_legacy_environ
     monkeypatch.setattr(module, 'github', github)
     with pytest.raises(Denied, match='LEGACY_ENVIRONMENT'): host.activate()
     host.fresh_verify.assert_not_called()
+
+
+def test_storage_budget_fails_before_build_or_backup_and_never_cleans_data(tmp_path, monkeypatch):
+    from tools.staging_automation import backend as module
+    import sqlite3
+    from types import SimpleNamespace
+    path = tmp_path / 'gamerhq.db'
+    with sqlite3.connect(path) as db: db.execute('CREATE TABLE existing(value TEXT)')
+    before = path.read_bytes()
+    host = HostBackend({'workRoot': str(tmp_path), 'database': str(path)}, {})
+    monkeypatch.setattr(module.shutil, 'disk_usage', lambda unused: SimpleNamespace(free=0))
+    with pytest.raises(Denied, match='DISK_BUDGET'): host.storage_budget()
+    assert path.read_bytes() == before
+    monkeypatch.setattr(module.shutil, 'disk_usage', lambda unused: SimpleNamespace(free=2147483648))
+    host.storage_budget()
+    assert path.read_bytes() == before

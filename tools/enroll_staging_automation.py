@@ -15,6 +15,7 @@ import stat
 import subprocess
 import tempfile
 import shutil
+import errno
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
@@ -37,7 +38,9 @@ def atomic(path, body, gid, mode):
     label = None
     if path.exists():
         try: label = os.getxattr(path, 'security.selinux', follow_symlinks=False)
-        except OSError: pass
+        except OSError as error:
+            if error.errno not in (errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP):
+                raise ValueError('EXISTING_SECURITY_LABEL_UNAVAILABLE') from None
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as f:
         tmp = Path(f.name); os.fchown(f.fileno(), 0, gid); os.fchmod(f.fileno(), mode)
         if label: os.setxattr(f.fileno(), 'security.selinux', label)
