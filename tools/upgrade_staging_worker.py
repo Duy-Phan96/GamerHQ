@@ -24,6 +24,8 @@ PROFILE=CONTROL/'settings/profile.json'
 POLICY=CONTROL/'policy.json'
 STATE=Path('/var/lib/gamerhq-staging-bootstrap/worker-upgrades')
 OLD='2e6a0ea40c40447fd3bae1a3b14fb845d6675b77'
+PREVIOUS='1c8ec294491f089c85a4f919a8bea5bf74e8f1f8'
+SUPPORTED_PREVIOUS=frozenset((OLD,PREVIOUS))
 REPOSITORY='https://github.com/Duy-Phan96/GamerHQ.git'
 
 def protected(path,uid,private=False):
@@ -98,7 +100,7 @@ def remove_marker(marker,nonce):
 def upgrade(commit,approval):
     if platform.system() != 'Linux' or os.geteuid() != 0:raise PermissionError('INFRASTRUCTURE_OWNER_SESSION_REQUIRED')
     if approval != 'UPDATE ISOLATED STAGING WORKER':raise PermissionError('EXPLICIT_WORKER_REVISION_APPROVAL_REQUIRED')
-    if not re.fullmatch('[0-9a-f]{40}',commit) or commit==OLD:raise ValueError('NEW_IMMUTABLE_COMMIT_REQUIRED')
+    if not re.fullmatch('[0-9a-f]{40}',commit) or commit in SUPPORTED_PREVIOUS:raise ValueError('NEW_IMMUTABLE_COMMIT_REQUIRED')
     account=pwd.getpwnam('gamerhq-staging-bridge');uid,gid=account.pw_uid,account.pw_gid
     if uid<=0 or gid<=0 or account.pw_dir!='/var/lib/gamerhq-staging-bridge':raise PermissionError('STAGING_IDENTITY_MISMATCH')
     for path,owner in ((ROOT,0),(WORKER,0),(CONTROL,0),(ROOT/'worker',uid),(STATE.parent,0)):
@@ -123,19 +125,19 @@ def apply_locked(commit,account):
     if transaction and transaction.get('state')=='APPLYING':
         # A terminated owner session leaves a deny marker. Restore the recorded
         # public metadata/source before retrying; no database recovery is involved.
-        if transaction['old']!=OLD or transaction['new']!=commit:raise PermissionError('UPGRADE_RECOVERY_BINDING_REJECTED')
+        if transaction['old'] not in SUPPORTED_PREVIOUS or transaction['new']!=commit:raise PermissionError('UPGRADE_RECOVERY_BINDING_REJECTED')
         if not marker.exists() and not marker.is_symlink():
             recovered_policy=protected(POLICY,0);recovered_profile=protected(PROFILE,uid,private=True)
             recovered_head=git('rev-parse','HEAD')
             if recovered_head==commit and recovered_policy.get('hostSourceCommit')==commit and recovered_profile.get('hostSourceCommit')==commit:
                 verify_fixed(account,commit)
                 transaction['state']='APPLIED';atomic(journal,transaction,0,0,0o600)
-                return receipt(commit,'ALREADY_CURRENT')
-            if recovered_head!=OLD or recovered_policy!=transaction['policy'] or recovered_profile!=transaction['profile']:
+                return receipt(commit,'ALREADY_CURRENT',transaction['old'])
+            if recovered_head!=transaction['old'] or recovered_policy!=transaction['policy'] or recovered_profile!=transaction['profile']:
                 raise PermissionError('UPGRADE_RECOVERY_MARKER_MISSING')
         else:
             if protected(marker,0,private=True)!={'workerUpgrade':transaction['nonce']}:raise PermissionError('UPGRADE_RECOVERY_MARKER_REJECTED')
-            git('checkout','--detach',OLD);protect_source(gid)
+            git('checkout','--detach',transaction['old']);protect_source(gid)
             atomic(POLICY,transaction['policy'],0,gid,0o640)
             atomic(PROFILE,transaction['profile'],uid,gid,0o600)
             remove_marker(marker,transaction['nonce'])
@@ -145,13 +147,15 @@ def apply_locked(commit,account):
         'deploymentHome':account.pw_dir,'dockerHost':'unix:///run/user/'+str(uid)+'/docker.sock'}
     if any(policy.get(k)!=v or profile.get(k)!=v for k,v in expected.items()):raise PermissionError('STAGING_BINDING_MISMATCH')
     if policy.get('schemaVersion')!=2 or profile.get('workerEnabled') is not False:raise PermissionError('OFFLINE_WORKER_REQUIRED')
+    if (WORKER/'.env').exists() or (WORKER/'.env').is_symlink():raise PermissionError('LOCAL_RUNTIME_ENVIRONMENT_REJECTED')
     if git('remote','get-url','origin')!=REPOSITORY or git('status','--porcelain'):raise PermissionError('CLEAN_PUBLIC_WORKER_SOURCE_REQUIRED')
     current=git('rev-parse','HEAD')
     if current==commit and policy.get('hostSourceCommit')==commit and profile.get('hostSourceCommit')==commit:
         if marker.exists():raise PermissionError('EXISTING_ACCESS_REVOCATION_PRESERVED')
         verify_fixed(account,commit)
-        return receipt(commit,'ALREADY_CURRENT')
-    if current!=OLD or policy.get('hostSourceCommit')!=OLD or profile.get('hostSourceCommit')!=OLD:raise PermissionError('EXPECTED_INSTALLED_REVISION_REQUIRED')
+        return receipt(commit,'ALREADY_CURRENT',transaction['old'] if transaction else None)
+    if current not in SUPPORTED_PREVIOUS or policy.get('hostSourceCommit')!=current or profile.get('hostSourceCommit')!=current:raise PermissionError('EXPECTED_INSTALLED_REVISION_REQUIRED')
+    old=current
     if marker.exists() or marker.is_symlink():raise PermissionError('EXISTING_ACCESS_REVOCATION_PRESERVED')
     git('fetch','--no-tags','origin',commit)
     if git('rev-parse',commit)!=commit:raise PermissionError('FETCHED_COMMIT_MISMATCH')
@@ -160,14 +164,14 @@ def apply_locked(commit,account):
     # the operator independently verifies the downloaded script with SHA-256.
     blob=hashlib.sha1(b'blob '+str(len(public_script)).encode()+b'\0'+public_script,usedforsecurity=False).hexdigest()
     if git('rev-parse',commit+':tools/upgrade_staging_worker.py')!=blob:raise PermissionError('VERIFIED_DELIVERY_SOURCE_MISMATCH')
-    changed=git('diff','--name-only',OLD,commit).splitlines()
+    changed=git('diff','--name-only',old,commit).splitlines()
     allowed=('tools/','tests/','.github/workflows/','deploy/staging/','docs/')
-    if any(not p.startswith(allowed) and p!='hosts/gamerhq/skill_deployment_docker.py' for p in changed):raise PermissionError('SOURCE_ONLY_REVISION_SCOPE_REJECTED')
+    if any(not p.startswith(allowed) and p not in ('hosts/gamerhq/skill_deployment_docker.py','hosts/gamerhq/skill_staging.py') for p in changed):raise PermissionError('SOURCE_ONLY_REVISION_SCOPE_REJECTED')
     for name in ('requirements.lock','requirements-skills.lock','Dockerfile','pyproject.toml'):
-        if git('rev-parse',OLD+':'+name)!=git('rev-parse',commit+':'+name):raise PermissionError('DEPENDENCY_OR_IMAGE_CHANGE_NOT_AUTHORIZED')
+        if git('rev-parse',old+':'+name)!=git('rev-parse',commit+':'+name):raise PermissionError('DEPENDENCY_OR_IMAGE_CHANGE_NOT_AUTHORIZED')
     if any(line.startswith('120000 ') for line in git('ls-tree','-r',commit).splitlines()):raise PermissionError('SOURCE_SYMLINK_REJECTED')
     nonce=uuid.uuid4().hex
-    transaction={'old':OLD,'new':commit,'nonce':nonce,'state':'APPLYING','policy':policy,'profile':profile}
+    transaction={'old':old,'new':commit,'nonce':nonce,'state':'APPLYING','policy':policy,'profile':profile}
     atomic(journal,transaction,0,0,0o600)
     atomic(marker,{'workerUpgrade':nonce},0,0,0o600)
     try:
@@ -179,11 +183,13 @@ def apply_locked(commit,account):
         info=buildx.stat()
         if not buildx.is_dir() or info.st_uid!=uid or info.st_mode & 0o077:raise PermissionError('PRIVATE_BUILDX_STATE_REQUIRED')
         atomic(POLICY,{**policy,'hostSourceCommit':commit},0,gid,0o640)
-        atomic(PROFILE,{**profile,'hostSourceCommit':commit},uid,gid,0o600)
+        # Retain the old image/data, but never present its previous source
+        # binding as a freshly verified base for this worker revision.
+        atomic(PROFILE,{**profile,'hostSourceCommit':commit,'baseImage':'REQUIRES_REVIEWED_BASE_REBUILD'},uid,gid,0o600)
         if git('status','--porcelain'):raise RuntimeError('REVISED_SOURCE_NOT_CLEAN')
         verify_fixed(account,commit)
     except Exception:
-        git('checkout','--detach',OLD);protect_source(gid)
+        git('checkout','--detach',old);protect_source(gid)
         atomic(POLICY,policy,0,gid,0o640);atomic(PROFILE,profile,uid,gid,0o600)
         remove_marker(marker,nonce)
         transaction['state']='ROLLED_BACK';atomic(journal,transaction,0,0,0o600)
@@ -193,10 +199,10 @@ def apply_locked(commit,account):
     import syslog
     syslog.openlog('gamerhq-staging',syslog.LOG_PID,syslog.LOG_AUTHPRIV)
     syslog.syslog(syslog.LOG_NOTICE,json.dumps({'operation':'worker-source-revision','state':'APPLIED','id':nonce,'commit':commit}))
-    return receipt(commit,'APPLIED')
+    return receipt(commit,'APPLIED',old)
 
-def receipt(commit,state):
-    return {'operation':'worker-source-revision','state':state,'previousCommit':OLD,'workerCommit':commit,
+def receipt(commit,state,previous):
+    return {'operation':'worker-source-revision','state':state,'previousCommit':previous,'workerCommit':commit,
         'workerEnabled':False,'gatewayStarted':False,'productionChanged':False,'sshPolicyChanged':False,
         'credentialsChanged':False,'dependenciesChanged':False,'databaseChanged':False,'isolationPolicyChanged':False}
 
