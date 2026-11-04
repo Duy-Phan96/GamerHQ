@@ -83,7 +83,7 @@ class ProgressionMemberSignalTests(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch.object(progression.db, "get_selectable_games")
-    def test_first_game_transition_emits_once_with_member_stable_key(self, games):
+    def test_first_observed_game_add_emits_member_stable_signal(self, games):
         games.return_value = [
             {"id": 1, "role_id": 7001},
             {"id": 2, "role_id": 7002},
@@ -102,9 +102,54 @@ class ProgressionMemberSignalTests(unittest.IsolatedAsyncioTestCase):
             "occurredAt": 555,
         },))
 
-        later = self.member(guild, roles=[self.role(7001), self.role(7002)])
+    @patch.object(progression.db, "get_selectable_games")
+    def test_existing_member_game_add_uses_same_first_game_key(self, games):
+        games.return_value = [
+            {"id": 1, "role_id": 7001},
+            {"id": 2, "role_id": 7002},
+            {"id": 3, "role_id": 7003},
+        ]
+        guild = SimpleNamespace(id=123, premium_subscriber_role=None)
+        before = self.member(guild, roles=[self.role(7001)])
+        after = self.member(guild, roles=[self.role(7001), self.role(7002)])
+
+        payloads = progression.progression_member_signals(before, after, now=556)
+
+        self.assertEqual(payloads, ({
+            "memberId": 42,
+            "provider": "profile",
+            "signal": "first_game_added",
+            "dedupeKey": "profile:first_game_added:123:42",
+            "occurredAt": 556,
+        },))
+
+        later = self.member(
+            guild,
+            roles=[self.role(7001), self.role(7002), self.role(7003)],
+        )
+        repeated = progression.progression_member_signals(after, later, now=557)
         self.assertEqual(
-            progression.progression_member_signals(after, later, now=556),
+            repeated[0]["dedupeKey"],
+            "profile:first_game_added:123:42",
+        )
+
+    @patch.object(progression.db, "get_selectable_games")
+    def test_game_removal_or_unrelated_role_change_emits_no_first_game_signal(self, games):
+        games.return_value = [
+            {"id": 1, "role_id": 7001},
+            {"id": 2, "role_id": 7002},
+        ]
+        guild = SimpleNamespace(id=123, premium_subscriber_role=None)
+        with_game = self.member(guild, roles=[self.role(7001)])
+        without_game = self.member(guild, roles=[])
+        unrelated = self.member(guild, roles=[self.role(9001)])
+
+        self.assertEqual(
+            progression.progression_member_signals(with_game, without_game, now=558),
+            (),
+        )
+        self.assertEqual(
+            progression.progression_member_signals(without_game, unrelated, now=559),
             (),
         )
 
