@@ -1,0 +1,46 @@
+name: Policy-bound staging automation
+run-name: Routine staging - ${{ inputs.operation }}
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        options: [health, reconcile, prepare, install, update, restart, recover, smoke, history, status, identity-check]
+        required: true
+      release:
+        description: Optional published patch release descriptor for prepare; no credentials
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: host-staging-automation
+  cancel-in-progress: false
+jobs:
+  routine:
+    if: github.ref == 'refs/heads/main' && (vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true' || inputs.operation == 'status' || inputs.operation == 'identity-check')
+    runs-on: ubuntu-latest
+    environment: staging-automation
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: inputs.operation == 'identity-check'
+        with:
+          python-version: '3.12'
+      - name: Install pinned verifier dependencies for the identity-only probe
+        if: inputs.operation == 'identity-check'
+        run: python -m pip install cryptography==46.0.3 cffi==2.0.0 pycparser==2.23
+      - name: Invoke the scoped Host policy
+        env:
+          OPERATION: ${{ inputs.operation }}
+          GAMERHQ_STAGING_RELEASE: ${{ inputs.release }}
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+          GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
+        run: python3 -m tools.staging_automation_client "$OPERATION"

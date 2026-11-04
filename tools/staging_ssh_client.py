@@ -47,8 +47,8 @@ def failure_code(returncode, stderr):
     return "REMOTE_COMMAND_FAILED"
 
 
-def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=subprocess.run):
-    command = encode(request)
+def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=subprocess.run, encoder=encode, failure_factory=None):
+    command = encoder(request)
     try:
         ipaddress.ip_address(host or "")
         valid_host = True
@@ -80,6 +80,8 @@ def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=s
         stderr = getattr(result, "stderr", "") or ""
         authenticated = bool(re.search(r'^Authenticated to .+ using "publickey"', stderr, re.MULTILINE))
         if result.returncode:
+            if failure_factory:
+                raise failure_factory(request, result.returncode, authenticated, stderr)
             raise StagingAccessError(failure_code(result.returncode, stderr), request,
                 exit_code=result.returncode, authenticated=authenticated,worker_evidence=decode_evidence(stderr))
         if len(result.stdout.encode()) > 65536:
