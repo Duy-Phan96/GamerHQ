@@ -121,7 +121,7 @@ def build_overlay(backend, current):
         env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_GLOBAL': '/dev/null',
             'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
         def git(*args):
-            result = subprocess.run(['git', '-C', str(repo), *args], env=env, capture_output=True, check=True, timeout=180)
+            result = subprocess.run(['git', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-C', str(repo), *args], env=env, capture_output=True, check=True, timeout=180)
             if len(result.stdout) > 262144:
                 raise Denied('PUBLIC_METADATA_LIMIT')
             return result.stdout

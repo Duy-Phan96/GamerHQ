@@ -92,7 +92,7 @@ def extension(commit, approval):
         'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
     with tempfile.TemporaryDirectory(prefix='gamerhq-host-extension-') as temp:
         def git(*args):
-            result = subprocess.run(['git', '-C', temp, *args], env=env, capture_output=True, check=True, timeout=180)
+            result = subprocess.run(['git', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', '-C', temp, *args], env=env, capture_output=True, check=True, timeout=180)
             if len(result.stdout) > 262144:
                 raise ValueError('SOURCE_LIMIT')
             return result.stdout
