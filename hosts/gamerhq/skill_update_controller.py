@@ -74,7 +74,7 @@ class SkillUpdateController:
         decision = update_decision(current_version, release["version"], policy,
             migration_safe=True, capabilities_unchanged=set(capabilities) <= set(current_capabilities))
         if host_source_commit is not None:
-            if not re.fullmatch(r"[0-9a-f]{40}", host_source_commit) or not manual_review or release["version"] != current_version:
+            if not re.fullmatch(r"[0-9a-f]{40}", host_source_commit) or not manual_review or release["version"] != current_version or not set(capabilities) <= set(current_capabilities):
                 raise ValueError("Host promotion requires reviewed source and the unchanged installed Skill version.")
             decision = "owner-reviewed-host-promotion"
         if decision not in ("eligible-for-staging", "owner-reviewed-host-promotion") and not (decision == "manual-review-required" and manual_review):

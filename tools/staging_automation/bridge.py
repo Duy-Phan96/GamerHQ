@@ -49,7 +49,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             return result
         if operation == 'host-promote':
             from .host_promotion import promote
-            result = promote(backend)
+            result = promote(backend, expected_image=state['approvedImage'])
             state['approvedImage'] = result.pop('image'); save(state)
             return result
         if operation in ('restart', 'recover'): return backend.restart(state['approvedImage'], recover=operation == 'recover')

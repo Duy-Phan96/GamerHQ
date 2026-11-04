@@ -149,4 +149,4 @@ def test_host_promotion_consumes_existing_build_restart_limits_and_cannot_bootst
 def test_unextended_controller_cannot_select_any_host_source():
     backend = SimpleNamespace(policy={})
     with pytest.raises(Denied, match='NOT_ALLOWED'):
-        promote(backend)
+        promote(backend, expected_image='sha256:' + 'a' * 64)

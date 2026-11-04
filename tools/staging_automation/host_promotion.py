@@ -161,7 +161,7 @@ def build_overlay(backend, current):
         return image
 
 
-def promote(backend):
+def promote(backend, *, expected_image):
     from database import db
     from tools.skill_staging import backend_for
     from tools.skill_deployment_worker import health_probe
@@ -173,6 +173,8 @@ def promote(backend):
     p = backend.profile
     backend.storage_budget(); backend.fresh_verify()
     current = backend.inspect()['Image']
+    if current != expected_image:
+        raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
     if backend.health()['state'] != 'HOST_READY':
         raise Denied('HOST_NOT_READY')
     retained_state(p['database'], p['stagingGuildId'])
