@@ -44,7 +44,7 @@ def verify(token, policy, operation, challenge, *, read=read_url, now=None):
     try:
         if not isinstance(token, str) or len(token) > 20000: raise ValueError()
         parts = token.split('.'); header = json.loads(decode(parts[0])); claims = json.loads(decode(parts[1]))
-        if len(parts) != 3 or header.get('alg') != 'RS256' or header.get('typ') != 'JWT' or set(header) - {'alg', 'typ', 'kid', 'x5t'}: raise ValueError()
+        if len(parts) != 3 or header.get('alg') != 'RS256' or header.get('typ') != 'JWT' or set(header) - {'alg', 'typ', 'kid', 'x5t', 'x5t#S256'}: raise ValueError()
         jwks = json.loads(read(ISSUER + '/.well-known/jwks'))
         matches = [k for k in jwks['keys'] if k['kid'] == header['kid'] and k['kty'] == 'RSA']
         if len(matches) != 1: raise ValueError()

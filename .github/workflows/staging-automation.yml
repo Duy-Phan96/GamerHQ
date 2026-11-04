@@ -5,7 +5,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [health, reconcile, prepare, install, update, restart, recover, smoke, history, status]
+        options: [health, reconcile, prepare, install, update, restart, recover, smoke, history, status, identity-check]
         required: true
       release:
         description: Optional published patch release descriptor for prepare; no credentials
@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   routine:
-    if: github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    if: github.ref == 'refs/heads/main' && (vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true' || inputs.operation == 'status' || inputs.operation == 'identity-check')
     runs-on: ubuntu-latest
     environment: staging-automation
     permissions:
@@ -28,6 +28,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: inputs.operation == 'identity-check'
+        with:
+          python-version: '3.12'
+      - name: Install pinned verifier dependencies for the identity-only probe
+        if: inputs.operation == 'identity-check'
+        run: python -m pip install cryptography==46.0.3 cffi==2.0.0 pycparser==2.23
       - name: Invoke the scoped Host policy
         env:
           OPERATION: ${{ inputs.operation }}

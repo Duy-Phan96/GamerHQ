@@ -52,6 +52,14 @@ def enroll(commit, public_key, approval):
     account = pwd.getpwnam('gamerhq-staging-bridge'); uid, gid = account.pw_uid, account.pw_gid
     profile = json.loads(trusted(CONTROL / 'settings/profile.json', uid)); legacy_policy = json.loads(trusted(CONTROL / 'policy.json'))
     if profile.get('deploymentUid') != uid or profile.get('hostSourceCommit') != legacy_policy.get('hostSourceCommit') or profile.get('root') != str(ROOT) or profile.get('configurationRoot') != str(CONTROL): raise ValueError('EXISTING_IDENTITY_REQUIRED')
+    if profile['hostSourceCommit'] != '92db47042d58055cb0debdfd83f11f8508e19809': raise ValueError('REVIEWED_LEGACY_COMPATIBILITY_REQUIRED')
+    capability = subprocess.run(['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin',
+        'HOME=' + account.pw_dir, 'XDG_RUNTIME_DIR=/run/user/' + str(uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus',
+        'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(LEGACY / '.venv/bin/python'), '-I', '-B', '-c',
+        "import sys;from cryptography.hazmat.primitives.asymmetric import rsa;assert sys.version_info[:2]>=(3,12);print('CAPABLE')"], capture_output=True, text=True, timeout=60)
+    if capability.returncode or capability.stdout.strip() != 'CAPABLE': raise ValueError('EXISTING_SANDBOX_VERIFIER_CAPABILITY_REQUIRED')
+    state_path = ROOT / 'worker/automation-state.json'
+    if state_path.exists() and json.loads(trusted(state_path, uid)).get('enabled'): raise ValueError('ACTIVE_POLICY_ALREADY_ENROLLED')
     env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
     def git(folder, *args):
         result = subprocess.run(['git', '-C', str(folder), *args], env=env, capture_output=True, check=True, timeout=180)
@@ -124,4 +132,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--commit', required=True); parser.add_argument('--public-key', required=True); parser.add_argument('--approval', required=True)
     args = parser.parse_args()
     try: print(json.dumps(enroll(args.commit, args.public_key, args.approval), indent=2))
-    except Exception: raise SystemExit('Staging automation enrollment rejected; no production operation was performed.') from None
+    except (ValueError, PermissionError) as error:
+        code = str(error)
+        if not re.fullmatch('[A-Z_]{1,80}', code): code = 'ENROLLMENT_REJECTED'
+        raise SystemExit(json.dumps({'enrollmentError': code, 'productionChanged': False})) from None
+    except Exception: raise SystemExit('{"enrollmentError":"ENROLLMENT_REJECTED","productionChanged":false}') from None

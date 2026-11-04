@@ -15,7 +15,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     charge(state, operation, now); save(state)
     if operation == 'status':
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
-        return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'bootstrapVerified': bool(state.get('bootstrapVerified'))}
+        return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired'))}
     if operation == 'challenge':
         if not isinstance(payload, dict) or set(payload) != {'operation'} or payload['operation'] in PUBLIC:
             raise Denied('PAYLOAD_REJECTED')
@@ -55,9 +55,12 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         if error.code == 'RECOVERY_REQUIRES_OWNER': state['recoveryRequired'] = True
         if operation in ('restart', 'recover'): state['circuitUntil'] = now + 3600
         save(state); raise
-    except Exception:
+    except Exception as error:
         if operation in ('restart', 'recover'): state['circuitUntil'] = now + 3600
-        save(state); raise Denied('AUTOMATION_OPERATION_FAILED') from None
+        save(state)
+        from tools.staging_errors import decode_evidence
+        evidence = decode_evidence(str(error))
+        raise Denied('HOST_' + evidence['stagingFailure'] if evidence else 'AUTOMATION_OPERATION_FAILED') from None
 
 
 def main():
