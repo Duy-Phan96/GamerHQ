@@ -46,6 +46,15 @@ jobs:
           }
           if [[ "$OPERATION" == resume-offline ]]; then
             python3 -m tools.staging_offline_prepare
+          elif [[ "$OPERATION" == bootstrap ]]; then
+            [[ "$APPROVAL" == 'BOOTSTRAP ISOLATED STAGING' ]] || {
+              echo 'First Gateway startup requires its exact operation approval.' >&2
+              exit 1
+            }
+            # This job runs only after the protected Gateway owner review.
+            # Refresh through actual read-only verification, never extend a TTL.
+            invoke_prepare verify ''
+            invoke_prepare bootstrap "$APPROVAL"
           elif [[ "$OPERATION" == diagnose ]]; then
             python3 -m tools.staging_ssh_client --phase configure --operation health
             invoke_prepare inspect ''
