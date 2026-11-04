@@ -36,10 +36,13 @@ def launch_failure(stderr):
     return None
 
 
-def failure(request, code, authenticated, stderr):
-    public = launch_failure(stderr) or 'AUTOMATION_REQUEST_REJECTED'
-    if len(stderr.encode()) <= 65536:
-        for line in reversed(stderr.splitlines()):
+def failure(request, code, authenticated, stderr, *, stdout=''):
+    # systemd releases may forward launcher errors on either stream. Parse only
+    # bounded allowlisted facts, and never retain either raw stream in errors.
+    evidence = stderr + '\n' + stdout
+    public = launch_failure(evidence) or 'AUTOMATION_REQUEST_REJECTED'
+    if len(evidence.encode()) <= 65536:
+        for line in reversed(evidence.splitlines()):
             try: value = json.loads(line)
             except ValueError: continue
             if isinstance(value, dict) and set(value) == {'automationError'} and value['automationError'] in PUBLIC_ERRORS:
