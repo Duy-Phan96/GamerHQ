@@ -1,7 +1,7 @@
 name: Installed staging pre-build regression
 on:
   pull_request:
-    paths: ['tools/staging_prebuild_diagnostics.py', 'tools/staging_buildx_smoke.py', 'tools/upgrade_staging_worker.py', 'tools/staging_worker_revision_smoke.py', 'tools/staging_dispatch.py', 'tools/staging_errors.py', '.github/workflows/staging-prebuild-regression.yml']
+    paths: ['tools/staging_prebuild_diagnostics.py', 'tools/staging_buildx_smoke.py', 'tools/upgrade_staging_worker.py', 'tools/staging_worker_revision_smoke.py', 'tools/staging_dispatch.py', 'tools/staging_errors.py', 'tools/staging_inspect.py', 'hosts/gamerhq/skill_staging.py', '.github/workflows/staging-prebuild-regression.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -9,14 +9,20 @@ jobs:
   immutable-worker:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        installed: ['2e6a0ea40c40447fd3bae1a3b14fb845d6675b77', '1c8ec294491f089c85a4f919a8bea5bf74e8f1f8']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: 2e6a0ea40c40447fd3bae1a3b14fb845d6675b77
+          ref: ${{ matrix.installed }}
           path: installed-worker-source
       - name: Provision exact installed worker on disposable runner only
         working-directory: installed-worker-source
+        env:
+          INSTALLED_COMMIT: ${{ matrix.installed }}
         shell: bash
         run: |
           set -euo pipefail
@@ -25,15 +31,17 @@ jobs:
           sudo systemctl start ssh
           ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-prebuild-ci-key
           sudo python3 -m tools.prepare_staging_access \
-            --commit 2e6a0ea40c40447fd3bae1a3b14fb845d6675b77 \
+            --commit "$INSTALLED_COMMIT" \
             --public-key-file /tmp/staging-prebuild-ci-key.pub \
             --apply --install-prerequisites --approval 'PREPARE ISOLATED STAGING'
       - name: Exercise installed pre-build boundary without a build or credentials
+        env:
+          INSTALLED_COMMIT: ${{ matrix.installed }}
         shell: bash
         run: |
           set -euo pipefail
           sudo python3 tools/staging_prebuild_diagnostics.py \
-            --expected-worker-commit 2e6a0ea40c40447fd3bae1a3b14fb845d6675b77 > /tmp/prebuild-evidence.json
+            --expected-worker-commit "$INSTALLED_COMMIT" > /tmp/prebuild-evidence.json
           cat /tmp/prebuild-evidence.json
           python3 - <<'PY'
           import json

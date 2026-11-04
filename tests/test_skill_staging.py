@@ -154,10 +154,10 @@ def test_bootstrap_requires_live_authorization_and_does_not_replace_an_existing_
 def test_verifier_refuses_an_unapproved_docker_context_or_daemon():
     profile = {"dockerDaemonId": "approved-staging-daemon", "baseImage": "sha256:" + "a" * 64}
     with patch.dict(os.environ, {"DOCKER_HOST": "fake-remote-daemon"}):
-        with pytest.raises(ValueError, match="local"): verify_docker(profile)
+        with pytest.raises(ValueError, match="STAGING_DAEMON_REJECTED"): verify_docker(profile)
     with patch.dict(os.environ, {"DOCKER_HOST": "", "DOCKER_CONTEXT": "default"}), patch(
             "hosts.gamerhq.skill_staging.subprocess.run", return_value=SimpleNamespace(stdout="unapproved-daemon")):
-        with pytest.raises(ValueError, match="identity"): verify_docker(profile)
+        with pytest.raises(ValueError, match="STAGING_DAEMON_REJECTED"): verify_docker(profile)
 
 
 def test_docker_readiness_checks_staging_uid_access_without_gateway_or_credentials(staging):

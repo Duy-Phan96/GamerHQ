@@ -15,6 +15,7 @@ import discord
 from .skill_deployment_docker import IMAGE
 from .skill_artifacts import verify_wheel
 from .skill_release_artifacts import fetch_release
+from tools.staging_errors import VerificationFailure,verified_check,docker_failure
 
 
 def validate_profile(profile):
@@ -109,9 +110,9 @@ def verify_local_artifacts(profile):
 
 
 def verify_offline(profile):
-    validate_profile(profile)
+    verified_check('STAGING_PROFILE_REJECTED','profile',lambda:validate_profile(profile))
     verify_docker(profile)
-    verify_local_artifacts(profile)
+    verified_check('STAGING_ARTIFACT_REJECTED','artifact',lambda:verify_local_artifacts(profile))
     return {"schemaVersion": 1, "kind": "offline-local-artifact", "verifiedAt": int(time.time()),
         "fingerprint": artifact_fingerprint(profile), "verified": True, "gatewayStarted": False,
         "liveIdentityVerified": False, "publishedReleaseVerified": False}
@@ -165,20 +166,31 @@ def verify_daemon(profile):
 
 
 def verify_docker(profile):
-    verify_daemon(profile)
+    verified_check('STAGING_DAEMON_REJECTED','daemon',lambda:verify_daemon(profile))
     if not IMAGE.fullmatch(profile["baseImage"]):
-        raise ValueError("Reviewed immutable base identity is required.")
-    def run(command, **kwargs):
-        return subprocess.run(command, capture_output=True, text=True, timeout=30, check=True, **kwargs).stdout.strip()
+        raise VerificationFailure('STAGING_BASE_IMAGE_MISSING','base-image')
+    def run(command,step,code,**kwargs):
+        try:
+            return subprocess.run(command,capture_output=True,text=True,timeout=30,check=True,**kwargs).stdout.strip()
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError) as error:
+            if step=='storage-probe' and getattr(error,'returncode',None) in (41,42,43):
+                failure={41:'STAGING_DATA_ACCESS_REJECTED',42:'STAGING_DATABASE_ACCESS_REJECTED',43:'STAGING_BACKUPS_ACCESS_REJECTED'}[error.returncode]
+                raise VerificationFailure(failure,step,exit_code=error.returncode) from None
+            safe=docker_failure(error,step)
+            if safe.evidence['stagingFailure'] not in ('DOCKER_COMMAND_FAILED','DOCKER_COMMAND_UNAVAILABLE'):
+                raise safe from None
+            raise VerificationFailure(code,step,exit_code=safe.evidence.get('exitCode')) from None
     environment = {**os.environ, "GAMERHQ_STAGING_IMAGE": profile["baseImage"]}
-    run(["docker", "compose", "--file", profile["composeFile"], "--profile", "live-acceptance", "config", "--quiet"], env=environment)
+    run(["docker", "compose", "--file", profile["composeFile"], "--profile", "live-acceptance", "config", "--quiet"],
+        'compose-config','STAGING_COMPOSE_CONFIG_REJECTED',env=environment)
     database, backups = Path(profile["database"]), Path(profile["backupRoot"])
     if not database.is_file() or not backups.is_dir():
-        raise ValueError("Initialize approved isolated data/backup paths before verification.")
+        raise VerificationFailure('STAGING_STORAGE_MISSING','storage-probe')
     run(["docker", "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-        "--user", "10001:10001", "--mount", f"type=bind,src={database.parent},dst=/staging-data",
-        "--mount", f"type=bind,src={backups},dst=/staging-backups", "--entrypoint", "python", profile["baseImage"], "-c",
-        "import os; assert all(os.access(path,os.R_OK|os.W_OK) for path in ('/staging-data','/staging-data/gamerhq.db','/staging-backups'))"])
+        "--user", "10001:10001", "--volume", f"{database.parent}:/staging-data:Z",
+        "--volume", f"{backups}:/staging-backups:Z", "--entrypoint", "python", profile["baseImage"], "-c",
+        "import os,sys\nfor index,path in enumerate(('/staging-data','/staging-data/gamerhq.db','/staging-backups')):\n if not os.access(path,os.R_OK|os.W_OK): sys.exit(41+index)"],
+        'storage-probe','STAGING_STORAGE_PROBE_FAILED')
 
 
 def discord_read(path, token):

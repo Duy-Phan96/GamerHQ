@@ -148,7 +148,11 @@ def main():
     args = parser.parse_args()
     profile = json.loads(args.profile.read_text(encoding="utf-8"))
     validate_profile(profile)
-    if args.operation == "initialize":
+    inspection = None
+    if args.operation == 'inspect':
+        from tools.staging_inspect import inspect_staging
+        inspection=inspect_staging(profile)
+    elif args.operation == "initialize":
         initialize(profile, args.approval)
     elif args.operation == "build-base":
         print(json.dumps({"reviewCandidateImage": build_base(profile, args.approval), "gatewayStarted": False}))
@@ -192,8 +196,10 @@ def main():
         if args.approval != "INSTALL IN ISOLATED STAGING":
             raise PermissionError("Explicit staging installation authorization is required.")
         host_request(profile, f"/api/v1/servers/{profile['stagingGuildId']}/skills/{release['skillId']}/install", payload={})
-    print(json.dumps({"operation": args.operation, "result": "PASS", "workerEnabled": profile.get("workerEnabled") is True,
-        "productionChanged": False, "gatewayMayStart": args.operation == "bootstrap"}))
+    result={"operation": args.operation, "result": "PASS", "workerEnabled": profile.get("workerEnabled") is True,
+        "productionChanged": False, "gatewayMayStart": args.operation == "bootstrap"}
+    if inspection is not None:result['inspection']=inspection
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

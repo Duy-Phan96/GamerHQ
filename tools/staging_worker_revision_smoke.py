@@ -28,6 +28,7 @@ def main():
     database.write_bytes(b'synthetic retained staging database sentinel')
     os.chown(database,uid,gid);database.chmod(0o600)
     previous=hashlib.sha256(database.read_bytes()).hexdigest()
+    installed_before=json.loads((control/'policy.json').read_text())['hostSourceCommit']
     # Exercise actual source/metadata rollback after a failed candidate check,
     # without adding a failure-injection switch to the shipped owner installer.
     from tools import upgrade_staging_worker as revision
@@ -39,7 +40,7 @@ def main():
         except RuntimeError as error:assert str(error)=='WORKER_REVISION_ROLLED_BACK'
         else:raise AssertionError('Candidate verification must fail closed')
     finally:revision.verify_fixed=original_verify
-    assert json.loads((control/'policy.json').read_text())['hostSourceCommit']==revision.OLD
+    assert json.loads((control/'policy.json').read_text())['hostSourceCommit']==installed_before
     assert not (root/'worker/access-revoked').exists()
     command=[sys.executable,str(Path(__file__).with_name('upgrade_staging_worker.py')),'--commit',args.commit,'--approval','UPDATE ISOLATED STAGING WORKER']
     for expected in ('APPLIED','ALREADY_CURRENT'):
@@ -47,6 +48,7 @@ def main():
         if result.returncode:raise RuntimeError('Disposable source revision failed: '+result.stderr[-2000:])
         receipt=json.loads(result.stdout)
         assert receipt['state']==expected and receipt['workerCommit']==args.commit
+        assert json.loads((control/'settings/profile.json').read_text())['baseImage']=='REQUIRES_REVIEWED_BASE_REBUILD'
         assert not any(receipt[k] for k in ('workerEnabled','gatewayStarted','productionChanged','sshPolicyChanged','credentialsChanged','dependenciesChanged','databaseChanged'))
     assert previous==hashlib.sha256(database.read_bytes()).hexdigest()
     assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in snapshots.items())
@@ -63,6 +65,25 @@ with tempfile.TemporaryDirectory(dir='/opt/gamerhq-staging/worker') as folder:
  assert (root/'image-id').read_text().startswith('sha256:')
 print('INSTALLED_WORKER_BUILDX_PASS')
 '''
+    # Exercise the actual verifier, its phase codes and read-only inspection
+    # using only this disposable runner's synthetic data and rootless engine.
+    child=child.replace("print('INSTALLED_WORKER_BUILDX_PASS')",r'''
+from hosts.gamerhq.skill_staging import verify_docker
+from tools.staging_errors import StagingFailure
+from tools.staging_inspect import inspect_staging
+from tools.skill_staging import write_record
+subprocess.run(['docker','pull','python:3.12-slim'],capture_output=True,text=True,check=True,timeout=180)
+image=subprocess.check_output(['docker','image','inspect','--format','{{.Id}}','python:3.12-slim'],text=True).strip()
+profile_path=pathlib.Path('/etc/gamerhq-staging/settings/profile.json')
+p=json.loads(profile_path.read_text());p['baseImage']=image
+write_record(profile_path,p)
+report=inspect_staging(p)
+assert report['storage']['database']['mappedAclReadWrite'] is False
+try:verify_docker(p)
+except StagingFailure as error:assert error.evidence['stagingFailure']=='STAGING_DATABASE_ACCESS_REJECTED',error.evidence
+else:raise AssertionError('Masked database ACL must be rejected')
+print('INSTALLED_WORKER_BUILDX_PASS')
+''')
     launch=['runuser','-u','gamerhq-staging-bridge','--','env','-i','PATH=/usr/local/bin:/usr/bin:/bin',
         'HOME='+identity.pw_dir,'XDG_RUNTIME_DIR=/run/user/'+str(uid),'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(uid)+'/bus',
         'systemd-run','--user','--pipe','--wait','--collect','--quiet','--unit=staging-revision-ci-'+uuid.uuid4().hex,
@@ -90,14 +111,22 @@ print('INSTALLED_WORKER_BUILDX_PASS')
             except StagingAccessError as error:
                 proof=error.evidence
             else:raise AssertionError('Unconfigured candidate must fail offline verification')
-            assert proof['authenticated'] is True and proof['workerFailure']=='PREPARATION_REJECTED',proof
+            assert proof['authenticated'] is True and proof['workerFailure']=='STAGING_DATABASE_ACCESS_REJECTED',proof
+            assert proof['workerStep']=='storage-probe' and proof['workerExitCode']==42
             ident=proof['workerAuditId'];assert len(ident)==32
             audit=subprocess.run(['journalctl','-t','gamerhq-staging','--since','-10min','--no-pager','--output=cat'],capture_output=True,text=True,check=True).stdout
             assert ident in audit
         finally:
             server.terminate();server.wait(timeout=10)
+    # Only the known synthetic fixture's ACL mask is changed, restoring its
+    # pre-provisioned mapped UID permission. Database bytes remain identical.
+    database.chmod(0o660)
+    probe=child.split("try:verify_docker(p)",1)[0].replace("['mappedAclReadWrite'] is False","['mappedAclReadWrite'] is True")+"verify_docker(p)\nprint('INSTALLED_WORKER_BUILDX_PASS')\n"
+    result=subprocess.run(launch,input=probe,capture_output=True,text=True,timeout=240)
+    if result.returncode:raise RuntimeError('Disposable repaired ACL verification failed: '+result.stderr[-2000:])
+    assert previous==hashlib.sha256(database.read_bytes()).hexdigest()
     print(json.dumps({'sourceRevision':'PASS','failedVerificationRollback':'PASS','retry':'PASS','retainedDatabase':'PASS','sshIdentityAndPolicyUnchanged':True,
         'protectedConfigurationUnchanged':True,'installedBuildx':'PASS','restrictedSshError':proof['workerFailure'],
-        'auditCorrelation':'PASS','gatewayStarted':False,'productionChanged':False}))
+        'auditCorrelation':'PASS','verifiedBindAccess':'PASS','previousSource':installed_before,'gatewayStarted':False,'productionChanged':False}))
 
 if __name__=='__main__':main()
