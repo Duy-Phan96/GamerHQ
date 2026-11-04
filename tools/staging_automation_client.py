@@ -16,11 +16,28 @@ from tools.staging_automation.oidc import NoRedirects
 
 from tools.staging_automation.policy import ERROR_CODES
 from tools.staging_errors import CODES
-PUBLIC_ERRORS = ERROR_CODES | {'HOST_' + code for code in CODES}
+PUBLIC_ERRORS = ERROR_CODES | {'HOST_' + code for code in CODES} | {'SSH_AUTHENTICATED_ROUTE_REJECTED'}
+
+
+def launch_failure(stderr):
+    """Categorize known public launcher paths; never return raw remote text."""
+    if len(stderr.encode()) > 65536: return None
+    paths = {
+        '/usr/local/libexec/gamerhq-staging-ssh-router': 'SSH_ROUTER',
+        '/usr/local/libexec/gamerhq-staging-automation-entry': 'SSH_AUTOMATION_ENTRY',
+        '/opt/gamerhq-staging/automation-controller/entry.py': 'AUTOMATION_CONTROLLER',
+    }
+    for line in stderr.splitlines():
+        for path, phase in paths.items():
+            if "can't open file '" + path + "'" in line:
+                if 'No such file or directory' in line: return phase + '_NOT_FOUND'
+                if 'Permission denied' in line: return phase + '_NOT_READABLE'
+        if 'Failed to connect to bus' in line: return 'SYSTEMD_USER_BUS_UNAVAILABLE'
+    return None
 
 
 def failure(request, code, authenticated, stderr):
-    public = 'AUTOMATION_REQUEST_REJECTED'
+    public = launch_failure(stderr) or 'AUTOMATION_REQUEST_REJECTED'
     if len(stderr.encode()) <= 65536:
         for line in reversed(stderr.splitlines()):
             try: value = json.loads(line)
