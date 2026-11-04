@@ -1,7 +1,7 @@
 name: Scoped staging automation regression
 on:
   pull_request:
-    paths: ['tools/staging_automation/**', 'tools/enroll_staging_automation.py', 'tools/staging_automation_smoke.py', 'tools/staging_ssh_router.py', 'tools/repair_staging_ssh_routing.py', 'tests/test_staging_ssh_router.py', '.github/workflows/staging-automation*.yml']
+    paths: ['tools/staging_automation/**', 'tools/enroll_staging_automation.py', 'tools/staging_automation_smoke.py', 'tools/staging_ssh_router.py', 'tools/repair_staging_ssh_routing.py', 'tools/repair_staging_automation_access.py', 'tests/test_staging_ssh_router.py', '.github/workflows/staging-automation*.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/checkout@v4
         with:
           ref: 92db47042d58055cb0debdfd83f11f8508e19809

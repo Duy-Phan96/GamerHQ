@@ -81,7 +81,7 @@ def invoke(request, *, host, port, private_key, known_hosts, payload=None, run=s
         authenticated = bool(re.search(r'^Authenticated to .+ using "publickey"', stderr, re.MULTILINE))
         if result.returncode:
             if failure_factory:
-                raise failure_factory(request, result.returncode, authenticated, stderr)
+                raise failure_factory(request, result.returncode, authenticated, stderr, stdout=getattr(result, 'stdout', '') or '')
             raise StagingAccessError(failure_code(result.returncode, stderr), request,
                 exit_code=result.returncode, authenticated=authenticated,worker_evidence=decode_evidence(stderr))
         if len(result.stdout.encode()) > 65536:
