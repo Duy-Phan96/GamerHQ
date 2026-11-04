@@ -85,7 +85,8 @@ def progression_member_signals(before, after, *, now: int | None = None) -> tupl
     if game_role_ids:
         before_games = before_roles & game_role_ids
         after_games = after_roles & game_role_ids
-        if not before_games and after_games:
+        newly_added_games = after_games - before_games
+        if newly_added_games:
             occurred_at = int(now if now is not None else time.time())
             signals.append({
                 "memberId": int(after.id),
