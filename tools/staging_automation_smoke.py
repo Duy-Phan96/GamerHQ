@@ -15,8 +15,8 @@ import time
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--commit', required=True); args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.geteuid() != 0: raise PermissionError('DISPOSABLE_CI_ONLY')
-    from tools.enroll_staging_automation import enroll
     from tools.repair_staging_ssh_routing import repair, REPAIRED
+    from tools.repair_staging_automation_access import repair as repair_access
     enrolled_commit = 'a1b50573850921e478a2f838e72868853bde6dd7'
     account = pwd.getpwnam('gamerhq-staging-bridge')
     root = Path('/opt/gamerhq-staging'); config = Path('/etc/gamerhq-staging')
@@ -31,8 +31,16 @@ def main():
         for name in ('client', 'host'):
             subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(tmp / name)], check=True)
         public = ' '.join((tmp / 'client.pub').read_text().split()[:2])
+        old_installer = subprocess.check_output(['git', 'show', enrolled_commit + ':tools/enroll_staging_automation.py'])
+        installer = tmp / 'original-enrollment.py'; installer.write_bytes(old_installer)
         for _ in range(2):
-            receipt = enroll(enrolled_commit, public, 'ENROLL RESTRICTED STAGING AUTOMATION')
+            # Reproduce the exact published owner command, including umask 077.
+            saved_umask = os.umask(0o077)
+            try:
+                result = subprocess.run(['python3', str(installer), '--commit', enrolled_commit, '--public-key', public,
+                    '--approval', 'ENROLL RESTRICTED STAGING AUTOMATION'], capture_output=True, text=True, check=True)
+            finally: os.umask(saved_umask)
+            receipt = json.loads(result.stdout)
             assert receipt['state'] == 'ENROLLED_INACTIVE' and receipt['legacyWorkerCommit'] == profile['hostSourceCommit']
             assert not any(receipt[k] for k in ('automationEnabled', 'gatewayStarted', 'productionChanged', 'existingCredentialsChanged', 'legacySshEntryChanged', 'sandboxChanged', 'workerSourceChanged'))
         for name, body in originals.items():
@@ -60,6 +68,11 @@ def main():
             assert Path('/etc/ssh/sshd_config.d/90-gamerhq-staging.conf').read_bytes() == REPAIRED
             server.send_signal(__import__('signal').SIGHUP)
             time.sleep(.5)
+            denied = call('status')
+            assert denied.returncode == 2 and 'Permission denied' in denied.stderr and 'automation-controller/entry.py' in denied.stderr
+            for _ in range(2):
+                fixed = repair_access(args.commit, 'RESTORE REVIEWED STAGING CODE ACCESS')
+                assert fixed['directoryModes'] == ['0o750', '0o750'] and fixed['restrictedSandboxStatus'] == 'NOT_ACTIVATED'
             status = call('status'); assert status.returncode == 0, status.stderr
             value = json.loads(status.stdout); assert value['state'] == 'NOT_ACTIVATED' and value['controllerCommit'] == enrolled_commit
             assert call('bootstrap').returncode != 0
@@ -97,6 +110,7 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
         'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
+        'ownerUmask077FailureReproduced': True, 'directoryAccessRepair': 'PASS',
         'gatewayStarted': False, 'productionChanged': False}))
 
 

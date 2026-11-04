@@ -134,3 +134,16 @@ deployment gates before marking enrollment ready. This flag admits an activation
 review; it does not activate the Host policy. A fresh protected activation run is
 required after handoff. Run 41872833897 was a deliberate negative prerequisite
 probe before VPS enrollment, not evidence of a failed VPS installation.
+
+The published owner command also sets `umask 077`. Original enrollment used
+`mkdir(mode=0750)` without restoring that mode, producing root-only `0700`
+controller directories despite the correct group. New enrollment sets the
+reviewed `0750` explicitly. Existing enrolled installations use the narrowly
+scoped owner-only `repair_staging_automation_access.py`: it verifies every
+installed source file against enrolled commit a1b5057, restores read/traverse
+access for the existing staging group on exactly two code directories, and
+requires an actual NOT_ACTIVATED status receipt through the existing restricted
+user sandbox. Failure restores the original modes. It changes no code, SSH
+policy, credentials, data, container, deployment gate or activation state.
+The real SSH regression now reproduces both original failures using the exact
+published installer and umask, then verifies both independent repairs.
