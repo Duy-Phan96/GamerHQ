@@ -69,7 +69,14 @@ def main():
             server.send_signal(__import__('signal').SIGHUP)
             time.sleep(.5)
             denied = call('status')
-            assert denied.returncode == 2 and 'Permission denied' in denied.stderr and 'automation-controller/entry.py' in denied.stderr
+            denied_evidence = {'exitCode': denied.returncode,
+                'stderrPermissionDenied': 'Permission denied' in denied.stderr,
+                'stdoutPermissionDenied': 'Permission denied' in denied.stdout,
+                'stderrControllerPath': 'automation-controller/entry.py' in denied.stderr,
+                'stdoutControllerPath': 'automation-controller/entry.py' in denied.stdout,
+                'legacyEntryRejected': 'Unsupported or unavailable isolated staging request' in denied.stderr,
+                'routerRejected': 'SSH_AUTHENTICATED_ROUTE_REJECTED' in denied.stderr}
+            assert denied.returncode == 2 and 'Permission denied' in denied.stderr and 'automation-controller/entry.py' in denied.stderr, denied_evidence
             for _ in range(2):
                 fixed = repair_access(args.commit, 'RESTORE REVIEWED STAGING CODE ACCESS')
                 assert fixed['directoryModes'] == ['0o750', '0o750'] and fixed['restrictedSandboxStatus'] == 'NOT_ACTIVATED'
