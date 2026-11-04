@@ -14,7 +14,6 @@ import re
 import stat
 import subprocess
 import tempfile
-import shutil
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
@@ -34,13 +33,8 @@ def trusted(path, uid=0):
 
 def atomic(path, body, gid, mode):
     if path.is_symlink() or path.parent.is_symlink(): raise ValueError('REDIRECTION_REJECTED')
-    label = None
-    if path.exists():
-        try: label = os.getxattr(path, 'security.selinux', follow_symlinks=False)
-        except OSError: pass
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as f:
         tmp = Path(f.name); os.fchown(f.fileno(), 0, gid); os.fchmod(f.fileno(), mode)
-        if label: os.setxattr(f.fileno(), 'security.selinux', label)
         f.write(body); f.flush(); os.fsync(f.fileno())
     try: tmp.replace(path)
     finally:
@@ -124,11 +118,6 @@ except Exception:sys.exit('Restricted staging automation request rejected.')
 '''
     atomic(ENTRY, entry.encode(), 0, 0o755)
     atomic(POLICY, (json.dumps(policy, indent=2) + '\n').encode(), gid, 0o640)
-    if Path('/sys/fs/selinux/enforce').exists():
-        restorecon = shutil.which('restorecon')
-        if not restorecon: raise ValueError('SELINUX_CONTEXT_CAPABILITY_REQUIRED')
-        subprocess.run([restorecon, '-F', str(ENTRY), str(POLICY), str(DEST), str(DEST / 'staging_automation'), str(DEST / 'entry.py'),
-            *[str(DEST / 'staging_automation' / name) for name in FILES]], check=True, capture_output=True, timeout=30)
     line = ('restrict,command="' + str(ENTRY) + '" ' + public_key + '\n').encode()
     if line not in original_keys.splitlines(keepends=True):
         atomic(keys, original_keys + (b'' if not original_keys or original_keys.endswith(b'\n') else b'\n') + line, 0, 0o644)
