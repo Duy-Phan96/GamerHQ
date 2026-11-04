@@ -26,6 +26,7 @@
 
 ### Fixed
 
+- Progression first-game observation now works for existing community members: adding any new selectable game after Progression is enabled emits the same stable one-time `first_game_added` signal, so pre-existing game roles no longer block the achievement.
 - Fixed `/server health` area selection so rebuilding the dashboard no longer detaches the active selector before the response is rendered.
 - Reduced Owner Change Log noise by grouping only unambiguous category deletions with their pure child-channel moves while preserving every history row.
 
