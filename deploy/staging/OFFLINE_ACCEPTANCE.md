@@ -89,3 +89,37 @@ build/proof/candidate sequence. The installed root-owned worker cannot replace
 its own trusted code. Applying this control-plane repair remains an explicit
 owner security operation; it grants no new SSH, Docker, root or sandbox privileges.
 Routine Skill package installation/updates and runner diagnostics need no root SSH.
+
+## Actual VPS transport acceptance
+
+The owner confirmed installation of source revision
+`92db47042d58055cb0debdfd83f11f8508e19809`. No further source installation is
+needed for the following results:
+
+- [41847994082](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41847994082):
+  health and storage admission, policy-bound clean-source base rebuild, published
+  release verification, persisted offline proof and candidate probe all passed.
+  No database initialization or worker replacement occurred in this run.
+- [41848273670](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41848273670):
+  read-only live verification on the actual VPS passed with the Gateway stopped.
+- [41813865296, retry](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41813865296):
+  the existing owner-approved live authorization completed successfully. The
+  staging worker is authorized, its live proof persisted, and automatic update
+  was skipped. Both deployment gates remain disabled. No Gateway was started.
+
+The installed inspection protocol does not publish its source hash; the exact
+revision is owner-attested, with build admission verifying the clean checkout
+against root-owned policy and live REST verification proving the transport fix.
+This is not independent public source-hash telemetry.
+
+Before first Gateway approval, the runner preflight checks application flags for
+the pinned Host's required Server Members intent. It never changes Portal settings
+or requests message-content/presence privileges. The protected startup job refreshes
+actual live verification **after** owner review, then invokes bounded bootstrap.
+Expired proofs retain their refusal; failed fresh verification prevents startup.
+This runner/workflow improvement requires no VPS or root-owned source revision.
+
+The watchdog's full `HOST_READY` result requires a running Gateway/Host; the
+intentional authorized-but-stopped interval is not live Host acceptance. Discord
+resource interactions, Skill installation, Web management and migration/rollback
+acceptance still follow separate explicit first-Gateway authorization.

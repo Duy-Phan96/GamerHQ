@@ -137,6 +137,10 @@ exclusive guild, category permissions and published release access from an
 ephemeral GitHub runner. It does not access the VPS, rotate credentials, enable
 the worker, create a live authorization proof or start a Gateway. Its output is
 bounded public evidence, not a substitute for actual VPS authorization.
+It also checks the Server Members intent required by the pinned Host before
+requesting first Gateway approval. The protected startup job performs fresh
+read-only VPS verification after approval, so waiting for review does not require
+manual proof renewal or a root command. Verification failure stops startup.
 
 After restricted reachability/health is verified, enable the preparation repository
 variable. Routine operations use the installed Host worker automatically, without
