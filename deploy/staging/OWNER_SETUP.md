@@ -131,6 +131,13 @@ it never initializes a database, replaces worker sources or starts a Gateway.
 Use `initialize` and the initial `prepare-offline` bundle only for new enrollment.
 See [the VPS offline acceptance receipt](OFFLINE_ACCEPTANCE.md).
 
+For a failed live-verification phase, run **Read-only staging live preflight** on
+`main`. It uses the already protected configuration to diagnose dedicated bot,
+exclusive guild, category permissions and published release access from an
+ephemeral GitHub runner. It does not access the VPS, rotate credentials, enable
+the worker, create a live authorization proof or start a Gateway. Its output is
+bounded public evidence, not a substitute for actual VPS authorization.
+
 After restricted reachability/health is verified, enable the preparation repository
 variable. Routine operations use the installed Host worker automatically, without
 repeated owner review or manual VPS commands. Exact operation acknowledgments
