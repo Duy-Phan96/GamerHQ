@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        installed: ['2e6a0ea40c40447fd3bae1a3b14fb845d6675b77', '1c8ec294491f089c85a4f919a8bea5bf74e8f1f8']
+        installed: ['2e6a0ea40c40447fd3bae1a3b14fb845d6675b77', '1c8ec294491f089c85a4f919a8bea5bf74e8f1f8', '8390d4aefdbb48f2ed1f27717320f14401166bec']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4

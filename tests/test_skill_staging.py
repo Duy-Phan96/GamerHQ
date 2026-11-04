@@ -24,6 +24,7 @@ def staging(tmp_path):
         profile[key] = profile[key].replace("/opt/gamerhq-staging", root.as_posix())
     for key in ("configurationRoot", "composeFile", "botEnvFile", "releaseFile", "sdkReleaseFile"):
         profile[key] = profile[key].replace("/etc/gamerhq/staging", config.as_posix())
+    Path(profile['workRoot']).mkdir(mode=0o700)
     profile.update(stagingBotId="1", stagingGuildId="2", productionBotId="3", productionGuildId="4", categoryId="5", voiceCategoryId="6",
         baseImage="sha256:" + "a" * 64)
     compose = json.loads((ROOT / "deploy/staging/compose.json").read_text())
