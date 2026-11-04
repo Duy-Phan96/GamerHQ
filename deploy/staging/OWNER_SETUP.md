@@ -123,6 +123,14 @@ repository first; do not substitute a moving branch or unverified local wheel.
 
 ## Host-owned operations after enrollment
 
+For an already initialized staging database, choose preparation operation
+`resume-offline` with an empty approval input. It checks read-only health and the
+installed worker's writable-proof contract first, then runs `build-base`, `fetch`,
+`verify-offline` and `build`. It stops on the first failure and is safe to retry;
+it never initializes a database, replaces worker sources or starts a Gateway.
+Use `initialize` and the initial `prepare-offline` bundle only for new enrollment.
+See [the VPS offline acceptance receipt](OFFLINE_ACCEPTANCE.md).
+
 After restricted reachability/health is verified, enable the preparation repository
 variable. Routine operations use the installed Host worker automatically, without
 repeated owner review or manual VPS commands. Exact operation acknowledgments
