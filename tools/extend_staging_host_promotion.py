@@ -136,7 +136,10 @@ def extension(commit, approval):
     fd = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_nlink != 1 or info.st_mode & 0o022:
+        # Existing user services can create a group-writable lock under umask
+        # 0002. It contains no code/data; retain that mode, requiring the exact
+        # dedicated UID/GID, one inode, no symlink and no world-write access.
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1 or info.st_mode & 0o002:
             raise ValueError('EXISTING_OPERATION_LOCK_REQUIRED')
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Re-read under the same lock used by every existing deployment operation.

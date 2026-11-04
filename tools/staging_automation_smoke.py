@@ -99,6 +99,10 @@ def main():
             # Install the reviewed extension under the same restrictive umask,
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
             from tools.extend_staging_host_promotion import extension
+            lock_info = (root / 'worker/operation.lock').lstat()
+            print(json.dumps({'extensionLock': {'uid': lock_info.st_uid, 'gid': lock_info.st_gid,
+                'mode': oct(lock_info.st_mode & 0o777), 'links': lock_info.st_nlink,
+                'expectedUid': account.pw_uid, 'expectedGid': account.pw_gid}}), flush=True)
             for _ in range(2):
                 previous = os.umask(0o077)
                 try: extended = extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')
