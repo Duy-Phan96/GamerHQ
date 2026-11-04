@@ -126,10 +126,15 @@ def main():
     # Verify actual Docker normalization, not only a hand-written inspect fixture.
     # This is a disposable sleep container, never the Discord application.
     child = '''import os,sys,json,subprocess
-sys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']
+sys.path[:0]=['/opt/gamerhq-staging/automation-controller/revisions/REVIEWED_EXTENSION','/opt/gamerhq-staging/deployment-worker']
 from tools.staging_dispatch import environment
 os.environ.clear();os.environ.update(environment())
 from staging_automation.backend import HostBackend
+from staging_automation.host_promotion import COMMIT
+from staging_automation.deployment import SkillUpdateController
+import inspect
+assert 'host_source_commit' in inspect.signature(SkillUpdateController.stage).parameters
+assert COMMIT=='6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
 p=json.load(open('/etc/gamerhq-staging/settings/profile.json'))
 def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=180)
 run(['docker','network','create','gamerhq-staging-private'],False)
@@ -140,6 +145,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
+    child = child.replace('REVIEWED_EXTENSION', args.commit)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']

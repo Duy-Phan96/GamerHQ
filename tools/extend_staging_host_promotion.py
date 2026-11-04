@@ -18,6 +18,8 @@ import tempfile
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
 OLD = 'a1b50573850921e478a2f838e72868853bde6dd7'
+ORIGINAL_ENTRY = ("import sys\nsys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']\n"
+    "from staging_automation.bridge import entry\nentry()\n").encode()
 LEGACY = '92db47042d58055cb0debdfd83f11f8508e19809'
 HOST = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
 ARCHIVE = 'ca3c9acbf7087d59881f130c903bf13b2c47fed1f2157933f6ca08e07df2fc97'
@@ -113,9 +115,7 @@ def extension(commit, approval):
             for name in ('__init__.py', 'policy.py', 'oidc.py', 'backend.py', 'bridge.py'):
                 if trusted(ROOT / 'automation-controller/staging_automation' / name) != git('show', OLD + ':tools/staging_automation/' + name):
                     raise ValueError('INSTALLED_SOURCE_MISMATCH')
-            expected_entry = ("import sys\nsys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']\n"
-                "from staging_automation.bridge import entry\nentry()\n").encode()
-            if old_entry != expected_entry:
+            if old_entry != ORIGINAL_ENTRY:
                 raise ValueError('INSTALLED_ENTRY_MISMATCH')
     revisions = ROOT / 'automation-controller/revisions'
     directory(revisions, gid)
@@ -152,7 +152,9 @@ def extension(commit, approval):
         state = json.loads(trusted(ROOT / 'worker/automation-state.json', uid, private=True))
         if state.get('recoveryRequired'):
             raise ValueError('REVIEWED_RECOVERY_REQUIRED')
-        if policy['controllerCommit'] == commit and (policy != new_policy or old_entry != launch):
+        # A crash after policy replace but before entry replace is recoverable
+        # only with the same exact root-owned old/new entry and immutable policy.
+        if policy['controllerCommit'] == commit and (policy != new_policy or old_entry not in (launch, ORIGINAL_ENTRY)):
             raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
         try:
             atomic(policy_path, (json.dumps(new_policy, indent=2) + '\n').encode(), gid)
@@ -164,6 +166,10 @@ def extension(commit, approval):
             raise
     finally:
         os.close(fd)
+    import syslog
+    syslog.openlog('gamerhq-staging-security', syslog.LOG_PID, syslog.LOG_AUTHPRIV)
+    syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'extend-staging-host-promotion', 'controllerCommit': commit,
+        'approvedHostCommit': HOST, 'state': 'INSTALLED', 'productionChanged': False}))
     return {'operation': 'extend-staging-host-promotion', 'state': 'INSTALLED', 'controllerCommit': commit,
         'approvedHostCommit': HOST, 'hostPromotionRequiresProtectedOwnerReview': True,
         'automationEnabled': bool(state.get('enabled')), 'gatewayStarted': False, 'productionChanged': False,
