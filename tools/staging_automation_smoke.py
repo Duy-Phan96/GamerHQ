@@ -60,8 +60,31 @@ def main():
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
         finally: server.terminate(); server.wait(timeout=10)
     assert hashlib.sha256(database.read_bytes()).hexdigest() == digest
+    # Verify actual Docker normalization, not only a hand-written inspect fixture.
+    # This is a disposable sleep container, never the Discord application.
+    child = '''import os,sys,json,subprocess
+sys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']
+from tools.staging_dispatch import environment
+os.environ.clear();os.environ.update(environment())
+from staging_automation.backend import HostBackend
+p=json.load(open('/etc/gamerhq-staging/settings/profile.json'))
+def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=180)
+run(['docker','network','create','gamerhq-staging-private'],False)
+run(['docker','pull','python:3.12-slim'])
+try:
+ run(['docker','run','--detach','--name','gamerhq-staging-bot','--label','com.docker.compose.project=gamerhq-staging','--label','com.docker.compose.service=gamerhq-staging','--user','10001:10001','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true','--memory','512m','--cpus','1','--pids-limit','128','--restart','no','--network','gamerhq-staging-private','--volume','/opt/gamerhq-staging/data:/app/runtime/data:Z','--volume','/opt/gamerhq-staging/backups:/app/backups:Z','python:3.12-slim','python','-c','import time;time.sleep(120)'])
+ assert HostBackend(p,{}).inspect()['Name']=='/gamerhq-staging-bot'
+finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
+print('NORMALIZED_STAGING_LIMITS_PASS')
+'''
+    launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
+        'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
+        'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']
+    normalized = subprocess.run(launch, input=child, capture_output=True, text=True, timeout=240)
+    if normalized.returncode or normalized.stdout.strip() != 'NORMALIZED_STAGING_LIMITS_PASS':
+        raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
-        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'gatewayStarted': False, 'productionChanged': False}))
+        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS', 'gatewayStarted': False, 'productionChanged': False}))
 
 
 if __name__ == '__main__': main()
