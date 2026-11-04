@@ -44,6 +44,10 @@ def main():
             current = Path(name).read_bytes()
             if name.endswith('authorized_keys'): assert current.startswith(body) and current.count(public.encode()) == 1
             else: assert current == body
+        # Existing installations may have restrictive code directories; model
+        # that state explicitly, independent of runner ACLs/pre-existing modes.
+        for directory in (root / 'automation-controller', root / 'automation-controller/staging_automation'):
+            directory.chmod(0o700)
         host = ' '.join((tmp / 'host.pub').read_text().split()[:2]); known = tmp / 'known_hosts'; known.write_text('[127.0.0.1]:22225 ' + host + '\n')
         sshd = tmp / 'sshd_config'
         sshd.write_text('Port 22225\nListenAddress 127.0.0.1\nHostKey '+str(tmp / 'host')+'\nPidFile '+str(tmp / 'pid')+'\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers gamerhq-staging-bridge\nStrictModes yes\nPermitUserRC no\nDisableForwarding yes\nInclude /etc/ssh/sshd_config.d/90-gamerhq-staging.conf\n')
@@ -120,7 +124,7 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
         'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
-        'ownerUmask077FailureReproduced': True, 'directoryAccessRepair': 'PASS',
+        'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',
         'gatewayStarted': False, 'productionChanged': False}))
 
 

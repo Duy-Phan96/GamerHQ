@@ -145,5 +145,8 @@ access for the existing staging group on exactly two code directories, and
 requires an actual NOT_ACTIVATED status receipt through the existing restricted
 user sandbox. Failure restores the original modes. It changes no code, SSH
 policy, credentials, data, container, deployment gate or activation state.
-The real SSH regression now reproduces both original failures using the exact
-published installer and umask, then verifies both independent repairs.
+The real SSH regression executes the published installer and owner umask,
+explicitly models existing root-only code directories independently of runner
+ACL/default directory state, then verifies both independent repairs. A live
+exit-2 result alone does not prove this cause; obtain the public launcher phase
+or owner receipt before selecting an actual VPS repair.
