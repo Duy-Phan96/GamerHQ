@@ -16,6 +16,8 @@ def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--commit', required=True); args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true' or os.geteuid() != 0: raise PermissionError('DISPOSABLE_CI_ONLY')
     from tools.enroll_staging_automation import enroll
+    from tools.repair_staging_ssh_routing import repair, REPAIRED
+    enrolled_commit = 'a1b50573850921e478a2f838e72868853bde6dd7'
     account = pwd.getpwnam('gamerhq-staging-bridge')
     root = Path('/opt/gamerhq-staging'); config = Path('/etc/gamerhq-staging')
     profile_path = config / 'settings/profile.json'; profile = json.loads(profile_path.read_text())
@@ -30,7 +32,7 @@ def main():
             subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(tmp / name)], check=True)
         public = ' '.join((tmp / 'client.pub').read_text().split()[:2])
         for _ in range(2):
-            receipt = enroll(args.commit, public, 'ENROLL RESTRICTED STAGING AUTOMATION')
+            receipt = enroll(enrolled_commit, public, 'ENROLL RESTRICTED STAGING AUTOMATION')
             assert receipt['state'] == 'ENROLLED_INACTIVE' and receipt['legacyWorkerCommit'] == profile['hostSourceCommit']
             assert not any(receipt[k] for k in ('automationEnabled', 'gatewayStarted', 'productionChanged', 'existingCredentialsChanged', 'legacySshEntryChanged', 'sandboxChanged', 'workerSourceChanged'))
         for name, body in originals.items():
@@ -39,22 +41,31 @@ def main():
             else: assert current == body
         host = ' '.join((tmp / 'host.pub').read_text().split()[:2]); known = tmp / 'known_hosts'; known.write_text('[127.0.0.1]:22225 ' + host + '\n')
         sshd = tmp / 'sshd_config'
-        sshd.write_text('Port 22225\nListenAddress 127.0.0.1\nHostKey '+str(tmp / 'host')+'\nPidFile '+str(tmp / 'pid')+'\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers gamerhq-staging-bridge\nStrictModes yes\nPermitUserRC no\nDisableForwarding yes\n')
+        sshd.write_text('Port 22225\nListenAddress 127.0.0.1\nHostKey '+str(tmp / 'host')+'\nPidFile '+str(tmp / 'pid')+'\nUsePAM no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers gamerhq-staging-bridge\nStrictModes yes\nPermitUserRC no\nDisableForwarding yes\nInclude /etc/ssh/sshd_config.d/90-gamerhq-staging.conf\n')
         server = subprocess.Popen(['/usr/sbin/sshd', '-D', '-f', str(sshd)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             for _ in range(30):
                 try:
                     with socket.create_connection(('127.0.0.1', 22225), timeout=1): break
                 except OSError: time.sleep(.1)
-            def call(op, payload=None, prefix='gamerhq-staging-automation-v1'):
+            def call(op, payload=None, prefix='gamerhq-staging-automation-v1', key=None):
                 req = {'version': 1, 'phase': 'automation', 'operation': op}
                 command = prefix + ' ' + base64.b64encode(json.dumps(req).encode()).decode()
-                return subprocess.run(['ssh', '-F', '/dev/null', '-T', '-p', '22225', '-i', str(tmp / 'client'), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile='+str(known), 'gamerhq-staging-bridge@127.0.0.1', command], input=json.dumps(payload) if payload else '', capture_output=True, text=True, timeout=90)
+                return subprocess.run(['ssh', '-F', '/dev/null', '-T', '-p', '22225', '-i', str(key or tmp / 'client'), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile='+str(known), 'gamerhq-staging-bridge@127.0.0.1', command], input=json.dumps(payload) if payload else '', capture_output=True, text=True, timeout=90)
+            failed = call('status')
+            assert failed.returncode != 0 and 'Unsupported or unavailable isolated staging request' in failed.stderr
+            for _ in range(2):
+                repaired = repair(args.commit, 'REPAIR AUTHENTICATED STAGING SSH ROUTING')
+                assert repaired['forceCommandRetained'] and not repaired['automationEnabled']
+            assert Path('/etc/ssh/sshd_config.d/90-gamerhq-staging.conf').read_bytes() == REPAIRED
+            server.send_signal(__import__('signal').SIGHUP)
+            time.sleep(.5)
             status = call('status'); assert status.returncode == 0, status.stderr
-            value = json.loads(status.stdout); assert value['state'] == 'NOT_ACTIVATED' and value['controllerCommit'] == args.commit
+            value = json.loads(status.stdout); assert value['state'] == 'NOT_ACTIVATED' and value['controllerCommit'] == enrolled_commit
             assert call('bootstrap').returncode != 0
             assert call('credentials').returncode != 0
             assert call('status', prefix='gamerhq-staging-v1').returncode != 0
+            assert call('status', key='/tmp/staging-legacy-ci-key').returncode != 0
             challenge = json.loads(call('challenge', {'operation': 'activate'}).stdout)
             assert call('activate', {'token': 'invalid-jwt', 'challenge': challenge['challenge']}).returncode != 0
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
@@ -84,7 +95,9 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
     if normalized.returncode or normalized.stdout.strip() != 'NORMALIZED_STAGING_LIMITS_PASS':
         raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
-        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS', 'gatewayStarted': False, 'productionChanged': False}))
+        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS',
+        'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
+        'gatewayStarted': False, 'productionChanged': False}))
 
 
 if __name__ == '__main__': main()
