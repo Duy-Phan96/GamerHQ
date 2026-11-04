@@ -20,6 +20,9 @@
 
 ### Changed
 
+- Restored the compact Discord event builder for installed Event Manager creation and editing, reusing date/time/player controls, weekday toggles and preview/confirmation. Player pickers and advanced settings retain the public Skill API, revision checks and retry-safe resource identity.
+- Established progressive enhancement guidance across Host, Skills and Web: preserve working behavior and established UX by default.
+
 - Updated the reviewed immutable XP & Progression Skill pin from the 0.1.0 baseline to the released 0.2.0 commit and documented explicitly authorized cross-repository work with target-repository branches/PRs and independent release ownership.
 - Standardized new branch and commit naming guidance while preserving existing branch history.
 - Documented independent Host, SDK, Runtime API, external Skill and web versioning/release responsibilities.

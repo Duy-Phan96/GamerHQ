@@ -9,6 +9,10 @@ one repeatable development process.
 
 ## Goals
 
+Follow [progressive enhancement](PROGRESSIVE_ENHANCEMENT.md): inspect and preserve
+working behavior and established UX, extend incrementally, and regression-test
+the previously supported workflow. Architectural changes do not imply a UX redesign.
+
 The lifecycle should keep development:
 
 - lightweight;

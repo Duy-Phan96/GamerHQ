@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from services.operation_context import measured
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import urlencode
 import re
 import secrets
@@ -1110,7 +1111,7 @@ class EventTitleModal(discord.ui.Modal, title="Event Title"):
 class BuilderDateSelect(discord.ui.Select):
     def __init__(self, builder):
         self.builder = builder
-        today = datetime.now(SERVER_TZ).date()
+        today = datetime.now(ZoneInfo(builder.timezone_name) if hasattr(builder, "timezone_name") else SERVER_TZ).date()
         options = []
         for i in range(14):
             d = today + timedelta(days=i)
@@ -1120,6 +1121,8 @@ class BuilderDateSelect(discord.ui.Select):
                 default=builder.date == d.isoformat(),
             ))
         label = datetime.fromisoformat(builder.date).strftime("%a, %d.%m.%Y") if builder.date else "Choose date"
+        if builder.date and builder.date not in {option.value for option in options}:
+            options.append(discord.SelectOption(label=label, value=builder.date, emoji="📅", default=True))
         super().__init__(placeholder=f"📅 {label}"[:150], options=options, row=0)
 
     async def callback(self, interaction):
@@ -1143,6 +1146,8 @@ class BuilderTimeSelect(discord.ui.Select):
                     default=selected == label,
                 ))
         placeholder = f"🕐 Time · {selected}" if selected else "🕐 Choose time"
+        if selected and selected not in {option.value for option in options}:
+            options.append(discord.SelectOption(label=selected, value=selected, emoji="🕐", default=True))
         super().__init__(placeholder=placeholder[:150], options=options, row=1)
 
     async def callback(self, interaction):
@@ -1156,6 +1161,8 @@ class BuilderPlayersSelect(discord.ui.Select):
     def __init__(self, builder):
         self.builder = builder
         options = [discord.SelectOption(label=f"{n} players", value=str(n), emoji="👥", default=builder.max_players == n) for n in range(2, 26)]
+        if builder.max_players and builder.max_players not in range(2, 26):
+            options.append(discord.SelectOption(label=f"{builder.max_players} players", value=str(builder.max_players), emoji="👥", default=True))
         placeholder = f"👥 {builder.max_players} players" if builder.max_players else "👥 Choose total players"
         super().__init__(placeholder=placeholder[:150], options=options, row=2)
 
