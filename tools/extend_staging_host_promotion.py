@@ -133,15 +133,19 @@ def extension(commit, approval):
     new_policy = {**policy, 'controllerCommit': commit,
         'hostPromotion': {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}}
     lock_path = ROOT / 'worker/operation.lock'
+    parent_info = lock_path.parent.lstat()
+    if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != uid or parent_info.st_gid != gid or parent_info.st_mode & 0o002:
+        raise ValueError('PRIVATE_WORKER_DIRECTORY_REQUIRED')
     fd = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
-        # Existing user services can create a group-writable lock under umask
-        # 0002. It contains no code/data; retain that mode, requiring the exact
-        # dedicated UID/GID, one inode, no symlink and no world-write access.
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1 or info.st_mode & 0o002:
+        # Some existing systemd user managers create 0666 locks. The enclosing
+        # private staging directory protects this non-data inode; acquire the
+        # exact owned single-link inode, then tighten it without path-based chmod.
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1:
             raise ValueError('EXISTING_OPERATION_LOCK_REQUIRED')
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.fchmod(fd, 0o600)
         # Re-read under the same lock used by every existing deployment operation.
         if trusted(policy_path) != original_policy or trusted(entry) != old_entry:
             raise ValueError('CONCURRENT_POLICY_CHANGE_REJECTED')
@@ -164,7 +168,7 @@ def extension(commit, approval):
         'approvedHostCommit': HOST, 'hostPromotionRequiresProtectedOwnerReview': True,
         'automationEnabled': bool(state.get('enabled')), 'gatewayStarted': False, 'productionChanged': False,
         'workerSourceChanged': False, 'sshPolicyChanged': False, 'credentialsChanged': False,
-        'databaseChanged': False, 'containersChanged': False, 'deploymentGatesChanged': False}
+        'databaseChanged': False, 'containersChanged': False, 'deploymentGatesChanged': False, 'operationLockMode': '0600'}
 
 
 if __name__ == '__main__':

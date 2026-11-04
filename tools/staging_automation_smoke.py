@@ -108,6 +108,7 @@ def main():
                 try: extended = extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')
                 finally: os.umask(previous)
                 assert extended['state'] == 'INSTALLED' and extended['automationEnabled'] is False
+                assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
             extended_status = json.loads(call('status').stdout)
             assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionSupported'] is True
             assert extended_status['state'] == 'NOT_ACTIVATED'
