@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import time
 import uuid
+import shutil
 
 from .policy import Denied, release_allowed
 from .oidc import github, owner_protected
@@ -56,6 +57,12 @@ class HostBackend:
         proof = verify_remote(self.profile)
         write_record(self.profile['verificationFile'], proof)
 
+    def storage_budget(self):
+        if shutil.disk_usage(self.profile['workRoot']).free < 1073741824: raise Denied('DISK_BUDGET_REQUIRES_OWNER')
+        with sqlite3.connect(Path(self.profile['database']).resolve(strict=True).as_uri() + '?mode=ro', uri=True) as source:
+            size = source.execute('PRAGMA page_count').fetchone()[0] * source.execute('PRAGMA page_size').fetchone()[0]
+        if size > 268435456: raise Denied('DATABASE_BUDGET_REQUIRES_OWNER')
+
     def policy_integrity(self):
         if not owner_protected(github(self.policy, '/environments/staging'), self.policy['ownerId']):
             raise Denied('LEGACY_ENVIRONMENT_NOT_PROTECTED')
@@ -78,6 +85,7 @@ class HostBackend:
         return current['Image']
 
     def prepare(self, candidate):
+        self.storage_budget()
         from tools.staging_configuration import atomic_json
         from hosts.gamerhq.skill_release_artifacts import fetch_release
         from hosts.gamerhq.skill_staging import verify_offline
@@ -102,6 +110,7 @@ class HostBackend:
         return host_request(self.profile, f"/api/v1/servers/{self.profile['stagingGuildId']}/skills/event-manager")
 
     def install(self):
+        self.storage_budget()
         self.fresh_verify()
         if self.health()['state'] != 'HOST_READY': raise Denied('HOST_NOT_READY')
         if self.skill().get('state', {}).get('installed'): return {'state': 'ALREADY_INSTALLED'}
@@ -118,6 +127,7 @@ class HostBackend:
         return {'state': 'INSTALLED'}
 
     def update(self):
+        self.storage_budget()
         from database import db
         from hosts.gamerhq.skill_artifacts import UpdatePolicy
         from hosts.gamerhq.skill_update_controller import SkillUpdateController

@@ -71,6 +71,10 @@ private credentials are needed in chat.
 - Runtime must retain user 10001, read-only root, dropped capabilities, isolated
   staging network/mounts, no auto-restart, at most 512 MiB, 1 CPU and 128 PIDs.
   Drift requires owner review.
+- Build/install/update admission requires at least 1 GiB free storage and a staging
+  SQLite snapshot no larger than 256 MiB. Insufficient budget stops automation;
+  it never deletes data/backups to make room. These are admission budgets; the
+  kernel-enforced container/sandbox memory and CPU limits remain independent.
 - Published patches stay in Event Manager 0.1.x, use the approved repository,
   SDK/base and API, and cannot add capabilities. GitHub tag source, publisher
   checksum and wheel bytes are verified independently by the existing adapter.
