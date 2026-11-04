@@ -7,6 +7,7 @@ import asyncio
 import importlib.util
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -86,4 +87,94 @@ def test_legacy_install_requires_transactional_cutover_before_domain_enable(lega
             contract_id="event-manager.list.v1", payload={})
         assert rows["events"][0]["legacyEventIds"] == [legacy.event["id"]]
         assert owns_events(1)
+    asyncio.run(scenario())
+
+
+def test_compact_discord_builder_uses_public_skill_persistence_without_duplicate_resources(resources):
+    """Real installed Skill + Host SQLite/resources; Discord itself is synthetic."""
+    from cogs.event_manager import open_editor
+    from cogs import event_manager
+    from cogs.event_editor import WeekdayView, EventPreviewView
+    from cogs import lfg
+
+    async def scenario():
+        guild, member = resources.guild, resources.member
+        member.guild_permissions.administrator = False
+        member.guild_permissions.manage_guild = False
+        bot = SimpleNamespace(guilds=[guild], get_guild=lambda ident: guild if ident == 1 else None)
+        db.set_setting("skill_resources:1:event-manager", json.dumps({"categoryId": 10, "allowPublic": False}))
+        runtime = GamerHQSkillRuntime(bot)
+        bot.skill_runtime = runtime
+        load_external_skill_packages(runtime, ("event-manager",))
+        await runtime.register_all()
+        await runtime.install_skill(guild_id=1, skill_id="event-manager")
+
+        def interaction():
+            return SimpleNamespace(client=bot, guild=guild, user=member,
+                response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock(), defer=AsyncMock()),
+                followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
+
+        async def call(op, payload):
+            return await runtime.call_management(guild_id=1, skill_id="event-manager",
+                contract_id=f"event-manager.{op}.v1", payload=payload, actor_id=50)
+
+        try:
+            create = interaction()
+            await open_editor(create)
+            builder = create.followup.send.await_args.kwargs["view"]
+            assert builder.draft["timezone"] == "Europe/Berlin"
+            days = WeekdayView(builder)
+            days.selected = {0, 2, 4}
+            await days.apply_days.callback(interaction())
+            builder.draft.update(name="Compact Raid", game="Arena", description="Practice", voiceEnabled=False)
+            preview = interaction()
+            await builder.preview.callback(preview)
+            view = preview.edit_original_response.await_args.kwargs["view"]
+            assert isinstance(view, EventPreviewView) and not view.confirm.disabled
+            # No legacy persistence or per-occurrence resource creator may run.
+            real_call, interrupted = event_manager.call, False
+            async def interrupted_create(interaction, operation, payload):
+                nonlocal interrupted
+                result = await real_call(interaction, operation, payload)
+                if operation == "create" and not interrupted:
+                    interrupted = True
+                    raise RuntimeError("Synthetic lost create response after commit")
+                return result
+            with patch.object(lfg, "persist_event_draft", side_effect=AssertionError("legacy write")), \
+                    patch.object(lfg, "create_private_event_channel", side_effect=AssertionError("legacy resources")), \
+                    patch.object(event_manager, "call", side_effect=interrupted_create):
+                await view.confirm.callback(interaction())
+                assert not builder.submitted
+                await view.confirm.callback(interaction())
+                await view.confirm.callback(interaction())
+            rows = await call("list", {})
+            assert len(rows["events"]) == 1
+            event = rows["events"][0]
+            assert event["config"]["weekdays"] == [0, 2, 4]
+            assert event["config"]["game"] == "Arena"
+            assert event["config"]["description"] == "Practice"
+            original_revision = event["revision"]
+
+            edit = interaction()
+            await open_editor(edit, event["id"])
+            editor = edit.followup.send.await_args.kwargs["view"]
+            assert editor.revision == original_revision
+            editor.draft["name"] = "Edited Compact Raid"
+            preview = interaction()
+            await editor.preview.callback(preview)
+            edit_view = preview.edit_original_response.await_args.kwargs["view"]
+            assert edit_view.confirm.label == "Save changes"
+            await edit_view.confirm.callback(interaction())
+            await call("reconcile", {"eventId": event["id"]})
+            current = (await call("get", {"eventId": event["id"]}))["state"]
+            assert current["config"]["name"] == "Edited Compact Raid"
+            assert current["revision"] > original_revision
+            assert current["chat"]["channelId"] == "100"
+            assert len(resources.channels) == len(resources.messages) == 1
+            assert guild.create_text_channel.await_count == 1
+            assert len((await call("history", {"eventId": event["id"]}))["occurrences"]) > 1
+            assert owns_events(1)
+        finally:
+            await runtime.close()
+
     asyncio.run(scenario())

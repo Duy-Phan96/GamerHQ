@@ -17,6 +17,18 @@
 - Never read/expose real `.env` values. Back up before DB/schema work; no local + VPS bot against the live guild, force-push, `reset --hard`, automatic deploy or uncontrolled Discord deletion.
 - Normal administration starts at `/server manage`; first-time setup is `/server setup`, technical tools belong under owner-only `/server dev`. Preserve the existing confirmed operation services.
 
+## Progressive enhancement
+
+Preserve working behavior and established UX by default. Extend existing systems
+incrementally rather than replacing them wholesale. Before a feature change:
+inspect the existing functionality and user experience; identify the smallest
+compatible extension; preserve interaction patterns and terminology; avoid broad
+redesigns unless explicitly requested; document unavoidable breaking UX changes;
+explain alternatives and obtain product-owner direction before major changes
+requiring product decisions; add regression tests for previously supported flows.
+Apply this policy to Host, Skills, Web and future platform components. See
+[development guidance](docs/development/PROGRESSIVE_ENHANCEMENT.md).
+
 ## Development lifecycle
 - Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.
 - Follow [Repository Ownership and Handoffs](docs/development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md). Cross-repository work is allowed only when the owner explicitly authorizes it; use a dedicated branch/PR in every target repository, preserve that repository's architecture/release rules, and document the source request, target change and resulting commit/PR.

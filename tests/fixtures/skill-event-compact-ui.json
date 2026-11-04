@@ -1,0 +1,16 @@
+{
+  "content": "# 📅 Create GamerHQ Event\n\n**📝 Title:** Raid\n**📅 Date:** Monday, 07 January 2030\n**🕐 Time:** 7:00 PM · Europe/Berlin\n**👥 Players:** 5\n**🔁 Repeat:** One-time\n**🔔 Voice invite:** Off\n**👁️ Visibility:** 🔒 Private · Invite only\nDiscord will display the final event in each member's local time.",
+  "rows": [
+    [{"type": "select", "label": null, "placeholder": "📅 Mon, 07.01.2030", "choices": null}],
+    [{"type": "select", "label": null, "placeholder": "🕐 Time · 7:00", "choices": null}],
+    [{"type": "select", "label": null, "placeholder": "👥 5 players", "choices": null}],
+    [{"type": "select", "label": null, "placeholder": "Event type", "choices": ["One-time Event", "Recurring Event"]}],
+    [
+      {"type": "button", "label": "Title", "placeholder": null, "choices": null},
+      {"type": "button", "label": "PM", "placeholder": null, "choices": null},
+      {"type": "button", "label": "Voice off", "placeholder": null, "choices": null},
+      {"type": "button", "label": "Private", "placeholder": null, "choices": null},
+      {"type": "button", "label": "Preview", "placeholder": null, "choices": null}
+    ]
+  ]
+}
