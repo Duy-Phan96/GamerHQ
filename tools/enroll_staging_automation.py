@@ -9,13 +9,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import pwd
 import re
 import stat
 import subprocess
 import tempfile
 import shutil
 import errno
+import base64
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
@@ -50,16 +50,25 @@ def atomic(path, body, gid, mode):
         if tmp.exists(): tmp.unlink()
 
 
-def enroll(commit, public_key, approval):
-    if os.geteuid() != 0 or approval != 'ENROLL RESTRICTED STAGING AUTOMATION': raise PermissionError('OWNER_APPROVAL_REQUIRED')
-    if not re.fullmatch('[0-9a-f]{40}', commit): raise ValueError('IMMUTABLE_SOURCE_REQUIRED')
+def public_key_bytes(public_key):
     fields = public_key.split()
-    if len(fields) != 2 or fields[0] != 'ssh-ed25519': raise ValueError('DEDICATED_PUBLIC_KEY_REQUIRED')
-    import base64
+    if len(fields) != 2 or fields[0] != 'ssh-ed25519' or public_key != ' '.join(fields): raise ValueError('DEDICATED_CANONICAL_PUBLIC_KEY_REQUIRED')
     raw = base64.b64decode(fields[1], validate=True)
     if len(raw) != 51 or raw[:19] != b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20': raise ValueError('DEDICATED_PUBLIC_KEY_REQUIRED')
+    return raw
+
+
+def enroll(commit, public_key, approval):
+    import pwd
+    if os.geteuid() != 0 or approval != 'ENROLL RESTRICTED STAGING AUTOMATION': raise PermissionError('OWNER_APPROVAL_REQUIRED')
+    if not re.fullmatch('[0-9a-f]{40}', commit): raise ValueError('IMMUTABLE_SOURCE_REQUIRED')
+    raw = public_key_bytes(public_key); fields = public_key.split()
+    for directory in (ROOT, CONTROL, ENTRY.parent):
+        info = directory.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022: raise ValueError('PROTECTED_PARENT_DIRECTORY_REQUIRED')
     account = pwd.getpwnam('gamerhq-staging-bridge'); uid, gid = account.pw_uid, account.pw_gid
     profile = json.loads(trusted(CONTROL / 'settings/profile.json', uid)); legacy_policy = json.loads(trusted(CONTROL / 'policy.json'))
+    if (CONTROL / 'settings/profile.json').stat().st_mode & 0o077: raise ValueError('PRIVATE_PROFILE_REQUIRED')
     if profile.get('deploymentUid') != uid or profile.get('hostSourceCommit') != legacy_policy.get('hostSourceCommit') or profile.get('root') != str(ROOT) or profile.get('configurationRoot') != str(CONTROL): raise ValueError('EXISTING_IDENTITY_REQUIRED')
     if profile['hostSourceCommit'] != '92db47042d58055cb0debdfd83f11f8508e19809': raise ValueError('REVIEWED_LEGACY_COMPATIBILITY_REQUIRED')
     capability = subprocess.run(['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin',

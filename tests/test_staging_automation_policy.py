@@ -23,6 +23,16 @@ def signing_key(): return rsa.generate_private_key(public_exponent=65537, key_si
 def b64(value): return base64.urlsafe_b64encode(value).rstrip(b'=').decode()
 
 
+@pytest.mark.parametrize('mutation', ['newline-prefix', 'newline-suffix', 'tab', 'options', 'space-prefix'])
+def test_enrollment_rejects_authorized_keys_line_and_option_injection(mutation):
+    from tools.enroll_staging_automation import public_key_bytes
+    canonical = 'ssh-ed25519 ' + base64.b64encode(b'\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20' + b'a' * 32).decode()
+    assert len(public_key_bytes(canonical)) == 51
+    variants = {'newline-prefix': '\n' + canonical, 'newline-suffix': canonical + '\n', 'tab': canonical.replace(' ', '\t'),
+        'options': 'command="shell" ' + canonical, 'space-prefix': ' ' + canonical}
+    with pytest.raises(ValueError): public_key_bytes(variants[mutation])
+
+
 @pytest.fixture
 def trust(signing_key):
     workflow = b'reviewed workflow bytes'
