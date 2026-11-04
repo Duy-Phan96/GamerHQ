@@ -9,9 +9,9 @@ CODES = frozenset({'BUILDX_STATE_NOT_WRITABLE','DOCKER_BUILD_FAILED','DOCKER_COM
     'WORKER_OUTPUT_LIMIT','STAGING_PROFILE_REJECTED','STAGING_DAEMON_REJECTED','STAGING_BASE_IMAGE_MISSING',
     'STAGING_COMPOSE_CONFIG_REJECTED','STAGING_STORAGE_MISSING','STAGING_STORAGE_PROBE_FAILED',
     'STAGING_DATA_ACCESS_REJECTED','STAGING_DATABASE_ACCESS_REJECTED','STAGING_BACKUPS_ACCESS_REJECTED',
-    'STAGING_ARTIFACT_REJECTED'})
+    'STAGING_ARTIFACT_REJECTED','STAGING_RECORD_PERSISTENCE_FAILED'})
 STEPS = frozenset({'docker-build','docker-command','prepare','worker-command','profile','daemon','base-image',
-    'compose-config','storage-probe','artifact'})
+    'compose-config','storage-probe','artifact','record'})
 
 def decode_evidence(text):
     if not isinstance(text,str) or len(text.encode()) > 65536:
