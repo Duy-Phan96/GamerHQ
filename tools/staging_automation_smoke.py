@@ -96,6 +96,26 @@ def main():
             challenge = json.loads(call('challenge', {'operation': 'activate'}).stdout)
             assert call('activate', {'token': 'invalid-jwt', 'challenge': challenge['challenge']}).returncode != 0
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
+            # Install the reviewed extension under the same restrictive umask,
+            # retaining keys, state, legacy worker, DB and sandbox. No apply.
+            from tools.extend_staging_host_promotion import extension
+            for _ in range(2):
+                previous = os.umask(0o077)
+                try: extended = extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')
+                finally: os.umask(previous)
+                assert extended['state'] == 'INSTALLED' and extended['automationEnabled'] is False
+            extended_status = json.loads(call('status').stdout)
+            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionSupported'] is True
+            assert extended_status['state'] == 'NOT_ACTIVATED'
+            assert call('host-promote', {'token': 'invalid-jwt', 'challenge': 'invalid'}).returncode != 0
+            state_path = root / 'worker/automation-state.json'
+            inactive_bytes = state_path.read_bytes()
+            active = json.loads(inactive_bytes); active.update(enabled=True, bootstrapVerified=True, approvedImage='sha256:'+'a'*64)
+            state_path.write_text(json.dumps(active)); os.chown(state_path, account.pw_uid, account.pw_gid)
+            active_bytes = state_path.read_bytes()
+            assert extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')['automationEnabled'] is True
+            assert state_path.read_bytes() == active_bytes
+            state_path.write_bytes(inactive_bytes)
         finally: server.terminate(); server.wait(timeout=10)
     assert hashlib.sha256(database.read_bytes()).hexdigest() == digest
     # Verify actual Docker normalization, not only a hand-written inspect fixture.

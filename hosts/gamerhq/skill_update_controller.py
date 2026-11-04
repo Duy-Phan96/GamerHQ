@@ -14,10 +14,11 @@ import sqlite3
 import time
 import uuid
 import re
+import os
 
 from database import db
 from skill_runtime.contracts.capabilities import KNOWN_CAPABILITIES
-from .skill_artifacts import UpdatePolicy, update_decision, verify_wheel
+from hosts.gamerhq.skill_artifacts import UpdatePolicy, update_decision, verify_wheel
 
 
 def application_generation(conn):
@@ -60,7 +61,7 @@ class SkillUpdateController:
             raise ValueError("Deployment does not exist.")
         return dict(row)
 
-    def stage(self, *, release, wheel, current_version, current_capabilities, policy=UpdatePolicy(), manual_review=False):
+    def stage(self, *, release, wheel, current_version, current_capabilities, policy=UpdatePolicy(), manual_review=False, host_source_commit=None):
         if not re.fullmatch(r"[a-z][a-z0-9-]*", str(release.get("skillId", ""))) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", str(release.get("distribution", ""))):
             raise ValueError("Invalid release identity.")
         if release.get("sourceReviewed") is not True or release.get("runtimeApi") != "1":
@@ -72,11 +73,17 @@ class SkillUpdateController:
             raise ValueError("This update needs a separately verified explicit migration before application.")
         decision = update_decision(current_version, release["version"], policy,
             migration_safe=True, capabilities_unchanged=set(capabilities) <= set(current_capabilities))
-        if decision != "eligible-for-staging" and not (decision == "manual-review-required" and manual_review):
+        if host_source_commit is not None:
+            if not re.fullmatch(r"[0-9a-f]{40}", host_source_commit) or not manual_review or release["version"] != current_version:
+                raise ValueError("Host promotion requires reviewed source and the unchanged installed Skill version.")
+            decision = "owner-reviewed-host-promotion"
+        if decision not in ("eligible-for-staging", "owner-reviewed-host-promotion") and not (decision == "manual-review-required" and manual_review):
             raise ValueError("Update policy does not permit staging this release.")
         artifact = verify_wheel(Path(wheel), distribution=release["distribution"], version=release["version"], sha256=release["sha256"])
         ident = uuid.uuid4().hex
         evidence = {"artifact": artifact, "release": release, "policyDecision": decision, "previousVersion": current_version}
+        if host_source_commit is not None:
+            evidence["hostSourceCommit"] = host_source_commit
         evidence["previousImage"] = self.backend.current_image()
         with db.connect() as conn:
             evidence["applicationGeneration"] = application_generation(conn)
@@ -118,11 +125,15 @@ class SkillUpdateController:
             backup = self.backup_root / (ident + ".sqlite")
             if backup.exists():
                 raise ValueError("A backup already exists for this deployment; inspect before retrying.")
+            descriptor = os.open(backup, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(descriptor)
             with db.connect() as conn, closing(sqlite3.connect(backup)) as target:
                 conn.backup(target)
             fingerprint = application_fingerprint(backup)
             evidence = json.loads(row["evidence_json"])
             evidence["backup"] = {"sha256": hashlib.sha256(backup.read_bytes()).hexdigest(), "applicationFingerprint": fingerprint}
+            if hasattr(self.backend, "verify_backup"):
+                evidence["backup"]["verification"] = self.backend.verify_backup(backup)
             self._state(ident, "APPLYING", evidence=evidence)
             self.backend.activate(row["image"])
             if not self.backend.healthy(expected_version=row["version"]):

@@ -65,10 +65,10 @@ def verify(token, policy, operation, challenge, *, read=read_url, now=None):
         if not now - 600 <= claims['iat'] <= now + 30 or claims['nbf'] > now + 30 or not now < claims['exp'] <= claims['iat'] + 600: raise ValueError()
         if not re.fullmatch('[A-Za-z0-9_-]{8,128}', claims.get('jti', '')): raise ValueError()
         if not re.fullmatch('[0-9a-f]{40}', claims.get('workflow_sha', '')) or not re.fullmatch('[1-9][0-9]{0,19}', claims.get('run_id', '')): raise ValueError()
-        filename = 'staging-automation-activate.yml' if operation in SECURITY else 'staging-automation.yml'
+        filename = 'staging-host-promotion.yml' if operation == 'host-promote' else 'staging-automation-activate.yml' if operation in SECURITY else 'staging-automation.yml'
         if claims.get('workflow_ref') != policy['repository'] + '/.github/workflows/' + filename + '@refs/heads/main': raise ValueError()
         workflow = read('https://raw.githubusercontent.com/' + policy['repository'] + '/' + claims['workflow_sha'] + '/.github/workflows/' + filename)
-        digest = policy['securityWorkflowSha256' if operation in SECURITY else 'routineWorkflowSha256']
+        digest = policy['hostPromotion']['workflowSha256'] if operation == 'host-promote' else policy['securityWorkflowSha256' if operation in SECURITY else 'routineWorkflowSha256']
         if hashlib.sha256(workflow).hexdigest() != digest: raise ValueError()
         if operation in SECURITY:
             if not owner_protected(github(policy, '/environments/deployment-security', read), policy['ownerId']): raise ValueError()

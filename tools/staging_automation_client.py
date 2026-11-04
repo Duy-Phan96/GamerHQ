@@ -90,7 +90,7 @@ def perform(operation, release=None, *, call=exchange, get_token=token):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'reconcile', 'identity-check'])
+    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check'])
     args = parser.parse_args()
     if args.operation == 'identity-check':
         from tools.staging_automation.oidc import verify

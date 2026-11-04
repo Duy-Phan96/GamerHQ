@@ -49,7 +49,8 @@ class HostBackend:
         if not c['State'].get('Running') or c['State'].get('Health', {}).get('Status') != 'healthy': raise Denied('HOST_NOT_HEALTHY')
         from tools.staging_health import health
         result = health(self.profile)
-        return {'state': result['status'], 'gatewayChecked': result['gatewayChecked']}
+        return {'state': result['status'], 'gatewayChecked': result['gatewayChecked'],
+            'hostCommit': c['Config'].get('Labels', {}).get('org.opencontainers.image.revision')}
 
     def fresh_verify(self):
         from hosts.gamerhq.skill_staging import verify_remote
@@ -175,4 +176,5 @@ class HostBackend:
     def smoke(self):
         if self.health()['state'] != 'HOST_READY': raise Denied('HOST_NOT_READY')
         skill = self.skill()
-        return {'state': 'SMOKE_PASS', 'skillVersion': skill['version'], 'installed': bool(skill.get('state', {}).get('installed'))}
+        return {'state': 'SMOKE_PASS', 'skillVersion': skill['version'], 'installed': bool(skill.get('state', {}).get('installed')),
+            'hostCommit': self.inspect()['Config'].get('Labels', {}).get('org.opencontainers.image.revision')}
