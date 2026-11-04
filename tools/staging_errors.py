@@ -6,8 +6,12 @@ import subprocess
 CODES = frozenset({'BUILDX_STATE_NOT_WRITABLE','DOCKER_BUILD_FAILED','DOCKER_COMMAND_FAILED',
     'DOCKER_TIMEOUT','DOCKER_COMMAND_UNAVAILABLE','DOCKER_MEMORY_EXHAUSTED','DOCKER_STORAGE_FULL',
     'DOCKER_REGISTRY_REJECTED','DOCKER_NETWORK_FAILED','PREPARATION_REJECTED','WORKER_COMMAND_FAILED',
-    'WORKER_OUTPUT_LIMIT'})
-STEPS = frozenset({'docker-build','docker-command','prepare','worker-command'})
+    'WORKER_OUTPUT_LIMIT','STAGING_PROFILE_REJECTED','STAGING_DAEMON_REJECTED','STAGING_BASE_IMAGE_MISSING',
+    'STAGING_COMPOSE_CONFIG_REJECTED','STAGING_STORAGE_MISSING','STAGING_STORAGE_PROBE_FAILED',
+    'STAGING_DATA_ACCESS_REJECTED','STAGING_DATABASE_ACCESS_REJECTED','STAGING_BACKUPS_ACCESS_REJECTED',
+    'STAGING_ARTIFACT_REJECTED'})
+STEPS = frozenset({'docker-build','docker-command','prepare','worker-command','profile','daemon','base-image',
+    'compose-config','storage-probe','artifact'})
 
 def decode_evidence(text):
     if not isinstance(text,str) or len(text.encode()) > 65536:
@@ -40,6 +44,17 @@ class StagingFailure(RuntimeError):
             raise ValueError('INVALID_PUBLIC_WORKER_EVIDENCE')
         self.evidence=value
         super().__init__(encoded)
+
+class VerificationFailure(StagingFailure,ValueError):
+    """Preserve validation-error compatibility while publishing only safe codes."""
+
+def verified_check(code,step,call):
+    try:return call()
+    except StagingFailure:raise
+    except Exception as error:
+        status=getattr(error,'returncode',None)
+        if type(status) is not int or not -255 <= status <= 255:status=None
+        raise VerificationFailure(code,step,exit_code=status) from None
 
 def docker_failure(error,step='docker-command'):
     if isinstance(error,subprocess.TimeoutExpired):
