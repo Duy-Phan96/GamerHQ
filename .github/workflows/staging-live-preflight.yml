@@ -18,7 +18,7 @@ jobs:
           path: actions-client
       - uses: actions/checkout@v4
         with:
-          ref: 2cb9adc79d42b95bf07ebd81600550be358cef11
+          ref: b2d4de3908c3a3ea6bdaa94c447ec72c4f702f0c
           path: reviewed-host
           persist-credentials: false
       - uses: actions/setup-python@v5

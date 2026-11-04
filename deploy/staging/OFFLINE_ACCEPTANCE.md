@@ -65,3 +65,27 @@ Docker isolation, worker enablement or its live authorization proof. Successful
 runner checks must still be followed by successful protected `authorize-live`
 on the actual VPS before asking for first Gateway startup. Both deployment gates
 remain disabled throughout diagnosis.
+
+### Discord HTTP transport repair
+
+Runner diagnosis [41840684139](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41840684139)
+reproduced HTTP 403 at `bot-identity` before guild or permission checks. The
+installed adapter used Python's default user agent. An unauthenticated public
+`/gateway` comparison returned 403 with that default and 200 with Discord's bot
+user-agent format. Discord's [official reference](https://github.com/discord/discord-api-docs/blob/main/developers/reference.mdx#user-agent)
+requires an identifying HTTP user agent and documents possible blocking without it.
+
+The repair sets that header on existing GET-only, redirect-rejecting requests.
+It preserves TLS/authentication policy. Worker failures now expose fixed Discord
+HTTP categories and identity/category/release phases, correlated to the existing
+audit journal; no body, token, URL or arbitrary exception is published. A live
+authorization persists its candidate proof before enabling the worker, so a
+proof-write failure cannot leave the worker enabled without proof.
+
+The source-only installer accepts the currently installed proof repair and the
+previous three reviewed revisions. Disposable CI verifies rollback, retries,
+retained data/key/configuration, restricted SSH evidence and the complete offline
+build/proof/candidate sequence. The installed root-owned worker cannot replace
+its own trusted code. Applying this control-plane repair remains an explicit
+owner security operation; it grants no new SSH, Docker, root or sandbox privileges.
+Routine Skill package installation/updates and runner diagnostics need no root SSH.

@@ -71,7 +71,9 @@ def descriptor(value, *, sdk=False):
 
 def configure(operation, payload, profile):
     from tools.skill_staging import write_record, backend_for
-    audit(operation, "STARTED")
+    from tools.staging_errors import StagingFailure, VerificationFailure
+    audit_id = uuid.uuid4().hex
+    audit(operation, "STARTED", audit_id=audit_id)
     try:
         if operation == "health":
             if payload is not None: raise ValueError("Health accepts no configuration.")
@@ -97,8 +99,10 @@ def configure(operation, payload, profile):
             candidate = {**profile, "workerEnabled": True}
             proof = verify_remote(candidate)
             from tools.staging_dispatch import PROFILE
-            atomic_json(PROFILE, candidate)
             write_record(profile["verificationFile"], proof)
+            # Never enable the worker if proof persistence fails. A proof for the
+            # candidate profile cannot authorize the old disabled profile.
+            atomic_json(PROFILE, candidate)
         elif operation == "release":
             if not isinstance(payload, dict) or set(payload) != {"skillRelease"}:
                 raise ValueError("Only one reviewed Skill descriptor may change.")
@@ -113,10 +117,14 @@ def configure(operation, payload, profile):
             initial(payload, profile)
         else:
             raise ValueError("Unsupported staging configuration operation.")
+    except StagingFailure as error:
+        audit(operation, "FAILED", audit_id=audit_id)
+        raise VerificationFailure(error.evidence['stagingFailure'], error.evidence['step'],
+            exit_code=error.evidence.get('exitCode'), audit_id=audit_id) from None
     except Exception:
-        audit(operation, "FAILED")
-        raise
-    audit(operation, "PASS")
+        audit(operation, "FAILED", audit_id=audit_id)
+        raise VerificationFailure('CONFIGURATION_REJECTED', 'configure', audit_id=audit_id) from None
+    audit(operation, "PASS", audit_id=audit_id)
 
 
 def initial(payload, profile):

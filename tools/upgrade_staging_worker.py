@@ -26,7 +26,8 @@ STATE=Path('/var/lib/gamerhq-staging-bootstrap/worker-upgrades')
 OLD='2e6a0ea40c40447fd3bae1a3b14fb845d6675b77'
 PREVIOUS='1c8ec294491f089c85a4f919a8bea5bf74e8f1f8'
 VERIFIER='8390d4aefdbb48f2ed1f27717320f14401166bec'
-SUPPORTED_PREVIOUS=frozenset((OLD,PREVIOUS,VERIFIER))
+PROOF_REPAIR='2cb9adc79d42b95bf07ebd81600550be358cef11'
+SUPPORTED_PREVIOUS=frozenset((OLD,PREVIOUS,VERIFIER,PROOF_REPAIR))
 REPOSITORY='https://github.com/Duy-Phan96/GamerHQ.git'
 
 def protected(path,uid,private=False):
