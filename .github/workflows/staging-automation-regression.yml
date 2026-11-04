@@ -30,3 +30,12 @@ jobs:
         env:
           REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_automation_smoke --commit "$REVIEWED_COMMIT"
+      - name: Build the exact baseline and rehearse the approved Host overlay offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin 92db47042d58055cb0debdfd83f11f8508e19809
+          mkdir /tmp/gamerhq-host-baseline
+          git archive 92db47042d58055cb0debdfd83f11f8508e19809 | tar -x -C /tmp/gamerhq-host-baseline
+          docker build --build-arg VCS_REF=92db47042d58055cb0debdfd83f11f8508e19809 --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
+          python3 -m tools.staging_host_promotion_smoke --base-image "$(cat /tmp/gamerhq-host-baseline-image)"
