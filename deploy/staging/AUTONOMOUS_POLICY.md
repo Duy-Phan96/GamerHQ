@@ -105,3 +105,32 @@ Removing an SSH identity or changing the sandbox is an explicit owner operation.
 CI uses generated signing keys and a disposable rootless VPS fixture; it never
 starts a real Discord Gateway. Passing those tests is not actual VPS enrollment,
 initial startup, automation activation or live Event Manager/Web acceptance.
+
+## Account-level SSH routing and enrollment handoff
+
+The original bootstrap's account-wide `ForceCommand` takes precedence over
+`authorized_keys` commands. Successful additive enrollment therefore does not
+prove that the new key reaches its controller. The original regression fixture
+missed this because it omitted the account-wide Match rule. It now reproduces
+the rejection before exercising the repaired routing with both real keys.
+
+`repair_staging_ssh_routing.py` is a separately owner-authorized security repair.
+It retains account-wide ForceCommand and every existing restriction, and enables
+OpenSSH `ExposeAuthInfo` for this staging account only. A root-owned router reads
+the actual authenticated public key from OpenSSH's private auth-info file and
+binds it to its root-owned authorized-key entry. The automation identity cannot
+request the legacy protocol, and the legacy identity cannot request automation.
+No client-selected prefix alone grants authority. Missing, ambiguous or
+unsupported authentication metadata is denied. Both original entries and the
+installed policy/controller remain unchanged. Configuration validation, effective
+policy checks, SELinux label preservation, rollback and SSH reload preserve
+existing owner sessions; no container, database, credential or GitHub gate changes.
+
+The repository variable `GAMERHQ_STAGING_AUTOMATION_ENROLLED` must stay false until
+the pinned SSH `status` operation returns NOT_ACTIVATED with the enrolled source
+commit and public key digest. The existing administrative handoff then verifies
+the original bootstrap owner review, legacy environment protection and disabled
+deployment gates before marking enrollment ready. This flag admits an activation
+review; it does not activate the Host policy. A fresh protected activation run is
+required after handoff. Run 41872833897 was a deliberate negative prerequisite
+probe before VPS enrollment, not evidence of a failed VPS installation.
