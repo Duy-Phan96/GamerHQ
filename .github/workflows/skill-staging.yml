@@ -5,7 +5,7 @@ on:
     inputs:
       operation:
         type: choice
-        options: [prepare-offline, diagnose, inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
+        options: [resume-offline, prepare-offline, diagnose, inspect, initialize, build-base, fetch, verify-offline, verify, build, bootstrap, install]
         required: true
       approval:
         description: Offline bundle requires PREPARE ISOLATED STAGING OFFLINE; bootstrap is a separate Gateway approval
@@ -24,7 +24,7 @@ jobs:
       - run: echo 'Explicit first staging Gateway activation approved.'
   prepare:
     needs: gateway-review
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true' && (needs['gateway-review'].result == 'success' || (needs['gateway-review'].result == 'skipped' && contains(fromJSON('["prepare-offline","diagnose","inspect","initialize","build-base","fetch","verify-offline","verify","build","install"]'), inputs.operation))) }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true' && (needs['gateway-review'].result == 'success' || (needs['gateway-review'].result == 'skipped' && contains(fromJSON('["resume-offline","prepare-offline","diagnose","inspect","initialize","build-base","fetch","verify-offline","verify","build","install"]'), inputs.operation))) }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 40
@@ -44,7 +44,9 @@ jobs:
           invoke_prepare() {
             python3 -m tools.staging_ssh_client --phase prepare --operation "$1" --approval "$2"
           }
-          if [[ "$OPERATION" == diagnose ]]; then
+          if [[ "$OPERATION" == resume-offline ]]; then
+            python3 -m tools.staging_offline_prepare
+          elif [[ "$OPERATION" == diagnose ]]; then
             python3 -m tools.staging_ssh_client --phase configure --operation health
             invoke_prepare inspect ''
             invoke_prepare build-base 'BUILD ISOLATED STAGING BASE'
