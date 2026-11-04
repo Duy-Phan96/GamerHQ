@@ -206,6 +206,16 @@ def test_launcher_diagnostics_do_not_echo_unknown_paths_or_oversized_output():
         assert error.evidence['automationFailure'] == 'AUTOMATION_REQUEST_REJECTED'
 
 
+@pytest.mark.parametrize('stdout,expected', [
+    ("private-token\npython: can't open file '/opt/gamerhq-staging/automation-controller/entry.py': Permission denied", 'AUTOMATION_CONTROLLER_NOT_READABLE'),
+    ('private-token\n{"automationError":"SSH_AUTHENTICATED_ROUTE_REJECTED"}', 'SSH_AUTHENTICATED_ROUTE_REJECTED'),
+])
+def test_launcher_stdout_is_sanitized_as_strictly_as_stderr(stdout, expected):
+    error = failure({'phase': 'automation', 'operation': 'status'}, 2, True, '', stdout=stdout)
+    assert error.evidence['automationFailure'] == expected
+    assert 'private-token' not in str(error) and '/opt/' not in str(error)
+
+
 def container():
     return {'Name': '/gamerhq-staging-bot', 'Image': 'sha256:' + 'a' * 64,
         'Config': {'User': '10001:10001', 'Labels': {'com.docker.compose.project': 'gamerhq-staging', 'com.docker.compose.service': 'gamerhq-staging'}},
