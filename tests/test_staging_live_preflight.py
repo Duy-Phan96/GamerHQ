@@ -10,7 +10,8 @@ from tools.staging_live_preflight import PreflightFailure, verify_packet
 def fixture():
     packet = dict(zip(('stagingBotId', 'stagingGuildId', 'productionBotId', 'productionGuildId', 'categoryId', 'voiceCategoryId'), map(str, range(1, 7))))
     packet.update(discordToken='synthetic-staging-token', releaseToken='synthetic-release-token', sdkRelease={'id': 'sdk'}, skillRelease={'id': 'skill'})
-    rows = {'/users/@me': {'id': '1'}, '/users/@me/guilds?limit=200': [{'id': '2'}], '/guilds/2': {'id': '2'},
+    rows = {'/users/@me': {'id': '1'}, '/oauth2/applications/@me': {'flags': 32768},
+        '/users/@me/guilds?limit=200': [{'id': '2'}], '/guilds/2': {'id': '2'},
         '/guilds/2/members/1': {'roles': []}, '/guilds/2/roles': [],
         '/channels/5': {'guild_id': '2', 'type': 4}, '/channels/6': {'guild_id': '2', 'type': 4}}
     calls, fetched, progress = [], [], []
@@ -32,7 +33,8 @@ def test_full_preflight_uses_only_approved_reads_and_never_mutates_packet():
     result = verify_packet(packet, **kwargs)
     assert result['state'] == 'LIVE_PREFLIGHT_PASS'
     assert result['gatewayStarted'] is result['productionChanged'] is result['workerAuthorizationChanged'] is result['vpsConfigurationChanged'] is False
-    assert fetched == ['sdk', 'skill'] and len(calls) == 7
+    assert fetched == ['sdk', 'skill'] and len(calls) == 8
+    assert result['gatewayMembersIntentVerified'] is True
     assert json.dumps(packet, sort_keys=True) == before
 
 
@@ -79,3 +81,29 @@ def test_release_failure_is_distinct_and_does_not_emit_release_token():
     kwargs['fetch'] = rejected
     with pytest.raises(PreflightFailure) as error: verify_packet(packet, **kwargs)
     assert error.value.evidence == {'stagingPreflightError': 'RELEASE_HTTP_REJECTED', 'step': 'sdk-release', 'httpStatus': 404}
+
+
+@pytest.mark.parametrize('flags', [16384, 32768, 49152, 32768 | 64])
+def test_gateway_readiness_accepts_approved_or_limited_members_intent(flags):
+    packet, rows, _, _, _, kwargs = fixture()
+    rows['/oauth2/applications/@me']['flags'] = flags
+    assert verify_packet(packet, **kwargs)['gatewayMembersIntentVerified'] is True
+
+
+@pytest.mark.parametrize('flags', [0, 64, None, True, -1, '32768'])
+def test_missing_or_malformed_intent_flags_stop_before_guild_data_and_release_fetch(flags):
+    packet, rows, calls, fetched, progress, kwargs = fixture()
+    rows['/oauth2/applications/@me']['flags'] = flags
+    with pytest.raises(PreflightFailure) as error:
+        verify_packet(packet, **kwargs)
+    assert error.value.evidence['step'] == 'gateway-members-intent'
+    assert calls == ['/users/@me', '/oauth2/applications/@me'] and not fetched
+    assert 'gateway-members-intent' not in [row['livePreflightStep'] for row in progress]
+
+
+def test_omitted_optional_application_flags_mean_no_privileged_access():
+    packet, rows, _, _, _, kwargs = fixture()
+    rows['/oauth2/applications/@me'].pop('flags')
+    with pytest.raises(PreflightFailure) as error:
+        verify_packet(packet, **kwargs)
+    assert error.value.evidence['stagingPreflightError'] == 'GATEWAY_MEMBERS_INTENT_REQUIRED'
