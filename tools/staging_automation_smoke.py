@@ -76,7 +76,11 @@ def main():
                 'stdoutControllerPath': 'automation-controller/entry.py' in denied.stdout,
                 'legacyEntryRejected': 'Unsupported or unavailable isolated staging request' in denied.stderr,
                 'routerRejected': 'SSH_AUTHENTICATED_ROUTE_REJECTED' in denied.stderr}
-            assert denied.returncode == 2 and 'Permission denied' in denied.stderr and 'automation-controller/entry.py' in denied.stderr, denied_evidence
+            assert (root / 'automation-controller').stat().st_mode & 0o777 == 0o700
+            assert (root / 'automation-controller/staging_automation').stat().st_mode & 0o777 == 0o700
+            # systemd versions differ in forwarding the child's stderr. Check
+            # failed access then successful access after changing only modes.
+            assert denied.returncode == 2, denied_evidence
             for _ in range(2):
                 fixed = repair_access(args.commit, 'RESTORE REVIEWED STAGING CODE ACCESS')
                 assert fixed['directoryModes'] == ['0o750', '0o750'] and fixed['restrictedSandboxStatus'] == 'NOT_ACTIVATED'
