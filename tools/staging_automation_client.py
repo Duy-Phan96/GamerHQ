@@ -4,14 +4,19 @@ import base64
 import json
 import os
 import sys
+import hashlib
+from pathlib import Path
+import uuid
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, build_opener
 
-from tools.staging_ssh_client import invoke, StagingAccessError
+from tools.staging_ssh_client import invoke, StagingAccessError, failure_code
 from tools.staging_automation.policy import request, PREFIX, Denied
 from tools.staging_automation.oidc import NoRedirects
 
-PUBLIC_ERRORS = frozenset('AUTOMATION_NOT_ACTIVATED INITIAL_BOOTSTRAP_NOT_VERIFIED LEGACY_ENVIRONMENT_NOT_PROTECTED INITIAL_IMAGE_NOT_VERIFIED HOST_NOT_READY UNKNOWN_IMAGE_REQUIRES_OWNER RECOVERY_REQUIRES_OWNER RESTART_RATE_LIMIT RESTART_COOLDOWN RECOVERY_CIRCUIT_OPEN MUTATION_RATE_LIMIT BUILD_RATE_LIMIT REQUEST_RATE_LIMIT OIDC_REJECTED OIDC_REPLAY_REJECTED CHALLENGE_REJECTED CLOCK_REGRESSION CONCURRENT_OPERATION_REJECTED OPERATION_NOT_ALLOWED RESOURCE_LIMIT_REQUIRES_OWNER PUBLISHER_REJECTED VERSION_REQUIRES_OWNER IMMUTABLE_RELEASE_CHANGED PRIVILEGE_EXPANSION_REQUIRES_OWNER MIGRATION_REQUIRES_OWNER RELEASE_DESCRIPTOR_REJECTED OFFLINE_PROBE_FAILED RESTART_HEALTH_FAILED PACKAGE_UPDATE_REQUIRED HOST_OPERATION_FAILED ACCESS_REVOKED PAYLOAD_REJECTED AUTOMATION_OPERATION_FAILED'.split())
+from tools.staging_automation.policy import ERROR_CODES
+from tools.staging_errors import CODES
+PUBLIC_ERRORS = ERROR_CODES | {'HOST_' + code for code in CODES}
 
 
 def failure(request, code, authenticated, stderr):
@@ -22,7 +27,7 @@ def failure(request, code, authenticated, stderr):
             except ValueError: continue
             if isinstance(value, dict) and set(value) == {'automationError'} and value['automationError'] in PUBLIC_ERRORS:
                 public = value['automationError']; break
-    error = StagingAccessError('STAGING_AUTOMATION_REJECTED', request, exit_code=code, authenticated=authenticated)
+    error = StagingAccessError(failure_code(code, stderr), request, exit_code=code, authenticated=authenticated)
     error.evidence['automationFailure'] = public
     RuntimeError.__init__(error, json.dumps(error.evidence))
     return error
@@ -65,9 +70,16 @@ def perform(operation, release=None, *, call=exchange, get_token=token):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'reconcile'])
+    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'reconcile', 'identity-check'])
     args = parser.parse_args()
-    if args.operation == 'status': result = exchange('status')
+    if args.operation == 'identity-check':
+        from tools.staging_automation.oidc import verify
+        nonce = uuid.uuid4().hex
+        policy = {'repository': 'Duy-Phan96/GamerHQ', 'repositoryId': '1375800851', 'ownerId': '272528289',
+            'routineWorkflowSha256': hashlib.sha256(Path('.github/workflows/staging-automation.yml').read_bytes()).hexdigest()}
+        verify(token('gamerhq-staging-automation:1375800851:' + nonce), policy, 'health', nonce)
+        result = {'state': 'WORKLOAD_IDENTITY_VERIFIED', 'vpsAccess': False, 'gatewayStarted': False, 'productionChanged': False}
+    elif args.operation == 'status': result = exchange('status')
     elif args.operation == 'reconcile':
         status = exchange('status')
         if status.get('state') != 'ACTIVE': result = status
@@ -86,4 +98,6 @@ def main():
 if __name__ == '__main__':
     try: main()
     except StagingAccessError as error: raise SystemExit(str(error)) from None
+    except Denied as error:
+        raise SystemExit(json.dumps({'automationError': error.code if error.code in ERROR_CODES else 'CLIENT_REQUEST_REJECTED'})) from None
     except Exception: raise SystemExit('{"automationError":"STAGING_AUTOMATION_FAILED"}') from None

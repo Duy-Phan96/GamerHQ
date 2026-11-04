@@ -20,6 +20,9 @@ class HostBackend:
             result = subprocess.run(args, capture_output=True, text=True, check=True, timeout=timeout)
             if len(result.stdout.encode()) > 262144: raise ValueError()
             return result.stdout.strip()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:
+            from tools.staging_errors import docker_failure
+            raise Denied('HOST_' + docker_failure(error).evidence['stagingFailure']) from None
         except Exception: raise Denied('HOST_OPERATION_FAILED') from None
 
     def inspect(self):
@@ -41,7 +44,8 @@ class HostBackend:
         verify_rootless(self.profile)
         found = self.run(['docker', 'ps', '--all', '--filter', 'name=^/gamerhq-staging-bot$', '--format', '{{.ID}}'])
         if not found: return {'state': 'AWAITING_INITIAL_BOOTSTRAP', 'gatewayStarted': False}
-        self.inspect()
+        c = self.inspect()
+        if not c['State'].get('Running') or c['State'].get('Health', {}).get('Status') != 'healthy': raise Denied('HOST_NOT_HEALTHY')
         from tools.staging_health import health
         result = health(self.profile)
         return {'state': result['status'], 'gatewayChecked': result['gatewayChecked']}

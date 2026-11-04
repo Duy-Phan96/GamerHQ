@@ -173,6 +173,8 @@ def test_client_binds_fresh_challenge_to_token_and_never_echoes_secrets():
     assert calls == [('challenge', {'operation': 'smoke'}), ('smoke', {'challenge': 'nonce', 'token': 'private-token'})]
     error = failure({'phase': 'automation', 'operation': 'smoke'}, 1, True, 'private-token\n{"automationError":"HOST_NOT_READY"}')
     assert 'private-token' not in str(error) and error.evidence['automationFailure'] == 'HOST_NOT_READY'
+    error = failure({'phase': 'automation', 'operation': 'status'}, 255, False, 'Permission denied (publickey). private-key')
+    assert error.evidence['stagingError'] == 'SSH_AUTHENTICATION_REJECTED' and 'private-key' not in str(error)
 
 
 def container():
@@ -209,3 +211,33 @@ def test_release_policy_refuses_privilege_and_migration_expansion():
     release_allowed(patch_release, base, profile)
     for candidate in ({**patch_release, 'capabilities': ['storage.skill', 'scheduler.jobs']}, {**patch_release, 'migrationMode': 'destructive'}, {**patch_release, 'version': '0.2.0', 'tag': 'v0.2.0'}, {**base, 'sha256': 'c' * 64}):
         with pytest.raises(Denied): release_allowed(candidate, base, profile)
+
+
+def test_administrative_handoff_cannot_change_pending_bootstrap_or_use_fake_enrollment():
+    from tools.staging_automation_github import finalize
+    mutations = []
+    def api(path, method='GET', body=None):
+        if method != 'GET': mutations.append((path, body)); return {}
+        if path.startswith('/actions/runs/'): return {'conclusion': None, 'head_sha': '6a444d2051568335a7abd13d872edddde16aae9c'}
+        raise AssertionError(path)
+    receipt = {'result': 'PASS', 'operation': 'status', 'state': 'NOT_ACTIVATED', 'controllerCommit': 'a' * 40, 'publicKeySha256': 'b' * 64}
+    with pytest.raises(ValueError, match='WAIT_FOR_ORIGINAL'): finalize(api, receipt, 'a' * 40, 'b' * 64)
+    assert not mutations
+    with pytest.raises(ValueError, match='MATCHING_INACTIVE'): finalize(api, {**receipt, 'controllerCommit': 'c' * 40}, 'a' * 40, 'b' * 64)
+    assert not mutations
+
+
+def test_activation_requires_original_success_and_owner_protected_legacy_environment(monkeypatch):
+    from tools.staging_automation import backend as module
+    policy = {'repository': 'Duy-Phan96/GamerHQ', 'ownerId': '272528289', 'bootstrapRun': '41850674216', 'bootstrapCommit': 'a' * 40}
+    host = HostBackend({}, policy); host.fresh_verify = Mock()
+    monkeypatch.setattr(module, 'github', lambda *args: {'conclusion': None})
+    with pytest.raises(Denied, match='INITIAL_BOOTSTRAP'): host.activate()
+    host.fresh_verify.assert_not_called()
+    def github(p, path):
+        if path.endswith('/approvals'): return [{'state': 'approved', 'user': {'id': 272528289}, 'environments': [{'name': 'deployment-security'}]}]
+        if path.endswith('/environments/staging'): return {'can_admins_bypass': False, 'protection_rules': []}
+        return {'conclusion': 'success', 'head_sha': 'a' * 40, 'head_branch': 'main', 'event': 'workflow_dispatch'}
+    monkeypatch.setattr(module, 'github', github)
+    with pytest.raises(Denied, match='LEGACY_ENVIRONMENT'): host.activate()
+    host.fresh_verify.assert_not_called()

@@ -25,6 +25,7 @@ jobs:
         run: |
           test "$ENROLLED" = true
           test "$(gh api repos/Duy-Phan96/GamerHQ/actions/runs/41850674216 --jq .conclusion)" = success
+          gh api repos/Duy-Phan96/GamerHQ/environments/staging --jq '(.can_admins_bypass == false) and any(.protection_rules[]; .type == "required_reviewers" and any(.reviewers[]; .reviewer.id == 272528289))' | grep -qx true
   activate:
     needs: prerequisites
     if: github.ref == 'refs/heads/main'
