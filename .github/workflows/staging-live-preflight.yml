@@ -1,0 +1,33 @@
+name: Read-only staging live preflight
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: isolated-staging-configuration
+  cancel-in-progress: false
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_PREPARATION_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: actions-client
+      - uses: actions/checkout@v4
+        with:
+          ref: 2cb9adc79d42b95bf07ebd81600550be358cef11
+          path: reviewed-host
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install reviewed Host adapter dependencies
+        run: python -m pip install -r reviewed-host/requirements.lock
+      - name: Check dedicated staging identity, permissions and immutable releases
+        env:
+          GAMERHQ_STAGING_CONFIGURATION: ${{ secrets.GAMERHQ_STAGING_CONFIGURATION }}
+          PYTHONPATH: ${{ github.workspace }}/reviewed-host
+        run: python actions-client/tools/staging_live_preflight.py

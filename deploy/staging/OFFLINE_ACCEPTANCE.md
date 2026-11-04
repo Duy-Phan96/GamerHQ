@@ -40,3 +40,28 @@ authorize the protected `authorize-live` operation to check dedicated staging bo
 guild/category permissions and release access through read-only REST. That step
 enables the staging worker but starts no Gateway and does not enable update gates.
 First Gateway startup and production remain separate explicit boundaries.
+
+## Live-verification continuation
+
+The owner approved run [41813865296](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41813865296).
+Its SSH connection authenticated, but `authorize-live` failed with
+`REMOTE_WORKER_REJECTED`; the installed immutable worker suppresses the private
+exception. The independent bounded `verify` run
+[41838993630](https://github.com/Duy-Phan96/GamerHQ/actions/runs/41838993630)
+also failed with `PREPARATION_REJECTED`, audit
+`126a7c3efdbb4a2c9c08fe2f26e73bc0`. These results do not establish a Discord
+credential, permission or network cause, and do not accept live staging.
+
+The main-only **Read-only staging live preflight** workflow diagnoses the existing
+protected configuration on an ephemeral GitHub runner using Host descriptor,
+HTTP, category-permission and artifact adapters from the exact reviewed worker
+commit above. It reports fixed phases and HTTP status or missing permission names;
+it never publishes response bodies, tokens, private artifacts or configuration.
+It performs only Discord/GitHub reads, with private wheels in a temporary runner
+directory. It needs no VPS source replacement or root access.
+
+A runner preflight cannot attest VPS networking, persisted credential equality,
+Docker isolation, worker enablement or its live authorization proof. Successful
+runner checks must still be followed by successful protected `authorize-live`
+on the actual VPS before asking for first Gateway startup. Both deployment gates
+remain disabled throughout diagnosis.
