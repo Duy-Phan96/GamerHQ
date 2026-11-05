@@ -17,12 +17,27 @@ from contextlib import closing
 from .deployment import SkillUpdateController, application_fingerprint
 from .policy import Denied
 
-COMMIT = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
-BASELINE = '92db47042d58055cb0debdfd83f11f8508e19809'
+COMMIT = '17858f47480e914956dd241b9f37a328b4c6ac2b'
+BASELINE = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
+CI_RUN = '42013244636'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 DIRECTORIES = ('cogs', 'skill_runtime', 'hosts', 'skills', 'services', 'database', 'tools')
 FILES = ('bot.py', 'config.py', 'release_info.py', 'VERSION', 'CHANGELOG.md', '.env.example', 'data/games_seed.json')
 COMPATIBILITY = ('Dockerfile', 'requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml', 'database/db.py')
+REVIEWED_HOST_CHANGES = frozenset({
+    'hosts/gamerhq/skill_resources.py',
+    'hosts/gamerhq/skill_update_controller.py',
+    'hosts/gamerhq/web_platform.py',
+})
+
+
+def verify_compatibility(git):
+    for path in (*COMPATIBILITY, 'database', 'skill_runtime', 'skills', 'services'):
+        if git('rev-parse', BASELINE + ':' + path) != git('rev-parse', COMMIT + ':' + path):
+            raise Denied('MIGRATION_REQUIRES_OWNER')
+    changed = git('diff', '--no-renames', '--name-only', '-z', BASELINE, COMMIT, '--', 'hosts')
+    if frozenset(changed.decode().rstrip('\0').split('\0')) != REVIEWED_HOST_CHANGES:
+        raise Denied('MIGRATION_REQUIRES_OWNER')
 
 
 def extract_application(archive, destination):
@@ -68,11 +83,21 @@ def retained_state(path, guild):
                 # all membership, attendance, configuration and identity fields.
                 value = {k: v for k, v in value.items() if k not in ('revision', 'status', 'voice')}
             rows[key] = value
-        return {'authority': authority, 'installed': installed, 'rows': rows}
+        mappings = {}
+        for key, raw in conn.execute("SELECT resource_key,state_json FROM skill_managed_resources "
+                "WHERE guild_id=? AND skill_id='event-manager' AND kind='text'", (guild,)):
+            value = json.loads(raw)
+            if value.get('channelId'):
+                mappings[key] = {field: value[field] for field in ('channelId', 'messageId', 'marker')
+                                 if value.get(field) is not None}
+        return {'authority': authority, 'installed': installed, 'rows': rows, 'mappings': mappings}
 
 
 def require_retained(before, after):
-    if before['authority'] != after['authority'] or before['installed'] != after['installed'] or any(after['rows'].get(k) != v for k, v in before['rows'].items()):
+    if (before['authority'] != after['authority'] or before['installed'] != after['installed']
+            or any(after['rows'].get(k) != v for k, v in before['rows'].items())
+            or any(after['mappings'].get(key, {}).get(field) != value
+                   for key, mapping in before['mappings'].items() for field, value in mapping.items())):
         raise Denied('RECOVERY_REQUIRES_OWNER')
 
 
@@ -130,9 +155,7 @@ def build_overlay(backend, current):
             git('fetch', '--quiet', '--depth=1', 'origin', commit)
         if git('rev-parse', COMMIT).decode().strip() != COMMIT:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
-        for path in (*COMPATIBILITY, 'skill_runtime', 'hosts', 'skills', 'services'):
-            if git('rev-parse', BASELINE + ':' + path) != git('rev-parse', COMMIT + ':' + path):
-                raise Denied('MIGRATION_REQUIRES_OWNER')
+        verify_compatibility(git)
         archive = root / 'source.tar'
         git('archive', '--format=tar', '--output=' + str(archive), COMMIT)
         if archive.stat().st_size > 32 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != policy['archiveSha256']:
@@ -184,7 +207,7 @@ def promote(backend, *, expected_image):
         raise Denied('VERSION_REQUIRES_OWNER')
     # Source trust includes private-wheel CI in the reviewed Host PR. Verify
     # public Host CI live without assuming private GitHub token permissions.
-    run = github(backend.policy, '/actions/runs/41907551454')
+    run = github(backend.policy, '/actions/runs/' + CI_RUN)
     if run.get('head_sha') != COMMIT or run.get('conclusion') != 'success':
         raise Denied('OFFLINE_PROBE_FAILED')
     if source_commit(backend, current) == COMMIT:

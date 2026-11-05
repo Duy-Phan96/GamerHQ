@@ -8,6 +8,7 @@ from pathlib import Path
 import pwd
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -98,28 +99,38 @@ def main():
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
             # Install the reviewed extension under the same restrictive umask,
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
-            from tools.extend_staging_host_promotion import extension
+            from tools.extend_staging_host_promotion import HOST, OLD, extension
+            from urllib.request import urlopen
+            old_installer = tmp / 'previous_host_promotion.py'
+            with urlopen('https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/' + OLD +
+                         '/tools/extend_staging_host_promotion.py', timeout=20) as source:
+                old_body = source.read(16385)
+            assert hashlib.sha256(old_body).hexdigest() == '232a6cbe47a6300516a002c2d792a655c4a0f6040cc6c4bb80dc63c4c4e85f3e'
+            old_installer.write_bytes(old_body)
             lock_info = (root / 'worker/operation.lock').lstat()
             print(json.dumps({'extensionLock': {'uid': lock_info.st_uid, 'gid': lock_info.st_gid,
                 'mode': oct(lock_info.st_mode & 0o777), 'links': lock_info.st_nlink,
                 'expectedUid': account.pw_uid, 'expectedGid': account.pw_gid}}), flush=True)
-            for _ in range(2):
-                previous = os.umask(0o077)
-                try: extended = extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')
-                finally: os.umask(previous)
-                assert extended['state'] == 'INSTALLED' and extended['automationEnabled'] is False
-                assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
-            extended_status = json.loads(call('status').stdout)
-            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionSupported'] is True
-            assert extended_status['state'] == 'NOT_ACTIVATED'
-            assert call('host-promote', {'token': 'invalid-jwt', 'challenge': 'invalid'}).returncode != 0
+            subprocess.run([sys.executable, str(old_installer), '--commit', OLD, '--approval',
+                'INSTALL REVIEWED STAGING HOST PROMOTION'], check=True, timeout=420, capture_output=True, umask=0o077)
+            assert json.loads(call('status').stdout)['controllerCommit'] == OLD
             state_path = root / 'worker/automation-state.json'
             inactive_bytes = state_path.read_bytes()
             active = json.loads(inactive_bytes); active.update(enabled=True, bootstrapVerified=True, approvedImage='sha256:'+'a'*64)
             state_path.write_text(json.dumps(active)); os.chown(state_path, account.pw_uid, account.pw_gid)
             active_bytes = state_path.read_bytes()
-            assert extension(args.commit, 'INSTALL REVIEWED STAGING HOST PROMOTION')['automationEnabled'] is True
-            assert state_path.read_bytes() == active_bytes
+            for _ in range(2):
+                previous = os.umask(0o077)
+                try: extended = extension(args.commit, 'REPLACE REVIEWED STAGING HOST PIN')
+                finally: os.umask(previous)
+                assert extended['state'] == 'PIN_INSTALLED' and extended['automationEnabled'] is True
+                assert extended['approvedHostCommit'] == HOST and extended['hostPromotionRequiresProtectedOwnerReview']
+                assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
+                assert state_path.read_bytes() == active_bytes
+            extended_status = json.loads(call('status').stdout)
+            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionCommit'] == HOST
+            assert extended_status['state'] == 'ACTIVE'
+            assert call('host-promote', {'token': 'invalid-jwt', 'challenge': 'invalid'}).returncode != 0
             state_path.write_bytes(inactive_bytes)
         finally: server.terminate(); server.wait(timeout=10)
     assert hashlib.sha256(database.read_bytes()).hexdigest() == digest
@@ -134,7 +145,7 @@ from staging_automation.host_promotion import COMMIT
 from staging_automation.deployment import SkillUpdateController
 import inspect
 assert 'host_source_commit' in inspect.signature(SkillUpdateController.stage).parameters
-assert COMMIT=='6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
+assert COMMIT=='REVIEWED_HOST'
 p=json.load(open('/etc/gamerhq-staging/settings/profile.json'))
 def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=180)
 run(['docker','network','create','gamerhq-staging-private'],False)
@@ -145,7 +156,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']

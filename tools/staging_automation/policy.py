@@ -36,8 +36,9 @@ def validate_policy(value):
     for key in ('routineWorkflowSha256', 'securityWorkflowSha256', 'publicKeySha256'):
         if not re.fullmatch('[0-9a-f]{64}', value.get(key, '')): raise Denied('POLICY_REJECTED')
     if 'hostPromotion' in value:
+        from .host_promotion import COMMIT
         p = value['hostPromotion']
-        if set(p) != {'commit', 'archiveSha256', 'workflowSha256'} or p['commit'] != '6a2c74a234d693abe70f5f69dfbb41dbce38bc75' or any(not re.fullmatch('[0-9a-f]{64}', p[k]) for k in ('archiveSha256', 'workflowSha256')):
+        if set(p) != {'commit', 'archiveSha256', 'workflowSha256'} or p['commit'] != COMMIT or any(not re.fullmatch('[0-9a-f]{64}', p[k]) for k in ('archiveSha256', 'workflowSha256')):
             raise Denied('POLICY_REJECTED')
     if value.get('limits') != {'mutationsPerHour': 12, 'buildsPerHour': 3, 'restartsPerHour': 2, 'restartCooldown': 120}:
         raise Denied('RESOURCE_POLICY_REJECTED')

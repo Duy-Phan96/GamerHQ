@@ -1,5 +1,38 @@
 # Reviewed staging Host promotion
 
+## Event Manager V2 pin replacement
+
+The next reviewed Host target is `17858f47480e914956dd241b9f37a328b4c6ac2b`
+from #216, verified by Actions run `42013244636`. Its application archive
+SHA256 is `77504247b70dee58c6f7d982eb4d65e50218a7fccb3581cd7e5723799fe888d9`.
+The live baseline must report Host `6a2c74a234d693abe70f5f69dfbb41dbce38bc75`
+and installed Skill `0.1.0`. Dependency locks, Dockerfile, database, Runtime,
+portable Skills and services must match the baseline. The root-owned controller
+permits only the exact reviewed Host adapter file differences.
+
+The pin installer verifies the existing immutable extension
+`135bbf604926d6b1794503d17821ad00f1c09555`, its policy and entry, and selects
+the new revision under the existing operation lock. Active authorization,
+SSH routing, the worker binding, configuration, credentials, database and
+containers are retained. After checking the new pin via the routine status
+operation, use the protected Host workflow in `deployment-security`.
+Its workflow and signed proof remain specific to the new target.
+
+1. Promote the Host while the published `0.1.0` Skill is installed. Check the
+   backup and restore probe, existing database records, channel and card mappings,
+   Health and Smoke receipts.
+2. Only after that passes, use the routine staging workflow to prepare the
+   reviewed `0.1.1` GitHub prerelease from Skill #7 and #8. Its image must pass
+   the offline probe on the new Host base. Apply it through the existing
+   approved staging update operation.
+3. Check the installed pair and deployment history, then run a bounded restart
+   and smoke test. Preserve the backups. Failed health permits automatic image
+   rollback only while the application fingerprint matches the backup.
+   Any recovery after writes or use of new scheduling semantics needs review.
+   Manual Discord acceptance is a separate owner test.
+
+## Previous promotion
+
 Owner authorization covers only application commit
 `6a2c74a234d693abe70f5f69dfbb41dbce38bc75`. It does not authorize production,
 new credentials, broader SSH/Docker privileges or a destructive migration.

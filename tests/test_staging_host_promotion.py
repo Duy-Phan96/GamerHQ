@@ -11,8 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from database import db
-from tools.staging_automation.host_promotion import (COMMIT, extract_application, retained_state,
-    require_retained, PromotionDocker, promote)
+from tools.staging_automation.host_promotion import (BASELINE, COMMIT, REVIEWED_HOST_CHANGES,
+    extract_application, retained_state, require_retained, PromotionDocker, promote, verify_compatibility)
 from tools.staging_automation.policy import Denied, charge, validate_policy, admit
 from tools.staging_automation.oidc import verify
 from test_staging_automation_policy import trust, signing_key
@@ -67,6 +67,8 @@ def seed():
         conn.execute("INSERT INTO skill_guild_state VALUES(1,'event-manager',1,1,1,'0.1.0',1)")
         conn.execute("INSERT INTO skill_storage VALUES(1,'event-manager','event.v2:one',?,1)",
             (json.dumps({'id': 'one', 'revision': 4, 'members': ['50'], 'config': {'name': 'Existing'}, 'chat': {'channelId': '100'}}),))
+        conn.execute("INSERT INTO skill_managed_resources(guild_id,skill_id,resource_key,kind,state_json) "
+            "VALUES(1,'event-manager','event:one','text',?)", (json.dumps({'channelId': 100, 'messageId': 200, 'marker': 'bound'}),))
 
 
 def test_backup_restore_probe_preserves_actual_sqlite_authority_and_event_data(deployment_fixture):
@@ -80,10 +82,40 @@ def test_backup_restore_probe_preserves_actual_sqlite_authority_and_event_data(d
     assert gate.verify_backup(backup) == {'integrity': 'PASS', 'restoreProbe': 'PASS', 'skillAuthority': 'event-manager'}
     assert not list(root.glob('host-restore-probe-*'))
     before = retained_state(backup, 1)
+    assert before['mappings']['event:one']['channelId'] == 100
     with db.connect() as conn:
         conn.execute("UPDATE skill_storage SET value_json=?", (json.dumps({'id': 'one', 'revision': 5, 'members': [], 'config': {'name': 'Existing'}, 'chat': {'channelId': '100'}}),))
     with pytest.raises(Denied, match='RECOVERY'):
         require_retained(before, retained_state(db.DB_PATH, 1))
+
+
+def test_changed_discord_card_mapping_requires_review(deployment_fixture):
+    seed()
+    before = retained_state(db.DB_PATH, 1)
+    with db.connect() as conn:
+        conn.execute("UPDATE skill_managed_resources SET state_json=json_set(state_json,'$.messageId',201)")
+    with pytest.raises(Denied, match='RECOVERY'):
+        require_retained(before, retained_state(db.DB_PATH, 1))
+
+
+def test_only_reviewed_host_adapter_paths_can_change():
+    host_changes = set(REVIEWED_HOST_CHANGES)
+    changed_tree = None
+
+    def git(command, *args):
+        if command == 'diff':
+            assert args[-3:] == (COMMIT, '--', 'hosts')
+            return ('\0'.join(sorted(host_changes)) + '\0').encode()
+        return b'changed' if args[0] == COMMIT + ':' + str(changed_tree) else b'same'
+
+    verify_compatibility(git)
+    host_changes.add('hosts/gamerhq/unreviewed.py')
+    with pytest.raises(Denied, match='MIGRATION'):
+        verify_compatibility(git)
+    host_changes.remove('hosts/gamerhq/unreviewed.py')
+    changed_tree = 'database'
+    with pytest.raises(Denied, match='MIGRATION'):
+        verify_compatibility(git)
 
 
 def test_legacy_or_wrong_authority_cannot_be_promoted(deployment_fixture):
@@ -125,6 +157,10 @@ def test_host_promotion_requires_distinct_protected_workflow_and_owner_review(tr
     policy, claims, token, read, reviews, environment = trust
     policy['hostPromotion'] = {'commit': COMMIT, 'archiveSha256': 'a' * 64, 'workflowSha256': policy['securityWorkflowSha256']}
     assert validate_policy(policy)
+    retired = copy.deepcopy(policy)
+    retired['hostPromotion']['commit'] = BASELINE
+    with pytest.raises(Denied, match='POLICY'):
+        validate_policy(retired)
     with pytest.raises(Denied):
         verify(token(), policy, 'host-promote', 'd' * 32, read=read, now=1001)
     claims.update(environment='deployment-security', sub='repo:Duy-Phan96/GamerHQ:environment:deployment-security',
