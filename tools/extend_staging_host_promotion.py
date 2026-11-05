@@ -1,4 +1,4 @@
-"""Python 3.9 owner-only, versioned extension of the enrolled staging controller.
+"""Python 3.9 owner-only replacement of the existing staging promotion pin.
 
 No credential reads, SSH changes, worker replacement, database or Docker actions.
 The active automation state is preserved. Host apply still needs signed GitHub
@@ -17,12 +17,14 @@ import tempfile
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
-OLD = 'a1b50573850921e478a2f838e72868853bde6dd7'
-ORIGINAL_ENTRY = ("import sys\nsys.path[:0]=['/opt/gamerhq-staging/automation-controller','/opt/gamerhq-staging/deployment-worker']\n"
-    "from staging_automation.bridge import entry\nentry()\n").encode()
+OLD = '135bbf604926d6b1794503d17821ad00f1c09555'
 LEGACY = '92db47042d58055cb0debdfd83f11f8508e19809'
-HOST = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
-ARCHIVE = 'ca3c9acbf7087d59881f130c903bf13b2c47fed1f2157933f6ca08e07df2fc97'
+PREVIOUS_HOST = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
+PREVIOUS_PIN = {'commit': PREVIOUS_HOST,
+    'archiveSha256': 'ca3c9acbf7087d59881f130c903bf13b2c47fed1f2157933f6ca08e07df2fc97',
+    'workflowSha256': '25314997e8d6e9f4b6affa64690ecfab8044be3c87e9c27d1555d827372a1c79'}
+HOST = '17858f47480e914956dd241b9f37a328b4c6ac2b'
+ARCHIVE = '77504247b70dee58c6f7d982eb4d65e50218a7fccb3581cd7e5723799fe888d9'
 MODULES = ('__init__.py', 'policy.py', 'oidc.py', 'backend.py', 'bridge.py', 'host_promotion.py')
 
 
@@ -75,7 +77,7 @@ def atomic(path, body, gid):
 
 def extension(commit, approval):
     import pwd
-    if os.geteuid() != 0 or approval != 'INSTALL REVIEWED STAGING HOST PROMOTION':
+    if os.geteuid() != 0 or approval != 'REPLACE REVIEWED STAGING HOST PIN':
         raise ValueError('OWNER_APPROVAL_REQUIRED')
     if not re.fullmatch('[0-9a-f]{40}', commit):
         raise ValueError('IMMUTABLE_SOURCE_REQUIRED')
@@ -90,6 +92,19 @@ def extension(commit, approval):
         raise ValueError('REVIEWED_ENROLLMENT_REQUIRED')
     entry = ROOT / 'automation-controller/entry.py'
     old_entry = trusted(entry)
+    revisions = ROOT / 'automation-controller/revisions'
+    previous = revisions / OLD
+    destination = revisions / commit
+    for parent in (revisions, previous, previous / 'staging_automation'):
+        directory(parent)
+
+    def launcher(path):
+        return ("import sys\nsys.path[:0]=[" + repr(str(path)) + ",'/opt/gamerhq-staging/deployment-worker']\n"
+                "from staging_automation.bridge import entry\nentry()\n").encode()
+
+    previous_launch, launch = launcher(previous), launcher(destination)
+    if policy['controllerCommit'] == OLD and (policy.get('hostPromotion') != PREVIOUS_PIN or old_entry != previous_launch):
+        raise ValueError('INSTALLED_PIN_MISMATCH')
     env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_GLOBAL': '/dev/null',
         'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
     with tempfile.TemporaryDirectory(prefix='gamerhq-host-extension-') as temp:
@@ -111,15 +126,11 @@ def extension(commit, approval):
             if hashlib.sha256(body).hexdigest() != policy[key]:
                 raise ValueError('EXISTING_WORKFLOW_POLICY_CHANGED')
         workflow = git('show', commit + ':.github/workflows/staging-host-promotion.yml')
-        if policy['controllerCommit'] == OLD:
-            for name in ('__init__.py', 'policy.py', 'oidc.py', 'backend.py', 'bridge.py'):
-                if trusted(ROOT / 'automation-controller/staging_automation' / name) != git('show', OLD + ':tools/staging_automation/' + name):
-                    raise ValueError('INSTALLED_SOURCE_MISMATCH')
-            if old_entry != ORIGINAL_ENTRY:
-                raise ValueError('INSTALLED_ENTRY_MISMATCH')
-    revisions = ROOT / 'automation-controller/revisions'
-    directory(revisions, gid)
-    destination = revisions / commit
+        for name in MODULES:
+            if trusted(previous / 'staging_automation' / name) != git('show', OLD + ':tools/staging_automation/' + name):
+                raise ValueError('INSTALLED_SOURCE_MISMATCH')
+        if trusted(previous / 'staging_automation/deployment.py') != git('show', OLD + ':hosts/gamerhq/skill_update_controller.py'):
+            raise ValueError('INSTALLED_SOURCE_MISMATCH')
     directory(destination, gid); directory(destination / 'staging_automation', gid)
     for name, body in blobs.items():
         target = destination / 'staging_automation' / name
@@ -128,8 +139,6 @@ def extension(commit, approval):
         atomic(target, body, gid)
     # Existing sandbox/SSH launcher still invokes the same entry file. Only its
     # root-owned import target and a narrowly scoped root-owned policy change.
-    launch = ("import sys\nsys.path[:0]=[" + repr(str(destination)) + ",'/opt/gamerhq-staging/deployment-worker']\n"
-        "from staging_automation.bridge import entry\nentry()\n").encode()
     new_policy = {**policy, 'controllerCommit': commit,
         'hostPromotion': {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}}
     lock_path = ROOT / 'worker/operation.lock'
@@ -152,9 +161,11 @@ def extension(commit, approval):
         state = json.loads(trusted(ROOT / 'worker/automation-state.json', uid, private=True))
         if state.get('recoveryRequired'):
             raise ValueError('REVIEWED_RECOVERY_REQUIRED')
+        if not state.get('enabled') or not state.get('bootstrapVerified') or not re.fullmatch('sha256:[0-9a-f]{64}', state.get('approvedImage', '')):
+            raise ValueError('ACTIVE_STAGING_REQUIRED')
         # A crash after policy replace but before entry replace is recoverable
         # only with the same exact root-owned old/new entry and immutable policy.
-        if policy['controllerCommit'] == commit and (policy != new_policy or old_entry not in (launch, ORIGINAL_ENTRY)):
+        if policy['controllerCommit'] == commit and (policy != new_policy or old_entry not in (launch, previous_launch)):
             raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
         try:
             atomic(policy_path, (json.dumps(new_policy, indent=2) + '\n').encode(), gid)
@@ -168,10 +179,10 @@ def extension(commit, approval):
         os.close(fd)
     import syslog
     syslog.openlog('gamerhq-staging-security', syslog.LOG_PID, syslog.LOG_AUTHPRIV)
-    syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'extend-staging-host-promotion', 'controllerCommit': commit,
-        'approvedHostCommit': HOST, 'state': 'INSTALLED', 'productionChanged': False}))
-    return {'operation': 'extend-staging-host-promotion', 'state': 'INSTALLED', 'controllerCommit': commit,
-        'approvedHostCommit': HOST, 'hostPromotionRequiresProtectedOwnerReview': True,
+    syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'replace-staging-host-promotion-pin', 'controllerCommit': commit,
+        'approvedHostCommit': HOST, 'state': 'PIN_INSTALLED', 'productionChanged': False}))
+    return {'operation': 'replace-staging-host-promotion-pin', 'state': 'PIN_INSTALLED', 'controllerCommit': commit,
+        'previousHostCommit': PREVIOUS_HOST, 'approvedHostCommit': HOST, 'hostPromotionRequiresProtectedOwnerReview': True,
         'automationEnabled': bool(state.get('enabled')), 'gatewayStarted': False, 'productionChanged': False,
         'workerSourceChanged': False, 'sshPolicyChanged': False, 'credentialsChanged': False,
         'databaseChanged': False, 'containersChanged': False, 'deploymentGatesChanged': False, 'operationLockMode': '0600'}

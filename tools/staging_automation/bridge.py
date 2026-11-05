@@ -15,7 +15,8 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     charge(state, operation, now); save(state)
     if operation == 'status':
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
-        return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy}
+        return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy,
+                'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit')}
     if operation == 'challenge':
         if not isinstance(payload, dict) or set(payload) != {'operation'} or payload['operation'] in PUBLIC:
             raise Denied('PAYLOAD_REJECTED')
