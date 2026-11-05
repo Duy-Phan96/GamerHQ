@@ -30,6 +30,14 @@ contract and recovery policy.
 | Progression | [gamerhq-skill-xp-progression 0.2.0](https://github.com/Duy-Phan96/gamerhq-skill-xp-progression/releases/tag/v0.2.0) | Runtime API 1, versioned `progression.*.v1` management, storage, audited Discord operations. Host source lock pins `b8226977`. Active feature work stays with the owner of [#215](https://github.com/Duy-Phan96/GamerHQ/pull/215). Verify each tenant's install and role policy before release acceptance. |
 | Recurring Posts | [gamerhq-skill-recurring-posts 1.4.0](https://github.com/Duy-Phan96/gamerhq-skill-recurring-posts/releases/tag/v1.4.0) | Runtime API 1, versioned `recurring-posts.*` management, scheduler and scoped Discord message delivery. The current Host source lock stays on 1.2.3 at `7656616a`. Promoting a newer artifact needs reviewed compatibility, capability and schedule-preservation checks. Tenant installation and live acceptance remain to be confirmed. |
 
+The published Progression 0.2.0 wheel declares SDK `>=0.1,<0.2` in release
+source. Recurring Posts 1.4.0 declares `>=0.2,<0.3`. Both declare Runtime API 1.
+The published Event Manager 0.1.2 release declares SDK `>=0.3,<0.4` and has a
+verified 0.3.0 staging installation. Existing source pins are a separate Host
+integration path. The Skill owners must review and publish compatible wheel
+metadata before adopting either newer distribution through the SDK 0.3.0
+release lifecycle.
+
 ## Web staging boundary
 
 [Private Web connectivity #166](https://github.com/Duy-Phan96/GamerHQ/issues/166)
