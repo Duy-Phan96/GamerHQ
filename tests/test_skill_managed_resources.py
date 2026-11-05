@@ -10,7 +10,7 @@ import pytest
 
 from database import db
 from hosts.gamerhq.skill_host import CapabilityPermissions
-from hosts.gamerhq.skill_resources import GamerHQManagedResources
+from hosts.gamerhq.skill_resources import GamerHQManagedResources, event_channel_identity
 from skill_runtime.contracts.errors import CapabilityUnavailableError, InvalidHostOperationError, TransientHostError
 
 
@@ -34,7 +34,7 @@ def fixture():
         guild.fetch_channels = AsyncMock(side_effect=lambda: list(channels))
         def make_channel(name, **kwargs):
             channel = MagicMock(spec=discord.TextChannel)
-            channel.id, channel.name, channel.guild, channel.category_id, channel.topic = 100, name, guild, parent.id, kwargs["topic"]
+            channel.id, channel.name, channel.guild, channel.category_id, channel.topic = 100 + len(channels), name, guild, parent.id, kwargs["topic"]
             overrides = dict(kwargs["overwrites"])
             channel.overwrites_for.side_effect = lambda target: copy.copy(overrides.get(target, discord.PermissionOverwrite()))
             async def set_permissions(target, *, overwrite, **kwargs):
@@ -42,7 +42,10 @@ def fixture():
             channel.set_permissions = AsyncMock(side_effect=set_permissions)
             channel.edit = AsyncMock()
             async def send(**kwargs):
-                message = SimpleNamespace(id=200, author=guild.me, embeds=[kwargs["embed"]], edit=AsyncMock())
+                view = kwargs.get("view")
+                components = [SimpleNamespace(children=view.children)] if view else []
+                message = SimpleNamespace(id=200 + len(messages), author=guild.me, embeds=[kwargs["embed"]],
+                                          components=components, edit=AsyncMock())
                 messages.append(message)
                 return message
             channel.send = AsyncMock(side_effect=send)
@@ -78,6 +81,33 @@ def test_restart_and_retries_keep_one_channel_one_card_and_revoke_member_access(
         assert fixture.guild.create_text_channel.await_count == 1
         assert channel.send.await_count == 1
         assert len(fixture.messages) == 1
+    asyncio.run(scenario())
+
+
+def test_named_event_channels_use_durable_identity_and_keep_chat_when_disabled(fixture):
+    async def scenario():
+        adapter = fixture.adapter()
+        first = await adapter.ensure_area(**spec(name="GamerHQ Event"))
+        second = await adapter.ensure_area(**spec(key="event:other", name="GamerHQ Event"))
+        channel, other = fixture.channels
+        assert channel.name == other.name == "gamerhq-event"
+        assert first["channelId"] != second["channelId"]
+        card = fixture.messages[0]
+        control = card.components[0].children[0].custom_id
+        assert card.embeds[0].footer.text is None
+        assert event_channel_identity(channel, guild_id=1, message_id=card.id, control_id=control) == "raid"
+        assert event_channel_identity(channel, guild_id=2) is None
+        assert event_channel_identity(other, guild_id=1, message_id=card.id, control_id=control) is None
+        assert event_channel_identity(channel, guild_id=1, message_id=card.id, control_id=control + "0") is None
+        assert await adapter.ensure_area(**spec(name="Custom Title", chat_enabled=False)) == first
+        channel.edit.assert_awaited_with(name="custom-title", reason="Host-managed resource configuration")
+        assert channel.test_overrides[fixture.member].send_messages is False
+        assert await adapter.ensure_area(**spec(name="Custom Title")) == first
+        assert channel.test_overrides[fixture.member].send_messages is True
+        fixture.channels.remove(channel)
+        with pytest.raises(InvalidHostOperationError, match="previously bound"):
+            await adapter.ensure_area(**spec(name="Custom Title"))
+        assert fixture.guild.create_text_channel.await_count == 2
     asyncio.run(scenario())
 
 

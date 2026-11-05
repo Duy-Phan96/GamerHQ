@@ -51,6 +51,13 @@ class PlayersSelect(GuardedControl, BuilderPlayersSelect):
 
 
 class RecurrenceSelect(BuilderRecurrenceSelect):
+    def __init__(self, builder):
+        super().__init__(builder)
+        if builder.recurrence_mode == "recurring":
+            self.placeholder = "Recurring Event · Edit weekdays"
+            for option in self.options:
+                option.default = False
+
     async def callback(self, interaction):
         if not await self.builder.interaction_check(interaction):
             return
@@ -66,7 +73,8 @@ class WeekdayView(discord.ui.View):
     def __init__(self, builder):
         super().__init__(timeout=900)
         self.builder = builder
-        self.selected = {int(day) for day in builder.draft.get("weekdays", [])}
+        self.original = dict(builder.draft)
+        self.selected = {int(day) for day in builder.draft.get("weekdays", []) or builder.recurring_days}
         self.rebuild()
 
     def rebuild(self):
@@ -79,27 +87,31 @@ class WeekdayView(discord.ui.View):
     def content(self):
         names = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
         days = ", ".join(names[day] for day in sorted(self.selected)) or "Choose at least one weekday"
-        retention = ("An imported schedule and its end condition are retained until you explicitly confirm replacement in event settings."
+        retention = ("An imported schedule and its end condition are retained until you explicitly confirm replacement through the administrator migration command."
             if self.builder.legacy_schedule else "Repeats until you edit, pause or delete it.")
         return (f"# Recurring Event\n\nSelect each weekday independently.\n\n**Every:** {days}\n"
             f"**Time:** {self.builder._display_time()} · {safe(self.builder.timezone_name)}\n\n"
             f"{retention} Nothing has been saved yet.")
 
     async def interaction_check(self, interaction):
+        if self.is_finished() or self.builder.draft != self.original:
+            await interaction.response.send_message("Reopen weekday settings from your current event draft.", ephemeral=True)
+            return False
         return await self.builder.interaction_check(interaction)
 
-    @discord.ui.button(label="Apply weekdays", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label="Apply", style=discord.ButtonStyle.success, row=2)
     async def apply_days(self, interaction, button):
         if not await self.interaction_check(interaction):
             return
         if not self.selected:
             return await interaction.response.send_message("Choose at least one weekday.", ephemeral=True)
-        self.builder.draft.update(kind="recurring", weekdays=sorted(self.selected))
+        self.builder.recurring_days = sorted(self.selected)
+        self.builder.draft.update(kind="recurring", weekdays=self.builder.recurring_days)
         self.builder.rebuild()
         await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
         self.stop()
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction, button):
         if await self.interaction_check(interaction):
             await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
@@ -132,7 +144,7 @@ class SettingModal(discord.ui.Modal):
     def __init__(self, page, field):
         super().__init__(title=page.label(field)[:45])
         self.page, self.field = page, field
-        self.value = discord.ui.TextInput(label=page.label(field)[:45], default=str(page.builder.draft.get(field.config_path, "")),
+        self.value = discord.ui.TextInput(label=page.label(field)[:45], default=str(page.draft.get(field.config_path, "")),
             required=field.required, max_length=4000 if field.type == "long_text" else 100,
             style=discord.TextStyle.paragraph if field.type == "long_text" else discord.TextStyle.short)
         self.add_item(self.value)
@@ -155,18 +167,57 @@ class SettingModal(discord.ui.Modal):
                 ZoneInfo(value)
         except (ValueError, ZoneInfoNotFoundError):
             return await interaction.response.send_message("Use YYYY-MM-DD for dates, HH:MM for time, and an IANA timezone such as Europe/Berlin.", ephemeral=True)
-        self.page.builder.draft[self.field.config_path] = value
-        self.page.builder.reviewed = None
+        self.page.draft[self.field.config_path] = value
         await interaction.response.edit_message(content=self.page.content(), view=self.page)
 
 
-class SettingsView(discord.ui.View):
-    """All remaining declared capabilities are opt-in, never a raw draft dump."""
+class DraftPage(discord.ui.View):
+    """A submenu edits its own copy until Apply is selected."""
+
     def __init__(self, builder):
         super().__init__(timeout=900)
         self.builder = builder
-        fields = [field for field in builder.fields if field.config_path not in ("members", "invited", "kind", "weekdays")]
-        select = discord.ui.Select(placeholder="Choose an event setting", row=0,
+        self.original = dict(builder.draft)
+        self.draft = dict(builder.draft)
+
+    async def interaction_check(self, interaction):
+        if self.is_finished() or self.builder.draft != self.original:
+            await interaction.response.send_message("This panel is out of date. Reopen it from your event.", ephemeral=True)
+            return False
+        return await self.builder.interaction_check(interaction)
+
+    async def finish(self, interaction, *, apply):
+        if not await self.interaction_check(interaction):
+            return
+        if apply:
+            self.builder.draft.update(self.draft)
+            self.builder.rebuild()
+        await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        self.stop()
+
+    @discord.ui.button(label="Apply", style=discord.ButtonStyle.success, row=4)
+    async def apply(self, interaction, button):
+        await self.finish(interaction, apply=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=4)
+    async def cancel(self, interaction, button):
+        await self.finish(interaction, apply=False)
+
+
+class SettingsView(DraftPage):
+    LABELS = {
+        "description": "Description", "chatEnabled": "Event chat", "voiceEnabled": "Temporary voice channel",
+        "durationMinutes": "Duration in minutes", "startDate": "Exact date", "localTime": "Exact time",
+        "maxPlayers": "Custom player limit", "timezone": "Time zone", "voiceLeadMinutes": "Custom reminder lead time",
+        "voiceOpenLeadMinutes": "Voice channel opening lead time",
+    }
+
+    def __init__(self, builder):
+        super().__init__(builder)
+        fields = [field for field in builder.fields if field.config_path in self.LABELS]
+        if not fields:
+            return
+        select = discord.ui.Select(placeholder="Choose an advanced setting", row=0,
             options=[discord.SelectOption(label=self.label(field), value=str(index)) for index, field in enumerate(fields)])
 
         async def choose(interaction):
@@ -174,103 +225,87 @@ class SettingsView(discord.ui.View):
                 return
             field = fields[int(select.values[0])]
             if field.type == "boolean":
-                builder.draft[field.config_path] = not bool(builder.draft.get(field.config_path))
-                builder.reviewed = None
-                await interaction.response.edit_message(content=self.content(), view=self)
-            elif field.type == "select":
-                values = discord.ui.Select(placeholder=self.label(field), row=1,
-                    options=[discord.SelectOption(label=option.label, value=option.value,
-                        default=option.value == str(builder.draft.get(field.config_path))) for option in field.options])
-                async def change(choice):
-                    if not await self.interaction_check(choice):
-                        return
-                    builder.draft[field.config_path] = values.values[0]
-                    builder.reviewed = None
-                    self.remove_item(values)
-                    await choice.response.edit_message(content=self.content(), view=self)
-                values.callback = change
-                for child in list(self.children):
-                    if child.row == 1:
-                        self.remove_item(child)
-                self.add_item(values)
+                self.draft[field.config_path] = not self.draft.get(field.config_path, field.config_path == "chatEnabled")
                 await interaction.response.edit_message(content=self.content(), view=self)
             else:
                 await interaction.response.send_modal(SettingModal(self, field))
+
         select.callback = choose
         self.add_item(select)
 
-    @staticmethod
-    def label(field):
-        return {"startDate": "Date", "localTime": "Time", "maxPlayers": "Player limit",
-            "voiceEnabled": "Voice reminders", "voiceLeadMinutes": "Voice reminder lead time",
-            "chatEnabled": "Event chat", "convertLegacySchedule": "Replace imported schedule and end condition"}.get(field.config_path, field.label)[:100]
+    def label(self, field):
+        return self.LABELS[field.config_path]
 
     def content(self):
-        b = self.builder
-        lines = ["# Event settings", "Choose a setting to adjust it. Preview again before saving.", b.content()]
-        for field in b.fields:
-            key = field.config_path
-            if key in ("durationMinutes", "autoEnroll", "voiceEnabled", "chatEnabled", "convertLegacySchedule"):
-                value = b.draft.get(key, False)
-                lines.append(f"**{self.label(field)}:** {'On' if value is True else 'Off' if value is False else safe(value)}")
-        if b.draft.get("convertLegacySchedule"):
-            lines.append("⚠️ Confirmation selected: replace the imported schedule and its existing end condition when saved.")
-        return "\n".join(lines)[:1900]
-
-    async def interaction_check(self, interaction):
-        return await self.builder.interaction_check(interaction)
-
-    @discord.ui.button(label="Back to event", style=discord.ButtonStyle.secondary, row=4)
-    async def back(self, interaction, button):
-        if await self.interaction_check(interaction):
-            self.builder.rebuild()
-            await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+        draft = self.draft
+        chat = "On" if draft.get("chatEnabled", True) else "Off (existing chat becomes read-only)"
+        voice = "On" if draft.get("voiceEnabled") else "Off"
+        return (f"# Advanced Settings\n\n**Event chat:** {chat}\n**Temporary voice channel:** {voice}\n"
+                f"**Duration:** {draft.get('durationMinutes', 120)} minutes\n"
+                f"**Description:** {safe(draft.get('description') or 'None', 350)}\n"
+                f"**Schedule:** {draft.get('startDate', '—')} at {draft.get('localTime', '—')} "
+                f"({safe(draft.get('timezone', 'UTC'))})\n**Player limit:** {draft.get('maxPlayers', 5)}\n\n"
+                "Apply updates this draft. Preview and save the event to publish your changes.")
 
 
 class ParticipantSelect(discord.ui.UserSelect):
     def __init__(self, page, field, remove, row, label):
-        super().__init__(placeholder=label, min_values=0, max_values=25, row=row)
+        super().__init__(placeholder=label, min_values=1, max_values=25, row=row)
         self.page, self.field, self.remove = page, field, remove
 
     async def callback(self, interaction):
         if not await self.page.interaction_check(interaction):
             return
-        b = self.page.builder
-        current = selected_ids(b.draft.get(self.field, ""))
-        chosen = {str(member.id) for member in self.values if self.remove or not member.bot}
-        current = current - chosen if self.remove else current | chosen
-        b.draft[self.field] = ",".join(sorted(current))
-        b.reviewed = None
-        await interaction.response.edit_message(content=self.page.content(), view=self.page)
+        draft = self.page.draft
+        chosen = {str(member.id) for member in self.values if not member.bot}
+        if self.remove:
+            if self.page.builder.owner_id in chosen:
+                return await interaction.response.send_message("The host cannot be removed. They can leave an individual session.", ephemeral=True)
+            for field in ("members", "invited"):
+                draft[field] = ",".join(sorted(selected_ids(draft.get(field, "")) - chosen))
+        else:
+            current = selected_ids(draft.get(self.field, ""))
+            if self.field == "members":
+                if len(current | chosen) > self.page.builder.max_players:
+                    return await interaction.response.send_message("The event is full. Raise the player limit before adding players.", ephemeral=True)
+                draft["invited"] = ",".join(sorted(selected_ids(draft.get("invited", "")) - chosen))
+            else:
+                chosen -= selected_ids(draft.get("members", ""))
+            draft[self.field] = ",".join(sorted(current | chosen))
+        await interaction.response.edit_message(content=self.page.content(), view=self.page, allowed_mentions=discord.AllowedMentions.none())
 
 
-class ParticipantsView(discord.ui.View):
-    def __init__(self, builder):
-        super().__init__(timeout=900)
-        self.builder = builder
-        for row, (field, remove, label) in enumerate((("members", False, "Add event players"),
-                ("members", True, "Remove event players"), ("invited", False, "Invite players"),
-                ("invited", True, "Remove invitations"))):
-            self.add_item(ParticipantSelect(self, field, remove, row, label))
-
+class ParticipantsView(DraftPage):
     def content(self):
-        b = self.builder
-        players = ", ".join(f"<@{ident}>" for ident in sorted(selected_ids(b.draft.get("members", "")))[:15]) or "None"
-        invited = ", ".join(f"<@{ident}>" for ident in sorted(selected_ids(b.draft.get("invited", "")))[:15]) or "None"
-        return (f"# Event players\n\n**Players:** {len(selected_ids(b.draft.get('members', '')))}\n"
-            f"**Invited:** {len(selected_ids(b.draft.get('invited', '')))}\n\n"
-            f"**Players (first 15):** {players}\n**Invited (first 15):** {invited}\n\n"
-            "Add or remove players by name. Existing players are retained. Preview again before saving.\n"
-            "These are event members and invitations. Use Join/Leave or /lfg participants for a single occurrence.")
+        members = selected_ids(self.draft.get("members", "")) | ({self.builder.owner_id} if self.builder.owner_id else set())
+        invited = selected_ids(self.draft.get("invited", ""))
+        def names(values):
+            return ", ".join(f"<@{ident}>" for ident in sorted(values)[:15]) + (" …" if len(values) > 15 else "") if values else "None"
+        host = f"<@{self.builder.owner_id}>" if self.builder.owner_id else "Unassigned"
+        return (f"# Manage Players\n\n**Host:** {host}\n**Event members ({len(members)}/{self.builder.max_players}):** {names(members)}\n"
+                f"**Pending invitations ({len(invited)}):** {names(invited)}\n\n"
+                "Members register for future sessions. Invitations do not reserve a slot. Apply updates the draft.")
 
-    async def interaction_check(self, interaction):
-        return await self.builder.interaction_check(interaction)
+    async def picker(self, interaction, *, remove):
+        if not await self.interaction_check(interaction):
+            return
+        for child in list(self.children):
+            if isinstance(child, ParticipantSelect):
+                self.remove_item(child)
+        if remove:
+            self.add_item(ParticipantSelect(self, "members", True, 0, "Choose players or invitees to remove"))
+        else:
+            self.add_item(ParticipantSelect(self, "members", False, 0, "Add permanent players"))
+            self.add_item(ParticipantSelect(self, "invited", False, 1, "Invite only"))
+        await interaction.response.edit_message(content=self.content(), view=self, allowed_mentions=discord.AllowedMentions.none())
 
-    @discord.ui.button(label="Back to event", style=discord.ButtonStyle.secondary, row=4)
-    async def back(self, interaction, button):
-        if await self.interaction_check(interaction):
-            self.builder.rebuild()
-            await interaction.response.edit_message(content=self.builder.content(), view=self.builder)
+    @discord.ui.button(label="Add", style=discord.ButtonStyle.primary, row=2)
+    async def add(self, interaction, button):
+        await self.picker(interaction, remove=False)
+
+    @discord.ui.button(label="Remove", style=discord.ButtonStyle.secondary, row=2)
+    async def remove(self, interaction, button):
+        await self.picker(interaction, remove=True)
 
 
 class EventPreviewView(discord.ui.View):
@@ -301,25 +336,58 @@ class EventPreviewView(discord.ui.View):
             self.builder.stop()
             self.stop()
 
-    @discord.ui.button(label="Players & invites", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Manage Players", style=discord.ButtonStyle.secondary, row=2)
     async def participants(self, interaction, button):
         if await self.interaction_check(interaction):
             view = ParticipantsView(self.builder)
             await interaction.response.edit_message(content=view.content(), view=view)
 
-    @discord.ui.button(label="Event settings", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Advanced Settings", style=discord.ButtonStyle.secondary, row=2)
     async def settings(self, interaction, button):
         if await self.interaction_check(interaction):
             view = SettingsView(self.builder)
             await interaction.response.edit_message(content=view.content(), view=view)
 
+    @discord.ui.button(label="Game", style=discord.ButtonStyle.secondary, row=2)
+    async def game(self, interaction, button):
+        if await self.interaction_check(interaction):
+            view = GameView(self.builder)
+            await interaction.response.edit_message(content=view.content(), view=view)
+
+
+class GameView(DraftPage):
+    def __init__(self, builder):
+        from database import db
+        super().__init__(builder)
+        current = self.draft.get("game", "")
+        games = [game["name"] for game in db.get_all_games(active_only=True) if 0 < len(game["name"]) <= 100]
+        options = list(dict.fromkeys(["", current, *games]))[:25]
+        selector = discord.ui.Select(placeholder="Choose a game", options=[
+            discord.SelectOption(label=name or "No game", value=str(index), default=name == current)
+            for index, name in enumerate(options)])
+
+        async def choose(interaction):
+            if await self.interaction_check(interaction):
+                self.draft["game"] = options[int(selector.values[0])]
+                for option in selector.options:
+                    option.default = option.value == selector.values[0]
+                await interaction.response.edit_message(content=self.content(), view=self)
+
+        selector.callback = choose
+        self.add_item(selector)
+
+    def content(self):
+        return f"# Game\n\n**Selected:** {safe(self.draft.get('game') or 'No game')}\n\nUse Title to enter a custom game."
+
 
 class SkillEventEditor(discord.ui.View):
-    def __init__(self, actor_id, fields, draft, *, event_id=None, revision=None, guild_id=None, legacy_schedule=False):
+    def __init__(self, actor_id, fields, draft, *, event_id=None, revision=None, guild_id=None, legacy_schedule=False, owner_id=None):
         super().__init__(timeout=900)
         self.actor_id, self.fields, self.draft, self.guild_id = actor_id, fields, draft, guild_id
         self.event_id, self.revision = event_id, revision
         self.legacy_schedule = legacy_schedule
+        self.owner_id = str(actor_id) if not event_id else owner_id
+        self.recurring_days = list(draft.get("weekdays", []))
         self.request_id, self.reviewed = secrets.token_hex(16), None
         self.submitted, self.saving = False, asyncio.Lock()
         self.rebuild()
@@ -353,13 +421,16 @@ class SkillEventEditor(discord.ui.View):
         days = ", ".join(option.label for option in field.options if option.value in selected) if field else ""
         return f"Every {days}" if days else "Choose weekdays"
 
+    def reminders_enabled(self):
+        return self.draft.get("remindersEnabled", self.draft.get("voiceEnabled", False))
+
     def rebuild(self):
         self.reviewed = None
         self.clear_items()
         for control in (DateSelect(self), TimeSelect(self), PlayersSelect(self), RecurrenceSelect(self)):
             self.add_item(control)
         self.ampm_button.label = self.period
-        self.voice_lead.label = f"{self.draft.get('voiceLeadMinutes', 15)}m" if self.draft.get("voiceEnabled") else "Voice off"
+        self.voice_lead.label = f"{self.draft.get('voiceLeadMinutes', 15)}m" if self.reminders_enabled() else "Voice off"
         self.visibility_button.label = "Public" if self.draft.get("visibility") == "public" else "Private"
         self.visibility_button.emoji = "🌐" if self.draft.get("visibility") == "public" else "🔒"
         for button in (self.edit_title, self.ampm_button, self.voice_lead, self.visibility_button, self.preview):
@@ -369,7 +440,7 @@ class SkillEventEditor(discord.ui.View):
 
     def content(self):
         date = datetime.fromisoformat(self.date).strftime("%A, %d %B %Y") if self.date else "Not selected"
-        lead = f"{self.draft.get('voiceLeadMinutes', 15)} min before" if self.draft.get("voiceEnabled") else "Off"
+        lead = f"{self.draft.get('voiceLeadMinutes', 15)} min before" if self.reminders_enabled() else "Off"
         return (f"# 📅 {'Edit' if self.event_id else 'Create'} GamerHQ Event\n\n"
             f"**📝 Title:** {safe(self.title, 100)}\n"
             + (f"**Game:** {safe(self.draft['game'], 100)}\n" if self.draft.get("game") else "")
@@ -417,10 +488,13 @@ class SkillEventEditor(discord.ui.View):
     @discord.ui.button(label="Voice off", emoji="🔔", style=discord.ButtonStyle.secondary, row=4)
     async def voice_lead(self, interaction, button):
         if await self.interaction_check(interaction):
-            values = [None, 15, 30, 45, 5]
-            current = self.draft.get("voiceLeadMinutes", 15) if self.draft.get("voiceEnabled") else None
+            values = [None, 5, 15, 30, 45]
+            current = self.draft.get("voiceLeadMinutes", 15) if self.reminders_enabled() else None
             lead = values[(values.index(current) + 1) % len(values)] if current in values else None
-            self.draft["voiceEnabled"] = lead is not None
+            field = "remindersEnabled" if any(f.config_path == "remindersEnabled" for f in self.fields) else "voiceEnabled"
+            if any(f.config_path == "voiceOpenLeadMinutes" for f in self.fields):
+                self.draft.setdefault("voiceOpenLeadMinutes", self.draft.get("voiceLeadMinutes", 15))
+            self.draft[field] = lead is not None
             if lead is not None:
                 self.draft["voiceLeadMinutes"] = lead
             self.rebuild()
@@ -444,16 +518,22 @@ class SkillEventEditor(discord.ui.View):
             if draft != json.dumps(self.draft, sort_keys=True):
                 return await interaction.followup.send("The draft changed. Preview it again.", ephemeral=True)
             self.reviewed = draft
-            next_at = result.get("nextOccurrence")
+            schedule = result
             if self.event_id and self.legacy_schedule and not self.draft.get("convertLegacySchedule"):
                 # The Skill's retained finite schedule, never a Host recurrence calculation.
                 existing = await api(interaction, "get", {"eventId": self.event_id})
-                next_at = existing["state"].get("nextOccurrence")
+                schedule = existing["state"]
+            next_at = schedule.get("nextOccurrence")
             content = self.content().replace("Create GamerHQ Event", "Event Preview").replace("Edit GamerHQ Event", "Event Preview")
-            content += (f"\n\n**Start:** <t:{next_at}:F> (<t:{next_at}:R>)" if next_at else "\n\nNo future occurrence.")
+            first = schedule.get("firstOccurrence")
+            if first is not None:
+                content += f"\n\n**First event:** <t:{first}:F>"
+            content += (f"\n**Next session:** <t:{next_at}:F>" if next_at else "\nNo future occurrence.")
+            upcoming = schedule.get("upcomingOccurrences", [])[:3]
+            if len(upcoming) > 1:
+                content += "\n**Upcoming:** " + " · ".join(f"<t:{stamp}:f>" for stamp in upcoming)
             content += f"\n**Event players:** {len(selected_ids(self.draft.get('members', '')))} · **Invited:** {len(selected_ids(self.draft.get('invited', '')))}"
             content += (f"\n**Duration:** {self.draft.get('durationMinutes', 120)} min"
-                f" · **Auto-enroll:** {'On' if self.draft.get('autoEnroll') else 'Off'}"
                 f" · **Event chat:** {'On' if self.draft.get('chatEnabled', True) else 'Off'}")
             if self.legacy_schedule and not self.draft.get("convertLegacySchedule"):
                 content += "\nImported schedule and existing end condition retained."
@@ -484,7 +564,7 @@ class SkillEventEditor(discord.ui.View):
                 event = result["event"]
                 try:
                     await api(interaction, "reconcile", {"eventId": event["id"]})
-                    message = "Event saved and its persistent area synchronized."
+                    message = "Event saved and its persistent area synchronized." if event.get("config", {}).get("chatEnabled", True) else "Event saved. Event chat is off."
                 except Exception:
                     message = "Event saved. Discord synchronization is pending; check Skill health before retrying."
                 await interaction.edit_original_response(content=message, view=None)

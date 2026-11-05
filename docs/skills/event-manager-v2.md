@@ -4,6 +4,30 @@ Source: owner-authorized cross-repository transformation, 2026-11-02;
 [tracking issue #172](https://github.com/Duy-Phan96/GamerHQ/issues/172), superseding
 the V1 UX in #153. This document records source evidence, not production state.
 
+## November 5 live acceptance follow-up
+
+The owner's initial Discord checks passed on compact Host `6a2c74a` with
+Skill `0.1.0`. The follow-up candidate pairs the revised compact Host adapter
+with the Skill `0.1.1` private wheel and the shared Web collection renderer.
+Runtime API 1 and SDK `0.3.0` still apply. Existing v1 contracts remain usable,
+with additive attendance, cancellation and preview fields.
+
+Validate the wheel with the exact reviewed Host source in private Skill CI.
+Use the existing staging controller to verify backup and restore before any
+promotion. The current protected Host promotion policy pins `6a2c74a`.
+A new reviewed immutable Host target needs deployment-security authorization.
+Keep both candidates together for the next Discord acceptance. A rollback after
+creating new independent-first series or recording opt-outs needs a compatibility
+review. Skill `0.1.0` does not interpret those new semantics.
+
+On isolated staging, confirm the default title, reopen a multi-day draft, choose
+a first day outside its weekdays, and create a private event. Verify the same
+chat and card survive rename, capacity edit, pause/resume and restart. Check the
+owner and permanent roster, invite-only access, individual opt-out, and capacity
+with separate staging accounts. Confirm Cancel Session and Delete Event retain
+the channel and history. Verify reminder preferences and temporary voice
+separately. Only the owner's new live evidence closes Discord acceptance.
+
 ## Verified baseline
 
 Host `develop` at `e45c62117b324ff270db2067dbe30167b41cdeb4` contains:

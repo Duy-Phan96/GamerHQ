@@ -10,18 +10,33 @@ persistence and lifecycle remain exclusively in the installed Skill's public API
 
 Creation and editing share date, time, player limit and One-time / Recurring
 dropdowns; Title (including game and description), AM/PM, voice reminder,
-public/private and Preview buttons. Recurring opens seven independent weekday
-buttons. Preview opens Edit / Create Event (or Save changes) / Cancel, plus player
-pickers and event settings. Every persistent save requires a fresh validated
-preview; editing retains the original revision and creation retains one request ID.
-Advanced settings retain exact wall times, timezones, capacity, duration,
-auto-enrollment, chat, voice and explicit imported-schedule conversion. User pickers
-add/remove event members and invitations without dropping existing selections;
-single-occurrence participation remains under Join/Leave and `/lfg participants`.
-New drafts retain the established Host timezone, and existing event timezones are
-preserved. DST interpretation and rolling indefinite recurrence remain Skill-owned.
-The component snapshot is `tests/fixtures/skill-event-compact-ui.json`; live Discord
-acceptance is separately required. The sections below describe the retained V1 flow.
+public/private and Preview buttons. Choosing Recurring again opens the seven
+weekday controls with the current selection. Apply updates the draft. Cancel
+keeps the previous draft. Preview validates all pending changes and Save Changes
+or Create Event persists them with the original revision or request ID.
+The Host starts new drafts with **GamerHQ Event**. Members with Manage Server
+can set a guild default with `/lfg default-title`.
+
+Use a managed event's **Manage** button or `/lfg manage` inside its channel.
+Elsewhere, choose from **My Events** or **All Events** with management permissions.
+**Manage Players** edits permanent members and invitations through Discord user
+selectors. Members register automatically for future sessions. Invitations grant
+an opportunity to join without reserving capacity. A session opt-out affects
+that session only. Leave stays available during pause and Join resumes with the event.
+Private chat access is determined by the configured visibility and membership.
+Event management permissions do not add Discord channel overwrites.
+
+With Skill 0.1.1, a recurring event's first date can be outside its repeating
+weekdays. Existing schedules keep their prior interpretation until explicitly
+edited. Imported schedules require the separate administrator-only
+`/lfg convert-schedule` flow. The Skill owns timezone and DST validation.
+**Cancel Session** keeps the series. **Delete Event** ends the series, stops future
+sessions and retains chat and history. Turning Event Chat off makes a bound chat
+read-only for members while preserving its channel and messages. Temporary voice
+is configured separately from reminder preferences.
+
+See the [staging handoff](skills/event-manager-v2.md) for release dependencies
+and manual acceptance. The sections below describe the retained V1 flow.
 
 - cogs/lfg.py: creation/preview/join/share UI, Discord role assignment, private text/voice, notifications, persistent views and scheduler.
 - services/lfg_service.py: game eligibility, lookups, rendering and Europe/Berlin date parsing; ambiguous/nonexistent DST times are rejected.
