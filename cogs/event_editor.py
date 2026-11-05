@@ -249,9 +249,10 @@ class SettingsView(DraftPage):
 
 
 class ParticipantSelect(discord.ui.UserSelect):
-    def __init__(self, page, field, remove, row, label):
-        super().__init__(placeholder=label, min_values=1, max_values=25, row=row)
-        self.page, self.field, self.remove = page, field, remove
+    def __init__(self, page, remove):
+        label = "Choose players or invitees to remove" if remove else "Choose players to invite"
+        super().__init__(placeholder=label, min_values=1, max_values=25, row=0)
+        self.page, self.remove = page, remove
 
     async def callback(self, interaction):
         if not await self.page.interaction_check(interaction):
@@ -264,14 +265,9 @@ class ParticipantSelect(discord.ui.UserSelect):
             for field in ("members", "invited"):
                 draft[field] = ",".join(sorted(selected_ids(draft.get(field, "")) - chosen))
         else:
-            current = selected_ids(draft.get(self.field, ""))
-            if self.field == "members":
-                if len(current | chosen) > self.page.builder.max_players:
-                    return await interaction.response.send_message("The event is full. Raise the player limit before adding players.", ephemeral=True)
-                draft["invited"] = ",".join(sorted(selected_ids(draft.get("invited", "")) - chosen))
-            else:
-                chosen -= selected_ids(draft.get("members", ""))
-            draft[self.field] = ",".join(sorted(current | chosen))
+            current = selected_ids(draft.get("invited", ""))
+            chosen -= selected_ids(draft.get("members", ""))
+            draft["invited"] = ",".join(sorted(current | chosen))
         await interaction.response.edit_message(content=self.page.content(), view=self.page, allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -279,12 +275,13 @@ class ParticipantsView(DraftPage):
     def content(self):
         members = selected_ids(self.draft.get("members", "")) | ({self.builder.owner_id} if self.builder.owner_id else set())
         invited = selected_ids(self.draft.get("invited", ""))
+        invited -= members
         def names(values):
             return ", ".join(f"<@{ident}>" for ident in sorted(values)[:15]) + (" …" if len(values) > 15 else "") if values else "None"
         host = f"<@{self.builder.owner_id}>" if self.builder.owner_id else "Unassigned"
         return (f"# Manage Players\n\n**Host:** {host}\n**Event members ({len(members)}/{self.builder.max_players}):** {names(members)}\n"
                 f"**Pending invitations ({len(invited)}):** {names(invited)}\n\n"
-                "Members register for future sessions. Invitations do not reserve a slot. Apply updates the draft.")
+                "Players can accept in /lfg invitations. Invitations do not reserve a slot. Apply updates the draft.")
 
     async def picker(self, interaction, *, remove):
         if not await self.interaction_check(interaction):
@@ -292,18 +289,14 @@ class ParticipantsView(DraftPage):
         for child in list(self.children):
             if isinstance(child, ParticipantSelect):
                 self.remove_item(child)
-        if remove:
-            self.add_item(ParticipantSelect(self, "members", True, 0, "Choose players or invitees to remove"))
-        else:
-            self.add_item(ParticipantSelect(self, "members", False, 0, "Add permanent players"))
-            self.add_item(ParticipantSelect(self, "invited", False, 1, "Invite only"))
+        self.add_item(ParticipantSelect(self, remove))
         await interaction.response.edit_message(content=self.content(), view=self, allowed_mentions=discord.AllowedMentions.none())
 
-    @discord.ui.button(label="Add", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Add Player", style=discord.ButtonStyle.primary, row=2)
     async def add(self, interaction, button):
         await self.picker(interaction, remove=False)
 
-    @discord.ui.button(label="Remove", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Remove Player", style=discord.ButtonStyle.secondary, row=2)
     async def remove(self, interaction, button):
         await self.picker(interaction, remove=True)
 
@@ -385,6 +378,7 @@ class SkillEventEditor(discord.ui.View):
         super().__init__(timeout=900)
         self.actor_id, self.fields, self.draft, self.guild_id = actor_id, fields, draft, guild_id
         self.event_id, self.revision = event_id, revision
+        self.original_invites = selected_ids(draft.get("invited", ""))
         self.legacy_schedule = legacy_schedule
         self.owner_id = str(actor_id) if not event_id else owner_id
         self.recurring_days = list(draft.get("weekdays", []))
@@ -569,5 +563,8 @@ class SkillEventEditor(discord.ui.View):
                     message = "Event saved. Discord synchronization is pending; check Skill health before retrying."
                 await interaction.edit_original_response(content=message, view=None)
                 self.stop()
+                if "invited" in event:
+                    from cogs.event_manager import notify_invited
+                    await notify_invited(interaction.guild, set(event["invited"]) - self.original_invites)
             except (ValueError, RuntimeError) as error:
                 await interaction.followup.send(str(error)[:1500], ephemeral=True)

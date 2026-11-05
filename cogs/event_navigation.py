@@ -94,7 +94,7 @@ class EventPicker(EventView):
 
 
 class EventActions(EventView):
-    def __init__(self, cog, interaction, event, occurrences, manages):
+    def __init__(self, cog, interaction, event, occurrences, manages, *, attendance=False):
         super().__init__(cog, interaction)
         self.event = event
         self.session = min((row for row in occurrences if session_open(row, event)),
@@ -105,12 +105,18 @@ class EventActions(EventView):
         attending = self.session and user in self.session["participants"]
         actions = []
         if attending:
-            actions.append(("leave", "Leave"))
+            actions.append(("leave", "Leave This Session"))
         elif event["status"] == "active" and (event["config"]["visibility"] == "public"
-                or user in event["members"] + event["invited"] or user == event.get("ownerId")):
+                or user in event["members"] or user == event.get("ownerId")):
             actions.append(("join", "Join"))
         if user in event["members"] and user != event.get("ownerId"):
-            actions.append(("leave-series", "Leave Event"))
+            actions.append(("leave-series", "Leave Event Permanently"))
+        if attendance:
+            actions.append(("attendance-plan", "My Attendance"))
+        actions.append(("switch-event", "Switch Event"))
+        permissions = interaction.user.guild_permissions
+        if permissions.administrator or permissions.manage_guild:
+            actions.append(("server-events", "All Server Events"))
         if manages:
             actions.extend([("edit", "Edit Event"), ("players", "Manage Players"),
                             ("pause", "Pause") if event["status"] == "active" else ("resume", "Resume")])
