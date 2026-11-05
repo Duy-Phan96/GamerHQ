@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from cogs.event_manager import EventManager, SkillEventEditor, call, can_manage, can_view, open_editor
+from cogs.event_manager import EventManager, SkillEventEditor, call, can_manage, can_view, notify_invited, open_editor
 from cogs.event_attendance import AttendanceView, LeaveMembershipView
+from cogs.event_navigation import EventActions
 from cogs.event_editor import (DateSelect, TimeSelect, PlayersSelect, RecurrenceSelect, WeekdayView,
     EventPreviewView, SettingsView, ParticipantsView, DetailsModal)
 from cogs.event_editor import SettingModal
@@ -140,6 +141,28 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
             api.assert_not_called()
         permanent = LeaveMembershipView(None, interaction, "internal-event", {"config": {"visibility": "private"}})
         self.assertIn("lose access", permanent.content())
+
+    async def test_quick_leave_is_bound_to_the_rendered_session(self):
+        interaction = self.interaction()
+        cog = SimpleNamespace(member_action=AsyncMock())
+        event = {"id": "internal", "ownerId": "20", "members": ["10"], "status": "active",
+                 "config": self.builder().draft}
+        stamp = 1900000000
+        view = EventActions(cog, interaction, event, [{"startAt": stamp, "status": "scheduled",
+                                                       "participants": ["10"]}], False)
+        button = next(item for item in view.children if item.label == "Leave This Session")
+        await button.callback(interaction)
+        cog.member_action.assert_awaited_once_with(interaction, "internal", "leave", start_at=stamp)
+
+    async def test_invitation_dm_failure_never_falls_back_to_public_disclosure(self):
+        response = SimpleNamespace(status=403, reason="Forbidden")
+        denied = SimpleNamespace(send=AsyncMock(side_effect=discord.Forbidden(response, "DMs disabled")))
+        permitted = SimpleNamespace(send=AsyncMock())
+        guild = SimpleNamespace(name="Fixture", get_member={10: denied, 20: permitted}.get)
+        await notify_invited(guild, {"10", "20"})
+        denied.send.assert_awaited_once()
+        permitted.send.assert_awaited_once()
+        self.assertIn("/lfg invitations", permitted.send.await_args.args[0])
 
     async def test_mutation_rechecks_owner_and_guild_before_dispatch(self):
         interaction = self.interaction(ident=20, guild=2)

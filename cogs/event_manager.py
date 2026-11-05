@@ -18,7 +18,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs.event_editor import SkillEventEditor
+from cogs.event_editor import SkillEventEditor, safe
 
 SKILL = "event-manager"
 
@@ -43,7 +43,7 @@ async def notify_invited(guild, users):
         member = guild.get_member(int(user))
         if member is not None:
             try:
-                await member.send("You have a GamerHQ event invitation. Open /lfg invitations in the inviting server.",
+                await member.send(f"You have an event invitation in **{safe(guild.name, 100)}**. Open /lfg invitations there.",
                                   allowed_mentions=discord.AllowedMentions.none())
             except discord.HTTPException:
                 continue

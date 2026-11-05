@@ -30,12 +30,15 @@ class EventView(discord.ui.View):
         await interaction.response.send_message("Open your own event controls to use this action.", ephemeral=True)
         return False
 
-    async def invoke(self, interaction, event_id, action):
+    async def invoke(self, interaction, event_id, action, *, start_at=None):
         if not await self.interaction_check(interaction):
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            await self.cog.action(interaction, event_id, action)
+            if start_at is not None:
+                await self.cog.member_action(interaction, event_id, action, start_at=start_at)
+            else:
+                await self.cog.action(interaction, event_id, action)
         except (ValueError, PermissionError, ManagementConflictError) as error:
             await interaction.followup.send(str(error)[:300], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
@@ -128,7 +131,8 @@ class EventActions(EventView):
                 style=discord.ButtonStyle.danger if action in ("delete", "cancel-session") else discord.ButtonStyle.secondary)
 
             async def clicked(interaction, choice=action):
-                await self.invoke(interaction, event["id"], choice)
+                start_at = self.session["startAt"] if self.session and choice in ("join", "leave") else None
+                await self.invoke(interaction, event["id"], choice, start_at=start_at)
 
             button.callback = clicked
             self.add_item(button)
