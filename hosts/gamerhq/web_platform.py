@@ -241,7 +241,11 @@ class GamerHQWebPlatformService:
         authorized_guild_ids: Iterable[int],
         actor_id: int | None = None,
     ) -> dict[str, Any]:
-        self._require_guild(guild_id, authorized_guild_ids)
+        guild = self._require_guild(guild_id, authorized_guild_ids)
+        if skill_id == "event-manager" and payload.get("convertLegacySchedule") is True:
+            member = guild.get_member(actor_id) if actor_id is not None else None
+            if member is None or not member.guild_permissions.administrator:
+                raise WebPlatformAuthorizationError("Only an administrator can replace an imported event schedule.")
         result = await self.skill_runtime.call_management(
             guild_id=int(guild_id),
             skill_id=skill_id,

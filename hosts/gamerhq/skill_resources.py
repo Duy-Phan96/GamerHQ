@@ -6,6 +6,7 @@ fail closed. Deployment-owned policy selects the only allowed parent category.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import json
 import re
 import secrets
@@ -16,6 +17,43 @@ import discord
 from database import db
 from skill_runtime.contracts.errors import CapabilityUnavailableError, InvalidHostOperationError, TransientHostError
 from .skill_host import _valid_identity
+
+
+def event_channel_identity(channel, *, guild_id, message_id=None, control_id=None):
+    """Resolve only the stored channel, guild and ownership marker."""
+    if not isinstance(channel, discord.TextChannel) or channel.guild.id != guild_id:
+        return None
+    with db.connect() as conn:
+        rows = conn.execute("SELECT resource_key,state_json FROM skill_managed_resources WHERE guild_id=? "
+            "AND skill_id='event-manager' AND kind='text' AND json_extract(state_json,'$.channelId')=?",
+            (guild_id, channel.id)).fetchall()
+    if len(rows) != 1:
+        return None
+    key, raw = rows[0]
+    state = json.loads(raw)
+    if not key.startswith("event:") or state.get("marker") != channel.topic:
+        return None
+    if message_id is not None and state.get("messageId") != message_id:
+        return None
+    if control_id is not None and control_id != event_card_id(state["marker"]):
+        return None
+    return key.removeprefix("event:")
+
+
+def event_card_id(marker):
+    return "gamerhq:event:manage:" + hashlib.sha256(marker.encode()).hexdigest()[:32]
+
+
+def event_card_controls(marker):
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(label="Manage", custom_id=event_card_id(marker)))
+    return view
+
+
+def has_publication_marker(message, marker):
+    return (any(getattr(embed.footer, "text", None) == marker for embed in message.embeds) or
+            any(getattr(button, "custom_id", None) == event_card_id(marker)
+                for row in getattr(message, "components", ()) for button in row.children))
 
 
 class GamerHQManagedResources:
@@ -134,6 +172,8 @@ class GamerHQManagedResources:
             return channel
         if state.get("creating"):
             raise TransientHostError("Channel creation outcome is uncertain; Host reconciliation required.")
+        if kind == "text" and self.skill_id == "event-manager" and state.get("channelId"):
+            raise InvalidHostOperationError("The previously bound event channel is missing; Host review required.")
         overwrites = {self.guild.default_role: discord.PermissionOverwrite(view_channel=visibility == "public", send_messages=chat)}
         overwrites[self.guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
         state["creating"] = True
@@ -151,6 +191,8 @@ class GamerHQManagedResources:
             raise InvalidHostOperationError("Host policy does not permit public Skill areas.")
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100 or not isinstance(overview, str) or len(overview) > 4000:
             raise InvalidHostOperationError("Invalid managed area content.")
+        if self.skill_id == "event-manager":
+            name = re.sub(r"\s+", "-", name.strip().lower())[:100]
         members = await self._members(member_ids)
         with self._claim(key, "text") as (state, save):
             channel = await self._channel(state, "text", parent, name, members, visibility, chat_enabled, save)
@@ -190,18 +232,20 @@ class GamerHQManagedResources:
                     state["messagePending"] = False
             if message is None and state.get("messagePending"):
                 matches = [m async for m in channel.history(limit=100) if m.author.id == self.guild.me.id and
-                           any(getattr(e.footer, "text", None) == state["marker"] for e in m.embeds)]
+                           has_publication_marker(m, state["marker"])]
                 if len(matches) != 1:
                     raise TransientHostError("Overview publication outcome is uncertain; manual reconciliation required.")
                 message = matches[0]
             embed = discord.Embed(description=overview)
-            embed.set_footer(text=state["marker"])
+            view = event_card_controls(state["marker"]) if self.skill_id == "event-manager" else None
+            if view is None:
+                embed.set_footer(text=state["marker"])
             if message is None:
                 state["messagePending"] = True
                 save()
-                message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                message = await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             else:
-                await message.edit(content=None, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                await message.edit(content=None, embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
             state["messageId"], state["messagePending"] = message.id, False
             state["synchronizationPending"] = False
             save()
