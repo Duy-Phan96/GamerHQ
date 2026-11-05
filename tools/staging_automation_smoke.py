@@ -101,23 +101,36 @@ def main():
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
             from tools.extend_staging_host_promotion import HOST, OLD, extension
             from urllib.request import urlopen
-            old_installer = tmp / 'previous_host_promotion.py'
-            with urlopen('https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/' + OLD +
-                         '/tools/extend_staging_host_promotion.py', timeout=20) as source:
-                old_body = source.read(16385)
-            assert hashlib.sha256(old_body).hexdigest() == '232a6cbe47a6300516a002c2d792a655c4a0f6040cc6c4bb80dc63c4c4e85f3e'
-            old_installer.write_bytes(old_body)
+
+            def install_pin(commit, digest, approval):
+                installer = tmp / (commit + '.py')
+                with urlopen('https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/' + commit +
+                             '/tools/extend_staging_host_promotion.py', timeout=20) as source:
+                    body = source.read(16385)
+                assert len(body) <= 16384 and hashlib.sha256(body).hexdigest() == digest
+                installer.write_bytes(body)
+                result = subprocess.run([sys.executable, str(installer), '--commit', commit, '--approval', approval],
+                    check=False, timeout=420, capture_output=True, text=True, umask=0o077)
+                assert result.returncode == 0, result.stderr
+                return json.loads(result.stdout)
             lock_info = (root / 'worker/operation.lock').lstat()
             print(json.dumps({'extensionLock': {'uid': lock_info.st_uid, 'gid': lock_info.st_gid,
                 'mode': oct(lock_info.st_mode & 0o777), 'links': lock_info.st_nlink,
                 'expectedUid': account.pw_uid, 'expectedGid': account.pw_gid}}), flush=True)
-            subprocess.run([sys.executable, str(old_installer), '--commit', OLD, '--approval',
-                'INSTALL REVIEWED STAGING HOST PROMOTION'], check=True, timeout=420, capture_output=True, umask=0o077)
-            assert json.loads(call('status').stdout)['controllerCommit'] == OLD
+            first = install_pin('135bbf604926d6b1794503d17821ad00f1c09555',
+                '232a6cbe47a6300516a002c2d792a655c4a0f6040cc6c4bb80dc63c4c4e85f3e',
+                'INSTALL REVIEWED STAGING HOST PROMOTION')
+            assert first['state'] == 'INSTALLED'
             state_path = root / 'worker/automation-state.json'
             inactive_bytes = state_path.read_bytes()
             active = json.loads(inactive_bytes); active.update(enabled=True, bootstrapVerified=True, approvedImage='sha256:'+'a'*64)
             state_path.write_text(json.dumps(active)); os.chown(state_path, account.pw_uid, account.pw_gid)
+            previous_pin = install_pin(OLD, 'b05e832e126c9f2a0964a920a84b9f1c4d254de4a1741e1a4307a8449efacc2a',
+                'REPLACE REVIEWED STAGING HOST PIN')
+            assert previous_pin['state'] == 'PIN_INSTALLED'
+            installed = json.loads(call('status').stdout)
+            assert installed['controllerCommit'] == OLD
+            assert installed['hostPromotionCommit'] == '17858f47480e914956dd241b9f37a328b4c6ac2b'
             active_bytes = state_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)

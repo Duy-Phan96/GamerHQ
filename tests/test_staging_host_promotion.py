@@ -11,8 +11,9 @@ from unittest.mock import patch
 import pytest
 
 from database import db
-from tools.staging_automation.host_promotion import (BASELINE, COMMIT, REVIEWED_HOST_CHANGES,
-    extract_application, retained_state, require_retained, PromotionDocker, promote, verify_compatibility)
+from tools.staging_automation.host_promotion import (BASELINE, BASELINE_SKILL_COMMIT, BASELINE_SKILL_SHA256,
+    BASELINE_SKILL_VERSION, COMMIT, REVIEWED_HOST_CHANGES, extract_application, retained_state,
+    require_baseline_skill, require_retained, PromotionDocker, promote, verify_compatibility)
 from tools.staging_automation.policy import Denied, charge, validate_policy, admit
 from tools.staging_automation.oidc import verify
 from test_staging_automation_policy import trust, signing_key
@@ -64,7 +65,7 @@ def test_host_promotion_refuses_automatic_database_restore_after_candidate_write
 def seed():
     with db.connect() as conn:
         conn.execute("INSERT INTO skill_domain_authority VALUES(1,'event-manager','event-manager','old','new',1)")
-        conn.execute("INSERT INTO skill_guild_state VALUES(1,'event-manager',1,1,1,'0.1.0',1)")
+        conn.execute("INSERT INTO skill_guild_state VALUES(1,'event-manager',1,1,1,?,1)", (BASELINE_SKILL_VERSION,))
         conn.execute("INSERT INTO skill_storage VALUES(1,'event-manager','event.v2:one',?,1)",
             (json.dumps({'id': 'one', 'revision': 4, 'members': ['50'], 'config': {'name': 'Existing'}, 'chat': {'channelId': '100'}}),))
         conn.execute("INSERT INTO skill_managed_resources(guild_id,skill_id,resource_key,kind,state_json) "
@@ -124,6 +125,17 @@ def test_legacy_or_wrong_authority_cannot_be_promoted(deployment_fixture):
         conn.execute("UPDATE skill_domain_authority SET skill_id='legacy'")
     with pytest.raises(Denied, match='RECOVERY'):
         retained_state(db.DB_PATH, 1)
+
+
+def test_host_promotion_keeps_the_exact_installed_skill_artifact():
+    release = {'version': BASELINE_SKILL_VERSION, 'reviewedCommit': BASELINE_SKILL_COMMIT,
+               'sha256': BASELINE_SKILL_SHA256}
+    require_baseline_skill(release, BASELINE_SKILL_VERSION)
+    for modified in ({'version': '0.1.2'}, {'reviewedCommit': 'a' * 40}, {'sha256': 'a' * 64}):
+        with pytest.raises(Denied, match='VERSION_REQUIRES_OWNER'):
+            require_baseline_skill({**release, **modified}, BASELINE_SKILL_VERSION)
+    with pytest.raises(Denied, match='VERSION_REQUIRES_OWNER'):
+        require_baseline_skill(release, '0.1.2')
 
 
 @pytest.mark.parametrize('kind', ['symlink', 'hardlink', 'traversal', 'absolute'])

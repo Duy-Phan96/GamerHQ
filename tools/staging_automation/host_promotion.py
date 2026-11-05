@@ -17,16 +17,17 @@ from contextlib import closing
 from .deployment import SkillUpdateController, application_fingerprint
 from .policy import Denied
 
-COMMIT = '17858f47480e914956dd241b9f37a328b4c6ac2b'
-BASELINE = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
-CI_RUN = '42013244636'
+COMMIT = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
+BASELINE = '17858f47480e914956dd241b9f37a328b4c6ac2b'
+CI_RUN = '42060126446'
+BASELINE_SKILL_VERSION = '0.1.1'
+BASELINE_SKILL_COMMIT = '2663f8ea84408286a118a01f60a47c574dae5ff8'
+BASELINE_SKILL_SHA256 = 'ba7336e3c1244777f2cbc17a02fe70a6310e4a284eb4cc1b30e960b6e75f9faa'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 DIRECTORIES = ('cogs', 'skill_runtime', 'hosts', 'skills', 'services', 'database', 'tools')
 FILES = ('bot.py', 'config.py', 'release_info.py', 'VERSION', 'CHANGELOG.md', '.env.example', 'data/games_seed.json')
 COMPATIBILITY = ('Dockerfile', 'requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml', 'database/db.py')
 REVIEWED_HOST_CHANGES = frozenset({
-    'hosts/gamerhq/skill_resources.py',
-    'hosts/gamerhq/skill_update_controller.py',
     'hosts/gamerhq/web_platform.py',
 })
 
@@ -71,7 +72,7 @@ def retained_state(path, guild):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         authority = conn.execute("SELECT * FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild,)).fetchall()
         installed = conn.execute("SELECT installed,configured,enabled,version FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild,)).fetchone()
-        if len(authority) != 1 or authority[0][2] != 'event-manager' or not installed or installed[0] != 1 or installed[3] != '0.1.0':
+        if len(authority) != 1 or authority[0][2] != 'event-manager' or not installed or installed[0] != 1 or installed[3] != BASELINE_SKILL_VERSION:
             raise Denied('RECOVERY_REQUIRES_OWNER')
         rows = {}
         for key, raw in conn.execute("SELECT storage_key,value_json FROM skill_storage WHERE guild_id=? AND skill_id='event-manager'", (guild,)):
@@ -99,6 +100,12 @@ def require_retained(before, after):
             or any(after['mappings'].get(key, {}).get(field) != value
                    for key, mapping in before['mappings'].items() for field, value in mapping.items())):
         raise Denied('RECOVERY_REQUIRES_OWNER')
+
+
+def require_baseline_skill(release, installed_version):
+    if (release.get('version') != BASELINE_SKILL_VERSION or release.get('reviewedCommit') != BASELINE_SKILL_COMMIT
+            or release.get('sha256') != BASELINE_SKILL_SHA256 or installed_version != BASELINE_SKILL_VERSION):
+        raise Denied('VERSION_REQUIRES_OWNER')
 
 
 class PromotionDocker:
@@ -203,8 +210,7 @@ def promote(backend, *, expected_image):
     retained_state(p['database'], p['stagingGuildId'])
     verify_local_artifacts(p)
     release = json.loads(Path(p['releaseFile']).read_text())
-    if release['version'] != '0.1.0' or backend.skill()['version'] != '0.1.0':
-        raise Denied('VERSION_REQUIRES_OWNER')
+    require_baseline_skill(release, backend.skill()['version'])
     # Source trust includes private-wheel CI in the reviewed Host PR. Verify
     # public Host CI live without assuming private GitHub token permissions.
     run = github(backend.policy, '/actions/runs/' + CI_RUN)
@@ -213,7 +219,9 @@ def promote(backend, *, expected_image):
     if source_commit(backend, current) == COMMIT:
         if p.get('applicationHostCommit') != COMMIT or p['baseImage'] != current:
             raise Denied('RECOVERY_REQUIRES_OWNER')
-        return {'state': 'ALREADY_CURRENT', 'hostCommit': COMMIT, 'skillVersion': '0.1.0', 'image': current, 'health': 'HOST_READY'}
+        return {'state': 'ALREADY_CURRENT', 'hostCommit': COMMIT, 'skillVersion': BASELINE_SKILL_VERSION, 'image': current, 'health': 'HOST_READY'}
+    if p.get('applicationHostCommit') != BASELINE:
+        raise Denied('IMMUTABLE_RELEASE_CHANGED')
     db.DB_PATH = Path(p['database']).resolve(strict=True)
     with db.connect() as conn:
         pending = conn.execute("SELECT evidence_json FROM skill_deployments WHERE state IN ('APPLYING','RECOVERY_REQUIRED')").fetchall()
@@ -229,8 +237,8 @@ def promote(backend, *, expected_image):
     docker = backend_for(candidate, lambda version: health_probe(p, {**release, 'version': version}))
     deployed = PromotionDocker(backend, docker, COMMIT)
     controller = SkillUpdateController(deployed, backup_root=p['backupRoot'])
-    wheel = Path(p['artifactRoot']) / (release['distribution'].replace('-', '_') + '-0.1.0-py3-none-any.whl')
-    ready = controller.stage(release=release, wheel=wheel, current_version='0.1.0', current_capabilities=p['approvedCapabilities']['event-manager'],
+    wheel = Path(p['artifactRoot']) / (release['distribution'].replace('-', '_') + f'-{BASELINE_SKILL_VERSION}-py3-none-any.whl')
+    ready = controller.stage(release=release, wheel=wheel, current_version=BASELINE_SKILL_VERSION, current_capabilities=p['approvedCapabilities']['event-manager'],
         manual_review=True, host_source_commit=COMMIT)
     if source_commit(backend, ready['image']) != COMMIT:
         raise Denied('IMMUTABLE_RELEASE_CHANGED')
@@ -248,5 +256,5 @@ def promote(backend, *, expected_image):
         if controller.get(ready['id'])['state'] == 'ROLLED_BACK':
             raise Denied('UPDATE_FAILED') from None
         raise Denied('RECOVERY_REQUIRES_OWNER') from None
-    return {'state': 'APPLIED', 'hostCommit': COMMIT, 'skillVersion': '0.1.0', 'health': 'HOST_READY',
+    return {'state': 'APPLIED', 'hostCommit': COMMIT, 'skillVersion': BASELINE_SKILL_VERSION, 'health': 'HOST_READY',
         'deploymentId': ready['id'], 'backupVerified': True, 'restoreProbe': 'PASS', 'authorityPreserved': True, 'image': applied['image']}

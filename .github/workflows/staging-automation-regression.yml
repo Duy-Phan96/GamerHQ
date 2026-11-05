@@ -34,8 +34,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin 6a2c74a234d693abe70f5f69dfbb41dbce38bc75
+          git fetch origin 17858f47480e914956dd241b9f37a328b4c6ac2b
           mkdir /tmp/gamerhq-host-baseline
-          git archive 6a2c74a234d693abe70f5f69dfbb41dbce38bc75 | tar -x -C /tmp/gamerhq-host-baseline
-          docker build --build-arg VCS_REF=6a2c74a234d693abe70f5f69dfbb41dbce38bc75 --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
+          git archive 17858f47480e914956dd241b9f37a328b4c6ac2b | tar -x -C /tmp/gamerhq-host-baseline
+          docker build --build-arg VCS_REF=17858f47480e914956dd241b9f37a328b4c6ac2b --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
           sudo /opt/gamerhq-staging/deployment-worker/.venv/bin/python -m tools.staging_host_promotion_smoke --base-image "$(cat /tmp/gamerhq-host-baseline-image)"

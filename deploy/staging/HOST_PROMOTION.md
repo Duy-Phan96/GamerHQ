@@ -1,5 +1,24 @@
 # Reviewed staging Host promotion
 
+## Event Manager V2.1 pin replacement
+
+Host #219 is pinned at `29ecf575f3d865b0f32a9d82adf1b06d7969cdc9`, with CI run
+`42060126446` and Git archive SHA256
+`8d4286c5596963fe10b8f36da163bbe3de12d6b2512673f5b54535145ad424bd`.
+The installer requires the installed controller `9c1a6f4` and its prior
+reviewed pin. The promotion requires the current Host `17858f4` and the exact
+published Skill 0.1.1 bytes. It keeps that Skill version while verifying the
+backup, restore probe, retained Event state and channel/card mappings.
+
+After the protected Host promotion and smoke pass, prepare Skill 0.1.2 through
+routine staging automation. The release resolves to
+`41a7d968852453d815a52f2f03e4ccac7e93eff9` and its wheel SHA256 is
+`84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465`.
+Apply only after the offline probe succeeds, then verify restart, health,
+deployment history and smoke. Manual Discord UX acceptance is separate.
+Recovery after consent or attendance writes requires review before returning
+to older invitation behavior.
+
 ## Event Manager V2 pin replacement
 
 The next reviewed Host target is `17858f47480e914956dd241b9f37a328b4c6ac2b`
