@@ -17,6 +17,23 @@ from skill_runtime.contracts.management_ui import (
 
 
 class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_attendance_web_requires_membership_and_ignores_forged_manager_flag(self):
+        guild = SimpleNamespace(id=1)
+        user = SimpleNamespace(guild=guild, display_name="Fixture Player")
+        guild.get_member = lambda ident: user if ident == 50 else None
+        guild.fetch_member = AsyncMock(return_value=None)
+        runtime = SimpleNamespace(call_management=AsyncMock(return_value={"sessions": [{"participants": ["50", "60"]}]}))
+        service = GamerHQWebPlatformService(bot=SimpleNamespace(get_guild=lambda _: guild), skill_runtime=runtime)
+        kwargs = dict(guild_id=1, skill_id="event-manager", contract_id="event-manager.attendance-plan.v1",
+                      payload={"eventId": "raid", "manager": True}, authorized_guild_ids=[1])
+        for actor in (None, 60):
+            with self.assertRaises(WebPlatformAuthorizationError):
+                await service.call_management(**kwargs, actor_id=actor)
+        runtime.call_management.assert_not_awaited()
+        result = await service.call_management(**kwargs, actor_id=50)
+        self.assertFalse(runtime.call_management.await_args.kwargs["payload"]["manager"])
+        self.assertEqual(result["sessions"], [{"participantNames": ["Fixture Player", "Server member"], "registered": 2}])
+
     def setUp(self):
         category = SimpleNamespace(id=50, name="Community")
         channel_general = SimpleNamespace(
