@@ -26,10 +26,21 @@ def test_history_authorization_happens_before_storage_access():
 
 
 def test_history_validates_package_and_returns_only_public_projection():
-    runtime = SimpleNamespace(status=AsyncMock(return_value=None))
+    runtime = SimpleNamespace(status=AsyncMock(return_value=SimpleNamespace(installed=True)))
     service = GamerHQWebPlatformService(bot=SimpleNamespace(get_guild=lambda ident: object()), skill_runtime=runtime)
-    with patch("hosts.gamerhq.skill_update_controller.deployment_history", return_value=[{"state": "READY"}]) as history:
-        assert asyncio.run(service.list_skill_deployments(guild_id=123, skill_id="event-manager", authorized_guild_ids=[123])) == [{"state": "READY"}]
+    row = {"id": "operator-id", "version": "0.1.2", "created_at": 1, "updated_at": 2, "detail": "internal"}
+    records = [{**row, "state": "READY"}, {**row, "state": "APPLIED"}]
+    with patch("hosts.gamerhq.skill_update_controller.deployment_history", return_value=records) as history:
+        public, = asyncio.run(service.list_skill_deployments(guild_id=123, skill_id="event-manager", authorized_guild_ids=[123]))
+        assert public == {
+            "id": hashlib.sha256(b"123:operator-id").hexdigest(),
+            "skill_id": "event-manager",
+            "version": "0.1.2",
+            "state": "APPLIED",
+            "detail": "Host package applied.",
+            "created_at": 1,
+            "updated_at": 2,
+        }
         runtime.status.assert_awaited_once_with(guild_id=123, skill_id="event-manager")
         history.assert_called_once_with(skill_id="event-manager")
 
