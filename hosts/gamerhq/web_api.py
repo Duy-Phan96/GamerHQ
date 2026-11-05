@@ -157,21 +157,24 @@ async def call_management(request: web.Request) -> web.Response:
     payload = body.get("payload")
     if not isinstance(payload, Mapping):
         raise ValueError("Management request requires a JSON object payload.")
-    raw_actor = request.headers.get("X-GamerHQ-Actor-Id")
-    actor = None
-    if raw_actor is not None:
-        if not raw_actor.isascii() or not raw_actor.isdigit() or not 0 < int(raw_actor) < 2**64:
-            raise ValueError("Invalid trusted actor identity.")
-        actor = int(raw_actor)
     result = await _service(request).call_management(
         guild_id=int(request.match_info["guild_id"]),
         skill_id=request.match_info["skill_id"],
         contract_id=request.match_info["contract_id"],
         payload=payload,
         authorized_guild_ids=_authorized_guild_ids(request),
-        **({"actor_id": actor} if actor is not None else {}),
+        **_trusted_actor(request),
     )
     return web.json_response(result)
+
+
+def _trusted_actor(request):
+    raw = request.headers.get("X-GamerHQ-Actor-Id")
+    if raw is None:
+        return {}
+    if not raw.isascii() or not raw.isdigit() or len(raw) > 20 or not 0 < int(raw) < 2**64:
+        raise ValueError("Invalid trusted actor identity.")
+    return {"actor_id": int(raw)}
 
 
 async def install_skill(request: web.Request) -> web.Response:
@@ -179,6 +182,7 @@ async def install_skill(request: web.Request) -> web.Response:
         guild_id=int(request.match_info["guild_id"]),
         skill_id=request.match_info["skill_id"],
         authorized_guild_ids=_authorized_guild_ids(request),
+        **_trusted_actor(request),
     )
     return web.json_response(result)
 
@@ -193,6 +197,7 @@ async def set_skill_enabled(request: web.Request) -> web.Response:
         skill_id=request.match_info["skill_id"],
         enabled=enabled,
         authorized_guild_ids=_authorized_guild_ids(request),
+        **_trusted_actor(request),
     )
     return web.json_response(result)
 
