@@ -12,12 +12,13 @@ from database import db
 from hosts.gamerhq.skill_resources import event_channel_identity
 from skill_runtime import ManagementConflictError
 from cogs.event_navigation import EventPicker, EventActions, ConfirmEventChange, session_open
+from cogs.event_attendance import AttendanceView, InvitationView, LeaveMembershipView
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs.event_editor import SkillEventEditor
+from cogs.event_editor import SkillEventEditor, safe
 
 SKILL = "event-manager"
 
@@ -28,7 +29,24 @@ def can_manage(member, event):
 
 
 def can_view(member, event):
-    return can_manage(member, event) or event["config"]["visibility"] == "public" or str(member.id) in event["members"] + event["invited"]
+    return can_manage(member, event) or event["config"]["visibility"] == "public" or str(member.id) in event["members"]
+
+
+def supports_attendance(interaction):
+    registry = interaction.client.skill_runtime.registry
+    return registry.contains(SKILL) and any(api.id == "event-manager.attendance-plan.v1"
+        for api in registry.get(SKILL).manifest.management_apis.exposes)
+
+
+async def notify_invited(guild, users):
+    for user in sorted(users)[:25]:
+        member = guild.get_member(int(user))
+        if member is not None:
+            try:
+                await member.send(f"You have an event invitation in **{safe(guild.name, 100)}**. Open /lfg invitations there.",
+                                  allowed_mentions=discord.AllowedMentions.none())
+            except discord.HTTPException:
+                continue
 
 
 async def call(interaction, operation, payload):
@@ -46,9 +64,16 @@ async def call(interaction, operation, payload):
         current = (await dispatch("get", {"eventId": event_id}))["state"]
         if not can_manage(interaction.user, current):
             raise PermissionError("You don't have permission to manage this event.")
+    if operation == "attendance-plan":
+        current = (await dispatch("get", {"eventId": payload["eventId"]}))["state"]
+        payload = {**payload, "manager": can_manage(interaction.user, current)}
     if payload.get("convertLegacySchedule") is True and not interaction.user.guild_permissions.administrator:
         raise PermissionError("Only an administrator can replace an imported schedule.")
-    return await dispatch(operation, payload)
+    result = await dispatch(operation, payload)
+    if operation in {"attendance-plan", "attendance-save", "invitations", "invite-response", "leave-membership"} and "error" in result:
+        error = {"conflict": ManagementConflictError, "forbidden": PermissionError}.get(result["code"], ValueError)
+        raise error(result["error"])
+    return result
 
 
 async def open_editor(interaction, event_id=None, *, players=False, convert=False):
@@ -69,6 +94,13 @@ async def open_editor(interaction, event_id=None, *, players=False, convert=Fals
         draft["members"] = str(interaction.user.id)
         title = db.get_setting(f"event_manager_default_title:{interaction.guild.id}")
         draft["name"] = title.strip() if isinstance(title, str) and 0 < len(title.strip()) <= 100 else "GamerHQ Event"
+        if "remindersEnabled" in draft:
+            reminder = db.get_setting(f"event_manager_default_reminder:{interaction.guild.id}")
+            if reminder not in ("off", "5", "15", "30", "45"):
+                reminder = "15"
+            draft["remindersEnabled"] = reminder != "off"
+            if reminder != "off":
+                draft["voiceLeadMinutes"] = int(reminder)
     schema = interaction.client.skill_runtime.management_ui_schema(SKILL)
     collection = next(field.collection for section in schema.sections for field in section.fields if field.collection)
     view = SkillEventEditor(interaction.user.id, collection.item_fields, draft, event_id=event_id, revision=revision,
@@ -102,19 +134,28 @@ class EventManager(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         await open_editor(interaction)
 
-    async def navigate(self, interaction, action, event_id=None):
+    async def navigate(self, interaction, action, event_id=None, *, ignore_channel=False, server=False):
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             raise PermissionError("Open Event Manager in your server.")
-        event_id = event_id or event_channel_identity(interaction.channel, guild_id=interaction.guild.id)
+        if not ignore_channel:
+            event_id = event_id or event_channel_identity(interaction.channel, guild_id=interaction.guild.id)
         if event_id:
             return await self.action(interaction, event_id, action)
         result = await call(interaction, "list", {})
-        manageable = action not in ("join", "leave")
+        manageable = action not in ("join", "leave", "attendance-plan", "manage")
+        admin = interaction.user.guild_permissions.administrator or interaction.user.guild_permissions.manage_guild
+        if server and not admin:
+            raise PermissionError("You don't have permission to list server events.")
+        actor = str(interaction.user.id)
         participant_ids = {row["eventId"] for row in result.get("occurrences", ())
                            if row["status"] in ("scheduled", "active") and str(interaction.user.id) in row["participants"]}
         events = [event for event in result["events"]
                   if (can_manage(interaction.user, event) if manageable else
-                      can_view(interaction.user, event) or event["id"] in participant_ids)]
+                      can_view(interaction.user, event) or (event["id"] in participant_ids and
+                      actor not in event.get("revokedAccess", ()) and action != "attendance-plan"))]
+        if action == "manage" and not server and (ignore_channel or not admin):
+            events = [event for event in events if event.get("ownerId") == actor or actor in event["members"]
+                      or event["id"] in participant_ids]
         if action == "convert":
             events = [event for event in events if event.get("legacyRecurrence")]
         if not events:
@@ -123,24 +164,43 @@ class EventManager(commands.Cog):
         for row in sorted(result.get("occurrences", ()), key=lambda item: item["startAt"]):
             if row["status"] in ("scheduled", "active"):
                 counts.setdefault(row["eventId"], len(row["participants"]))
-        admin = interaction.user.guild_permissions.administrator or interaction.user.guild_permissions.manage_guild
-        picker = EventPicker(self, interaction, events, counts, action, "All Events" if manageable and admin else
-                             "My Events" if manageable else "Choose Event")
+        title = ("All Events" if admin and (server or not ignore_channel) else "My Events") if action == "manage" or manageable else "Choose Event"
+        picker = EventPicker(self, interaction, events, counts, action, title)
         await interaction.followup.send(content=picker.content(), view=picker, ephemeral=True)
 
     async def action(self, interaction, event_id, action):
-        if action in ("join", "leave", "leave-series"):
+        if action in ("join", "leave"):
             return await self.member_action(interaction, event_id, action)
+        if action in ("switch-event", "server-events"):
+            return await self.navigate(interaction, "manage", ignore_channel=True, server=action == "server-events")
+        if action == "attendance-plan":
+            plan = await call(interaction, "attendance-plan", {"eventId": event_id, "days": 28})
+            view = AttendanceView(self, interaction, event_id, plan)
+            return await interaction.followup.send(view.content(), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         result = await call(interaction, "get", {"eventId": event_id})
         state = result["state"]
+        if action == "leave-series":
+            actor = str(interaction.user.id)
+            if actor not in state["members"] or actor == state.get("ownerId"):
+                raise PermissionError("Only a current member can leave their membership.")
+            view = LeaveMembershipView(self, interaction, event_id, state)
+            return await interaction.followup.send(view.content(), view=view, ephemeral=True)
         if action == "manage":
             viewable = can_view(interaction.user, state) or any(
                 row["status"] in ("active", "scheduled") and str(interaction.user.id) in row["participants"]
+                and str(interaction.user.id) not in state.get("revokedAccess", ())
                 for row in result.get("history", {}).get("occurrences", ()))
             if not viewable:
                 raise PermissionError("You don't have access to this event.")
-            view = EventActions(self, interaction, state, result.get("history", {}).get("occurrences", ()),
-                                can_manage(interaction.user, state))
+            manages = can_manage(interaction.user, state)
+            available = hasattr(interaction, "client") and supports_attendance(interaction)
+            view = EventActions(self, interaction, state, result.get("history", {}).get("occurrences", ()), manages,
+                                attendance=available)
+            if manages:
+                try:
+                    await call(interaction, "reconcile", {"eventId": event_id})
+                except Exception:
+                    logging.getLogger(__name__).warning("Event card reconciliation is pending", exc_info=True)
             return await interaction.followup.send(content=view.content(), view=view, ephemeral=True)
         if not can_manage(interaction.user, state):
             raise PermissionError("You don't have permission to manage this event.")
@@ -186,6 +246,32 @@ class EventManager(commands.Cog):
     async def manage(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.navigate(interaction, "manage")
+
+    @lfg.command(name="attendance", description="Plan attendance for upcoming sessions.")
+    async def attendance(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        if not supports_attendance(interaction):
+            return await interaction.followup.send("Attendance planning is unavailable on this server.", ephemeral=True)
+        await self.navigate(interaction, "attendance-plan")
+
+    @lfg.command(name="invitations", description="Review your pending event invitations in this server.")
+    async def invitations(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        if not supports_attendance(interaction):
+            return await interaction.followup.send("Event invitations are unavailable on this server.", ephemeral=True)
+        rows = (await call(interaction, "invitations", {}))["invitations"]
+        if not rows:
+            return await interaction.followup.send("You have no pending invitations.", ephemeral=True)
+        view = InvitationView(self, interaction, rows)
+        await interaction.followup.send(view.content(), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @lfg.command(name="default-reminder", description="Set the default reminder for new events.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def default_reminder(self, interaction: discord.Interaction, minutes: str):
+        if not interaction.guild or minutes not in ("off", "5", "15", "30", "45"):
+            raise ValueError("Choose off, 5, 15, 30, or 45 minutes.")
+        db.set_setting(f"event_manager_default_reminder:{interaction.guild.id}", minutes)
+        await interaction.response.send_message("Default event reminder saved.", ephemeral=True)
 
     async def member_action(self, interaction, event_id, action, *, start_at=None):
         manifest = interaction.client.skill_runtime.registry.get(SKILL).manifest

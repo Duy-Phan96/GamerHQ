@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from cogs.event_manager import EventManager, SkillEventEditor, call, can_manage, can_view, open_editor
+from cogs.event_manager import EventManager, SkillEventEditor, call, can_manage, can_view, notify_invited, open_editor
+from cogs.event_attendance import AttendanceView, LeaveMembershipView
+from cogs.event_navigation import EventActions
 from cogs.event_editor import (DateSelect, TimeSelect, PlayersSelect, RecurrenceSelect, WeekdayView,
     EventPreviewView, SettingsView, ParticipantsView, DetailsModal)
 from cogs.event_editor import SettingModal
@@ -37,7 +39,7 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
         event = {"ownerId": "10", "members": ["20"], "invited": ["30"], "config": {"visibility": "private"}}
         self.assertTrue(can_manage(self.member(10), event))
         self.assertFalse(can_manage(self.member(20), event))
-        self.assertTrue(can_view(self.member(30), event))
+        self.assertFalse(can_view(self.member(30), event))
         self.assertFalse(can_view(self.member(40), event))
         self.assertTrue(can_view(self.member(40, True), event))
 
@@ -102,6 +104,65 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
             await open_editor(interaction)
             self.assertEqual(interaction.followup.send.await_args.kwargs["view"].draft["name"], "Co-op Night")
             setting.assert_called_with("event_manager_default_title:12")
+
+    async def test_new_reminder_defaults_to_15_and_can_be_configured_off(self):
+        interaction = self.interaction()
+        schema = SimpleNamespace(sections=[SimpleNamespace(fields=[SimpleNamespace(collection=SimpleNamespace(item_fields=FIELDS))])])
+        interaction.client = SimpleNamespace(skill_runtime=SimpleNamespace(management_ui_schema=lambda _: schema))
+        with patch("cogs.event_manager.call", AsyncMock(return_value={"defaultDraft": self.builder(remindersEnabled=False).draft})), \
+                patch("cogs.event_manager.db.get_setting", side_effect=[None, None, None, "off"]):
+            await open_editor(interaction)
+            view = interaction.followup.send.await_args.kwargs["view"]
+            self.assertTrue(view.draft["remindersEnabled"])
+            self.assertEqual(view.draft["voiceLeadMinutes"], 15)
+            self.assertFalse(view.draft["voiceEnabled"])
+            await open_editor(interaction)
+            self.assertFalse(interaction.followup.send.await_args.kwargs["view"].draft["remindersEnabled"])
+
+    async def test_attendance_window_draft_cancel_and_guild_guard(self):
+        interaction = self.interaction()
+        plan = {"name": "Raid", "timezone": "UTC", "windowStartAt": 1900000000, "revision": 2,
+                "status": "active", "canEdit": True,
+                "sessions": [{"startAt": 1900000000 + day * 86400, "revision": 3, "status": "scheduled",
+                              "attending": True, "capacity": 5, "participants": ["10", "20"]} for day in (1, 15)]}
+        view = AttendanceView(None, interaction, "internal-event", plan)
+        self.assertEqual(len(view.sessions()), 1)
+        self.assertFalse(await view.interaction_check(self.interaction(guild=2)))
+        await next(item for item in view.children if getattr(item, "label", None) == "Show 4 Weeks").callback(interaction)
+        self.assertEqual(len(view.sessions()), 2)
+        select = next(item for item in view.children if isinstance(item, discord.ui.Select))
+        select._values = ["1"]
+        await select.callback(interaction)
+        self.assertIn("<@20>", view.content())
+        await next(item for item in view.children if getattr(item, "label", None) == "Leave This Session").callback(interaction)
+        self.assertEqual(view.draft, {plan["sessions"][1]["startAt"]: False})
+        with patch("cogs.event_manager.call", AsyncMock()) as api:
+            await view.cancel(interaction)
+            api.assert_not_called()
+        permanent = LeaveMembershipView(None, interaction, "internal-event", {"config": {"visibility": "private"}})
+        self.assertIn("lose access", permanent.content())
+
+    async def test_quick_leave_is_bound_to_the_rendered_session(self):
+        interaction = self.interaction()
+        cog = SimpleNamespace(member_action=AsyncMock())
+        event = {"id": "internal", "ownerId": "20", "members": ["10"], "status": "active",
+                 "config": self.builder().draft}
+        stamp = 1900000000
+        view = EventActions(cog, interaction, event, [{"startAt": stamp, "status": "scheduled",
+                                                       "participants": ["10"]}], False)
+        button = next(item for item in view.children if item.label == "Leave This Session")
+        await button.callback(interaction)
+        cog.member_action.assert_awaited_once_with(interaction, "internal", "leave", start_at=stamp)
+
+    async def test_invitation_dm_failure_never_falls_back_to_public_disclosure(self):
+        response = SimpleNamespace(status=403, reason="Forbidden")
+        denied = SimpleNamespace(send=AsyncMock(side_effect=discord.Forbidden(response, "DMs disabled")))
+        permitted = SimpleNamespace(send=AsyncMock())
+        guild = SimpleNamespace(name="Fixture", get_member={10: denied, 20: permitted}.get)
+        await notify_invited(guild, {"10", "20"})
+        denied.send.assert_awaited_once()
+        permitted.send.assert_awaited_once()
+        self.assertIn("/lfg invitations", permitted.send.await_args.args[0])
 
     async def test_mutation_rechecks_owner_and_guild_before_dispatch(self):
         interaction = self.interaction(ident=20, guild=2)
@@ -251,26 +312,24 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
     async def test_player_picker_preserves_existing_members_and_uses_names(self):
         editor = self.builder(members=",".join(str(i) for i in range(1, 45)), maxPlayers=50)
         page = ParticipantsView(editor)
-        self.assertEqual([item.label for item in page.children], ["Apply", "Cancel", "Add", "Remove"])
+        self.assertEqual([item.label for item in page.children], ["Apply", "Cancel", "Add Player", "Remove Player"])
         await page.add.callback(self.interaction())
-        add, invite = [next(c for c in page.children if c.row == row) for row in range(2)]
+        add = next(c for c in page.children if c.row == 0)
         add._values = [SimpleNamespace(id=60, bot=False), SimpleNamespace(id=61, bot=True)]
         await add.callback(self.interaction())
-        self.assertEqual(len(page.draft["members"].split(",")), 45)
+        self.assertEqual(len(page.draft["members"].split(",")), 44)
         self.assertEqual(len(editor.draft["members"].split(",")), 44)
         self.assertNotIn("61", page.draft["members"].split(","))
-        invite._values = [SimpleNamespace(id=62, bot=False)]
-        await invite.callback(self.interaction())
         await page.apply.callback(self.interaction())
-        self.assertEqual(editor.draft["invited"], "62")
-        self.assertEqual(len(editor.draft["members"].split(",")), 45)
+        self.assertEqual(editor.draft["invited"], "60")
+        self.assertEqual(len(editor.draft["members"].split(",")), 44)
         page = ParticipantsView(editor)
         await page.remove.callback(self.interaction())
         remove = next(c for c in page.children if c.row == 0)
         remove._values = [SimpleNamespace(id=60, bot=False)]
         await remove.callback(self.interaction())
         await page.cancel.callback(self.interaction())
-        self.assertIn("60", editor.draft["members"].split(","))
+        self.assertIn("60", editor.draft["invited"].split(","))
         self.assertIsNone(editor.reviewed)
 
     async def test_title_game_description_and_advanced_settings_remain_accessible(self):

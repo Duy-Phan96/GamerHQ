@@ -30,12 +30,15 @@ class EventView(discord.ui.View):
         await interaction.response.send_message("Open your own event controls to use this action.", ephemeral=True)
         return False
 
-    async def invoke(self, interaction, event_id, action):
+    async def invoke(self, interaction, event_id, action, *, start_at=None):
         if not await self.interaction_check(interaction):
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            await self.cog.action(interaction, event_id, action)
+            if start_at is not None:
+                await self.cog.member_action(interaction, event_id, action, start_at=start_at)
+            else:
+                await self.cog.action(interaction, event_id, action)
         except (ValueError, PermissionError, ManagementConflictError) as error:
             await interaction.followup.send(str(error)[:300], ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
@@ -94,7 +97,7 @@ class EventPicker(EventView):
 
 
 class EventActions(EventView):
-    def __init__(self, cog, interaction, event, occurrences, manages):
+    def __init__(self, cog, interaction, event, occurrences, manages, *, attendance=False):
         super().__init__(cog, interaction)
         self.event = event
         self.session = min((row for row in occurrences if session_open(row, event)),
@@ -105,12 +108,18 @@ class EventActions(EventView):
         attending = self.session and user in self.session["participants"]
         actions = []
         if attending:
-            actions.append(("leave", "Leave"))
+            actions.append(("leave", "Leave This Session"))
         elif event["status"] == "active" and (event["config"]["visibility"] == "public"
-                or user in event["members"] + event["invited"] or user == event.get("ownerId")):
+                or user in event["members"] or user == event.get("ownerId")):
             actions.append(("join", "Join"))
         if user in event["members"] and user != event.get("ownerId"):
-            actions.append(("leave-series", "Leave Event"))
+            actions.append(("leave-series", "Leave Event Permanently"))
+        if attendance:
+            actions.append(("attendance-plan", "My Attendance"))
+        actions.append(("switch-event", "Switch Event"))
+        permissions = interaction.user.guild_permissions
+        if permissions.administrator or permissions.manage_guild:
+            actions.append(("server-events", "All Server Events"))
         if manages:
             actions.extend([("edit", "Edit Event"), ("players", "Manage Players"),
                             ("pause", "Pause") if event["status"] == "active" else ("resume", "Resume")])
@@ -122,7 +131,8 @@ class EventActions(EventView):
                 style=discord.ButtonStyle.danger if action in ("delete", "cancel-session") else discord.ButtonStyle.secondary)
 
             async def clicked(interaction, choice=action):
-                await self.invoke(interaction, event["id"], choice)
+                start_at = self.session["startAt"] if self.session and choice in ("join", "leave") else None
+                await self.invoke(interaction, event["id"], choice, start_at=start_at)
 
             button.callback = clicked
             self.add_item(button)

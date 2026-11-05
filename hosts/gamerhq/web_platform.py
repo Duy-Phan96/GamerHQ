@@ -8,12 +8,17 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from typing import Any, Iterable, Mapping
+import discord
 
 from skill_runtime.contracts.context import SkillContext
 
 
 class WebPlatformAuthorizationError(PermissionError):
     pass
+
+
+MEMBER_EVENT_CONTRACTS = frozenset("event-manager." + name + ".v1" for name in
+    ("my-events", "attendance-plan", "attendance-save", "invitations", "invite-response"))
 
 
 def _json_value(value: Any) -> Any:
@@ -242,6 +247,19 @@ class GamerHQWebPlatformService:
         actor_id: int | None = None,
     ) -> dict[str, Any]:
         guild = self._require_guild(guild_id, authorized_guild_ids)
+        if skill_id == "event-manager" and contract_id in MEMBER_EVENT_CONTRACTS:
+            if actor_id is None:
+                raise WebPlatformAuthorizationError("A signed-in Discord member is required.")
+            member = guild.get_member(actor_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(actor_id)
+                except (discord.Forbidden, discord.NotFound) as error:
+                    raise WebPlatformAuthorizationError("Guild membership is required.") from error
+            if member is None or member.guild.id != int(guild_id):
+                raise WebPlatformAuthorizationError("Guild membership is required.")
+            if contract_id == "event-manager.attendance-plan.v1":
+                payload = {**payload, "manager": False}
         if skill_id == "event-manager" and payload.get("convertLegacySchedule") is True:
             member = guild.get_member(actor_id) if actor_id is not None else None
             if member is None or not member.guild_permissions.administrator:
@@ -253,7 +271,13 @@ class GamerHQWebPlatformService:
             payload=dict(payload),
             **({"actor_id": actor_id} if actor_id is not None else {}),
         )
-        return _json_value(result)
+        value = _json_value(result)
+        if skill_id == "event-manager" and contract_id == "event-manager.attendance-plan.v1":
+            for session in value.get("sessions", ()):
+                members = [guild.get_member(int(user)) for user in session["participants"]]
+                session["participantNames"] = [member.display_name if member else "Server member" for member in members]
+                session["registered"] = len(session.pop("participants"))
+        return value
 
     async def install_skill(
         self,

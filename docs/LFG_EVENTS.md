@@ -38,6 +38,18 @@ is configured separately from reminder preferences.
 See the [staging handoff](skills/event-manager-v2.md) for release dependencies
 and manual acceptance. The sections below describe the retained V1 flow.
 
+With Skill 0.1.2, **My Attendance** shows two weeks of scheduled sessions, with an
+option for four weeks. Select a session to see its roster. **Save Attendance**
+applies the whole draft. **Leave Event Permanently** confirms loss of private
+chat access and keeps past attendance. **Switch Event** opens your owned and
+joined events. Administrators can open **All Server Events**.
+
+**Add Player** creates a pending invitation. A best-effort DM points the
+recipient to `/lfg invitations`, which also works when DMs are disabled.
+**Remove Player** removes membership or revokes a pending invitation.
+`/lfg default-reminder` sets a guild default for new drafts, initially 15 minutes.
+Existing event settings and temporary voice-channel controls are separate.
+
 - cogs/lfg.py: creation/preview/join/share UI, Discord role assignment, private text/voice, notifications, persistent views and scheduler.
 - services/lfg_service.py: game eligibility, lookups, rendering and Europe/Berlin date parsing; ambiguous/nonexistent DST times are rejected.
 - services/lobby_service.py: transactional host/member rules. BEGIN IMMEDIATE serializes final capacity/state checks.
