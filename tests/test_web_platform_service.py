@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from hosts.gamerhq.web_platform import (
     GamerHQWebPlatformService,
@@ -288,6 +288,35 @@ class WebPlatformServiceTests(unittest.IsolatedAsyncioTestCase):
                 authorized_guild_ids=(999,),
             )
         self.runtime.install_skill.assert_not_awaited()
+
+    async def test_browser_lifecycle_requires_current_discord_management_permission(self):
+        rights = SimpleNamespace(administrator=False, manage_guild=False)
+        member = SimpleNamespace(guild=self.guild, guild_permissions=rights)
+        self.guild.get_member = lambda _: member
+        args = dict(guild_id=123, skill_id="progression", authorized_guild_ids=(123,), actor_id=50)
+        with self.assertRaises(WebPlatformAuthorizationError):
+            await self.service.install_skill(**args)
+        rights.manage_guild = True
+        await self.service.install_skill(**args)
+        rights.manage_guild = False
+        with self.assertRaises(WebPlatformAuthorizationError):
+            await self.service.set_skill_enabled(**args, enabled=False)
+        self.runtime.disable_skill.assert_not_awaited()
+
+    async def test_customer_history_requires_installation_and_hides_operator_records(self):
+        args = dict(guild_id=123, skill_id="progression", authorized_guild_ids=(123,))
+        with patch("hosts.gamerhq.skill_update_controller.deployment_history") as history:
+            self.assertEqual(await self.service.list_skill_deployments(**args), [])
+            history.assert_not_called()
+            self.status.installed = True
+            row = {"id": "operator-id", "detail": "internal diagnostic", "version": "0.2.0", "created_at": 1, "updated_at": 2}
+            history.return_value = [{**row, "state": "FAILED"}, {**row, "state": "APPLIED"}]
+            one, = await self.service.list_skill_deployments(**args)
+            again, = await self.service.list_skill_deployments(**args)
+            self.assertEqual(one, again)
+            self.assertEqual(one["state"], "APPLIED")
+            self.assertNotIn("operator-id", str(one))
+            self.assertNotIn("internal diagnostic", str(one))
 
     async def test_enable_disable_reuses_authoritative_runtime_state(self):
         await self.service.set_skill_enabled(

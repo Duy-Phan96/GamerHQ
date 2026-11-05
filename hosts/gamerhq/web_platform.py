@@ -7,6 +7,7 @@ the caller to provide guild IDs that were already authorized server-side.
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+from hashlib import sha256
 from typing import Any, Iterable, Mapping
 import discord
 
@@ -50,6 +51,28 @@ class GamerHQWebPlatformService:
         if guild is None:
             raise LookupError("Guild is not available to the GamerHQ host.")
         return guild
+
+    async def _require_member(self, guild, actor_id):
+        if actor_id is None:
+            raise WebPlatformAuthorizationError("A signed-in Discord member is required.")
+        member = guild.get_member(actor_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(actor_id)
+            except (discord.Forbidden, discord.NotFound) as error:
+                raise WebPlatformAuthorizationError("Guild membership is required.") from error
+        if member is None or member.guild.id != guild.id:
+            raise WebPlatformAuthorizationError("Guild membership is required.")
+        return member
+
+    async def _require_manager_actor(self, guild, actor_id):
+        # Existing trusted service operations carry no Discord actor. Browser
+        # requests always carry the actor from the sealed Web session.
+        if actor_id is not None:
+            member = await self._require_member(guild, actor_id)
+            permissions = member.guild_permissions
+            if not (permissions.administrator or permissions.manage_guild):
+                raise WebPlatformAuthorizationError("Discord Manage Server is required.")
 
     async def list_servers(self, *, authorized_guild_ids: Iterable[int]) -> list[dict[str, Any]]:
         allowed = self._authorized_set(authorized_guild_ids)
@@ -137,10 +160,16 @@ class GamerHQWebPlatformService:
 
     async def list_skill_deployments(self, *, guild_id: int, skill_id: str, authorized_guild_ids):
         self._require_guild(guild_id, authorized_guild_ids)
-        # Validate the package exists before returning Host-wide deployment history.
-        await self.skill_runtime.status(guild_id=int(guild_id), skill_id=skill_id)
+        status = await self.skill_runtime.status(guild_id=int(guild_id), skill_id=skill_id)
+        if not status.installed:
+            return []
         from .skill_update_controller import deployment_history
-        return deployment_history(skill_id=skill_id)
+        # This is shared runtime package history. Internal deployment IDs and
+        # diagnostics are reserved for Host operators.
+        return [{"id": sha256(f"{guild_id}:{row['id']}".encode()).hexdigest(), "skill_id": skill_id,
+                 "version": row["version"], "state": row["state"], "detail": "Host package applied.",
+                 "created_at": row["created_at"], "updated_at": row["updated_at"]}
+                for row in deployment_history(skill_id=skill_id) if row["state"] == "APPLIED"]
 
     async def get_management_schema(
         self,
@@ -248,18 +277,11 @@ class GamerHQWebPlatformService:
     ) -> dict[str, Any]:
         guild = self._require_guild(guild_id, authorized_guild_ids)
         if skill_id == "event-manager" and contract_id in MEMBER_EVENT_CONTRACTS:
-            if actor_id is None:
-                raise WebPlatformAuthorizationError("A signed-in Discord member is required.")
-            member = guild.get_member(actor_id)
-            if member is None:
-                try:
-                    member = await guild.fetch_member(actor_id)
-                except (discord.Forbidden, discord.NotFound) as error:
-                    raise WebPlatformAuthorizationError("Guild membership is required.") from error
-            if member is None or member.guild.id != int(guild_id):
-                raise WebPlatformAuthorizationError("Guild membership is required.")
+            await self._require_member(guild, actor_id)
             if contract_id == "event-manager.attendance-plan.v1":
                 payload = {**payload, "manager": False}
+        else:
+            await self._require_manager_actor(guild, actor_id)
         if skill_id == "event-manager" and payload.get("convertLegacySchedule") is True:
             member = guild.get_member(actor_id) if actor_id is not None else None
             if member is None or not member.guild_permissions.administrator:
@@ -285,8 +307,13 @@ class GamerHQWebPlatformService:
         guild_id: int,
         skill_id: str,
         authorized_guild_ids: Iterable[int],
+        actor_id: int | None = None,
     ) -> dict[str, Any]:
-        self._require_guild(guild_id, authorized_guild_ids)
+        guild = self._require_guild(guild_id, authorized_guild_ids)
+        await self._require_manager_actor(guild, actor_id)
+        status = await self.skill_runtime.status(guild_id=int(guild_id), skill_id=skill_id)
+        if status.version == "unknown":
+            raise LookupError("Skill package is unavailable to this Host.")
         await self.skill_runtime.install_skill(
             guild_id=int(guild_id),
             skill_id=skill_id,
@@ -304,9 +331,17 @@ class GamerHQWebPlatformService:
         skill_id: str,
         enabled: bool,
         authorized_guild_ids: Iterable[int],
+        actor_id: int | None = None,
     ) -> dict[str, Any]:
-        self._require_guild(guild_id, authorized_guild_ids)
+        guild = self._require_guild(guild_id, authorized_guild_ids)
+        await self._require_manager_actor(guild, actor_id)
         if enabled:
+            if actor_id is not None:
+                status = await self.skill_runtime.status(guild_id=int(guild_id), skill_id=skill_id)
+                if not status.installed or (not status.enabled and not status.configured):
+                    raise ValueError("Install and configure this Skill before enabling it.")
+                if not status.enabled and status.missing_capabilities:
+                    raise ValueError("The Host must provide the missing capabilities before enabling this Skill.")
             await self.skill_runtime.enable_skill(guild_id=int(guild_id), skill_id=skill_id)
         else:
             await self.skill_runtime.disable_skill(guild_id=int(guild_id), skill_id=skill_id)
@@ -328,9 +363,7 @@ class GamerHQWebPlatformService:
                 "distribution": status.source_distribution,
             },
             "state": {
-                # V1 represents Skills present in the host deployment. A future
-                # Marketplace catalog adds per-guild install/uninstall state.
-                "available": True,
+                "available": status.version != "unknown",
                 "installed": bool(status.installed),
                 "enabled": bool(status.enabled),
                 "configured": bool(status.configured),
