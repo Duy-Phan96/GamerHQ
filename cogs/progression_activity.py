@@ -99,6 +99,79 @@ def progression_member_signals(before, after, *, now: int | None = None) -> tupl
     return tuple(signals)
 
 
+async def emit_progression_award_notice(guild, payload: dict, response: dict) -> bool:
+    """Post human-readable achievement/reward evidence to the private Server Log."""
+    achievements = tuple(response.get("unlockedAchievements") or ())
+    rewards = tuple(response.get("rewardEvents") or ())
+    if not achievements and not rewards:
+        return False
+
+    member_id = int(payload.get("memberId") or response.get("memberId") or 0)
+    member = guild.get_member(member_id) if guild is not None and member_id else None
+    member_label = (
+        f"{member.display_name} ({member_id})"
+        if member is not None
+        else str(member_id or "unknown")
+    )
+
+    lines = [f"**Member:** {member_label}"]
+    if achievements:
+        lines.append("")
+        lines.append("**Achievements**")
+        for achievement in achievements[:10]:
+            name = str(achievement.get("name") or achievement.get("id") or "Achievement")[:100]
+            xp = int(achievement.get("xp") or 0)
+            occurrences = int(achievement.get("occurrences") or 1)
+            suffix = f" · +{xp} XP" if xp else ""
+            if occurrences > 1:
+                suffix += f" · {occurrences} occurrences"
+            lines.append(f"• {name}{suffix}")
+
+    if rewards:
+        lines.append("")
+        lines.append("**Rewards**")
+        for reward in rewards[:10]:
+            lines.append(f"• {str(reward.get('name') or reward.get('id') or 'Reward')[:100]}")
+
+    if response.get("level") is not None or response.get("totalXp") is not None:
+        lines.append("")
+        summary = []
+        if response.get("level") is not None:
+            summary.append(f"Level {int(response['level'])}")
+        if response.get("totalXp") is not None:
+            summary.append(f"{int(response['totalXp'])} total XP")
+        lines.append("**Progress:** " + " · ".join(summary))
+
+    provider = str(payload.get("provider") or "").strip()
+    signal = str(payload.get("signal") or payload.get("source") or "").strip()
+    if provider or signal:
+        lines.append(f"**Source:** {provider + '/' if provider else ''}{signal or 'activity'}")
+
+    dedupe = str(payload.get("dedupeKey") or "").strip()
+    event = (
+        "progression-award:" + dedupe
+        if dedupe
+        else "progression-award:"
+        + str(guild.id)
+        + ":"
+        + str(member_id)
+        + ":"
+        + str(payload.get("occurredAt") or int(time.time()))
+        + ":"
+        + ",".join(str(item.get("id") or "") for item in achievements + rewards)
+    )
+
+    from services.server_log_service import emit
+
+    return await emit(
+        guild,
+        event,
+        "🏆 Progression Award",
+        "\n".join(lines),
+        management=True,
+    )
+
+
 async def emit_progression_signal(bot, guild_id: int, payload: dict, *, attempts: int = 2) -> bool:
     """Best-effort public Runtime call; core member flows never depend on Progression."""
     runtime = getattr(bot, "skill_runtime", None) if bot is not None else None
@@ -121,12 +194,15 @@ async def emit_progression_signal(bot, guild_id: int, payload: dict, *, attempts
     attempts = max(1, min(int(attempts), 3))
     for attempt in range(attempts):
         try:
-            await runtime.call_management(
+            response = await runtime.call_management(
                 guild_id=guild_id,
                 skill_id="progression",
                 contract_id=RECORD_SIGNAL_API,
                 payload=dict(payload),
             )
+            guild = bot.get_guild(int(guild_id)) if hasattr(bot, "get_guild") else None
+            if guild is not None:
+                await emit_progression_award_notice(guild, payload, dict(response or {}))
             return True
         except Exception:
             if attempt + 1 >= attempts:
@@ -206,15 +282,21 @@ class ProgressionActivity(commands.Cog):
                         continue
                     self._voice_minutes[key] -= window
                     try:
-                        await self._management(
+                        payload = {
+                            "memberId": member.id,
+                            "source": "voice",
+                            "units": 1,
+                            "occurredAt": int(time.time()),
+                        }
+                        response = await self._management(
                             guild.id,
                             RECORD_ACTIVITY_API,
-                            {
-                                "memberId": member.id,
-                                "source": "voice",
-                                "units": 1,
-                                "occurredAt": int(time.time()),
-                            },
+                            payload,
+                        )
+                        await emit_progression_award_notice(
+                            guild,
+                            payload,
+                            dict(response or {}),
                         )
                     except Exception:
                         # Preserve the completed window for retry on the next sample.
@@ -258,17 +340,23 @@ async def award_completed_lfg(bot, guild: discord.Guild, event: dict) -> None:
 
     async def record(member_id: int, source: str):
         try:
-            await runtime.call_management(
+            payload = {
+                "memberId": member_id,
+                "source": source,
+                "units": 1,
+                "occurredAt": occurred_at,
+                "dedupeKey": f"lfg:{event_id}:{source}:{member_id}",
+            }
+            response = await runtime.call_management(
                 guild_id=guild.id,
                 skill_id="progression",
                 contract_id=RECORD_ACTIVITY_API,
-                payload={
-                    "memberId": member_id,
-                    "source": source,
-                    "units": 1,
-                    "occurredAt": occurred_at,
-                    "dedupeKey": f"lfg:{event_id}:{source}:{member_id}",
-                },
+                payload=payload,
+            )
+            await emit_progression_award_notice(
+                guild,
+                payload,
+                dict(response or {}),
             )
         except Exception:
             log.exception(
