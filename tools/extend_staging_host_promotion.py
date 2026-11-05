@@ -17,14 +17,14 @@ import tempfile
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
-OLD = '135bbf604926d6b1794503d17821ad00f1c09555'
+OLD = '9c1a6f4bca0f46a3f34ac57830e45e356e3a4b03'
 LEGACY = '92db47042d58055cb0debdfd83f11f8508e19809'
-PREVIOUS_HOST = '6a2c74a234d693abe70f5f69dfbb41dbce38bc75'
+PREVIOUS_HOST = '17858f47480e914956dd241b9f37a328b4c6ac2b'
 PREVIOUS_PIN = {'commit': PREVIOUS_HOST,
-    'archiveSha256': 'ca3c9acbf7087d59881f130c903bf13b2c47fed1f2157933f6ca08e07df2fc97',
-    'workflowSha256': '25314997e8d6e9f4b6affa64690ecfab8044be3c87e9c27d1555d827372a1c79'}
-HOST = '17858f47480e914956dd241b9f37a328b4c6ac2b'
-ARCHIVE = '77504247b70dee58c6f7d982eb4d65e50218a7fccb3581cd7e5723799fe888d9'
+    'archiveSha256': '77504247b70dee58c6f7d982eb4d65e50218a7fccb3581cd7e5723799fe888d9',
+    'workflowSha256': '83e80648461ad899ed9a2fdcff18145039c2cdd5a2045fd211daf2c7443ad05d'}
+HOST = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
+ARCHIVE = '8d4286c5596963fe10b8f36da163bbe3de12d6b2512673f5b54535145ad424bd'
 MODULES = ('__init__.py', 'policy.py', 'oidc.py', 'backend.py', 'bridge.py', 'host_promotion.py')
 
 
