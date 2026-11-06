@@ -1,0 +1,6 @@
+# Use the exact owner-verified hostname in the existing edge configuration.
+{$GAMERHQ_WEB_STAGING_HOSTNAME} {
+	header Cache-Control "no-store"
+	header X-GamerHQ-Staging-Edge "parked"
+	respond "Web staging is awaiting activation." 503
+}

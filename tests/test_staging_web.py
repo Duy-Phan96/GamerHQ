@@ -11,6 +11,7 @@ from zipfile import ZipFile
 import pytest
 
 from tools.staging_automation import web
+from tools import staging_web_edge as edge_check
 from tools.staging_automation.bridge import execute
 from tools.staging_automation.policy import Denied
 
@@ -90,6 +91,36 @@ def test_unhealthy_candidate_restores_running_web_and_cannot_be_rolled_back_to(m
         deployment.rollback()
 
 
+def test_edge_preflight_reports_exact_callback_and_rejects_other_addresses(monkeypatch, pin):
+    hostname = pin['hostname']
+    addresses = [edge_check.IPV4]
+    monkeypatch.setattr(edge_check.socket, 'getaddrinfo',
+                        lambda host, port, **kwargs: [(0, 0, 0, '', (address, port)) for address in addresses])
+    assert edge_check.preflight(hostname, dns_only=True)['discordRedirectUri'] == (
+        'https://' + hostname + '/api/auth/discord/callback')
+    addresses.append('2001:db8::1')
+    with pytest.raises(edge_check.EdgeCheckError, match='DNS_ADDRESS_MISMATCH'):
+        edge_check.preflight(hostname, dns_only=True)
+
+
+@pytest.mark.parametrize('redirect, parked, expected', [
+    ('https://other.synthetic.net/', (503, None, 'parked', 'no-store'), 'HTTPS_REDIRECT_MISMATCH'),
+    (None, (503, None, None, 'no-store'), 'PARKED_EDGE_MISMATCH'),
+    (None, (200, None, 'parked', 'no-store'), 'PARKED_EDGE_MISMATCH'),
+    (None, (503, None, 'parked', 'no-store'), 'PARKED_HTTPS_VERIFIED'),
+])
+def test_edge_preflight_requires_canonical_redirect_and_parked_response(monkeypatch, pin, redirect, parked, expected):
+    hostname = pin['hostname']
+    monkeypatch.setattr(edge_check, 'verify_dns', lambda _: None)
+    monkeypatch.setattr(edge_check, 'probe',
+                        lambda name, tls: parked if tls else (308, redirect or f'https://{name}/', None, None))
+    if expected == 'PARKED_HTTPS_VERIFIED':
+        assert edge_check.preflight(hostname)['state'] == expected
+    else:
+        with pytest.raises(edge_check.EdgeCheckError, match=expected):
+            edge_check.preflight(hostname)
+
+
 @pytest.mark.skipif(os.environ.get('GAMERHQ_WEB_CONTROLLER_DOCKER_CI') != 'true'
                     or os.environ.get('GITHUB_ACTIONS') != 'true', reason='requires disposable Actions Docker daemon')
 def test_disposable_docker_switch_preserves_host_and_restores_previous_web(tmp_path, pin):
@@ -126,11 +157,14 @@ require('http').createServer((req,res) => res.end(JSON.stringify({
 
         # Exercise the reviewed proxy route over certificate-verified TLS. The
         # local CA and high port are only for this disposable runner.
-        template = Path('deploy/staging/web.Caddyfile').read_text()
         edge = tmp_path / 'Caddyfile'
         hostname = pin['hostname']
-        edge.write_text('{\n\tauto_https disable_redirects\n}\n' +
-                        template.replace('{$GAMERHQ_WEB_STAGING_HOSTNAME} {', f'{hostname}:14443 {{\n\ttls internal'))
+        def write_edge(filename):
+            template = Path('deploy/staging', filename).read_text()
+            edge.write_text('{\n\tauto_https disable_redirects\n}\n' +
+                            template.replace('{$GAMERHQ_WEB_STAGING_HOSTNAME} {', f'{hostname}:14443 {{\n\ttls internal'))
+
+        write_edge('web-parked.Caddyfile')
         docker('run', '-d', '--name', 'gamerhq-staging-web-edge-ci', '--network', 'host',
                '--volume', str(edge) + ':/etc/caddy/Caddyfile:ro', 'caddy:2-alpine')
         certificate = tmp_path / 'edge-ca.pem'
@@ -147,14 +181,20 @@ require('http').createServer((req,res) => res.end(JSON.stringify({
                 '--resolve', f'{hostname}:14443:127.0.0.1', '--max-time', '10']
         origin = f'https://{hostname}:14443'
         for _ in range(15):
-            response = subprocess.run([*curl, '--fail', origin + '/'], text=True, capture_output=True, timeout=12)
+            response = subprocess.run([*curl, '--include', origin + '/'], text=True, capture_output=True, timeout=12)
             if response.returncode == 0:
-                assert json.loads(response.stdout)['service'] == 'gamerhq-web'
+                parked = response.stdout.lower()
+                assert parked.splitlines()[0].split()[1] == '503'
+                assert 'x-gamerhq-staging-edge: parked' in parked and 'cache-control: no-store' in parked
                 break
             time.sleep(1)
         else:
             pytest.fail('Disposable HTTPS listener did not become ready: ' +
                         docker('logs', 'gamerhq-staging-web-edge-ci'))
+        write_edge('web.Caddyfile')
+        docker('exec', 'gamerhq-staging-web-edge-ci', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile')
+        result = subprocess.check_output([*curl, '--fail', origin + '/'], text=True)
+        assert json.loads(result)['service'] == 'gamerhq-web'
         result = subprocess.check_output([*curl, '--output', '/dev/null', '--write-out', '%{http_code}',
                                           origin + '/api/health'], text=True)
         assert result == '404'
