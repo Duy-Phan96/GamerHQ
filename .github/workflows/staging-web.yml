@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 6391ca84efbb11304a72797678b2bc2d59038468
+          ref: 961662ccf0b7bd3f694d45f135712e389618c6ef
           persist-credentials: false
       - name: Use the existing restricted staging controller
         env:
