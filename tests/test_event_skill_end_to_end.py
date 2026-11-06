@@ -4,15 +4,20 @@ Run with the reviewed Event Manager package installed. Only its public entry poi
 management contracts and SDK lifecycle are used, never private repository imports.
 """
 import asyncio
+from datetime import datetime, timezone
 import importlib.util
+from importlib.metadata import version
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
+from packaging.version import Version
 import pytest
 
 from database import db
 from hosts.gamerhq.event_cutover import owns_events
+from hosts.gamerhq.skill_host import CapabilityPermissions, GamerHQSkillStorage
 from hosts.gamerhq.skill_packages import load_external_skill_packages
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
 from hosts.gamerhq.web_platform import GamerHQWebPlatformService
@@ -70,6 +75,120 @@ def test_public_install_editor_resources_and_restart_share_one_authority(resourc
                     max_players=5, invite_lead_minutes=15)
         finally:
             await second.close()
+    asyncio.run(scenario())
+
+
+def test_expiry_upgrade_and_reissue_preserve_sqlite_schedule_and_discord_access(resources):
+    if Version(version("gamerhq-skill-event-manager")) < Version("0.1.3"):
+        pytest.skip("Invitation expiry requires Event Manager 0.1.3 or later.")
+
+    async def scenario():
+        guild = resources.guild
+        owner = resources.member
+        guest = MagicMock(spec=discord.Member)
+        guest.id, guest.guild = 60, guild
+        guild.get_member.side_effect = {owner.id: owner, guest.id: guest}.get
+        bot = SimpleNamespace(guilds=[guild], get_guild=lambda ident: guild if ident == guild.id else None)
+        db.set_setting("skill_resources:1:event-manager", json.dumps({"categoryId": 10, "allowPublic": False}))
+        storage = GamerHQSkillStorage(guild_id=1, skill_id="event-manager",
+                                      permissions=CapabilityPermissions(("storage.skill",)))
+        now = int(datetime(2030, 1, 7, 10, tzinfo=timezone.utc).timestamp())
+
+        async def open_runtime():
+            runtime = GamerHQSkillRuntime(bot)
+            load_external_skill_packages(runtime, ("event-manager",))
+            await runtime.register_all()
+            bot.skill_runtime = runtime
+            return runtime
+
+        async def call(operation, payload, *, actor=50):
+            return await bot.skill_runtime.call_management(
+                guild_id=1, skill_id="event-manager", contract_id=f"event-manager.{operation}.v1",
+                payload=payload, actor_id=actor)
+
+        async def event_detail():
+            return (await call("get", {"eventId": event_id}))["state"]
+
+        async def inbox():
+            return (await call("invitations", {}, actor=guest.id))["invitations"]
+
+        async def accept(invite):
+            return await call("invite-response", {"eventId": invite["eventId"],
+                "revision": invite["revision"], "accept": True}, actor=guest.id)
+
+        async def edit(**changes):
+            current = (await call("get", {"eventId": event_id}))["event"]
+            current.pop("id")
+            return await call("update", {**current, "eventId": event_id, **changes})
+
+        with patch("time.time", side_effect=lambda: now):
+            runtime = await open_runtime()
+            try:
+                await runtime.install_skill(guild_id=1, skill_id="event-manager")
+                draft = (await call("describe", {}))["defaultDraft"]
+                draft.update(requestId="expiry-upgrade", name="Private recurring raid", kind="recurring",
+                             startDate="2030-01-08", localTime="19:00", timezone="UTC", weekdays=[0, 2, 4],
+                             visibility="private", invited=str(guest.id))
+                event_id = (await call("create", draft))["event"]["id"]
+                await runtime.enable_skill(guild_id=1, skill_id="event-manager")
+                await call("reconcile", {"eventId": event_id})
+                before = await event_detail()
+                history = (await call("history", {"eventId": event_id}))["occurrences"]
+                key = "event.v2:" + event_id
+                old = await storage.get(key)
+                # Simulate a pending row written by 0.1.2 before the Host restarts.
+                old.pop("invitationTtlHours")
+                old.pop("invitationExpiresAt")
+                await storage.set(key, old)
+            finally:
+                await runtime.close()
+
+            runtime = await open_runtime()
+            try:
+                assert await runtime.restore_guild(guild_id=1) == ("event-manager",)
+                legacy, = await inbox()
+                deadline = (await storage.get(key))["invitationExpiresAt"][str(guest.id)]
+                assert deadline == now + 7 * 86400 and legacy["revision"] == before["revision"]
+            finally:
+                await runtime.close()
+
+            now += 60
+            runtime = await open_runtime()
+            try:
+                assert await runtime.restore_guild(guild_id=1) == ("event-manager",)
+                assert await inbox() == [legacy]
+                assert (await storage.get(key))["invitationExpiresAt"][str(guest.id)] == deadline
+                assert (await event_detail())["chat"] == before["chat"]
+                assert (await call("history", {"eventId": event_id}))["occurrences"] == history
+                channel, = resources.channels
+                assert channel.overwrites_for(guest).view_channel is None
+                assert channel.overwrites_for(guild.default_role).view_channel is False
+
+                await edit(invited="", invitationTtlHours=1)
+                assert (await accept(legacy))["state"] == "resolved"
+                await edit(invited=str(guest.id))
+                short, = await inbox()
+                now += 3600
+                assert await inbox() == []
+                assert (await accept(short))["state"] == "resolved"
+                assert (await event_detail())["members"] == [str(owner.id)]
+                assert channel.overwrites_for(guest).view_channel is None
+
+                await edit(invited=str(guest.id))
+                fresh, = await inbox()
+                assert (await accept(short))["code"] == "conflict"
+                assert (await accept(fresh))["state"] == "accepted"
+                assert (await accept(fresh))["state"] == "resolved"
+                report = await runtime.scheduler.run_due(now=now)
+                assert report.executed == 1 and report.failed == 0
+                assert channel.overwrites_for(guest).view_channel is True
+                assert (await event_detail())["chat"] == before["chat"]
+                assert [row["id"] for row in (await call("history", {"eventId": event_id}))["occurrences"]] == [
+                    row["id"] for row in history]
+                assert len(resources.channels) == len(resources.messages) == 1
+            finally:
+                await runtime.close()
+
     asyncio.run(scenario())
 
 
