@@ -1,0 +1,40 @@
+name: Isolated staging Web
+run-name: Staging Web / ${{ inputs.operation }}
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Web-only staging operation
+        type: choice
+        required: true
+        options: [web-health, web-deploy, web-rollback]
+permissions:
+  contents: read
+concurrency:
+  group: host-staging-automation
+  cancel-in-progress: false
+jobs:
+  web:
+    if: github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.operation == 'web-health' && 'staging-automation' || 'deployment-security' }}
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 961662ccf0b7bd3f694d45f135712e389618c6ef
+          persist-credentials: false
+      - name: Use the existing restricted staging controller
+        env:
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+          GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
+          GAMERHQ_WEB_ARTIFACT_READ_TOKEN: ${{ inputs.operation == 'web-deploy' && secrets.GAMERHQ_WEB_ARTIFACT_READ_TOKEN || '' }}
+          WEB_OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.staging_automation_client "$WEB_OPERATION"
