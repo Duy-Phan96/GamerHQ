@@ -3,15 +3,19 @@ import re
 import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote'})
+WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback'})
 PUBLIC = frozenset({'status', 'challenge'})
-OPERATIONS = ROUTINE | SECURITY | PUBLIC
-MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote'})
+OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
+MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback'})
 PREFIX = 'gamerhq-staging-automation-v1'
 ERROR_CODES = frozenset(['ACCESS_REVOKED', 'AUTOMATION_NOT_ACTIVATED', 'AUTOMATION_REQUEST_REJECTED', 'DISK_BUDGET_REQUIRES_OWNER', 'DATABASE_BUDGET_REQUIRES_OWNER', 'BUILD_RATE_LIMIT', 'CHALLENGE_REJECTED', 'CLOCK_REGRESSION', 'CONCURRENT_OPERATION_REJECTED', 'CONTAINER_IDENTITY_REJECTED', 'CONTAINER_MOUNTS_REJECTED', 'CONTAINER_NETWORK_REJECTED', 'CONTAINER_PRIVILEGES_REJECTED', 'DEPLOYMENT_NOT_READY', 'GITHUB_POLICY_METADATA_UNAVAILABLE', 'HOST_NOT_HEALTHY', 'HOST_NOT_READY', 'HOST_OPERATION_FAILED', 'HTTP_REDIRECT_REJECTED', 'IMMUTABLE_RELEASE_CHANGED', 'INITIAL_BOOTSTRAP_NOT_VERIFIED', 'INITIAL_IMAGE_NOT_VERIFIED', 'LEGACY_ENVIRONMENT_NOT_PROTECTED', 'LEGACY_SOURCE_BINDING_REJECTED', 'MIGRATION_REQUIRES_OWNER', 'MUTATION_RATE_LIMIT', 'OFFLINE_PROBE_FAILED', 'OIDC_REJECTED', 'OIDC_REPLAY_REJECTED', 'OPERATION_NOT_ALLOWED', 'PACKAGE_UPDATE_REQUIRED', 'PAYLOAD_REJECTED', 'POLICY_REJECTED', 'PRIVILEGE_EXPANSION_REQUIRES_OWNER', 'PUBLIC_METADATA_LIMIT', 'PUBLISHER_REJECTED', 'RECOVERY_CIRCUIT_OPEN', 'RECOVERY_REQUIRES_OWNER', 'RELEASE_CHANNEL_REQUIRES_OWNER', 'RELEASE_DESCRIPTOR_REJECTED', 'REQUEST_LIMIT', 'REQUEST_RATE_LIMIT', 'REQUEST_REJECTED', 'RESOURCE_LIMIT_REQUIRES_OWNER', 'RESOURCE_POLICY_REJECTED', 'RESTART_COOLDOWN', 'RESTART_HEALTH_FAILED', 'RESTART_RATE_LIMIT', 'ROOT_EXECUTION_REJECTED', 'UNKNOWN_IMAGE_REQUIRES_OWNER', 'UPDATE_FAILED', 'VERSION_REQUIRES_OWNER'])
 
 
 ERROR_CODES = ERROR_CODES | frozenset({'HOST_SOURCE_BUILD_FAILED', 'HOST_PROMOTION_NOT_INSTALLED'})
+ERROR_CODES |= frozenset({'WEB_POLICY_REJECTED', 'WEB_NOT_ENROLLED', 'WEB_ARTIFACT_REJECTED',
+    'WEB_CAPACITY_REJECTED', 'WEB_CONFIGURATION_REJECTED', 'WEB_CONTAINER_REJECTED', 'WEB_HEALTH_FAILED',
+    'WEB_RECOVERY_REQUIRED', 'WEB_ROLLBACK_UNAVAILABLE'})
 
 
 class Denied(Exception):
@@ -42,6 +46,9 @@ def validate_policy(value):
             raise Denied('POLICY_REJECTED')
     if value.get('limits') != {'mutationsPerHour': 12, 'buildsPerHour': 3, 'restartsPerHour': 2, 'restartCooldown': 120}:
         raise Denied('RESOURCE_POLICY_REJECTED')
+    if 'webDeployment' in value:
+        from .web import validate_pin
+        validate_pin(value['webDeployment'])
     return value
 
 
@@ -53,6 +60,8 @@ def charge(state, operation, now=None):
     if len(events) >= 60: raise Denied('REQUEST_RATE_LIMIT')
     if operation in MUTATIONS and sum(e['op'] in MUTATIONS for e in events) >= 12: raise Denied('MUTATION_RATE_LIMIT')
     if operation in ('prepare', 'update', 'host-promote') and sum(e['op'] in ('prepare', 'update', 'host-promote') for e in events) >= 3: raise Denied('BUILD_RATE_LIMIT')
+    if operation == 'web-deploy' and sum(e['op'] == 'web-deploy' for e in events) >= 3:
+        raise Denied('BUILD_RATE_LIMIT')
     if operation in ('restart', 'recover', 'host-promote'):
         restarts = [e for e in events if e['op'] in ('restart', 'recover', 'host-promote')]
         if len(restarts) >= 2: raise Denied('RESTART_RATE_LIMIT')
@@ -64,6 +73,8 @@ def charge(state, operation, now=None):
 def admit(operation, state):
     if operation in MUTATIONS and state.get('recoveryRequired'): raise Denied('RECOVERY_REQUIRES_OWNER')
     if operation == 'host-promote' and (not state.get('enabled') or not state.get('bootstrapVerified')):
+        raise Denied('AUTOMATION_NOT_ACTIVATED')
+    if operation in WEB and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if operation in ROUTINE - {'health'} and not state.get('enabled'):
         raise Denied('AUTOMATION_NOT_ACTIVATED')

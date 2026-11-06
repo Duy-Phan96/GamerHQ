@@ -1,0 +1,12 @@
+# Set this only to the verified, owner-approved hostname.
+# Review this site block in the existing edge configuration before reloading it.
+{$GAMERHQ_WEB_STAGING_HOSTNAME} {
+	@internalHealth path /api/health
+	respond @internalHealth 404
+
+	reverse_proxy 127.0.0.1:13000 {
+		header_up -Authorization
+		header_up -X-GamerHQ-Actor-Id
+		header_up -X-GamerHQ-Authorized-Guild-Ids
+	}
+}
