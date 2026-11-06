@@ -76,7 +76,7 @@ def atomic(path, body, gid):
         if temporary.exists(): temporary.unlink()
 
 
-def extension(commit, approval, *, web_hostname=None):
+def extension(commit, approval, *, web_hostname=None, previous_web_controller=None):
     import pwd
     web = web_hostname is not None
     expected_approval = 'ENROLL ISOLATED STAGING WEB' if web else 'REPLACE REVIEWED STAGING HOST PIN'
@@ -85,8 +85,10 @@ def extension(commit, approval, *, web_hostname=None):
     if web and (not re.fullmatch(r'(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}', web_hostname)
                 or web_hostname.endswith(('.local', '.localhost', '.test', '.invalid', '.example'))):
         raise ValueError('VERIFIED_WEB_HOSTNAME_REQUIRED')
-    previous_commit = WEB_BASE if web else OLD
-    if not re.fullmatch('[0-9a-f]{40}', commit):
+    if previous_web_controller is not None and not web:
+        raise ValueError('OWNER_APPROVAL_REQUIRED')
+    previous_commit = (previous_web_controller or WEB_BASE) if web else OLD
+    if not all(re.fullmatch('[0-9a-f]{40}', value) for value in (commit, previous_commit)):
         raise ValueError('IMMUTABLE_SOURCE_REQUIRED')
     account = pwd.getpwnam('gamerhq-staging-bridge')
     uid, gid = account.pw_uid, account.pw_gid
@@ -97,6 +99,8 @@ def extension(commit, approval, *, web_hostname=None):
     policy = json.loads(original_policy)
     if policy.get('controllerCommit') not in (previous_commit, commit) or policy.get('legacyWorkerCommit') != LEGACY or policy.get('repository') != 'Duy-Phan96/GamerHQ':
         raise ValueError('REVIEWED_ENROLLMENT_REQUIRED')
+    if web and previous_commit != WEB_BASE and policy.get('webDeployment', {}).get('hostname') != web_hostname:
+        raise ValueError('EXISTING_WEB_ORIGIN_CHANGED')
     entry = ROOT / 'automation-controller/entry.py'
     old_entry = trusted(entry)
     revisions = ROOT / 'automation-controller/revisions'
@@ -140,7 +144,8 @@ def extension(commit, approval, *, web_hostname=None):
         workflow = git('show', commit + ':.github/workflows/staging-host-promotion.yml')
         if web and policy.get('hostPromotion') != {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}:
             raise ValueError('EXISTING_HOST_POLICY_CHANGED')
-        for name in MODULES:
+        previous_modules = (*MODULES, 'web.py') if web and previous_commit != WEB_BASE else MODULES
+        for name in previous_modules:
             if trusted(previous / 'staging_automation' / name) != git('show', previous_commit + ':tools/staging_automation/' + name):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
         if trusted(previous / 'staging_automation/deployment.py') != git('show', previous_commit + ':hosts/gamerhq/skill_update_controller.py'):
@@ -236,8 +241,11 @@ def extension(commit, approval, *, web_hostname=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--commit', required=True); parser.add_argument('--approval', required=True)
     parser.add_argument('--web-hostname')
+    parser.add_argument('--previous-web-controller')
     args = parser.parse_args()
-    try: print(json.dumps(extension(args.commit, args.approval, web_hostname=args.web_hostname), indent=2))
+    try:
+        print(json.dumps(extension(args.commit, args.approval, web_hostname=args.web_hostname,
+                                   previous_web_controller=args.previous_web_controller), indent=2))
     except Exception as error:
         code = str(error) if re.fullmatch('[A-Z_]{1,80}', str(error)) else 'HOST_EXTENSION_REJECTED'
         raise SystemExit(json.dumps({'extensionError': code, 'productionChanged': False})) from None

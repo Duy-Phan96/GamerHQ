@@ -167,6 +167,8 @@ def main():
         release = json.loads(os.environ['GAMERHQ_STAGING_RELEASE']) if args.operation == 'prepare' and os.environ.get('GAMERHQ_STAGING_RELEASE') else None
         result = perform(args.operation, release)
     print(json.dumps(result))
+    if args.operation == 'web-health' and result.get('state') == 'WEB_UNHEALTHY':
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

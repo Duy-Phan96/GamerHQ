@@ -18,7 +18,9 @@ network, secrets or command. The owner installs the root-owned policy once
 through the existing checksum-verified controller extension. An image pin
 binds a successful Web `main` push run, artifact ID, ZIP SHA-256, source commit
 and Docker image ID. Update the reviewed candidate descriptor before enrollment
-if the short-retention artifact has expired.
+if the short-retention artifact has expired. A later reviewed pin replacement
+uses `--previous-web-controller` with the installed controller commit and
+the same verified hostname. It retains the OAuth settings and Web slots.
 
 ## Owner configuration
 

@@ -181,17 +181,17 @@ class WebDeployment:
                     time.sleep(2)
         raise Denied('WEB_HEALTH_FAILED')
 
-    def create(self, name):
-        env = oauth_environment(self.pin, self.pin['commit'])
-        self.backend.run(['docker', 'create', '--name', name, '--label', LABEL + '=' + self.pin['commit'],
-                    '--pull=never', '--network', NETWORK, '--publish', PORT + ':3000', '--user', '1001:1001',
-                    '--init', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m,mode=1777',
-                    '--tmpfs', '/app/.next/cache:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0700',
-                    '--cap-drop=ALL', '--security-opt=no-new-privileges:true', '--memory=256m',
-                    '--memory-swap=256m', '--cpus=0.5', '--pids-limit=96', '--restart=no',
-                    '--log-driver=json-file', '--log-opt=max-size=5m', '--log-opt=max-file=2',
-                    '--env-file', '/dev/stdin', '--entrypoint', 'node', self.pin['imageId'], 'server.js'],
-                    stdin=''.join(key + '=' + value + '\n' for key, value in env.items()))
+    def create(self, name, env):
+        self.backend.run([
+            'docker', 'create', '--name', name, '--label', LABEL + '=' + self.pin['commit'],
+            '--pull=never', '--network', NETWORK, '--publish', PORT + ':3000', '--user', '1001:1001',
+            '--init', '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m,mode=1777',
+            '--tmpfs', '/app/.next/cache:rw,noexec,nosuid,size=32m,uid=1001,gid=1001,mode=0700',
+            '--cap-drop=ALL', '--security-opt=no-new-privileges:true', '--memory=256m',
+            '--memory-swap=256m', '--cpus=0.5', '--pids-limit=96', '--restart=no',
+            '--log-driver=json-file', '--log-opt=max-size=5m', '--log-opt=max-file=2',
+            '--env-file', '/dev/stdin', '--entrypoint', 'node', self.pin['imageId'], 'server.js',
+        ], stdin=''.join(key + '=' + value + '\n' for key, value in env.items()))
 
     def stop(self, row):
         self.docker('stop', '--time', '10', row['id'])
@@ -212,6 +212,10 @@ class WebDeployment:
                 self.probe(candidate, attempts=10)
             else:
                 self.start(candidate)
+            recorded = {**self.state, 'webActive': target}
+            if current is not None and current != target:
+                recorded['webPrevious'] = current
+            self.save(recorded)
         except Exception:
             try:
                 fresh = self.slots()
@@ -222,10 +226,7 @@ class WebDeployment:
             except Exception:
                 raise Denied('WEB_RECOVERY_REQUIRED') from None
             raise Denied('WEB_HEALTH_FAILED') from None
-        self.state['webActive'] = target
-        if current is not None and current != target:
-            self.state['webPrevious'] = current
-        self.save(self.state)
+        self.state.update(recorded)
         return {'state': 'WEB_HEALTHY', 'webCommit': candidate['commit'], 'imageId': candidate['imageId'],
                 'rollbackAvailable': self.state.get('webPrevious') in rows}
 
@@ -238,6 +239,7 @@ class WebDeployment:
             return self.select(current, rows)
         if not self.budget()['capacityReady']:
             raise Denied('WEB_CAPACITY_REJECTED')
+        env = oauth_environment(self.pin, self.pin['commit'])
         target = next(name for name in SLOTS if name != current)
         with tempfile.TemporaryDirectory(prefix='web-deploy-', dir=self.backend.profile['workRoot']) as temp:
             root = Path(temp)
@@ -249,7 +251,7 @@ class WebDeployment:
                 self.state.pop('webPrevious', None)
                 self.save(self.state)
                 self.docker('container', 'rm', rows[target]['id'])
-            self.create(target)
+            self.create(target, env)
         rows = self.slots()
         if rows[target]['imageId'] != self.pin['imageId'] or rows[target]['commit'] != self.pin['commit']:
             raise Denied('WEB_CONTAINER_REJECTED')
@@ -273,7 +275,8 @@ class WebDeployment:
         rows = self.slots()
         row = rows.get(self.state.get('webActive'))
         if row is None or not row['running']:
-            return {'state': 'WEB_NOT_RUNNING', **report}
+            status = 'WEB_UNHEALTHY' if self.state.get('webActive') or any(row['running'] for row in rows.values()) else 'WEB_NOT_RUNNING'
+            return {'state': status, **report}
         try:
             self.probe(row)
         except Denied:

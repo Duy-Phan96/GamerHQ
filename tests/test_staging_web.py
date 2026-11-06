@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 from types import SimpleNamespace
 from zipfile import ZipFile
 
@@ -91,7 +92,7 @@ def test_unhealthy_candidate_restores_running_web_and_cannot_be_rolled_back_to(m
 
 @pytest.mark.skipif(os.environ.get('GAMERHQ_WEB_CONTROLLER_DOCKER_CI') != 'true'
                     or os.environ.get('GITHUB_ACTIONS') != 'true', reason='requires disposable Actions Docker daemon')
-def test_disposable_docker_switch_preserves_host_and_restores_previous_web(monkeypatch, tmp_path, pin):
+def test_disposable_docker_switch_preserves_host_and_restores_previous_web(tmp_path, pin):
     def docker(*args, stdin=None):
         return subprocess.run(['docker', *args], input=stdin, text=True, capture_output=True, check=True, timeout=90).stdout.strip()
 
@@ -99,7 +100,6 @@ def test_disposable_docker_switch_preserves_host_and_restores_previous_web(monke
                               profile={'workRoot': str(tmp_path)})
     state = {}
     deployment = web.WebDeployment(backend, pin, state, lambda _: None)
-    monkeypatch.setattr(web, 'oauth_environment', lambda _pin, commit: {'GAMERHQ_WEB_VERSION': 'ci-' + commit})
     (tmp_path / 'server.js').write_text('''
 require('http').createServer((req,res) => res.end(JSON.stringify({
   service:'gamerhq-web', status:'ok', version:process.env.GAMERHQ_WEB_VERSION
@@ -117,12 +117,41 @@ require('http').createServer((req,res) => res.end(JSON.stringify({
         identity = docker('inspect', '--format', '{{.Id}} {{.State.StartedAt}}', sentinel)
         first, second = web.SLOTS
         for name in (first, second):
-            deployment.create(name)
+            deployment.create(name, {'GAMERHQ_WEB_VERSION': 'ci-' + pin['commit']})
             assert deployment.select(name, deployment.slots())['webCommit'] == pin['commit']
             pin['commit'] = 'b' * 40
         assert deployment.rollback()['webCommit'] != pin['commit']
         assert docker('inspect', '--format', '{{.Id}} {{.State.StartedAt}}', sentinel) == identity
         assert docker('port', first, '3000/tcp') == web.PORT
+
+        # Exercise the reviewed proxy route over certificate-verified TLS. The
+        # local CA and high port are only for this disposable runner.
+        template = Path('deploy/staging/web.Caddyfile').read_text()
+        edge = tmp_path / 'Caddyfile'
+        hostname = pin['hostname']
+        edge.write_text('{\n\tauto_https disable_redirects\n}\n' +
+                        template.replace('{$GAMERHQ_WEB_STAGING_HOSTNAME} {', f'{hostname}:14443 {{\n\ttls internal'))
+        docker('run', '-d', '--name', 'gamerhq-staging-web-edge-ci', '--network', 'host',
+               '--volume', str(edge) + ':/etc/caddy/Caddyfile:ro', 'caddy:2-alpine')
+        certificate = tmp_path / 'edge-ca.pem'
+        for _ in range(20):
+            try:
+                certificate.write_text(docker('exec', 'gamerhq-staging-web-edge-ci', 'cat',
+                                              '/data/caddy/pki/authorities/local/root.crt'))
+                break
+            except subprocess.CalledProcessError:
+                time.sleep(1)
+        else:
+            pytest.fail('Disposable TLS edge did not create its local CA.')
+        curl = ['curl', '--silent', '--show-error', '--noproxy', '*', '--cacert', str(certificate),
+                '--resolve', f'{hostname}:14443:127.0.0.1', '--max-time', '10']
+        origin = f'https://{hostname}:14443'
+        result = subprocess.check_output([*curl, '--fail', origin + '/'], text=True)
+        assert json.loads(result)['service'] == 'gamerhq-web'
+        result = subprocess.check_output([*curl, '--output', '/dev/null', '--write-out', '%{http_code}',
+                                          origin + '/api/health'], text=True)
+        assert result == '404'
     finally:
-        subprocess.run(['docker', 'rm', '-f', *web.SLOTS, 'gamerhq-staging-bot'], capture_output=True, timeout=30)
+        subprocess.run(['docker', 'rm', '-f', *web.SLOTS, 'gamerhq-staging-bot', 'gamerhq-staging-web-edge-ci'],
+                       capture_output=True, timeout=30)
         docker('network', 'rm', web.NETWORK)
