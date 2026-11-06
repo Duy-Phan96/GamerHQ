@@ -16,9 +16,9 @@ class HostBackend:
     def __init__(self, profile, policy):
         self.profile, self.policy = profile, policy
 
-    def run(self, args, timeout=30):
+    def run(self, args, timeout=30, *, stdin=None):
         try:
-            result = subprocess.run(args, capture_output=True, text=True, check=True, timeout=timeout)
+            result = subprocess.run(args, input=stdin, capture_output=True, text=True, check=True, timeout=timeout)
             if len(result.stdout.encode()) > 262144: raise ValueError()
             return result.stdout.strip()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:

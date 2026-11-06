@@ -11,6 +11,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  staging-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.lock -r requirements-dev.txt
+      - name: Rehearse Web switching and rollback on disposable Docker
+        env:
+          GAMERHQ_WEB_CONTROLLER_DOCKER_CI: 'true'
+        run: python -m pytest -q tests/test_staging_web.py tests/test_staging_automation_policy.py
+      - name: Validate the TLS edge configuration
+        run: |
+          docker run --rm --network none \
+            --env GAMERHQ_WEB_STAGING_HOSTNAME=staging.synthetic.net \
+            --volume "$PWD/deploy/staging/web.Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
   staging-rhel:
     runs-on: ubuntu-latest
     steps:

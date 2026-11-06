@@ -6,7 +6,7 @@ import sys
 import time
 import uuid
 
-from .policy import Denied, request, validate_policy, charge, admit, PUBLIC
+from .policy import Denied, request, validate_policy, charge, admit, PUBLIC, WEB
 from .oidc import verify
 
 
@@ -16,22 +16,29 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     if operation == 'status':
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
         return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy,
-                'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit')}
+                'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit'),
+                'webArtifactId': policy.get('webDeployment', {}).get('artifactId'),
+                'webRunId': policy.get('webDeployment', {}).get('runId'),
+                'webCommit': policy.get('webDeployment', {}).get('commit'),
+                'webArchiveSha256': policy.get('webDeployment', {}).get('archiveSha256')}
     if operation == 'challenge':
         if not isinstance(payload, dict) or set(payload) != {'operation'} or payload['operation'] in PUBLIC:
             raise Denied('PAYLOAD_REJECTED')
         request({'version': 1, 'phase': 'automation', 'operation': payload['operation']})
+        if payload['operation'] in WEB and 'webDeployment' not in policy:
+            raise Denied('WEB_NOT_ENROLLED')
         nonce = uuid.uuid4().hex
         state['challenge'] = {'nonce': nonce, 'operation': payload['operation'], 'expires': now + 300}; save(state)
         return {'challenge': nonce, 'audience': 'gamerhq-staging-automation:' + policy['repositoryId'] + ':' + nonce}
-    if not isinstance(payload, dict) or set(payload) - {'token', 'challenge', 'release'} or not {'token', 'challenge'} <= set(payload): raise Denied('PAYLOAD_REJECTED')
+    extra = {'release'} if operation == 'prepare' else {'artifactUrl'} if operation == 'web-deploy' else set()
+    if not isinstance(payload, dict) or set(payload) - ({'token', 'challenge'} | extra) or not {'token', 'challenge'} <= set(payload):
+        raise Denied('PAYLOAD_REJECTED')
     challenge = state.get('challenge', {})
     if challenge.get('nonce') != payload['challenge'] or challenge.get('operation') != operation or challenge.get('expires', 0) <= now: raise Denied('CHALLENGE_REJECTED')
     claims = verifier(payload['token'], policy, operation, payload['challenge'], now=now)
     seen = {k: exp for k, exp in state.get('usedTokens', {}).items() if exp > now}
     if claims['jti'] in seen or len(seen) >= 256: raise Denied('OIDC_REPLAY_REJECTED')
     seen[claims['jti']] = claims['exp']; state['usedTokens'] = seen; state.pop('challenge', None); save(state)
-    if 'release' in payload and operation != 'prepare': raise Denied('PAYLOAD_REJECTED')
     if operation == 'activate':
         image = backend.activate(state.get('approvedImage') if state.get('bootstrapVerified') else None)
         state.update(enabled=True, bootstrapVerified=True, approvedImage=image, activationRun=claims['run_id']); save(state)
@@ -41,6 +48,14 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     admit(operation, state)
     if state.get('enabled'): backend.policy_integrity()
     try:
+        if operation in WEB:
+            from .web import WebDeployment
+            web = WebDeployment(backend, policy['webDeployment'], state, save)
+            if operation == 'web-health':
+                return web.health()
+            if operation == 'web-rollback':
+                return web.rollback()
+            return web.deploy(payload.get('artifactUrl'))
         if operation == 'health': return backend.health()
         if operation == 'prepare': return backend.prepare(payload.get('release'))
         if operation == 'install': return backend.install()

@@ -112,6 +112,23 @@ def test_activation_needs_actual_owner_review_not_only_an_environment_name(trust
     with pytest.raises(Denied): verify(token(), p, 'activate', 'd' * 32, read=read, now=1001)
 
 
+def test_web_workflow_cannot_deploy_with_routine_identity_or_without_owner_review(trust):
+    policy, claims, token, read, reviews, _ = trust
+    policy['webDeployment'] = {'workflowSha256': policy['routineWorkflowSha256']}
+    workflow = 'Duy-Phan96/GamerHQ/.github/workflows/staging-web.yml@refs/heads/main'
+    claims['workflow_ref'] = workflow
+    assert verify(token(), policy, 'web-health', 'd' * 32, read=read, now=1001)
+    with pytest.raises(Denied):
+        verify(token(), policy, 'web-deploy', 'd' * 32, read=read, now=1001)
+    security_claims(claims)
+    claims['workflow_ref'] = workflow
+    assert verify(token(), policy, 'web-deploy', 'd' * 32, read=read, now=1001)
+    assert verify(token(), policy, 'web-rollback', 'd' * 32, read=read, now=1001)
+    reviews.clear()
+    with pytest.raises(Denied):
+        verify(token(), policy, 'web-rollback', 'd' * 32, read=read, now=1001)
+
+
 @pytest.mark.parametrize('operation', ['bootstrap', 'initial', 'credentials', 'release', 'revoke', 'shell', 'docker', 'apply', 'production'])
 def test_legacy_security_and_arbitrary_commands_are_not_in_routine_protocol(operation):
     with pytest.raises(Denied): request({'version': 1, 'phase': 'automation', 'operation': operation})
