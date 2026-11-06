@@ -146,8 +146,15 @@ require('http').createServer((req,res) => res.end(JSON.stringify({
         curl = ['curl', '--silent', '--show-error', '--noproxy', '*', '--cacert', str(certificate),
                 '--resolve', f'{hostname}:14443:127.0.0.1', '--max-time', '10']
         origin = f'https://{hostname}:14443'
-        result = subprocess.check_output([*curl, '--fail', origin + '/'], text=True)
-        assert json.loads(result)['service'] == 'gamerhq-web'
+        for _ in range(15):
+            response = subprocess.run([*curl, '--fail', origin + '/'], text=True, capture_output=True, timeout=12)
+            if response.returncode == 0:
+                assert json.loads(response.stdout)['service'] == 'gamerhq-web'
+                break
+            time.sleep(1)
+        else:
+            pytest.fail('Disposable HTTPS listener did not become ready: ' +
+                        docker('logs', 'gamerhq-staging-web-edge-ci'))
         result = subprocess.check_output([*curl, '--output', '/dev/null', '--write-out', '%{http_code}',
                                           origin + '/api/health'], text=True)
         assert result == '404'
