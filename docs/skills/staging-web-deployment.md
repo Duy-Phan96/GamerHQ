@@ -24,11 +24,18 @@ the same verified hostname. It retains the OAuth settings and Web slots.
 
 ## Owner configuration
 
-1. Choose a dedicated `staging` subdomain of a DNS zone you control. Confirm
-   the exact hostname and intended edge. Do not use the SSH IP as a Web origin.
-2. Add a DNS-only `A` record for that subdomain to the confirmed public IPv4
-   of the staging edge. Omit `AAAA` until an IPv6 listener and route have both
-   been verified. Keep the production records and virtual hosts in place.
+1. For temporary acceptance, register an available label under a free Dynu
+   hostname suffix using the owner account. In **Control Panel → DDNS Services
+   → hostname**, set **IPv4 Address** to `74.91.132.250` and save. Leave IPv6 and
+   Web Redirect disabled. The VPS uses a fixed address, so a DDNS client is
+   unnecessary. This step reserves a staging name without deciding the
+   commercial brand. [Dynu registration](https://www.dynu.com/Resources/Tutorials/DynamicDNS/GettingStarted)
+   · [Dynu A record setup](https://www.dynu.com/Resources/Tutorials/DynamicDNS/CreateARecord)
+2. Record the registered hostname. Run `python -m tools.staging_web_edge
+   --dns-only <registered-hostname>` from the reviewed Host checkout. The probe
+   requires the approved IPv4 as the only resolved address and emits the exact
+   callback URI. DNS resolution verifies routing. The owner account establishes
+   control of the name.
 3. In the Discord Developer Portal, create or select a dedicated staging
    application. Under OAuth2 → Redirects, add the verified HTTPS hostname with
    the exact path `/api/auth/discord/callback`, without a trailing slash.
@@ -42,12 +49,15 @@ the same verified hostname. It retains the OAuth settings and Web slots.
    only against the GitHub API and sends a one-minute signed download URL to
    the controller over the pinned SSH channel. The controller verifies the
    downloaded bytes before Docker sees them.
-5. Provision the exact HTTPS virtual host on the approved existing edge. Park
-   it with a static 503 first and verify the DNS, public certificate and HTTP
-   redirect independently. Caddy can issue a certificate when public DNS and
-   ports 80/443 are ready. Use the existing proxy if a service already owns
-   those ports. The included Caddy site block gives the final routing contract.
-   It proxies only loopback port 13000 and strips client-supplied internal
+5. Provision the exact hostname on the existing Caddy edge using
+   `deploy/staging/web-parked.Caddyfile`. Caddy can issue and renew a public
+   certificate using HTTP-01 or TLS-ALPN-01 once public DNS points to the VPS
+   and ports 80/443 reach Caddy. The DNS provider token stays with the owner.
+   Run `python -m tools.staging_web_edge <registered-hostname>` and require
+   `PARKED_HTTPS_VERIFIED` before enabling the active route. The check requires
+   the exact HTTP redirect, a trusted certificate for the name, and the
+   distinctive parked response. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https)
+   The active `deploy/staging/web.Caddyfile` proxies only loopback port 13000 and strips client-supplied internal
    authorization headers. Keep access logs off for the OAuth route so callback
    codes are not written to request logs.
 6. Run the checksum-verified controller extension in a trusted root TTY with
