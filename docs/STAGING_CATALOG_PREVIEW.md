@@ -13,8 +13,9 @@ authority. If none passes, the operation fails closed. The preview reads the
 backup and does not create or restore a snapshot.
 
 The Actions receipt includes timestamp, age, integrity, and aggregate catalog
-and mapping counts. Database bytes, internal IDs, database paths and
-apply tokens stay on the staging host. The immutable manifest comes from
+and mapping counts, plus which titles from the public manifest matched or
+need review. Database-only titles, bytes, internal IDs, paths and apply
+tokens stay on the staging host. The immutable manifest comes from
 the reviewed Host revision. The request accepts neither a path nor a manifest.
 
 Owner enrollment uses the existing checksum-verified controller extension

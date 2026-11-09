@@ -15,7 +15,7 @@ from tools.staging_automation.policy import Denied
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Controller checks Unix file ownership and modes.")
-def test_catalog_preview_uses_newest_eligible_backup_and_returns_only_counts(tmp_path, monkeypatch):
+def test_catalog_preview_uses_newest_eligible_backup_and_redacts_database_details(tmp_path, monkeypatch):
     live = tmp_path / "staging.db"
     monkeypatch.setattr(db, "DB_PATH", live)
     monkeypatch.setattr(db, "SEED_PATH", Path("data/games_seed.json"))
@@ -24,6 +24,7 @@ def test_catalog_preview_uses_newest_eligible_backup_and_returns_only_counts(tmp
     db.seed_catalog()
     with db.connect() as conn:
         conn.execute("UPDATE games SET role_id=71, channel_id=81 WHERE name='GTA Online'")
+        conn.execute("UPDATE games SET name=\'Private Fixture Label\' WHERE name=\'Overwatch 2\'")
         conn.execute("INSERT INTO skill_domain_authority VALUES(1,'event-manager','event-manager','a','b',1)")
 
     records = []
@@ -41,6 +42,11 @@ def test_catalog_preview_uses_newest_eligible_backup_and_returns_only_counts(tmp
     report = catalog_preview.preview(profile, records=lambda _: records, now=1010)
     assert report["backupAgeSeconds"] == 9
     assert report["titles"] == 70
+    assert report["backupChecksum"] == report["backupIntegrity"] == "PASS"
+    assert "Overwatch" in report["existingTitles"]
+    assert "Deadlock" in report["missingTitles"]
+    assert report["ambiguousTitles"] == []
+    assert "Private Fixture Label" not in json.dumps(report)
     assert (report["existing"], report["proposedInserts"], report["ambiguous"]) == (38, 32, 0)
     assert (report["existingMappedRoles"], report["existingMappedChannels"]) == (1, 1)
     assert "role_id" not in report and "channel_id" not in report and "review_token" not in report
