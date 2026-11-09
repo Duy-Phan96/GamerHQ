@@ -143,9 +143,56 @@ def test_supplied_manifest_seed_baseline(catalog, monkeypatch):
     monkeypatch.setattr(db, "SEED_PATH", Path("data/games_seed.json"))
     db.seed_catalog()
     result = import_catalog(catalog, Path("data/game_catalog_expansion.json"))
-    assert len(result["existing"]) == 37
+    assert len(result["existing"]) == 38
     assert len(result["insert"]) == 32
-    assert len(result["ambiguous"]) == 1
-    assert result["ambiguous"][0]["title"] == "Grand Theft Auto V"
-    assert result["ambiguous"][0]["review_note"]
+    assert result["ambiguous"] == []
+    assert result["alias_updates"] == []
+    gta = next(row for row in result["existing"] if row["title"] == "Grand Theft Auto V")
+    assert gta["name"] == "GTA Online"
     assert len(db.get_all_games()) == 60
+
+
+def test_gta_alias_apply_preserves_id_resources_and_custom_alias(catalog, tmp_path):
+    from services.game_service import search_games
+
+    game = db.upsert_custom_game("GTA Online", "🎮", DISPLAY_GROUP_ORDER[0])
+    with db.connect() as conn:
+        conn.execute("UPDATE games SET aliases_json=?, active=1, selectable=1, role_id=71, "
+                     "channel_id=81, chat_channel_id=82 WHERE id=?",
+                     (json.dumps(["GTA V", "GTA 5", "Custom GTA Alias"]), game["id"]))
+    original = db.get_game_by_id(game["id"])
+    source = write_manifest(tmp_path / "gta.json", [
+        {"name": "Grand Theft Auto V", "existing_name": "GTA Online", "aliases": ["GTA V", "GTA 5"]},
+    ])
+    preview = import_catalog(catalog, source)
+    assert preview["insert"] == []
+    assert preview["existing"][0]["id"] == game["id"]
+    assert preview["alias_updates"][0]["add"] == ["Grand Theft Auto V"]
+    assert db.get_game_by_id(game["id"]) == original
+    backup = tmp_path / "gta-backup.db"
+    apply_preview(catalog, source, backup)
+    verify(backup)
+    updated = db.get_game_by_id(game["id"])
+    assert json.loads(updated.pop("aliases_json")) == ["GTA V", "GTA 5", "Custom GTA Alias", "Grand Theft Auto V"]
+    original.pop("aliases_json")
+    assert updated == original
+    assert len(db.get_all_games()) == 1
+    for alias in ("GTA V", "GTA 5", "Grand Theft Auto V"):
+        assert search_games(alias, limit=1)[0]["id"] == game["id"]
+    assert import_catalog(catalog, source)["alias_updates"] == []
+
+
+def test_gta_alias_cannot_create_target_or_claim_another_row(catalog, tmp_path):
+    source = write_manifest(tmp_path / "gta.json", [
+        {"name": "Grand Theft Auto V", "existing_name": "GTA Online", "aliases": ["GTA V", "GTA 5"]},
+    ])
+    missing = import_catalog(catalog, source)
+    assert missing["insert"] == []
+    assert missing["ambiguous"][0]["expected_name"] == "GTA Online"
+    for title in ("GTA Online", "GTA V"):
+        db.upsert_custom_game(title, "🎮", DISPLAY_GROUP_ORDER[0])
+    conflict = import_catalog(catalog, source)
+    assert len(conflict["ambiguous"][0]["existing_ids"]) == 2
+    assert conflict["alias_updates"] == []
+    with pytest.raises(ValueError, match="ambiguous"):
+        apply_preview(catalog, source, tmp_path / "rejected.db")
