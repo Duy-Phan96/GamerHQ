@@ -46,14 +46,16 @@ class ConfigurationPreviewTests(unittest.IsolatedAsyncioTestCase):
     async def test_linked_resources_legacy_chat_and_skill_state_are_preserved(self):
         gaming = self.guild.add_category('GAMING')
         event_area = self.guild.add_category('EVENT TESTING')
-        chat = self.guild.add_channel('legacy game chat', gaming)
+        chat = MagicMock(spec=discord.TextChannel)
+        chat.id, chat.name, chat.guild = 8001, 'legacy game chat', self.guild
+        chat.category, chat.category_id, chat.overwrites = gaming, gaming.id, {}
         event_chat = self.guild.add_channel('community-events', event_area)
         shared_chat = self.guild.add_channel('💬・gaming-chat', gaming)
         voice = MagicMock(spec=discord.VoiceChannel)
         voice.id, voice.name, voice.guild = 8000, '🔊 Chill Lounge', self.guild
         voice.category, voice.category_id = self.voice, self.voice.id
         voice.overwrites = {}
-        self.guild.fetch_channels = AsyncMock(return_value=[*self.guild.channels, voice])
+        self.guild.fetch_channels = AsyncMock(return_value=[*self.guild.channels, voice, chat])
         db.set_setting('managed_category:1:gaming', gaming.id)
         db.set_setting('managed_channel:1:gaming-chat', shared_chat.id)
         db.set_setting('managed_category:1:voice-channels', self.voice.id)
@@ -76,7 +78,7 @@ class ConfigurationPreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcomes['voice', 'chill-lounge'], 'Reuse')
         self.assertEqual(outcomes['text', 'community-events'], 'Conflict')
         self.assertEqual(outcomes['skill', 'event-manager.text-area'], 'Reuse')
-        self.assertTrue(any('1 games with legacy hints' in line and '1 verified chats' in line for line in summary))
+        self.assertTrue(any('1 games with legacy hints' in line and '1 verified chats' in line for line in summary), summary)
         self.assertEqual(db.get_game_by_id(gid), before)
         self.assertIsNone(db.get_setting('managed_channel:1:community-events'))
         self.assertFalse(event_chat.edits or event_chat.sends)
