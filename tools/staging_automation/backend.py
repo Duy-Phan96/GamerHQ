@@ -131,7 +131,7 @@ class HostBackend:
         self.storage_budget()
         from database import db
         from hosts.gamerhq.skill_artifacts import UpdatePolicy
-        from hosts.gamerhq.skill_update_controller import SkillUpdateController
+        from .deployment import SkillUpdateController
         from tools.skill_staging import backend_for
         from tools.skill_deployment_worker import health_probe
         self.fresh_verify()

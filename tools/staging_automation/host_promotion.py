@@ -79,8 +79,10 @@ def retained_state(path, guild):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         authority = conn.execute("SELECT * FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild,)).fetchall()
         installed = conn.execute("SELECT installed,configured,enabled,version FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild,)).fetchone()
-        if len(authority) != 1 or authority[0][2] != 'event-manager' or not installed or installed[0] != 1 or installed[3] != BASELINE_SKILL_VERSION:
+        if len(authority) != 1 or authority[0][2] != 'event-manager' or not installed or installed[0] != 1:
             raise Denied('RECOVERY_REQUIRES_OWNER')
+        # The persisted version belongs to the guild lifecycle row. Retain it
+        # verbatim; the approved package version is verified against the Host API.
         rows = {}
         for key, raw in conn.execute("SELECT storage_key,value_json FROM skill_storage WHERE guild_id=? AND skill_id='event-manager'", (guild,)):
             value = json.loads(raw)
@@ -113,6 +115,13 @@ def require_baseline_skill(release, installed_version):
     if (release.get('version') != BASELINE_SKILL_VERSION or release.get('reviewedCommit') != BASELINE_SKILL_COMMIT
             or release.get('sha256') != BASELINE_SKILL_SHA256 or installed_version != BASELINE_SKILL_VERSION):
         raise Denied('VERSION_REQUIRES_OWNER')
+
+
+def require_runtime_lifecycle(retained, runtime):
+    state = runtime.get('state', {})
+    fields = ('installed', 'configured', 'enabled')
+    if any(state.get(field) is not bool(value) for field, value in zip(fields, retained['installed'][:3])):
+        raise Denied('RECOVERY_REQUIRES_OWNER')
 
 
 class PromotionDocker:
@@ -215,10 +224,12 @@ def promote(backend, *, expected_image):
         raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
     if backend.health()['state'] != 'HOST_READY':
         raise Denied('HOST_NOT_READY')
-    retained_state(p['database'], p['stagingGuildId'])
+    retained = retained_state(p['database'], p['stagingGuildId'])
     verify_local_artifacts(p)
     release = json.loads(Path(p['releaseFile']).read_text())
-    require_baseline_skill(release, backend.skill()['version'])
+    runtime = backend.skill()
+    require_baseline_skill(release, runtime['version'])
+    require_runtime_lifecycle(retained, runtime)
     # Source trust includes private-wheel CI in the reviewed Host PR. Verify
     # public Host CI live without assuming private GitHub token permissions.
     run = github(backend.policy, '/actions/runs/' + CI_RUN)

@@ -1,4 +1,4 @@
-"""Owner-only, read-only receipt for the failed staging Host promotion."""
+"""Owner-only verification of the corrected controller while recovery remains held."""
 from contextlib import closing
 import fcntl
 import hashlib
@@ -14,7 +14,21 @@ ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
 RUN = 42664893488
 RUN_STARTED = 1794245284
-CONTROLLER = '0931e16e85db6024b3142aacc072f7721ec28e2d'
+CONTROLLER = '4b15a48574f7c6ff3cc20f441afbc75160fd0bfb'
+PROMOTION_WORKFLOW = 'e5cf82afabfb7e09f7835e42b38302968698433bd3d7e791060ac57235c51d10'
+CATALOG_WORKFLOW = '771db3136163984413fa896483bb5a093bc70ec6d8b828f6dd9492768a7a3680'
+CONTROLLER_FILES = {
+    '__init__.py': 'ff54982103b29d90ebf83e0262b49dc07cc57504475c3f7b156cf743f1035ea5',
+    'policy.py': 'cbe3d190113bcbdaf8252a9353215bf70a283c9f0828d92029f0db556c1c9bf2',
+    'oidc.py': '8a286767bd0799d9f17619dfab3ae15c31200589511969205fbdb5a4c204ec3b',
+    'backend.py': '97d81188707e8a97c22edb94b89e7bb4a09807ab8fe345d266d42b6e11de5855',
+    'bridge.py': '15d54fc8c0f527cfce38f281e371cc892a3c717e7bb92748add8e32bb09f0f15',
+    'host_promotion.py': '35202129e048eaa636939ba50199dbd046c6a3bf69bde9bc24d7a462b06fa3a6',
+    'deployment.py': '0d4b602dc3d30f4ce40bbc3c6274119ef3412d57c873efbf59248dc2b3a286e1',
+    'catalog_preview.py': 'af471d827c7c9dc1789fd8621bbaec2d43d03fb7d56edd51a8282a318fa93f83',
+    'catalog_import.py': '9edaedc09dcc69a6e5779c26e1dda7769883da53eb9b179dd87689fe0d1abf09',
+    'catalog_manifest.json': '92483e33bc6b8dce16adfccf1884f1584e4668f1f006190b4254abeba75cbb69',
+}
 TARGET = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
 BASELINE = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
 ARCHIVE = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
@@ -49,6 +63,25 @@ def digest(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             hasher.update(block)
     return hasher.hexdigest()
+
+
+def verify_controller(automation):
+    if (automation.get('controllerCommit') != CONTROLLER
+            or automation.get('hostPromotion') != {
+                'commit': TARGET, 'archiveSha256': ARCHIVE, 'workflowSha256': PROMOTION_WORKFLOW}
+            or automation.get('catalogPreviewWorkflowSha256') != CATALOG_WORKFLOW):
+        raise ValueError('CONTROLLER_BINDING_REJECTED')
+    controller = ROOT / 'automation-controller'
+    revision = controller / 'revisions' / CONTROLLER
+    entry = controller / 'entry.py'
+    expected = ("import sys\nsys.path[:0]=[" + repr(str(revision)) + ",'/opt/gamerhq-staging/deployment-worker']\n"
+                "from staging_automation.bridge import entry\nentry()\n").encode()
+    paths = {entry: hashlib.sha256(expected).hexdigest()}
+    paths.update({revision / 'staging_automation' / name: value for name, value in CONTROLLER_FILES.items()})
+    for path, expected_digest in paths.items():
+        info = fixed_file(path, uid=0, limit=262144)
+        if info.st_mode & 0o022 or digest(path) != expected_digest:
+            raise ValueError('CONTROLLER_SOURCE_MISMATCH')
 
 
 def read_database(path, *, immutable=False):
@@ -86,6 +119,7 @@ def receipt_for_backup(root, ident, evidence, uid, *, guild_id=None):
         return {**result, 'inspection': 'FILE_MISSING'}
     try:
         info = fixed_file(path)
+        result['mode'] = format(stat.S_IMODE(info.st_mode), '04o')
         if info.st_uid != uid:
             return {**result, 'inspection': 'OWNER_MISMATCH'}
         if info.st_mode & 0o077:
@@ -191,6 +225,7 @@ def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=N
                          and known_release.get('sha256') == SKILL_WHEEL_SHA256)
     return {'integrityPass': db_ok, 'eventManagerAuthority': authority == [('event-manager',)],
             'knownSkillUpdateMatchesApprovedImageAndArtifact': known_matches,
+            'latestPreRunBackupMatchesKnownSkillUpdate': bool(preceding and preceding[0] == KNOWN_SKILL_UPDATE),
             **guild_lifecycle, 'attemptsSinceFailedRun': attempts, 'preexistingHostBlockers': blockers,
             'latestPreRunBackup': (receipt_for_backup(backup_root, preceding[0], json.loads(preceding[1]), uid,
                                                        guild_id=guild_id) if preceding else None),
@@ -245,6 +280,7 @@ def container_status(account, socket, profile, state):
     if mount != 'bind|' + str(ROOT / 'data'):
         return {**report, 'runtimeInspection': 'MOUNT_SCOPE_REJECTED'}
     probe = """
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -252,7 +288,12 @@ path = '/app/runtime/data/gamerhq.db'
 if os.environ.get('GAMERHQ_DB_PATH') != path:
     raise SystemExit(1)
 info = os.stat(path)
-print(json.dumps({'device': info.st_dev, 'inode': info.st_ino,
+wheel = '/opt/skill-release/gamerhq_skill_event_manager-0.1.2-py3-none-any.whl'
+digest = None
+if os.path.isfile(wheel) and os.stat(wheel).st_size <= 32 * 1024 * 1024:
+    with open(wheel, 'rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+print(json.dumps({'device': info.st_dev, 'inode': info.st_ino, 'wheelSha256': digest,
                   'version': importlib.metadata.version('gamerhq-skill-event-manager')}))
 """
     try:
@@ -261,10 +302,40 @@ print(json.dumps({'device': info.st_dev, 'inode': info.st_ino,
         version = facts.get('version')
         valid_version = version if isinstance(version, str) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-.][a-z0-9.]+)?', version) else None
         return {**report, 'runtimeInspection': 'PASS', 'packageVersion': valid_version,
+                'wheelMatchesReviewedArtifact': facts.get('wheelSha256') == SKILL_WHEEL_SHA256,
                 'runtimeDatabaseMatchesProfile': (facts.get('device'), facts.get('inode'))
                 == (host_db.st_dev, host_db.st_ino)}
     except (OSError, ValueError, subprocess.SubprocessError):
         return {**report, 'runtimeInspection': 'UNAVAILABLE'}
+
+
+def held_baseline_checks(report):
+    container = report.get('container', {})
+    database = report.get('database', {})
+    backup = database.get('lastVerifiedHostBackup') or {}
+    unsafe = database.get('latestPreRunBackup') or {}
+    return {
+        'reviewedController': report.get('controllerSourceVerified') is True,
+        'recoveryHeld': report.get('recoveryRequired') is True and report.get('automationEnabled') is True,
+        'baselineHostHealthy': (report.get('profileHostCommit') == BASELINE
+                                and container.get('hostCommit') == BASELINE and container.get('running') is True
+                                and container.get('dockerHealthy') is True and container.get('matchesApprovedImage') is True),
+        'verifiedSkillAndDatabaseBinding': (container.get('runtimeInspection') == 'PASS'
+                                            and container.get('runtimeDatabaseMatchesProfile') is True
+                                            and container.get('packageVersion') == '0.1.2'
+                                            and container.get('wheelMatchesReviewedArtifact') is True
+                                            and database.get('knownSkillUpdateMatchesApprovedImageAndArtifact') is True),
+        'guildLifecyclePreserved': (database.get('integrityPass') is True and database.get('eventManagerAuthority') is True
+                                    and database.get('skillInstalled') is True and database.get('skillConfigured') is True
+                                    and database.get('skillEnabled') is False and database.get('skillVersion') == '0.1.1'),
+        'noCandidateAttemptOrHostBlocker': (database.get('attemptsSinceFailedRun') == []
+                                            and database.get('preexistingHostBlockers') == []),
+        'historicalBackupVerified': (backup.get('checksumMatches') is True and backup.get('integrityPass') is True
+                                      and backup.get('restoreProbe') == 'PASS'),
+        'unsafeBackupExcluded': (database.get('latestPreRunBackupMatchesKnownSkillUpdate') is True
+                                 and unsafe.get('mode') == '0640' and unsafe.get('inspection') == 'MODE_UNSAFE'
+                                 and unsafe.get('checksumMatches') is None and unsafe.get('restoreProbe') == 'UNAVAILABLE'),
+    }
 
 
 def collect():
@@ -280,7 +351,9 @@ def collect():
     db = ROOT / 'data/gamerhq.db'
     socket = Path(f'/run/user/{uid}/docker.sock')
     policy = config(CONTROL / 'policy.json', 0)
-    automation = config(CONTROL / 'automation-policy.json', 0)
+    automation_path = CONTROL / 'automation-policy.json'
+    automation = config(automation_path, 0)
+    verify_controller(automation)
     # Root verifies the two protected policies. All mutable files and the Docker
     # socket are read with the same unprivileged identity as the existing worker.
     os.setgroups([])
@@ -304,7 +377,7 @@ def collect():
             raise ValueError('STAGING_BINDING_REJECTED')
     lock = work / 'operation.lock'
     lock_info = fixed_file(lock, uid=uid, private=True)
-    report = {'operation': 'diagnose-staging-host-promotion', 'workflowRun': RUN,
+    report = {'operation': 'verify-staging-promotion-recovery-hold', 'workflowRun': RUN,
               'controllerCommit': CONTROLLER, 'targetHostCommit': TARGET,
               'productionChanged': False, 'databaseChanged': False, 'containersChanged': False,
               'discordResourcesChanged': False, 'credentialFilesOpened': False}
@@ -316,8 +389,11 @@ def collect():
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return {**report, 'operationLock': 'BUSY'}
+        if config(automation_path, 0) != automation:
+            raise ValueError('CONTROLLER_BINDING_REJECTED')
+        verify_controller(automation)
         state = config(work / 'automation-state.json', uid, private=True)
-        report.update(operationLock='AVAILABLE', recoveryRequired=state.get('recoveryRequired') is True,
+        report.update(operationLock='AVAILABLE', controllerSourceVerified=True, recoveryRequired=state.get('recoveryRequired') is True,
                       automationEnabled=state.get('enabled') is True,
                       profileHostCommit=safe_commit(profile.get('applicationHostCommit')))
         try:
@@ -329,6 +405,9 @@ def collect():
                                                         approved_image=state.get('approvedImage'))
         except (OSError, ValueError, sqlite3.Error):
             report['database'] = {'inspection': 'UNAVAILABLE'}
+        checks = held_baseline_checks(report)
+        report.update(checks=checks, state='RECOVERY_HOLD_VERIFIED' if all(checks.values()) else 'REVIEW_REQUIRED',
+                      recoveryReleaseAuthorized=False)
     return report
 
 
@@ -338,6 +417,7 @@ if __name__ == '__main__':
     except Exception as error:
         reason = str(error)
         known = {'OWNER_ROOT_SESSION_REQUIRED', 'STAGING_ACCOUNT_SCOPE_REJECTED',
-                 'STAGING_BINDING_REJECTED', 'FILE_SCOPE_REJECTED'}
+                 'STAGING_BINDING_REJECTED', 'FILE_SCOPE_REJECTED',
+                 'CONTROLLER_BINDING_REJECTED', 'CONTROLLER_SOURCE_MISMATCH'}
         code = reason if reason in known else 'DIAGNOSTIC_UNAVAILABLE'
         raise SystemExit(json.dumps({'diagnosticError': code, 'productionChanged': False})) from None
