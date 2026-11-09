@@ -201,7 +201,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if (web or catalog_preview) and policy.get('hostPromotion') != {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}:
             raise ValueError('EXISTING_HOST_POLICY_CHANGED')
         previous_modules = (*MODULES, 'web.py') if web and previous_commit != WEB_BASE else MODULES
-        changed_modules = {'host_promotion.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'}
+        changed_modules = {'host_promotion.py', 'backend.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'}
         for name in previous_modules:
             installed = trusted(previous / 'staging_automation' / name)
             if installed != git('show', previous_commit + ':tools/staging_automation/' + name):

@@ -36,7 +36,7 @@ def test_same_skill_version_requires_explicit_host_source_review(deployment_fixt
     applied = controller.apply(ready['id'], approval='APPROVE ' + ready['id'])
     assert applied['state'] == 'APPLIED'
     backup = root / 'backups' / (ready['id'] + '.sqlite')
-    assert backup.exists()
+    assert backup.exists() and backup.stat().st_mode & 0o777 == 0o600
 
 
 def test_host_promotion_health_failure_uses_existing_safe_rollback(deployment_fixture):

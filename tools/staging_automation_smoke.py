@@ -183,6 +183,7 @@ from staging_automation.host_promotion import COMMIT
 from staging_automation.deployment import SkillUpdateController
 import inspect
 assert 'host_source_commit' in inspect.signature(SkillUpdateController.stage).parameters
+assert 'from .deployment import SkillUpdateController' in inspect.getsource(HostBackend.update)
 assert COMMIT=='REVIEWED_HOST'
 p=json.load(open('/etc/gamerhq-staging/settings/profile.json'))
 def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=180)

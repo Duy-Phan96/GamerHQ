@@ -43,7 +43,10 @@ The recovery-only enrollment is for controller `0931e16e` with its existing
 exact Host pin, protected workflow, catalog authorization and an active recovery
 latch. It switches only to the reviewed controller code and leaves the latch
 set. It records the prior Skill-update backup's file mode without opening it.
-Keep an unsafe backup out of inspection and restore selection. The earlier
+Routine updates had imported the legacy worker's controller, which let SQLite
+create backup files with default permissions. The corrected controller reuses
+the reviewed deployment module that creates backups at mode 0600. Keep the
+existing unsafe backup out of inspection and restore selection. The earlier
 verified Host backup establishes restore feasibility for that historical copy.
 
 After enrollment, inspect the recovery-held receipt and keep Host promotion
