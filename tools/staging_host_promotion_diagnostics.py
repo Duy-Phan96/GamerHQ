@@ -100,30 +100,42 @@ def receipt_for_backup(root, ident, evidence, uid, *, guild_id=None):
             return {**result, 'inspection': 'SIDECARS_PRESENT'}
         with closing(read_database(path, immutable=True)) as conn:
             result['integrityPass'] = integrity(conn)
-            if not result['checksumMatches'] or not result['integrityPass'] or guild_id is None:
-                pass
-            elif info.st_size > MAX_MEMORY_RESTORE_BYTES:
-                result['restoreProbe'] = 'DEFERRED_SIZE_LIMIT'
-            else:
-                with closing(sqlite3.connect(':memory:')) as clone:
-                    conn.backup(clone)
-                    authority = clone.execute(
-                        "SELECT guild_id,skill_id FROM skill_domain_authority WHERE domain='event-manager'"
-                    ).fetchall()
-                    same_schema = clone.execute('PRAGMA user_version').fetchone() == conn.execute('PRAGMA user_version').fetchone()
-                    result['restoreProbe'] = ('PASS' if integrity(clone) and same_schema
-                                              and authority == [(guild_id, 'event-manager')] else 'FAILED')
+            if result['checksumMatches'] and result['integrityPass'] and guild_id is not None:
+                result['guildLifecycle'] = lifecycle(conn, guild_id)
+                if info.st_size > MAX_MEMORY_RESTORE_BYTES:
+                    result['restoreProbe'] = 'DEFERRED_SIZE_LIMIT'
+                else:
+                    with closing(sqlite3.connect(':memory:')) as clone:
+                        conn.backup(clone)
+                        authority = clone.execute(
+                            "SELECT guild_id,skill_id FROM skill_domain_authority WHERE domain='event-manager'"
+                        ).fetchall()
+                        same_schema = clone.execute('PRAGMA user_version').fetchone() == conn.execute('PRAGMA user_version').fetchone()
+                        result['restoreProbe'] = ('PASS' if integrity(clone) and same_schema
+                                                  and authority == [(guild_id, 'event-manager')] else 'FAILED')
         checked = fixed_file(path, uid=uid, private=True, limit=MAX_BACKUP_BYTES)
         identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
         if identity(checked) != identity(info):
             raise ValueError('BACKUP_CHANGED')
     except (OSError, ValueError, sqlite3.Error):
+        result.pop('guildLifecycle', None)
         result.update(checksumMatches=None, integrityPass=None, restoreProbe='UNAVAILABLE', inspection='UNAVAILABLE')
     return result
 
 
 def safe_commit(value):
     return value if isinstance(value, str) and re.fullmatch('[0-9a-f]{40}', value) else None
+
+
+def lifecycle(conn, guild_id):
+    skill = conn.execute(
+        "SELECT installed,configured,enabled,version,updated_at FROM skill_guild_state "
+        "WHERE guild_id=? AND skill_id='event-manager'", (guild_id,),
+    ).fetchone()
+    version = skill[3] if skill and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-.][a-z0-9.]+)?', str(skill[3])) else None
+    return {'skillInstalled': bool(skill and skill[0]), 'skillConfigured': bool(skill and skill[1]),
+            'skillEnabled': bool(skill and skill[2]), 'skillVersion': version,
+            'skillLifecycleUpdatedAt': skill[4] if skill and type(skill[4]) is int else None}
 
 
 def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=None):
@@ -135,10 +147,7 @@ def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=N
             "SELECT skill_id FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'",
             (guild_id,),
         ).fetchall()
-        skill = conn.execute(
-            "SELECT installed,configured,enabled,version FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'",
-            (guild_id,),
-        ).fetchone()
+        guild_lifecycle = lifecycle(conn, guild_id)
         rows = conn.execute(
             "SELECT id,state,created_at,updated_at,previous_image,evidence_json FROM skill_deployments "
             "WHERE skill_id='event-manager' AND (updated_at>=? OR state IN ('APPLYING','RECOVERY_REQUIRED')) "
@@ -176,16 +185,13 @@ def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=N
                              'backup': receipt_for_backup(backup_root, ident, evidence, uid)})
         elif state in {'APPLYING', 'RECOVERY_REQUIRED'}:
             blockers.append({'state': state, 'targetHostCommit': safe_commit(target), 'updatedAt': updated})
-    version = skill[3] if skill and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-.][a-z0-9.]+)?', str(skill[3])) else None
     known_release = json.loads(known[2]).get('release', {}) if known else {}
     known_matches = bool(known and approved_image and known[1] == approved_image
                          and known_release.get('reviewedCommit') == SKILL_WHEEL_COMMIT
                          and known_release.get('sha256') == SKILL_WHEEL_SHA256)
     return {'integrityPass': db_ok, 'eventManagerAuthority': authority == [('event-manager',)],
             'knownSkillUpdateMatchesApprovedImageAndArtifact': known_matches,
-            'skillInstalled': bool(skill and skill[0]), 'skillConfigured': bool(skill and skill[1]),
-            'skillEnabled': bool(skill and skill[2]), 'skillVersion': version,
-            'attemptsSinceFailedRun': attempts, 'preexistingHostBlockers': blockers,
+            **guild_lifecycle, 'attemptsSinceFailedRun': attempts, 'preexistingHostBlockers': blockers,
             'latestPreRunBackup': (receipt_for_backup(backup_root, preceding[0], json.loads(preceding[1]), uid,
                                                        guild_id=guild_id) if preceding else None),
             'lastVerifiedHostBackup': (receipt_for_backup(backup_root, older[0], json.loads(older[1]), uid,

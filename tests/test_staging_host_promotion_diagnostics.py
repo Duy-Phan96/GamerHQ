@@ -16,12 +16,12 @@ def ledger(path):
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.executescript("""
             CREATE TABLE skill_domain_authority (guild_id, domain, skill_id);
-            CREATE TABLE skill_guild_state (guild_id, skill_id, installed, configured, enabled, version);
+            CREATE TABLE skill_guild_state (guild_id, skill_id, installed, configured, enabled, version, updated_at);
             CREATE TABLE skill_deployments
                 (id, skill_id, state, created_at, updated_at, previous_image, evidence_json, image, version);
             INSERT INTO skill_domain_authority VALUES(12, 'event-manager', 'event-manager');
-            INSERT INTO skill_guild_state VALUES(12, 'event-manager', 1, 1, 1, '0.1.2');
-            INSERT INTO skill_guild_state VALUES(34, 'event-manager', 1, 1, 1, '9.9.9');
+            INSERT INTO skill_guild_state VALUES(12, 'event-manager', 1, 1, 1, '0.1.2', 123);
+            INSERT INTO skill_guild_state VALUES(34, 'event-manager', 1, 1, 1, '9.9.9', 123);
         """)
 
 
@@ -128,6 +128,7 @@ def test_known_update_and_restore_probe_preserve_disk_bytes(tmp_path):
     result = diagnostic.evidence_from_database(db, tmp_path, 12, os.getuid(), approved_image='approved-image')
     assert result['knownSkillUpdateMatchesApprovedImageAndArtifact']
     assert result['latestPreRunBackup']['restoreProbe'] == 'PASS'
+    assert result['latestPreRunBackup']['guildLifecycle']['skillLifecycleUpdatedAt'] == 123
     assert backup.read_bytes() == before
     sidecar = backup.with_name(backup.name + '-wal')
     sidecar.write_bytes(b'unreviewed')
