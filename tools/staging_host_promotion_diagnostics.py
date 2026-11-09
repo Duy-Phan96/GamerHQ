@@ -47,7 +47,7 @@ def digest(path):
 
 
 def read_database(path, *, immutable=False):
-    fixed_file(path)
+    fixed_file(path, limit=MAX_BACKUP_BYTES)
     # A live read must not create WAL index files. If the sidecars are absent,
     # there is no live WAL to read; immutable mode never creates SQLite files.
     if not immutable:
@@ -156,17 +156,24 @@ def container_status(account, socket, profile, state):
     info = socket.lstat()
     if not stat.S_ISSOCK(info.st_mode) or info.st_uid != account.pw_uid or socket.resolve(strict=True) != socket:
         raise ValueError('ROOTLESS_SOCKET_SCOPE_REJECTED')
-    command = ['runuser', '-u', account.pw_name, '--', 'env', '-i',
-               'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=' + account.pw_dir,
-               'DOCKER_HOST=unix://' + str(socket), 'DOCKER_CONFIG=' + str(CONTROL / 'docker-client'), 'docker']
+    if os.geteuid() != account.pw_uid:
+        raise ValueError('STAGING_ACCOUNT_SCOPE_REJECTED')
+    environment = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': account.pw_dir,
+                   'DOCKER_HOST': 'unix://' + str(socket), 'DOCKER_CONFIG': str(CONTROL / 'docker-client'),
+                   'XDG_RUNTIME_DIR': str(socket.parent)}
+
     def read(*args):
-        result = subprocess.run([*command, *args], capture_output=True, text=True, check=True, timeout=10)
+        result = subprocess.run(['docker', *args], env=environment, cwd=ROOT, capture_output=True, text=True,
+                                check=True, timeout=10)
         if len(result.stdout) > 8192:
             raise ValueError('DOCKER_RESPONSE_REJECTED')
         return result.stdout.strip()
 
-    options = json.loads(read('info', '--format', '{{json .SecurityOptions}}'))
-    if not isinstance(options, list) or 'name=rootless' not in options:
+    security, daemon_id = read('info', '--format', '{{json .SecurityOptions}}|{{.ID}}').rsplit('|', 1)
+    options = json.loads(security)
+    if (not isinstance(options, list)
+            or not any(str(option).split(',', 1)[0] == 'name=rootless' for option in options)
+            or not daemon_id or daemon_id != profile.get('dockerDaemonId')):
         raise ValueError('ROOTLESS_SOCKET_SCOPE_REJECTED')
     container = 'gamerhq-staging-bot'
     if not read('ps', '--all', '--filter', 'name=^/' + container + '$', '--format', '{{.ID}}'):
@@ -198,6 +205,11 @@ def collect():
     socket = Path(f'/run/user/{uid}/docker.sock')
     policy = config(CONTROL / 'policy.json', 0)
     automation = config(CONTROL / 'automation-policy.json', 0)
+    # Root verifies the two protected policies. All mutable files and the Docker
+    # socket are read with the same unprivileged identity as the existing worker.
+    os.setgroups([])
+    os.setgid(account.pw_gid)
+    os.setuid(uid)
     profile = config(CONTROL / 'settings/profile.json', uid, private=True)
     expected = {'root': str(ROOT), 'workRoot': str(work), 'backupRoot': str(backup_root),
                 'database': str(db), 'dockerHost': 'unix://' + str(socket), 'deploymentUid': uid,
@@ -215,12 +227,15 @@ def collect():
         if directory.resolve(strict=True) != directory or not directory.is_dir():
             raise ValueError('STAGING_BINDING_REJECTED')
     lock = work / 'operation.lock'
-    fixed_file(lock, uid=uid, private=True)
+    lock_info = fixed_file(lock, uid=uid, private=True)
     report = {'operation': 'diagnose-staging-host-promotion', 'workflowRun': RUN,
               'controllerCommit': CONTROLLER, 'targetHostCommit': TARGET,
               'productionChanged': False, 'databaseChanged': False, 'containersChanged': False,
               'discordResourcesChanged': False, 'credentialFilesOpened': False}
-    with lock.open('rb') as stream:
+    with os.fdopen(os.open(lock, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream:
+        opened = os.fstat(stream.fileno())
+        if (opened.st_dev, opened.st_ino) != (lock_info.st_dev, lock_info.st_ino):
+            raise ValueError('FILE_SCOPE_REJECTED')
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

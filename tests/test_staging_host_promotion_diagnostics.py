@@ -4,6 +4,10 @@ import hashlib
 import json
 import os
 import sqlite3
+import socket
+from types import SimpleNamespace
+
+import pytest
 
 from tools import staging_host_promotion_diagnostics as diagnostic
 
@@ -67,3 +71,36 @@ def test_backup_symlink_never_supplies_evidence(tmp_path):
     evidence = diagnostic.receipt_for_backup(tmp_path, 'c' * 32, {}, os.getuid())
     assert evidence['inspection'] == 'UNAVAILABLE'
     assert evidence['integrityPass'] is None
+
+
+def test_container_probe_uses_only_approved_rootless_daemon(tmp_path, monkeypatch):
+    path = tmp_path / 'docker.sock'
+    account = SimpleNamespace(pw_uid=os.geteuid(), pw_dir=str(tmp_path))
+    state = {'approvedImage': 'stage-image'}
+    profile = {'dockerDaemonId': 'approved-daemon', 'baseImage': 'stage-image'}
+    calls = []
+
+    def run(argv, *, env, cwd, **kwargs):
+        assert env['DOCKER_HOST'] == 'unix://' + str(path)
+        assert cwd == diagnostic.ROOT
+        calls.append(argv)
+        outputs = {
+            'info': '["name=rootless"]|approved-daemon',
+            'ps': 'container-present',
+            'inspect': '/gamerhq-staging-bot|stage-image|running|healthy|gamerhq-staging|gamerhq-staging|'
+                       + diagnostic.BASELINE,
+        }
+        return SimpleNamespace(stdout=outputs[argv[1]])
+
+    monkeypatch.setattr(diagnostic.subprocess, 'run', run)
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.bind(str(path))
+        receipt = diagnostic.container_status(account, path, profile, state)
+        assert receipt['hostCommit'] == diagnostic.BASELINE and receipt['dockerHealthy']
+        assert receipt['matchesApprovedImage']
+        assert [command[1] for command in calls] == ['info', 'ps', 'inspect']
+        assert 'stage-image' not in str(receipt)
+        calls.clear()
+        with pytest.raises(ValueError, match='ROOTLESS_SOCKET_SCOPE_REJECTED'):
+            diagnostic.container_status(account, path, {**profile, 'dockerDaemonId': 'wrong-daemon'}, state)
+        assert [command[1] for command in calls] == ['info']
