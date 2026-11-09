@@ -6,15 +6,16 @@ database. The repository seed provides a reproducible comparison baseline.
 
 ## Repository seed preview
 
-- 37 matches. Existing game IDs and all stored settings and resource
+- 38 matches. Existing game IDs and all stored settings and resource
   mappings are preserved. Name variants include Overwatch → Overwatch 2,
   Minecraft (Java) → Minecraft, Civilization VII and Fall Guys.
 - 32 proposed additions. They enter the existing table hidden, with the
   existing 🎮 icon fallback and no Discord role or channel. The display
   groups come from the current Host categories.
-- One title requires review. The seed aliases GTA V and GTA 5 to GTA Online.
-  Keep the existing Online identity and review whether Grand Theft Auto V
-  should be a separate game or use that existing catalog entry before apply.
+- The GTA decision is resolved. GTA V, GTA 5 and Grand Theft Auto V
+  resolve to the existing GTA Online row. If the aliases are already present,
+  the preview schedules no change. An older snapshot may show one alias-only
+  update. A missing GTA Online row or competing match blocks apply.
 
 Proposed additions against the seed:
 
@@ -72,12 +73,11 @@ python -m tools.game_catalog_import --database "$STAGING_DATABASE" \
   --manifest data/game_catalog_expansion.json
 ```
 
-Review the JSON lists and resolve the GTA entry. If deferring that decision,
-use a reviewed manifest copy with that row omitted. Generate a fresh preview
+Review the JSON lists and saved resource mappings. Generate a fresh preview
 against the same target and use its token for the approved maintenance
 operation with the bot stopped. The tool takes the existing instance lock,
 checks the exact plan again and verifies a new backup before inserting any
-rows.
+rows or appending approved aliases to the explicit target.
 
 ```sh
 python -m tools.game_catalog_import --database "$STAGING_DATABASE" \
@@ -87,8 +87,8 @@ python -m tools.game_catalog_import --database "$STAGING_DATABASE" \
 
 Compare row counts and rerun preview after apply. Newly added titles should
 resolve to the same IDs with zero planned inserts. Verify existing role and
-channel mappings and reopen the existing selector. Catalog apply writes only
-new game records. Approval of Discord resource provisioning is separate.
+channel mappings and reopen the existing selector. Catalog apply inserts hidden records and can append the approved aliases to
+GTA Online. The existing game's identity and mappings are preserved. Approval of Discord resource provisioning is separate.
 
 ## PatchBot readiness
 
@@ -99,7 +99,7 @@ distinct from the retired original. Java and Bedrock, the Warcraft editions,
 the two Path of Exile games, the RuneScape variants, and Battlefield 6 and
 2042 have separate listings. Review the combined Black Ops 7 + Warzone feed
 before routing it to a Warzone channel. The Grand Theft Auto V feed listing
-does not settle GamerHQ's existing GTA Online mapping.
+does not establish which feed is appropriate for the existing GTA Online channel.
 
 Use PatchBot's official setup to select the game and the already approved
 channel. Its published [developer API](https://patchbot.io/game-developers)
