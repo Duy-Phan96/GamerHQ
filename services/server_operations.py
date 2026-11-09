@@ -42,8 +42,12 @@ def definitions(guild):
         name = 'partners-benefits' if name == 'marketplace' else name
         parent = f'managed_category:{guild.id}:{name}'
         names = {name, 'marketplace', 'partner-benefits'} if name == 'partners-benefits' else {name}
-        result.append(dict(key=parent, kind='category', name=name, label=category.name,
-                           aliases=names, private=category.private, parent=None))
+        row = dict(key=parent, kind='category', name=name, label=category.name,
+                   aliases=names, private=category.private, parent=None)
+        if name == 'games':
+            row['aliases'].add('gaming')
+            row['legacy_key'] = f'managed_category:{guild.id}:gaming'
+        result.append(row)
         for channel in category.channels:
             child = {'purchases': 'ig-purchases', 'buyer-ranking': 'ig-buyer-ranking'}.get(alias(channel.name), alias(channel.name))
             if removed(guild, child):

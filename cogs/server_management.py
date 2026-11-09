@@ -2130,20 +2130,6 @@ class StructureView(Menu):
             '# Removed Resources\nSelect a resource to preview an explicit restore. Nothing is recreated automatically.',
             view=RemovedResourcesView(self.guild, self.admin_id, names), ephemeral=True)
 
-    async def configuration_preview(self, interaction):
-        from services import server_configuration_preview
-        await interaction.response.defer(ephemeral=True)
-        try:
-            summary, rows = await server_configuration_preview.preview(
-                interaction.guild, interaction.user, interaction.client)
-        except (ServerMessageError, discord.HTTPException, OSError, ValueError, TimeoutError):
-            return await interaction.edit_original_response(
-                content='Configuration could not be verified. Retry from the configured guild as its owner.',
-                view=None)
-        view = ConfigurationPreviewView(self.guild, self.admin_id, summary, rows)
-        await interaction.edit_original_response(content=view.text(), view=view,
-                                                 allowed_mentions=discord.AllowedMentions.none())
-
     async def duplicates(self, interaction):
         from services.message_reconciliation import audit
         from cogs.server import DuplicateAuditView
@@ -2323,6 +2309,20 @@ class DeveloperView(Menu):
         await interaction.response.defer(ephemeral=True)
         findings = await scan(self.guild, interaction.client, messages=False)
         await interaction.edit_original_response(content=summary(findings), view=HealthView(self.guild, self.admin_id, findings))
+
+    async def configuration_preview(self, interaction):
+        from services import server_configuration_preview
+        await interaction.response.defer(ephemeral=True)
+        try:
+            summary, rows = await server_configuration_preview.preview(
+                interaction.guild, interaction.user, interaction.client)
+        except (ServerMessageError, discord.HTTPException, OSError, ValueError, TimeoutError):
+            return await interaction.edit_original_response(
+                content='Configuration could not be verified. Retry from the configured guild as its owner.',
+                view=None)
+        view = ConfigurationPreviewView(self.guild, self.admin_id, summary, rows)
+        await interaction.edit_original_response(content=view.text(), view=view,
+                                                 allowed_mentions=discord.AllowedMentions.none())
 
     async def duplicates(self, interaction):
         from services.message_reconciliation import audit
