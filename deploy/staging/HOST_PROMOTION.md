@@ -59,10 +59,22 @@ backup remains excluded. The read-only operation never releases the latch.
 Routine health, smoke and history are read-only, but do not replace this
 combined verification. The routine `recover` operation remains blocked.
 
-Keep Host promotion blocked. Any later latch release requires explicit
-separate review and approval. Neither package installation nor controller
-enrollment authorizes enabling Event Manager, restoring data, or dispatching
-the protected Host promotion.
+After owner review of the held receipt, the same checksum-verified collector
+has a separate root-only `--release-verified-recovery` mode with approval
+`RELEASE VERIFIED STAGING HOST RECOVERY HOLD`. Under the existing operation
+lock it rechecks the controller, image, artifact, mounted database, guild
+lifecycle, deployment history and historical backup. Only the known
+Skill-update backup may be corrected from 0640 to 0600. It opens the inode for
+metadata only before chmod. It then verifies the recorded checksum, SQLite
+integrity and an in-memory restore against the staging guild. A failed
+verification leaves recovery held and keeps any already tightened permissions.
+The action logs the approval attempt, permission change, verification and
+release to the existing staging security journal. It changes only the backup
+mode and, after all checks pass, the recovery latch.
+
+A `RECOVERY_HOLD_RELEASED` receipt is the boundary before separately
+reviewing Host promotion. This action does not restore a database, change
+Skill lifecycle, restart the Gateway, or dispatch the protected workflow.
 
 ## Event Manager V2.1 pin replacement
 
