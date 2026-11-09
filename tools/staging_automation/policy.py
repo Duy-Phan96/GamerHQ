@@ -4,7 +4,7 @@ import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
 WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview'})
 PUBLIC = frozenset({'status', 'challenge'})
 OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
 MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback'})
@@ -16,6 +16,10 @@ ERROR_CODES = ERROR_CODES | frozenset({'HOST_SOURCE_BUILD_FAILED', 'HOST_PROMOTI
 ERROR_CODES |= frozenset({'WEB_POLICY_REJECTED', 'WEB_NOT_ENROLLED', 'WEB_ARTIFACT_REJECTED',
     'WEB_CAPACITY_REJECTED', 'WEB_CONFIGURATION_REJECTED', 'WEB_CONTAINER_REJECTED', 'WEB_HEALTH_FAILED',
     'WEB_RECOVERY_REQUIRED', 'WEB_ROLLBACK_UNAVAILABLE'})
+
+
+ERROR_CODES |= frozenset({'CATALOG_PREVIEW_NOT_ENROLLED', 'CATALOG_STAGING_SOURCE_REJECTED',
+                         'CATALOG_VERIFIED_BACKUP_UNAVAILABLE'})
 
 
 class Denied(Exception):
@@ -46,6 +50,8 @@ def validate_policy(value):
             raise Denied('POLICY_REJECTED')
     if value.get('limits') != {'mutationsPerHour': 12, 'buildsPerHour': 3, 'restartsPerHour': 2, 'restartCooldown': 120}:
         raise Denied('RESOURCE_POLICY_REJECTED')
+    if 'catalogPreviewWorkflowSha256' in value and not re.fullmatch('[0-9a-f]{64}', value['catalogPreviewWorkflowSha256']):
+        raise Denied('POLICY_REJECTED')
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
@@ -74,7 +80,7 @@ def admit(operation, state):
     if operation in MUTATIONS and state.get('recoveryRequired'): raise Denied('RECOVERY_REQUIRES_OWNER')
     if operation == 'host-promote' and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
-    if operation in WEB and (not state.get('enabled') or not state.get('bootstrapVerified')):
+    if (operation in WEB or operation == 'catalog-preview') and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if operation in ROUTINE - {'health'} and not state.get('enabled'):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
