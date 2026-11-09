@@ -25,6 +25,7 @@
 !tools/**/*.py
 !data/
 !data/games_seed.json
+!data/game_catalog_expansion.json
 **/.env*
 !.env.example
 **/*.db*
