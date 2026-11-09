@@ -176,8 +176,8 @@ def test_verification_receipt_keeps_unsafe_backup_out_of_read_scope(tmp_path, mo
     assert result['checksumMatches'] is None and result['restoreProbe'] == 'UNAVAILABLE'
 
 
-def test_held_baseline_requires_exact_artifact_and_empty_promotion_history():
-    report = {
+def healthy_held_report():
+    return {
         'controllerSourceVerified': True, 'recoveryRequired': True, 'automationEnabled': True,
         'profileHostCommit': diagnostic.BASELINE,
         'container': {'hostCommit': diagnostic.BASELINE, 'running': True, 'dockerHealthy': True,
@@ -187,12 +187,14 @@ def test_held_baseline_requires_exact_artifact_and_empty_promotion_history():
         'database': {'integrityPass': True, 'eventManagerAuthority': True, 'skillInstalled': True,
                      'skillConfigured': True, 'skillEnabled': False, 'skillVersion': '0.1.1',
                      'knownSkillUpdateMatchesApprovedImageAndArtifact': True,
-                     'attemptsSinceFailedRun': [], 'preexistingHostBlockers': [],
+                     'attemptsSinceFailedRun': [], 'preexistingHostBlockers': [], 'pendingDeploymentCount': 0,
                      'lastVerifiedHostBackup': {'checksumMatches': True, 'integrityPass': True, 'restoreProbe': 'PASS'},
                      'latestPreRunBackupMatchesKnownSkillUpdate': True,
                      'latestPreRunBackup': {'mode': '0640', 'inspection': 'MODE_UNSAFE',
                                             'checksumMatches': None, 'restoreProbe': 'UNAVAILABLE'}},
     }
+def test_held_baseline_requires_exact_artifact_and_empty_promotion_history():
+    report = healthy_held_report()
     assert all(diagnostic.held_baseline_checks(report).values())
     report['container']['wheelMatchesReviewedArtifact'] = False
     report['database']['attemptsSinceFailedRun'] = [{'state': 'READY'}]
@@ -201,3 +203,86 @@ def test_held_baseline_requires_exact_artifact_and_empty_promotion_history():
     assert not checks['verifiedSkillAndDatabaseBinding']
     assert not checks['noCandidateAttemptOrHostBlocker']
     assert not checks['guildLifecyclePreserved']
+
+
+@pytest.mark.parametrize('corrupt_hash', [False, True])
+def test_explicit_release_only_after_private_backup_verifies(tmp_path, monkeypatch, corrupt_hash):
+    backup = tmp_path / (diagnostic.KNOWN_SKILL_UPDATE + '.sqlite')
+    ledger(backup)
+    original_bytes = backup.read_bytes()
+    checksum = hashlib.sha256(original_bytes).hexdigest()
+    backup.chmod(0o640)
+    evidence = {'backup': {'sha256': 'f' * 64 if corrupt_hash else checksum}}
+    state_path = tmp_path / 'automation-state.json'
+    state = {'recoveryRequired': True, 'enabled': True, 'bootstrapVerified': True, 'approvedImage': 'existing', 'limits': {'restartsPerHour': 2}}
+    state_path.write_text(json.dumps(state))
+    state_path.chmod(0o600)
+    report = healthy_held_report()
+    phases = []
+
+    def audit(_id, phase, **details):
+        phases.append(phase)
+
+    monkeypatch.setattr(diagnostic, 'audit_release', audit)
+    uid = os.getuid()
+    original_digest = diagnostic.digest
+    def private_digest(path):
+        assert path.stat().st_mode & 0o777 == 0o600
+        return original_digest(path)
+    monkeypatch.setattr(diagnostic, 'digest', private_digest)
+
+    def refresh():
+        report['database']['latestPreRunBackup'] = diagnostic.receipt_for_backup(
+            tmp_path, diagnostic.KNOWN_SKILL_UPDATE, evidence, uid, guild_id=12)
+
+    before = backup.stat()
+    receipt = diagnostic.release_hold(report, state_path, state, tmp_path, uid, refresh)
+    after = backup.stat()
+    assert before.st_ino == after.st_ino and before.st_mtime_ns == after.st_mtime_ns
+    assert backup.read_bytes() == original_bytes
+    assert receipt['backupModeChanged'] and after.st_mode & 0o777 == 0o600
+    assert json.loads(state_path.read_text()) == {**state, 'recoveryRequired': corrupt_hash}
+    assert state_path.stat().st_mode & 0o777 == 0o600
+    assert receipt['recoveryReleaseAuthorized'] is not corrupt_hash
+    if corrupt_hash:
+        assert phases == ['STARTED', 'BACKUP_MODE_CHECK_STARTED', 'BACKUP_PRIVATE', 'VERIFICATION_REJECTED']
+        assert receipt['state'] == 'RECOVERY_HELD' and receipt['recoveryRequired']
+    else:
+        assert phases == ['STARTED', 'BACKUP_MODE_CHECK_STARTED', 'BACKUP_PRIVATE', 'RELEASE_VERIFIED', 'RELEASED']
+        assert receipt['state'] == 'RECOVERY_HOLD_RELEASED' and not receipt['recoveryRequired']
+
+
+@pytest.mark.parametrize('blocker', ['no-latch', 'pending-deployment', 'unverified-host-backup'])
+def test_release_rejects_before_touching_backup(tmp_path, monkeypatch, blocker):
+    report = healthy_held_report()
+    state = {'recoveryRequired': blocker != 'no-latch', 'bootstrapVerified': True}
+    if blocker == 'pending-deployment':
+        report['database']['pendingDeploymentCount'] = 1
+    elif blocker == 'unverified-host-backup':
+        report['database']['lastVerifiedHostBackup']['restoreProbe'] = 'FAILED'
+    monkeypatch.setattr(diagnostic, 'audit_release', lambda *args: None)
+    def unexpected(*args):
+        pytest.fail('An unverified release touched recovery state or backup')
+    monkeypatch.setattr(diagnostic, 'private_backup_mode', unexpected)
+    monkeypatch.setattr(diagnostic, 'release_state', unexpected)
+    receipt = diagnostic.release_hold(report, tmp_path / 'state', state, tmp_path, os.getuid(), unexpected)
+    assert receipt['state'] in {'RECOVERY_HELD', 'REVIEW_REQUIRED'}
+    assert not receipt['backupModeChanged']
+
+
+@pytest.mark.parametrize('redirect', ['symlink', 'hardlink', 'sidecar', 'unexpected-mode'])
+def test_backup_correction_refuses_other_inodes_or_modes(tmp_path, redirect):
+    path = tmp_path / (diagnostic.KNOWN_SKILL_UPDATE + '.sqlite')
+    target = tmp_path / 'other.sqlite' if redirect in {'symlink', 'hardlink'} else path
+    target.write_bytes(b'fixture')
+    mode = 0o644 if redirect == 'unexpected-mode' else 0o640
+    target.chmod(mode)
+    if redirect == 'symlink':
+        path.symlink_to(target)
+    elif redirect == 'hardlink':
+        os.link(target, path)
+    elif redirect == 'sidecar':
+        path.with_name(path.name + '-wal').touch()
+    with pytest.raises(ValueError):
+        diagnostic.private_backup_mode(tmp_path, os.getuid())
+    assert target.stat().st_mode & 0o777 == mode

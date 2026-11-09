@@ -1,4 +1,5 @@
-"""Owner-only verification of the corrected controller while recovery remains held."""
+"""Verify the staging recovery hold or explicitly release it after backup verification."""
+import argparse
 from contextlib import closing
 import fcntl
 import hashlib
@@ -9,6 +10,9 @@ import re
 import sqlite3
 import stat
 import subprocess
+import syslog
+import tempfile
+import uuid
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
@@ -36,6 +40,7 @@ MAX_BACKUP_BYTES = 256 * 1024 ** 2
 MAX_MEMORY_RESTORE_BYTES = 32 * 1024 ** 2
 KNOWN_SKILL_UPDATE = '1b01158008ff4839988a97911d31a1c9'
 KNOWN_HOST_BACKUP = '8fbba0198bef4f71be26cd149260184f'
+RELEASE_APPROVAL = 'RELEASE VERIFIED STAGING HOST RECOVERY HOLD'
 SKILL_WHEEL_COMMIT = '41a7d968852453d815a52f2f03e4ccac7e93eff9'
 SKILL_WHEEL_SHA256 = '84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465'
 STATES = {'STAGING', 'READY', 'FAILED', 'APPLYING', 'APPLIED', 'ROLLED_BACK', 'RECOVERY_REQUIRED'}
@@ -184,7 +189,7 @@ def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=N
         guild_lifecycle = lifecycle(conn, guild_id)
         rows = conn.execute(
             "SELECT id,state,created_at,updated_at,previous_image,evidence_json FROM skill_deployments "
-            "WHERE skill_id='event-manager' AND (updated_at>=? OR state IN ('APPLYING','RECOVERY_REQUIRED')) "
+            "WHERE skill_id='event-manager' AND (updated_at>=? OR state IN ('STAGING','READY','APPLYING','RECOVERY_REQUIRED')) "
             "ORDER BY updated_at DESC LIMIT 21", (RUN_STARTED,),
         ).fetchall()
         preceding = conn.execute(
@@ -227,6 +232,7 @@ def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=N
             'knownSkillUpdateMatchesApprovedImageAndArtifact': known_matches,
             'latestPreRunBackupMatchesKnownSkillUpdate': bool(preceding and preceding[0] == KNOWN_SKILL_UPDATE),
             **guild_lifecycle, 'attemptsSinceFailedRun': attempts, 'preexistingHostBlockers': blockers,
+            'pendingDeploymentCount': sum(row[1] in {'STAGING', 'READY', 'APPLYING', 'RECOVERY_REQUIRED'} for row in rows),
             'latestPreRunBackup': (receipt_for_backup(backup_root, preceding[0], json.loads(preceding[1]), uid,
                                                        guild_id=guild_id) if preceding else None),
             'lastVerifiedHostBackup': (receipt_for_backup(backup_root, older[0], json.loads(older[1]), uid,
@@ -338,7 +344,112 @@ def held_baseline_checks(report):
     }
 
 
-def collect():
+def audit_release(audit_id, phase, **details):
+    syslog.openlog('gamerhq-staging-security', syslog.LOG_PID, syslog.LOG_AUTHPRIV)
+    syslog.syslog(syslog.LOG_NOTICE, json.dumps({
+        'operation': 'release-staging-host-recovery-hold', 'workflowRun': RUN,
+        'controllerCommit': CONTROLLER, 'auditId': audit_id, 'state': phase, **details,
+    }))
+
+
+def private_backup_mode(root, uid):
+    path = root / (KNOWN_SKILL_UPDATE + '.sqlite')
+    info = fixed_file(path, uid=uid, limit=MAX_BACKUP_BYTES)
+    if not 0 < info.st_size <= MAX_MEMORY_RESTORE_BYTES or any(
+            path.with_name(path.name + suffix).exists() or path.with_name(path.name + suffix).is_symlink()
+            for suffix in ('-wal', '-shm', '-journal')):
+        raise ValueError('BACKUP_SCOPE_REJECTED')
+    fd = os.open(path, os.O_PATH | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(fd)
+        identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_uid, item.st_nlink)
+        original = stat.S_IMODE(info.st_mode)
+        if (not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(info)
+                or stat.S_IMODE(opened.st_mode) != original or original not in (0o640, 0o600)):
+            raise ValueError('BACKUP_SCOPE_REJECTED')
+        if original == 0o640:
+            # O_PATH pins the inode without opening file contents. chmod follows
+            # this process's own descriptor, never a replaceable backup pathname.
+            os.chmod(f'/proc/self/fd/{fd}', 0o600)
+        verified = fixed_file(path, uid=uid, private=True, limit=MAX_BACKUP_BYTES)
+        if identity(verified) != identity(info) or stat.S_IMODE(verified.st_mode) != 0o600:
+            raise ValueError('BACKUP_SCOPE_REJECTED')
+        return format(original, '04o')
+    finally:
+        os.close(fd)
+
+
+def release_checks(report, *, before_mode_change):
+    checks = held_baseline_checks(report)
+    unsafe_excluded = checks.pop('unsafeBackupExcluded')
+    database = report.get('database', {})
+    backup = database.get('latestPreRunBackup') or {}
+    private_verified = (database.get('latestPreRunBackupMatchesKnownSkillUpdate') is True
+                        and backup.get('mode') == '0600' and backup.get('checksumMatches') is True
+                        and backup.get('integrityPass') is True and backup.get('restoreProbe') == 'PASS')
+    checks['skillUpdateBackup'] = private_verified or (before_mode_change and unsafe_excluded)
+    checks['noIncompleteDeployment'] = database.get('pendingDeploymentCount') == 0
+    return checks
+
+
+def release_state(path, state, uid):
+    if state.get('recoveryRequired') is not True or config(path, uid, private=True) != state:
+        raise ValueError('RECOVERY_STATE_CHANGED')
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.staging-recovery-', delete=False) as output:
+            temporary = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            json.dump({**state, 'recoveryRequired': False}, output, sort_keys=True)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def release_hold(report, state_path, state, backup_root, uid, refresh):
+    audit_id = uuid.uuid4().hex
+    report.update(operation='release-staging-host-recovery-hold', auditId=audit_id,
+                  ownerApprovalProvided=True, recoveryReleaseAuthorized=False, backupModeChanged=False)
+    before = release_checks(report, before_mode_change=True)
+    before['recoveryHeld'] = (before['recoveryHeld'] and state.get('recoveryRequired') is True
+                              and state.get('bootstrapVerified') is True)
+    report.update(checks=before, state='RECOVERY_HELD' if state.get('recoveryRequired') is True else 'REVIEW_REQUIRED')
+    audit_release(audit_id, 'STARTED')
+    if not all(before.values()):
+        audit_release(audit_id, 'BASELINE_REJECTED')
+        return report
+    audit_release(audit_id, 'BACKUP_MODE_CHECK_STARTED')
+    try:
+        original_mode = private_backup_mode(backup_root, uid)
+    except (OSError, ValueError):
+        audit_release(audit_id, 'BACKUP_MODE_UNCONFIRMED')
+        report.update(checks={}, backupModeChanged=None)
+        return report
+    report.update(backupModeBefore=original_mode, backupModeAfter='0600', backupModeChanged=original_mode != '0600')
+    audit_release(audit_id, 'BACKUP_PRIVATE', previousMode=original_mode, mode='0600')
+    try:
+        refresh()
+    except (OSError, ValueError):
+        audit_release(audit_id, 'VERIFICATION_ERROR')
+        report['checks'] = {}
+        return report
+    checks = release_checks(report, before_mode_change=False)
+    report['checks'] = checks
+    if not all(checks.values()):
+        audit_release(audit_id, 'VERIFICATION_REJECTED')
+        return report
+    audit_release(audit_id, 'RELEASE_VERIFIED')
+    release_state(state_path, state, uid)
+    audit_release(audit_id, 'RELEASED')
+    report.update(state='RECOVERY_HOLD_RELEASED', recoveryRequired=False, recoveryReleaseAuthorized=True)
+    return report
+
+
+def collect(*, release=False):
     if os.geteuid() != 0:
         raise PermissionError('OWNER_ROOT_SESSION_REQUIRED')
     import pwd
@@ -392,19 +503,28 @@ def collect():
         if config(automation_path, 0) != automation:
             raise ValueError('CONTROLLER_BINDING_REJECTED')
         verify_controller(automation)
-        state = config(work / 'automation-state.json', uid, private=True)
+        state_path = work / 'automation-state.json'
+        state = config(state_path, uid, private=True)
         report.update(operationLock='AVAILABLE', controllerSourceVerified=True, recoveryRequired=state.get('recoveryRequired') is True,
                       automationEnabled=state.get('enabled') is True,
                       profileHostCommit=safe_commit(profile.get('applicationHostCommit')))
-        try:
-            report['container'] = container_status(account, socket, profile, state)
-        except (OSError, ValueError, subprocess.SubprocessError):
-            report['container'] = {'inspection': 'UNAVAILABLE'}
-        try:
-            report['database'] = evidence_from_database(db, backup_root, int(profile['stagingGuildId']), uid,
-                                                        approved_image=state.get('approvedImage'))
-        except (OSError, ValueError, sqlite3.Error):
-            report['database'] = {'inspection': 'UNAVAILABLE'}
+        def refresh():
+            if config(automation_path, 0) != automation or config(state_path, uid, private=True) != state:
+                raise ValueError('RECOVERY_STATE_CHANGED')
+            verify_controller(automation)
+            try:
+                report['container'] = container_status(account, socket, profile, state)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                report['container'] = {'inspection': 'UNAVAILABLE'}
+            try:
+                report['database'] = evidence_from_database(db, backup_root, int(profile['stagingGuildId']), uid,
+                                                            approved_image=state.get('approvedImage'))
+            except (OSError, ValueError, sqlite3.Error):
+                report['database'] = {'inspection': 'UNAVAILABLE'}
+
+        refresh()
+        if release:
+            return release_hold(report, state_path, state, backup_root, uid, refresh)
         checks = held_baseline_checks(report)
         report.update(checks=checks, state='RECOVERY_HOLD_VERIFIED' if all(checks.values()) else 'REVIEW_REQUIRED',
                       recoveryReleaseAuthorized=False)
@@ -412,12 +532,20 @@ def collect():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--release-verified-recovery', action='store_true')
+    parser.add_argument('--approval')
+    args = parser.parse_args()
     try:
-        print(json.dumps(collect(), indent=2))
+        if (args.release_verified_recovery and args.approval != RELEASE_APPROVAL
+                or not args.release_verified_recovery and args.approval is not None):
+            raise PermissionError('EXPLICIT_OWNER_RELEASE_REQUIRED')
+        print(json.dumps(collect(release=args.release_verified_recovery), indent=2))
     except Exception as error:
         reason = str(error)
         known = {'OWNER_ROOT_SESSION_REQUIRED', 'STAGING_ACCOUNT_SCOPE_REJECTED',
                  'STAGING_BINDING_REJECTED', 'FILE_SCOPE_REJECTED',
-                 'CONTROLLER_BINDING_REJECTED', 'CONTROLLER_SOURCE_MISMATCH'}
+                 'CONTROLLER_BINDING_REJECTED', 'CONTROLLER_SOURCE_MISMATCH',
+                 'BACKUP_SCOPE_REJECTED', 'RECOVERY_STATE_CHANGED', 'EXPLICIT_OWNER_RELEASE_REQUIRED'}
         code = reason if reason in known else 'DIAGNOSTIC_UNAVAILABLE'
         raise SystemExit(json.dumps({'diagnosticError': code, 'productionChanged': False})) from None
