@@ -32,7 +32,7 @@ SEVERITY = {
 
 def group_for(finding):
     name = finding.name.lower()
-    if any(word in name for word in ("game channel", "game role", "game area", "games log", "gaming category")):
+    if any(word in name for word in ("game channel", "game role", "game selector", "game area", "games log", "gaming category")):
         return "Games"
     if any(word in name for word in ("lfg", "voice", "lobby", "temporary voice", "create voice")):
         return "LFG & Voice"
