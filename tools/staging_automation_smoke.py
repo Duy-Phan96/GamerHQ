@@ -99,7 +99,7 @@ def main():
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
             # Install the reviewed extension under the same restrictive umask,
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
-            from tools.extend_staging_host_promotion import CATALOG_CONTROLLER, CONFIGURATION_HOST, HOST, OLD, WEB_BASE, extension
+            from tools.extend_staging_host_promotion import CATALOG_CONTROLLER, CONFIGURATION_HOST, FAILED_CONFIGURATION_CONTROLLER, HOST, OLD, WEB_BASE, extension
             from urllib.request import urlopen
 
             def install_pin(commit, digest, approval, *flags):
@@ -140,20 +140,30 @@ def main():
             assert json.loads(call('status').stdout)['controllerCommit'] == CATALOG_CONTROLLER
             policy_path = config / 'automation-policy.json'
             catalog_policy = json.loads(policy_path.read_bytes())
+            first_configuration = install_pin(FAILED_CONFIGURATION_CONTROLLER,
+                'de77d78f0abc0968ca2e76d0b1bfa9e4820b2e79b32332ef1559c8d8999db019',
+                'ENROLL STAGING CONFIGURATION PREVIEW', '--configuration-preview')
+            assert first_configuration['state'] == 'PIN_INSTALLED'
+            assert json.loads(call('status').stdout)['controllerCommit'] == FAILED_CONFIGURATION_CONTROLLER
+            configured_policy = json.loads(policy_path.read_bytes())
+            held = json.loads(state_path.read_bytes())
+            held['recoveryRequired'] = True
+            state_path.write_text(json.dumps(held))
             active_bytes = state_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)
-                try: extended = extension(args.commit, 'ENROLL STAGING CONFIGURATION PREVIEW', configuration_preview=True)
+                try: extended = extension(args.commit, 'INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD', configuration_recovery=True)
                 finally: os.umask(previous)
-                assert extended['state'] == 'PIN_INSTALLED' and extended['automationEnabled'] is True
-                assert extended['approvedHostCommit'] == CONFIGURATION_HOST and extended['hostPromotionRequiresProtectedOwnerReview']
+                assert extended['state'] == 'FIX_INSTALLED_RECOVERY_HELD' and extended['recoveryRequired'] is True
+                assert extended['approvedHostCommit'] == CONFIGURATION_HOST and extended['promotionPinChanged'] is False
                 assert extended['catalogPreviewPolicyPreserved'] is True
                 assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
                 assert state_path.read_bytes() == active_bytes
             extended_status = json.loads(call('status').stdout)
             assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionCommit'] == CONFIGURATION_HOST
-            assert extended_status['state'] == 'ACTIVE'
+            assert extended_status['state'] == 'ACTIVE' and extended_status['recoveryRequired'] is True
             installed_policy = json.loads(policy_path.read_bytes())
+            assert installed_policy == {**configured_policy, 'controllerCommit': args.commit}
             assert {k: v for k, v in installed_policy.items() if k not in {'controllerCommit', 'hostPromotion'}} == {
                 k: v for k, v in catalog_policy.items() if k not in {'controllerCommit', 'hostPromotion'}}
             catalog_challenge = json.loads(call('challenge', {'operation': 'catalog-preview'}).stdout)
@@ -173,6 +183,7 @@ from staging_automation.host_promotion import COMMIT
 from staging_automation.deployment import SkillUpdateController
 import inspect
 assert 'host_source_commit' in inspect.signature(SkillUpdateController.stage).parameters
+assert 'from .deployment import SkillUpdateController' in inspect.getsource(HostBackend.update)
 assert COMMIT=='REVIEWED_HOST'
 p=json.load(open('/etc/gamerhq-staging/settings/profile.json'))
 def run(args,check=True):return subprocess.run(args,capture_output=True,text=True,check=check,timeout=180)
@@ -192,7 +203,8 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
     if normalized.returncode or normalized.stdout.strip() != 'NORMALIZED_STAGING_LIMITS_PASS':
         raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
-        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'catalogPreviewPolicyPreserved': True, 'normalizedContainerLimits': 'PASS',
+        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'catalogPreviewPolicyPreserved': True,
+        'recoveryLatchPreserved': True, 'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
         'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',
         'gatewayStarted': False, 'productionChanged': False}))

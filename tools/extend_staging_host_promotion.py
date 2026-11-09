@@ -28,6 +28,8 @@ HOST = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
 ARCHIVE = '8d4286c5596963fe10b8f36da163bbe3de12d6b2512673f5b54535145ad424bd'
 MODULES = ('__init__.py', 'policy.py', 'oidc.py', 'backend.py', 'bridge.py', 'host_promotion.py')
 CATALOG_CONTROLLER = '11e4062beb4e22f57669becbd68797be2099185a'
+FAILED_CONFIGURATION_CONTROLLER = '0931e16e85db6024b3142aacc072f7721ec28e2d'
+SKILL_UPDATE_BACKUP = '1b01158008ff4839988a97911d31a1c9.sqlite'
 CONFIGURATION_HOST = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
 CONFIGURATION_ARCHIVE = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
 CATALOG_SOURCES = {
@@ -98,13 +100,28 @@ def atomic(path, body, gid):
         if temporary.exists(): temporary.unlink()
 
 
+def skill_update_backup_mode():
+    """Report metadata only. Never open the known unsafe backup."""
+    backup_root = ROOT / 'backups'
+    try:
+        directory_info = backup_root.lstat()
+        if not stat.S_ISDIR(directory_info.st_mode):
+            return None
+        info = (backup_root / SKILL_UPDATE_BACKUP).lstat()
+    except OSError:
+        return None
+    return format(stat.S_IMODE(info.st_mode), '04o') if stat.S_ISREG(info.st_mode) else None
+
+
 def extension(commit, approval, *, web_hostname=None, previous_web_controller=None,
-              catalog_preview=False, configuration_preview=False):
+              catalog_preview=False, configuration_preview=False, configuration_recovery=False):
     import pwd
     web = web_hostname is not None
-    if sum((web, catalog_preview, configuration_preview)) > 1:
+    if sum((web, catalog_preview, configuration_preview, configuration_recovery)) > 1:
         raise ValueError('SELECT_ONE_EXTENSION')
-    expected_approval = ('ENROLL STAGING CONFIGURATION PREVIEW' if configuration_preview else
+    configuration_preview = configuration_preview or configuration_recovery
+    expected_approval = ('INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD' if configuration_recovery else
+                         'ENROLL STAGING CONFIGURATION PREVIEW' if configuration_preview else
                          'ENROLL STAGING CATALOG PREVIEW' if catalog_preview else
                          'ENROLL ISOLATED STAGING WEB' if web else 'REPLACE REVIEWED STAGING HOST PIN')
     if os.geteuid() != 0 or approval != expected_approval:
@@ -114,7 +131,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         raise ValueError('VERIFIED_WEB_HOSTNAME_REQUIRED')
     if previous_web_controller is not None and not web:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
-    previous_commit = (CATALOG_CONTROLLER if configuration_preview else
+    previous_commit = (FAILED_CONFIGURATION_CONTROLLER if configuration_recovery else
+                       CATALOG_CONTROLLER if configuration_preview else
                        (previous_web_controller or WEB_BASE) if web or catalog_preview else OLD)
     if not all(re.fullmatch('[0-9a-f]{40}', value) for value in (commit, previous_commit)):
         raise ValueError('IMMUTABLE_SOURCE_REQUIRED')
@@ -183,11 +201,12 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if (web or catalog_preview) and policy.get('hostPromotion') != {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}:
             raise ValueError('EXISTING_HOST_POLICY_CHANGED')
         previous_modules = (*MODULES, 'web.py') if web and previous_commit != WEB_BASE else MODULES
+        changed_modules = {'host_promotion.py', 'backend.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'}
         for name in previous_modules:
             installed = trusted(previous / 'staging_automation' / name)
             if installed != git('show', previous_commit + ':tools/staging_automation/' + name):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
-            if configuration_preview and name not in {'host_promotion.py', 'policy.py'} and blobs[name] != installed:
+            if configuration_preview and name not in changed_modules and blobs[name] != installed:
                 raise ValueError('UNRELATED_CONTROLLER_SOURCE_CHANGED')
         installed_deployment = trusted(previous / 'staging_automation/deployment.py')
         if installed_deployment != git('show', previous_commit + ':hosts/gamerhq/skill_update_controller.py'):
@@ -197,19 +216,18 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
                 raise ValueError('UNRELATED_CONTROLLER_SOURCE_CHANGED')
             previous_workflow = git('show', previous_commit + ':.github/workflows/staging-host-promotion.yml')
             catalog_workflow = git('show', previous_commit + ':.github/workflows/staging-catalog-preview.yml')
-            pin = configuration_pin(policy, commit=commit, previous_workflow=previous_workflow,
+            if configuration_recovery and previous_workflow != workflow:
+                raise ValueError('EXISTING_HOST_POLICY_CHANGED')
+            # Recovery selects corrected code for the already-installed pin.
+            # Compare the current policy to that exact pin even on the first run.
+            pin_policy = {**policy, 'controllerCommit': commit} if configuration_recovery else policy
+            pin = configuration_pin(pin_policy, commit=commit, previous_workflow=previous_workflow,
                                     workflow=workflow, catalog_workflow=catalog_workflow)
             for name, path in CATALOG_SOURCES.items():
                 installed = trusted(previous / 'staging_automation' / name)
                 if installed != git('show', previous_commit + ':' + path):
                     raise ValueError('INSTALLED_SOURCE_MISMATCH')
                 blobs[name] = installed
-    directory(destination, gid); directory(destination / 'staging_automation', gid)
-    for name, body in blobs.items():
-        target = destination / 'staging_automation' / name
-        if target.exists() and trusted(target) != body:
-            raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
-        atomic(target, body, gid)
     # Existing sandbox/SSH launcher still invokes the same entry file. Only its
     # root-owned import target and a narrowly scoped root-owned policy change.
     new_policy = {**policy, 'controllerCommit': commit}
@@ -248,12 +266,19 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1:
             raise ValueError('EXISTING_OPERATION_LOCK_REQUIRED')
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        os.fchmod(fd, 0o600)
+        if configuration_recovery:
+            if stat.S_IMODE(info.st_mode) != 0o600:
+                raise ValueError('PRIVATE_OPERATION_LOCK_REQUIRED')
+        else:
+            os.fchmod(fd, 0o600)
         # Re-read under the same lock used by every existing deployment operation.
         if trusted(policy_path) != original_policy or trusted(entry) != old_entry:
             raise ValueError('CONCURRENT_POLICY_CHANGE_REJECTED')
         state = json.loads(trusted(ROOT / 'worker/automation-state.json', uid, private=True))
-        if state.get('recoveryRequired'):
+        if configuration_recovery:
+            if state.get('recoveryRequired') is not True:
+                raise ValueError('RECOVERY_LATCH_REQUIRED')
+        elif state.get('recoveryRequired'):
             raise ValueError('REVIEWED_RECOVERY_REQUIRED')
         if not state.get('enabled') or not state.get('bootstrapVerified') or not re.fullmatch('sha256:[0-9a-f]{64}', state.get('approvedImage', '')):
             raise ValueError('ACTIVE_STAGING_REQUIRED')
@@ -261,6 +286,12 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         # only with the same exact root-owned old/new entry and immutable policy.
         if policy['controllerCommit'] == commit and (policy != new_policy or old_entry not in (launch, previous_launch)):
             raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
+        directory(destination, gid); directory(destination / 'staging_automation', gid)
+        for name, body in blobs.items():
+            target = destination / 'staging_automation' / name
+            if target.exists() and trusted(target) != body:
+                raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
+            atomic(target, body, gid)
         try:
             if web:
                 if oauth_body is not None:
@@ -293,6 +324,15 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
                    'gatewayChanged': False, 'productionChanged': False}
         syslog.syslog(syslog.LOG_NOTICE, json.dumps(receipt))
         return receipt
+    if configuration_recovery:
+        receipt = {'operation': 'install-staging-promotion-fix', 'state': 'FIX_INSTALLED_RECOVERY_HELD',
+                   'controllerCommit': commit, 'approvedHostCommit': target_host, 'recoveryRequired': True,
+                   'catalogPreviewPolicyPreserved': True, 'promotionPinChanged': False,
+                   'skillUpdateBackupMode': skill_update_backup_mode(),
+                   'databaseChanged': False, 'containersChanged': False, 'gatewayRestarted': False,
+                   'discordResourcesChanged': False, 'productionChanged': False}
+        syslog.syslog(syslog.LOG_NOTICE, json.dumps(receipt))
+        return receipt
     syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'replace-staging-host-promotion-pin', 'controllerCommit': commit,
         'approvedHostCommit': target_host, 'state': 'PIN_INSTALLED', 'productionChanged': False}))
     return {'operation': 'replace-staging-host-promotion-pin', 'state': 'PIN_INSTALLED', 'controllerCommit': commit,
@@ -310,11 +350,13 @@ if __name__ == '__main__':
     parser.add_argument('--previous-web-controller')
     parser.add_argument('--catalog-preview', action='store_true')
     parser.add_argument('--configuration-preview', action='store_true')
+    parser.add_argument('--configuration-preview-recovery', action='store_true')
     args = parser.parse_args()
     try:
         print(json.dumps(extension(args.commit, args.approval, web_hostname=args.web_hostname,
                                    previous_web_controller=args.previous_web_controller, catalog_preview=args.catalog_preview,
-                                   configuration_preview=args.configuration_preview), indent=2))
+                                   configuration_preview=args.configuration_preview,
+                                   configuration_recovery=args.configuration_preview_recovery), indent=2))
     except Exception as error:
         code = str(error) if re.fullmatch('[A-Z_]{1,80}', str(error)) else 'HOST_EXTENSION_REJECTED'
         raise SystemExit(json.dumps({'extensionError': code, 'productionChanged': False})) from None

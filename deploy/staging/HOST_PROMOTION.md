@@ -30,6 +30,31 @@ After successful staging health verification, use the private Configuration
 Preview and compare it with the [Production baseline](../../docs/SERVER_CONFIGURATION_PARITY.md).
 Staging structure changes and the catalog import have separate approvals.
 
+## Configuration Preview recovery hold
+
+Run `42664893488` rejected the installed guild lifecycle row before the Host
+promotion could apply a replacement. The package manifest and approved Skill
+artifact identify 0.1.2. The unchanged guild row records 0.1.1 and disabled.
+Host health alone does not establish enabled Event Manager or Discord event
+integration health. Retain the guild row exactly and verify the package and
+artifact independently.
+
+The recovery-only enrollment is for controller `0931e16e` with its existing
+exact Host pin, protected workflow, catalog authorization and an active recovery
+latch. It switches only to the reviewed controller code and leaves the latch
+set. It records the prior Skill-update backup's file mode without opening it.
+Routine updates had imported the legacy worker's controller, which let SQLite
+create backup files with default permissions. The corrected controller reuses
+the reviewed deployment module that creates backups at mode 0600. Keep the
+existing unsafe backup out of inspection and restore selection. The earlier
+verified Host backup establishes restore feasibility for that historical copy.
+
+After enrollment, inspect the recovery-held receipt and keep Host promotion
+blocked. Any later latch release requires explicit separate review of current
+staging evidence and a verified recovery path. Neither package installation
+nor controller enrollment authorizes enabling Event Manager, restoring data,
+or dispatching the protected Host promotion.
+
 ## Event Manager V2.1 pin replacement
 
 Host #219 is pinned at `29ecf575f3d865b0f32a9d82adf1b06d7969cdc9`, with CI run

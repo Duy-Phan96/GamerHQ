@@ -136,3 +136,63 @@ def test_enrollment_fails_before_switching_policy_or_entry(installation, change,
     assert installation.policy_path.read_bytes() == policy
     assert installation.entry.read_bytes() == entry
     assert not (installation.revisions / installation.commit).exists()
+
+
+def held_configuration(installation, monkeypatch, *, latched=True):
+    old = installation.policy['controllerCommit']
+    commit = installation.commit
+    monkeypatch.setattr(enrollment, 'FAILED_CONFIGURATION_CONTROLLER', old)
+    workflow = '.github/workflows/staging-host-promotion.yml'
+    reviewed_workflow = installation.git[f'{old}:{workflow}']
+    installation.git[f'{commit}:{workflow}'] = reviewed_workflow
+    policy_module = 'tools/staging_automation/policy.py'
+    installation.git[f'{commit}:{policy_module}'] = installation.git[f'{old}:{policy_module}']
+    installation.policy['hostPromotion'] = {'commit': host_promotion.COMMIT, 'archiveSha256': host_promotion.ARCHIVE_SHA256,
+                                             'workflowSha256': hashlib.sha256(reviewed_workflow).hexdigest()}
+    installation.policy_path.write_text(json.dumps(installation.policy))
+    state = json.loads(installation.state.read_bytes())
+    state['recoveryRequired'] = latched
+    installation.state.write_text(json.dumps(state))
+
+
+def install_held(fixture):
+    return enrollment.extension(fixture.commit, 'INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD',
+                                configuration_recovery=True)
+
+
+def test_recovery_revision_preserves_the_exact_latch_pin_and_unsafe_backup(installation, monkeypatch):
+    held_configuration(installation, monkeypatch)
+    backup_dir = enrollment.ROOT / 'backups'
+    backup_dir.mkdir()
+    unsafe = backup_dir / enrollment.SKILL_UPDATE_BACKUP
+    unsafe.write_bytes(b'private fixture')
+    unsafe.chmod(0o640)
+    before = installation.state.read_bytes()
+    for _ in range(2):
+        receipt = install_held(installation)
+        assert receipt['state'] == 'FIX_INSTALLED_RECOVERY_HELD'
+        assert receipt['recoveryRequired'] is True
+        assert receipt['skillUpdateBackupMode'] == '0640'
+        assert receipt['promotionPinChanged'] is False
+        assert installation.state.read_bytes() == before
+        assert json.loads(installation.policy_path.read_bytes()) == {
+            **installation.policy, 'controllerCommit': installation.commit}
+    assert unsafe.stat().st_mode & 0o777 == 0o640
+
+
+@pytest.mark.parametrize('change, reason', [
+    ('latch', 'RECOVERY_LATCH_REQUIRED'),
+    ('workflow', 'EXISTING_HOST_POLICY_CHANGED'),
+    ('policy', 'UNRELATED_CONTROLLER_SOURCE_CHANGED'),
+])
+def test_recovery_revision_refuses_unreviewed_changes(installation, monkeypatch, change, reason):
+    held_configuration(installation, monkeypatch, latched=change != 'latch')
+    if change == 'workflow':
+        installation.git[f'{installation.commit}:.github/workflows/staging-host-promotion.yml'] = b'changed'
+    elif change == 'policy':
+        installation.git[f'{installation.commit}:tools/staging_automation/policy.py'] = b'changed'
+    before = [file.read_bytes() for file in (installation.state, installation.policy_path, installation.entry)]
+    with pytest.raises(ValueError, match=reason):
+        install_held(installation)
+    assert [file.read_bytes() for file in (installation.state, installation.policy_path, installation.entry)] == before
+    assert not (installation.revisions / installation.commit).exists()
