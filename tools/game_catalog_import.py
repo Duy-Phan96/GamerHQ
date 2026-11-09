@@ -97,10 +97,10 @@ def plan(conn, games, target):
                                        "legacy_chat_channel_id": match["chat_channel_id"]})
             if target_name:
                 aliases = json.loads(match["aliases_json"])
-                known = title_keys(match["name"], aliases)
+                known = {value.lower() for value in (match["name"], *aliases)}
                 additions = []
                 for alias in (title, *row["aliases"]):
-                    key = name_key(alias)
+                    key = alias.lower()
                     if key not in known:
                         additions.append(alias)
                         known.add(key)
@@ -176,3 +176,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
