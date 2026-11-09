@@ -1,0 +1,312 @@
+{
+  "games": [
+    {
+      "name": "League of Legends",
+      "display_group": "🏆 MOBA"
+    },
+    {
+      "name": "Valorant",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Counter-Strike 2",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Fortnite",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Overwatch",
+      "display_group": "🔫 Shooter",
+      "aliases": [
+        "Overwatch 2"
+      ]
+    },
+    {
+      "name": "Apex Legends",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Dota 2",
+      "display_group": "🏆 MOBA"
+    },
+    {
+      "name": "Rocket League",
+      "display_group": "⚽ Sports & Racing"
+    },
+    {
+      "name": "Rainbow Six Siege",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "PUBG: BATTLEGROUNDS",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Call of Duty: Warzone",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Marvel Rivals",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Deadlock",
+      "display_group": "🏆 MOBA"
+    },
+    {
+      "name": "Team Fortress 2",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "THE FINALS",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Delta Force",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Battlefield 6",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Battlefield 2042",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Destiny 2",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Warframe",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Minecraft (Java)",
+      "display_group": "🏗️ Survival & Sandbox",
+      "aliases": [
+        "Minecraft",
+        "Minecraft Java Edition"
+      ]
+    },
+    {
+      "name": "Minecraft (Bedrock)",
+      "display_group": "🏗️ Survival & Sandbox",
+      "aliases": [
+        "Minecraft Bedrock Edition"
+      ]
+    },
+    {
+      "name": "Terraria",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Valheim",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Palworld",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Project Zomboid",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Rust",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "ARK: Survival Ascended",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "No Man's Sky",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Sea of Thieves",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Grand Theft Auto V",
+      "display_group": "🌍 MMO & RPG",
+      "aliases": [
+        "GTA V",
+        "GTA 5",
+        "Grand Theft Auto 5"
+      ],
+      "review_note": "The seed uses GTA V and GTA 5 as aliases of GTA Online. Verify the target game and channel before choosing a separate entry or an existing match."
+    },
+    {
+      "name": "Red Dead Redemption 2",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Stardew Valley",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Sons of the Forest",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "7 Days to Die",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Raft",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Satisfactory",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Factorio",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Enshrouded",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "Grounded 2",
+      "display_group": "🏗️ Survival & Sandbox"
+    },
+    {
+      "name": "World of Warcraft",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "World of Warcraft Classic",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Final Fantasy XIV",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "The Elder Scrolls Online",
+      "display_group": "🌍 MMO & RPG",
+      "aliases": [
+        "Elder Scrolls Online"
+      ]
+    },
+    {
+      "name": "Guild Wars 2",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Black Desert Online",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Lost Ark",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "New World",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "RuneScape",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Old School RuneScape",
+      "display_group": "🌍 MMO & RPG",
+      "aliases": [
+        "RuneScape (Old School)"
+      ]
+    },
+    {
+      "name": "Diablo IV",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Path of Exile 2",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Path of Exile",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Elden Ring",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Baldur's Gate 3",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Hearthstone",
+      "display_group": "⚔️ Strategy & Card"
+    },
+    {
+      "name": "Teamfight Tactics",
+      "display_group": "⚔️ Strategy & Card"
+    },
+    {
+      "name": "Legends of Runeterra",
+      "display_group": "⚔️ Strategy & Card"
+    },
+    {
+      "name": "StarCraft II",
+      "display_group": "⚔️ Strategy & Card"
+    },
+    {
+      "name": "Age of Empires IV",
+      "display_group": "⚔️ Strategy & Card"
+    },
+    {
+      "name": "Sid Meier's Civilization VII",
+      "display_group": "⚔️ Strategy & Card",
+      "aliases": [
+        "Civilization VII"
+      ]
+    },
+    {
+      "name": "Monster Hunter Wilds",
+      "display_group": "🌍 MMO & RPG"
+    },
+    {
+      "name": "Helldivers 2",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Deep Rock Galactic",
+      "display_group": "🔫 Shooter"
+    },
+    {
+      "name": "Lethal Company",
+      "display_group": "🎉 Party & Social"
+    },
+    {
+      "name": "Phasmophobia",
+      "display_group": "🎉 Party & Social"
+    },
+    {
+      "name": "R.E.P.O.",
+      "display_group": "🎉 Party & Social"
+    },
+    {
+      "name": "Dead by Daylight",
+      "display_group": "🎉 Party & Social"
+    },
+    {
+      "name": "Among Us",
+      "display_group": "🎉 Party & Social"
+    },
+    {
+      "name": "Fall Guys: Ultimate Knockout",
+      "display_group": "🎉 Party & Social",
+      "aliases": [
+        "Fall Guys"
+      ]
+    }
+  ]
+}
