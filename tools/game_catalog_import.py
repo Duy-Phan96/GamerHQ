@@ -33,7 +33,7 @@ def manifest(path):
         raise ValueError("Expected a JSON object with a games array.")
     games = []
     for row in source["games"]:
-        if not isinstance(row, dict) or set(row) - {"name", "aliases", "emoji", "display_group", "tags"}:
+        if not isinstance(row, dict) or set(row) - {"name", "aliases", "emoji", "display_group", "tags", "review_note"}:
             raise ValueError("Unexpected game manifest fields.")
         name, emoji, group = row.get("name"), row.get("emoji", "🎮"), row.get("display_group")
         if not isinstance(name, str) or not any(char.isalnum() for char in name_key(name)) or not isinstance(emoji, str) or not emoji.strip():
@@ -43,7 +43,10 @@ def manifest(path):
         aliases = strings(row.get("aliases", []))
         if any(not any(char.isalnum() for char in name_key(alias)) for alias in aliases):
             raise ValueError("Each alias needs a letter or number.")
-        games.append({"name": name.strip(), "emoji": emoji, "display_group": group,
+        note = row.get("review_note")
+        if note is not None and (not isinstance(note, str) or not note.strip()):
+            raise ValueError("A review note must be nonempty text.")
+        games.append({"review_note": note, "name": name.strip(), "emoji": emoji, "display_group": group,
                       "tags": strings(row.get("tags", [])), "aliases": aliases})
     return games
 
@@ -73,9 +76,10 @@ def plan(conn, games, target):
         title = row["name"]
         matched = sorted(set().union(*(existing_by_key[key] for key in row_keys)))
         collisions = sorted(set().union(*(input_by_key[key] for key in row_keys)) - {position})
-        if collisions or len(matched) > 1:
+        if row["review_note"] or collisions or len(matched) > 1:
             report["ambiguous"].append({"title": title, "existing_ids": matched,
-                                        "manifest_titles": [games[i]["name"] for i in collisions]})
+                                        "manifest_titles": [games[i]["name"] for i in collisions],
+                                        "review_note": row["review_note"]})
         elif row_keys & tombstones:
             report["retired"].append(title)
         elif matched:
@@ -84,7 +88,7 @@ def plan(conn, games, target):
                                        "role_id": match["role_id"], "channel_id": match["channel_id"],
                                        "legacy_chat_channel_id": match["chat_channel_id"]})
         else:
-            report["insert"].append(row)
+            report["insert"].append({key: value for key, value in row.items() if key != "review_note"})
 
     snapshot = json.dumps([str(target), games, existing, deleted], sort_keys=True, separators=(",", ":"))
     report["review_token"] = hashlib.sha256(snapshot.encode()).hexdigest()
