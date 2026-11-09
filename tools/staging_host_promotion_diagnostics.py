@@ -413,7 +413,7 @@ def release_state(path, state, uid):
 def release_hold(report, state_path, state, backup_root, uid, refresh):
     audit_id = uuid.uuid4().hex
     report.update(operation='release-staging-host-recovery-hold', auditId=audit_id,
-                  recoveryReleaseAuthorized=True, backupModeChanged=False)
+                  ownerApprovalProvided=True, recoveryReleaseAuthorized=False, backupModeChanged=False)
     before = release_checks(report, before_mode_change=True)
     before['recoveryHeld'] = (before['recoveryHeld'] and state.get('recoveryRequired') is True
                               and state.get('bootstrapVerified') is True)
@@ -422,10 +422,16 @@ def release_hold(report, state_path, state, backup_root, uid, refresh):
     if not all(before.values()):
         audit_release(audit_id, 'BASELINE_REJECTED')
         return report
+    audit_release(audit_id, 'BACKUP_MODE_CHECK_STARTED')
     try:
         original_mode = private_backup_mode(backup_root, uid)
-        report.update(backupModeBefore=original_mode, backupModeAfter='0600', backupModeChanged=original_mode != '0600')
-        audit_release(audit_id, 'BACKUP_PRIVATE', previousMode=original_mode, mode='0600')
+    except (OSError, ValueError):
+        audit_release(audit_id, 'BACKUP_MODE_UNCONFIRMED')
+        report.update(checks={}, backupModeChanged=None)
+        return report
+    report.update(backupModeBefore=original_mode, backupModeAfter='0600', backupModeChanged=original_mode != '0600')
+    audit_release(audit_id, 'BACKUP_PRIVATE', previousMode=original_mode, mode='0600')
+    try:
         refresh()
     except (OSError, ValueError):
         audit_release(audit_id, 'VERIFICATION_ERROR')
@@ -439,7 +445,7 @@ def release_hold(report, state_path, state, backup_root, uid, refresh):
     audit_release(audit_id, 'RELEASE_VERIFIED')
     release_state(state_path, state, uid)
     audit_release(audit_id, 'RELEASED')
-    report.update(state='RECOVERY_HOLD_RELEASED', recoveryRequired=False)
+    report.update(state='RECOVERY_HOLD_RELEASED', recoveryRequired=False, recoveryReleaseAuthorized=True)
     return report
 
 

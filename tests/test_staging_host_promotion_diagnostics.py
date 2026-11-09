@@ -243,11 +243,12 @@ def test_explicit_release_only_after_private_backup_verifies(tmp_path, monkeypat
     assert receipt['backupModeChanged'] and after.st_mode & 0o777 == 0o600
     assert json.loads(state_path.read_text()) == {**state, 'recoveryRequired': corrupt_hash}
     assert state_path.stat().st_mode & 0o777 == 0o600
+    assert receipt['recoveryReleaseAuthorized'] is not corrupt_hash
     if corrupt_hash:
-        assert phases == ['STARTED', 'BACKUP_PRIVATE', 'VERIFICATION_REJECTED']
+        assert phases == ['STARTED', 'BACKUP_MODE_CHECK_STARTED', 'BACKUP_PRIVATE', 'VERIFICATION_REJECTED']
         assert receipt['state'] == 'RECOVERY_HELD' and receipt['recoveryRequired']
     else:
-        assert phases == ['STARTED', 'BACKUP_PRIVATE', 'RELEASE_VERIFIED', 'RELEASED']
+        assert phases == ['STARTED', 'BACKUP_MODE_CHECK_STARTED', 'BACKUP_PRIVATE', 'RELEASE_VERIFIED', 'RELEASED']
         assert receipt['state'] == 'RECOVERY_HOLD_RELEASED' and not receipt['recoveryRequired']
 
 
