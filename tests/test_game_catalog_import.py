@@ -159,7 +159,7 @@ def test_gta_alias_apply_preserves_id_resources_and_custom_alias(catalog, tmp_pa
     with db.connect() as conn:
         conn.execute("UPDATE games SET aliases_json=?, active=1, selectable=1, role_id=71, "
                      "channel_id=81, chat_channel_id=82 WHERE id=?",
-                     (json.dumps(["GTA V", "GTA 5", "Custom GTA Alias"]), game["id"]))
+                     (json.dumps(["GTA V", "GTA-5", "Custom GTA Alias"]), game["id"]))
     original = db.get_game_by_id(game["id"])
     source = write_manifest(tmp_path / "gta.json", [
         {"name": "Grand Theft Auto V", "existing_name": "GTA Online", "aliases": ["GTA V", "GTA 5"]},
@@ -167,13 +167,13 @@ def test_gta_alias_apply_preserves_id_resources_and_custom_alias(catalog, tmp_pa
     preview = import_catalog(catalog, source)
     assert preview["insert"] == []
     assert preview["existing"][0]["id"] == game["id"]
-    assert preview["alias_updates"][0]["add"] == ["Grand Theft Auto V"]
+    assert preview["alias_updates"][0]["add"] == ["Grand Theft Auto V", "GTA 5"]
     assert db.get_game_by_id(game["id"]) == original
     backup = tmp_path / "gta-backup.db"
     apply_preview(catalog, source, backup)
     verify(backup)
     updated = db.get_game_by_id(game["id"])
-    assert json.loads(updated.pop("aliases_json")) == ["GTA V", "GTA 5", "Custom GTA Alias", "Grand Theft Auto V"]
+    assert json.loads(updated.pop("aliases_json")) == ["GTA V", "GTA-5", "Custom GTA Alias", "Grand Theft Auto V", "GTA 5"]
     original.pop("aliases_json")
     assert updated == original
     assert len(db.get_all_games()) == 1
@@ -196,3 +196,4 @@ def test_gta_alias_cannot_create_target_or_claim_another_row(catalog, tmp_path):
     assert conflict["alias_updates"] == []
     with pytest.raises(ValueError, match="ambiguous"):
         apply_preview(catalog, source, tmp_path / "rejected.db")
+
