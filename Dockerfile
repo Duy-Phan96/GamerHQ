@@ -25,7 +25,7 @@ COPY --chown=gamerhq:gamerhq skills/ ./skills/
 COPY --chown=gamerhq:gamerhq services/ ./services/
 COPY --chown=gamerhq:gamerhq database/ ./database/
 COPY --chown=gamerhq:gamerhq tools/ ./tools/
-COPY --chown=gamerhq:gamerhq data/games_seed.json ./data/games_seed.json
+COPY --chown=gamerhq:gamerhq data/games_seed.json data/game_catalog_expansion.json ./data/
 USER gamerhq
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
