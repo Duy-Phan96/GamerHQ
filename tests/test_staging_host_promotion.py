@@ -13,7 +13,7 @@ import pytest
 from database import db
 from tools.staging_automation.host_promotion import (ARCHIVE_SHA256, BASELINE, BASELINE_SKILL_COMMIT, BASELINE_SKILL_SHA256,
     BASELINE_SKILL_VERSION, COMMIT, REVIEWED_HOST_CHANGES, extract_application, retained_state,
-    require_baseline_skill, require_retained, PromotionDocker, promote, verify_compatibility)
+    require_baseline_skill, require_retained, require_runtime_lifecycle, PromotionDocker, promote, verify_compatibility)
 from tools.staging_automation.policy import Denied, charge, validate_policy, admit
 from tools.staging_automation.oidc import verify
 from test_staging_automation_policy import trust, signing_key
@@ -87,6 +87,26 @@ def test_backup_restore_probe_preserves_actual_sqlite_authority_and_event_data(d
     with db.connect() as conn:
         conn.execute("UPDATE skill_storage SET value_json=?", (json.dumps({'id': 'one', 'revision': 5, 'members': [], 'config': {'name': 'Existing'}, 'chat': {'channelId': '100'}}),))
     with pytest.raises(Denied, match='RECOVERY'):
+        require_retained(before, retained_state(db.DB_PATH, 1))
+
+
+def test_disabled_guild_retains_older_lifecycle_version_when_the_approved_package_differs(deployment_fixture):
+    seed()
+    with db.connect() as conn:
+        conn.execute("UPDATE skill_guild_state SET version='0.1.1', enabled=0")
+    before = retained_state(db.DB_PATH, 1)
+    assert before['installed'] == (1, 1, 0, '0.1.1')
+    release = {'version': BASELINE_SKILL_VERSION, 'reviewedCommit': BASELINE_SKILL_COMMIT,
+               'sha256': BASELINE_SKILL_SHA256}
+    runtime = {'version': '0.1.2', 'state': {'installed': True, 'configured': True, 'enabled': False}}
+    require_baseline_skill(release, runtime['version'])
+    require_runtime_lifecycle(before, runtime)
+    require_retained(before, retained_state(db.DB_PATH, 1))
+    with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
+        require_runtime_lifecycle(before, {**runtime, 'state': {**runtime['state'], 'enabled': True}})
+    with db.connect() as conn:
+        conn.execute("UPDATE skill_guild_state SET version='0.1.2'")
+    with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
         require_retained(before, retained_state(db.DB_PATH, 1))
 
 
