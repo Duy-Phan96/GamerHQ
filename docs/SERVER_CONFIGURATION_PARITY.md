@@ -47,6 +47,57 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    Event Manager category bindings through the existing Host integration.
    Keep the installed Skill, its authority and all event resources in place.
 
+## Owner-reported Production baseline, November 9, 2026
+
+The owner ran the default, read-only **/server dev → Health** view in the
+Production guild. The result was **103 passed, 20 repairable, 6 mappings need
+linking, 21 warnings/review, and 0 critical**. These are diagnostic counts.
+Only the findings below were supplied. The remaining entries have no
+item-level evidence in this record.
+
+| Logical resource | What the read establishes | Staging parity disposition |
+| --- | --- | --- |
+| `choose-your-games`, `looking-for-group`, `bot-commands` | Health found an existing resource without the expected managed link. | Prefer verifying and reusing the corresponding staging resource. Review identity, placement and access before linking. |
+| `looking-for-group` runtime state | The observed name or parent differs from the expected managed layout. | Check for an intentional placement exception independently of the missing link. Preserve the existing channel and overwrites. |
+| `gaming-chat` | Health could not resolve the expected channel. | Hold for review of alternate placement, legacy aliases, saved mapping, and owner intent. Exclude it from automatic creation. |
+| `server-log` | The combined mapping, parent, privacy or bot-access check needs review. | Verify the isolated staging mapping and effective privacy. The result alone does not identify an offending overwrite. |
+| `partners-benefits` | Managed category permissions differ from the default policy. | Review interactive exceptions and permission-synced children before proposing any staging parent change. |
+| `ig-purchases`, `ig-buyer-ranking` | Effective private visibility, staff access or integration access needs review. | Verify each staging resource and expected integration role separately. Keep existing exceptions until their purpose is confirmed. |
+
+Production is an observed baseline. Only owner-approved intended behavior
+becomes a shared staging requirement. Keep existing Production resources,
+overwrites and messages in place. Use this evidence without running Production
+reconcile, repair or setup.
+
+## Protected staging preview candidate
+
+[Candidate PR #232](https://github.com/Duy-Phan96/GamerHQ/pull/232) is based on
+the previously verified staging Host `29ecf575f3d865b0f32a9d82adf1b06d7969cdc9`.
+Candidate `89709625d9ea0c74c2b731436d1d13c9dcb453c4` carries the reviewed preview and its catalog-reading inputs.
+The candidate leaves the staging Web code, Event Manager code and release,
+dependency locks, database schema and existing game seed unchanged.
+
+The current installed promotion policy and workflow still bind the previous
+Host and do not allow this service delta. Keep the existing protected
+`host-promote` operation. The next release step is a separately reviewed,
+single-target controller revision and matching `deployment-security` workflow
+pin. Verify the exact candidate archive receipt from PR #232. Bind the promotion
+to the current staging Host and the already installed Event Manager 0.1.2
+artifact, and allow only the reviewed candidate paths. Preserve the existing
+catalog-preview policy, SSH restrictions, runtime configuration and staging data.
+Retain the existing backup, restore-probe, offline health, and rollback checks.
+Owner enrollment of the new pin and approval of the protected deployment remain
+separate from repository review. The existing workflow must not be dispatched
+against the old pin for this candidate.
+
+After protected promotion and health verification, open the private
+Configuration Preview in the staging guild. Compare logical identities and
+effective access against the table above. Keep link candidates, policy drift,
+unresolved or deliberately omitted resources and intentional exceptions
+separate. Review the resulting list before any staging structure confirmation.
+The catalog import remains on hold until the live game mappings are verified
+and separately approved.
+
 ## Games evidence and approval
 
 **Manage Visible Games** lists active rows only. The repository seed and
