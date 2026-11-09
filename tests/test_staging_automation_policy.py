@@ -129,6 +129,23 @@ def test_web_workflow_cannot_deploy_with_routine_identity_or_without_owner_revie
         verify(token(), policy, 'web-rollback', 'd' * 32, read=read, now=1001)
 
 
+def test_catalog_preview_requires_protected_owner_review_and_its_exact_workflow(trust):
+    policy, claims, token, read, reviews, _ = trust
+    policy['catalogPreviewWorkflowSha256'] = policy['routineWorkflowSha256']
+    workflow = 'Duy-Phan96/GamerHQ/.github/workflows/staging-catalog-preview.yml@refs/heads/main'
+    claims['workflow_ref'] = workflow
+    with pytest.raises(Denied):
+        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+    security_claims(claims)
+    with pytest.raises(Denied):
+        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+    claims['workflow_ref'] = workflow
+    assert verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+    reviews.clear()
+    with pytest.raises(Denied):
+        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+
+
 @pytest.mark.parametrize('operation', ['bootstrap', 'initial', 'credentials', 'release', 'revoke', 'shell', 'docker', 'apply', 'production'])
 def test_legacy_security_and_arbitrary_commands_are_not_in_routine_protocol(operation):
     with pytest.raises(Denied): request({'version': 1, 'phase': 'automation', 'operation': operation})
