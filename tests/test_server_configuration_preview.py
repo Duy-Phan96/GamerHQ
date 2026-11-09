@@ -8,7 +8,7 @@ import discord
 
 import config
 from database import db
-from services import server_configuration_preview as configuration
+from services import game_service, server_configuration_preview as configuration
 from services import server_operations as operations
 from services.server_service import ServerMessageError
 from tests import test_onboarding as fixtures
@@ -81,6 +81,21 @@ class ConfigurationPreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(db.get_setting('managed_channel:1:community-events'))
         self.assertFalse(event_chat.edits or event_chat.sends)
         voice.edit.assert_not_called()
+
+    async def test_choose_games_uses_only_the_current_managed_destination_as_fallback(self):
+        board = next(channel for channel in self.guild.text_channels if channel.name == 'choose-your-games')
+        db.set_setting('managed_channel:999:choose-your-games', 98765)
+        self.assertEqual(game_service.choose_games_channel_id(self.guild.id), 0)
+        db.set_setting('managed_channel:1:choose-your-games', board.id)
+        self.assertEqual(game_service.choose_games_channel_id(self.guild.id), board.id)
+        with patch.object(game_service, 'CHOOSE_GAMES_CHANNEL_ID', 12345):
+            self.assertEqual(game_service.choose_games_channel_id(self.guild.id), 12345)
+        other = SimpleNamespace(id=999)
+        with patch.object(board, 'guild', other):
+            bot = SimpleNamespace(get_channel=lambda _: board)
+            with self.assertRaises(game_service.GameStructureError):
+                await game_service.refresh_choose_games_message(bot, view=object(), intro_view=object())
+        self.assertFalse(board.sends)
 
     async def test_only_configured_guild_owner_can_start_inventory(self):
         outsider = SimpleNamespace(id=43, guild_permissions=discord.Permissions(administrator=True))

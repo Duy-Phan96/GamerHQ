@@ -54,7 +54,9 @@ the proposed expansion leave new rows inactive and non-selectable. The private
 preview reports catalog, active and visible counts separately from role and
 channel mappings and their Discord resolution. Use **Games → Game Library** to
 review showing a verified existing title after approval. That confirmation
-uses the existing role and channel setup and recovery paths.
+uses the existing role and channel setup and recovery paths. The existing
+Choose Your Games refresh can use this guild's managed channel link when the
+legacy environment override is unset.
 
 The November 5 staging backup yielded 38 matches, 32 additions and one alias
 update across the 70-title manifest. The current staging preview reruns that
