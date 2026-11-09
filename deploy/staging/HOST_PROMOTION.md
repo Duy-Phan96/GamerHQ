@@ -1,5 +1,35 @@
 # Reviewed staging Host promotion
 
+## Configuration Preview promotion
+
+The exact reviewed Host candidate is `89709625d9ea0c74c2b731436d1d13c9dcb453c4`
+from [candidate PR #232](https://github.com/Duy-Phan96/GamerHQ/pull/232), validated
+by [run 42646395695](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42646395695).
+The uncompressed Git archive SHA256 is
+`b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c`.
+The promotion accepts only the reviewed path delta, checks the exact archive
+and requires the installed staging Host `29ecf575` and the verified Event Manager
+0.1.2 artifact. It leaves the approved schema, dependency locks, Host adapters,
+Skill code and existing catalog seed unchanged.
+
+Use the checksum-verified installer from the reviewed controller commit with
+`--configuration-preview` and approval text `ENROLL STAGING CONFIGURATION PREVIEW`.
+The installer verifies the existing catalog controller `11e4062b`, its Host pin,
+protected workflow digest and catalog preview modules. Only the root-owned
+controller selection and exact Host pin change. The catalog workflow digest,
+SSH restrictions, runtime profile, deployment state, database and containers
+remain in place. The scoped CI rehearsal enrolls this revision from that exact
+prior controller on a disposable runner and records the installer SHA256.
+
+After enrollment, register the exact workflow in
+[draft PR #234](https://github.com/Duy-Phan96/GamerHQ/pull/234), dispatch the
+existing `host-promote` workflow on `main`, and obtain the actual
+`deployment-security` owner review. The protected apply verifies the backup,
+restore probe, retained Event state, candidate health and rollback readiness.
+After successful staging health verification, use the private Configuration
+Preview and compare it with the [Production baseline](../../docs/SERVER_CONFIGURATION_PARITY.md).
+Staging structure changes and the catalog import have separate approvals.
+
 ## Event Manager V2.1 pin replacement
 
 Host #219 is pinned at `29ecf575f3d865b0f32a9d82adf1b06d7969cdc9`, with CI run

@@ -99,17 +99,17 @@ def main():
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
             # Install the reviewed extension under the same restrictive umask,
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
-            from tools.extend_staging_host_promotion import HOST, OLD, extension
+            from tools.extend_staging_host_promotion import CATALOG_CONTROLLER, CONFIGURATION_HOST, HOST, OLD, WEB_BASE, extension
             from urllib.request import urlopen
 
-            def install_pin(commit, digest, approval):
+            def install_pin(commit, digest, approval, *flags):
                 installer = tmp / (commit + '.py')
                 with urlopen('https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/' + commit +
                              '/tools/extend_staging_host_promotion.py', timeout=20) as source:
-                    body = source.read(16385)
-                assert len(body) <= 16384 and hashlib.sha256(body).hexdigest() == digest
+                    body = source.read(65537)
+                assert len(body) <= 65536 and hashlib.sha256(body).hexdigest() == digest
                 installer.write_bytes(body)
-                result = subprocess.run([sys.executable, str(installer), '--commit', commit, '--approval', approval],
+                result = subprocess.run([sys.executable, str(installer), '--commit', commit, '--approval', approval, *flags],
                     check=False, timeout=420, capture_output=True, text=True, umask=0o077)
                 assert result.returncode == 0, result.stderr
                 return json.loads(result.stdout)
@@ -131,18 +131,33 @@ def main():
             installed = json.loads(call('status').stdout)
             assert installed['controllerCommit'] == OLD
             assert installed['hostPromotionCommit'] == '17858f47480e914956dd241b9f37a328b4c6ac2b'
+            current_pin = install_pin(WEB_BASE, '8943f7508ebc13dade0a7e64d39b4aa654a117fdf56375fe7773e86561e955c6',
+                'REPLACE REVIEWED STAGING HOST PIN')
+            assert current_pin['approvedHostCommit'] == HOST
+            catalog = install_pin(CATALOG_CONTROLLER, 'cd61eabcb22960ee5bfa78cd68617505c099a7cfd2660656c3ed332530aa863a',
+                'ENROLL STAGING CATALOG PREVIEW', '--catalog-preview')
+            assert catalog['state'] == 'CATALOG_PREVIEW_ENROLLED'
+            assert json.loads(call('status').stdout)['controllerCommit'] == CATALOG_CONTROLLER
+            policy_path = config / 'automation-policy.json'
+            catalog_policy = json.loads(policy_path.read_bytes())
             active_bytes = state_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)
-                try: extended = extension(args.commit, 'REPLACE REVIEWED STAGING HOST PIN')
+                try: extended = extension(args.commit, 'ENROLL STAGING CONFIGURATION PREVIEW', configuration_preview=True)
                 finally: os.umask(previous)
                 assert extended['state'] == 'PIN_INSTALLED' and extended['automationEnabled'] is True
-                assert extended['approvedHostCommit'] == HOST and extended['hostPromotionRequiresProtectedOwnerReview']
+                assert extended['approvedHostCommit'] == CONFIGURATION_HOST and extended['hostPromotionRequiresProtectedOwnerReview']
+                assert extended['catalogPreviewPolicyPreserved'] is True
                 assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
                 assert state_path.read_bytes() == active_bytes
             extended_status = json.loads(call('status').stdout)
-            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionCommit'] == HOST
+            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionCommit'] == CONFIGURATION_HOST
             assert extended_status['state'] == 'ACTIVE'
+            installed_policy = json.loads(policy_path.read_bytes())
+            assert {k: v for k, v in installed_policy.items() if k not in {'controllerCommit', 'hostPromotion'}} == {
+                k: v for k, v in catalog_policy.items() if k not in {'controllerCommit', 'hostPromotion'}}
+            catalog_challenge = json.loads(call('challenge', {'operation': 'catalog-preview'}).stdout)
+            assert call('catalog-preview', {'token': 'invalid-jwt', 'challenge': catalog_challenge['challenge']}).returncode != 0
             assert call('host-promote', {'token': 'invalid-jwt', 'challenge': 'invalid'}).returncode != 0
             state_path.write_bytes(inactive_bytes)
         finally: server.terminate(); server.wait(timeout=10)
@@ -169,7 +184,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', HOST)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', CONFIGURATION_HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']
@@ -177,7 +192,7 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
     if normalized.returncode or normalized.stdout.strip() != 'NORMALIZED_STAGING_LIMITS_PASS':
         raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
-        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'normalizedContainerLimits': 'PASS',
+        'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'catalogPreviewPolicyPreserved': True, 'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
         'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',
         'gatewayStarted': False, 'productionChanged': False}))

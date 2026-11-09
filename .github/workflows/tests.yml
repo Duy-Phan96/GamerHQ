@@ -31,6 +31,7 @@ jobs:
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
   staging-rhel:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Verify actual AlmaLinux 9 Python and D-Bus capabilities
@@ -40,7 +41,8 @@ jobs:
           docker pull almalinux:9
           docker image inspect almalinux:9 --format '{{json .RepoDigests}}'
           docker run --rm --network bridge --volume "$PWD:/source:ro" --workdir /source almalinux:9 bash -euc '
-            dnf install -y python3 python3.12 python3.12-pip dbus-broker dbus-daemon
+            python3 tools/extend_staging_host_promotion.py --help | grep -q -- --configuration-preview
+            dnf --setopt=timeout=20 --setopt=retries=2 install -y python3 python3.12 python3.12-pip dbus-broker dbus-daemon
             python3 -m tools.staging_rhel_smoke
           '
   staging-access:

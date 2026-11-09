@@ -34,8 +34,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin 17858f47480e914956dd241b9f37a328b4c6ac2b
+          git fetch origin 29ecf575f3d865b0f32a9d82adf1b06d7969cdc9
           mkdir /tmp/gamerhq-host-baseline
-          git archive 17858f47480e914956dd241b9f37a328b4c6ac2b | tar -x -C /tmp/gamerhq-host-baseline
-          docker build --build-arg VCS_REF=17858f47480e914956dd241b9f37a328b4c6ac2b --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
+          git archive 29ecf575f3d865b0f32a9d82adf1b06d7969cdc9 | tar -x -C /tmp/gamerhq-host-baseline
+          docker build --build-arg VCS_REF=29ecf575f3d865b0f32a9d82adf1b06d7969cdc9 --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
           sudo /opt/gamerhq-staging/deployment-worker/.venv/bin/python -m tools.staging_host_promotion_smoke --base-image "$(cat /tmp/gamerhq-host-baseline-image)"
+
+      - name: Publish checksum of the exact reviewed enrollment installer
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          git show "$REVIEWED_COMMIT:tools/extend_staging_host_promotion.py" | sha256sum

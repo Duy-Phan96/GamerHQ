@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from database import db
-from tools.staging_automation.host_promotion import (BASELINE, BASELINE_SKILL_COMMIT, BASELINE_SKILL_SHA256,
+from tools.staging_automation.host_promotion import (ARCHIVE_SHA256, BASELINE, BASELINE_SKILL_COMMIT, BASELINE_SKILL_SHA256,
     BASELINE_SKILL_VERSION, COMMIT, REVIEWED_HOST_CHANGES, extract_application, retained_state,
     require_baseline_skill, require_retained, PromotionDocker, promote, verify_compatibility)
 from tools.staging_automation.policy import Denied, charge, validate_policy, admit
@@ -99,13 +99,13 @@ def test_changed_discord_card_mapping_requires_review(deployment_fixture):
         require_retained(before, retained_state(db.DB_PATH, 1))
 
 
-def test_only_reviewed_host_adapter_paths_can_change():
+def test_only_the_exact_reviewed_candidate_paths_can_change():
     host_changes = set(REVIEWED_HOST_CHANGES)
     changed_tree = None
 
     def git(command, *args):
         if command == 'diff':
-            assert args[-3:] == (COMMIT, '--', 'hosts')
+            assert args[-3:] == (BASELINE, COMMIT, '--')
             return ('\0'.join(sorted(host_changes)) + '\0').encode()
         return b'changed' if args[0] == COMMIT + ':' + str(changed_tree) else b'same'
 
@@ -114,6 +114,11 @@ def test_only_reviewed_host_adapter_paths_can_change():
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
     host_changes.remove('hosts/gamerhq/unreviewed.py')
+    changed_path = 'data/game_catalog_expansion.json'
+    host_changes.remove(changed_path)
+    with pytest.raises(Denied, match='MIGRATION'):
+        verify_compatibility(git)
+    host_changes.add(changed_path)
     changed_tree = 'database'
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
@@ -131,11 +136,11 @@ def test_host_promotion_keeps_the_exact_installed_skill_artifact():
     release = {'version': BASELINE_SKILL_VERSION, 'reviewedCommit': BASELINE_SKILL_COMMIT,
                'sha256': BASELINE_SKILL_SHA256}
     require_baseline_skill(release, BASELINE_SKILL_VERSION)
-    for modified in ({'version': '0.1.2'}, {'reviewedCommit': 'a' * 40}, {'sha256': 'a' * 64}):
+    for modified in ({'version': '0.1.1'}, {'reviewedCommit': 'a' * 40}, {'sha256': 'a' * 64}):
         with pytest.raises(Denied, match='VERSION_REQUIRES_OWNER'):
             require_baseline_skill({**release, **modified}, BASELINE_SKILL_VERSION)
     with pytest.raises(Denied, match='VERSION_REQUIRES_OWNER'):
-        require_baseline_skill(release, '0.1.2')
+        require_baseline_skill(release, '0.1.1')
 
 
 @pytest.mark.parametrize('kind', ['symlink', 'hardlink', 'traversal', 'absolute'])
@@ -156,19 +161,25 @@ def test_source_extraction_rejects_links_and_path_redirection(tmp_path, kind):
 def test_source_extraction_copies_application_only(tmp_path):
     archive = tmp_path / 'source.tar'
     with tarfile.open(archive, 'w') as output:
-        for name in ('cogs/event_editor.py', 'bot.py', 'runtime/data/gamerhq.db', '.env', '.github/workflows/tests.yml'):
+        for name in ('cogs/event_editor.py', 'bot.py', 'data/game_catalog_expansion.json',
+                     'runtime/data/gamerhq.db', '.env', '.github/workflows/tests.yml'):
             data = b'synthetic'
             info = tarfile.TarInfo(name); info.size = len(data)
             output.addfile(info, io.BytesIO(data))
     destination = tmp_path / 'context'; destination.mkdir()
     extract_application(archive, destination)
-    assert sorted(str(p.relative_to(destination)).replace('\\', '/') for p in destination.rglob('*') if p.is_file()) == ['bot.py', 'cogs/event_editor.py']
+    assert sorted(str(p.relative_to(destination)).replace('\\', '/') for p in destination.rglob('*') if p.is_file()) == [
+        'bot.py', 'cogs/event_editor.py', 'data/game_catalog_expansion.json']
 
 
 def test_host_promotion_requires_distinct_protected_workflow_and_owner_review(trust):
     policy, claims, token, read, reviews, environment = trust
-    policy['hostPromotion'] = {'commit': COMMIT, 'archiveSha256': 'a' * 64, 'workflowSha256': policy['securityWorkflowSha256']}
+    policy['hostPromotion'] = {'commit': COMMIT, 'archiveSha256': ARCHIVE_SHA256, 'workflowSha256': policy['securityWorkflowSha256']}
     assert validate_policy(policy)
+    wrong_archive = copy.deepcopy(policy)
+    wrong_archive['hostPromotion']['archiveSha256'] = 'a' * 64
+    with pytest.raises(Denied, match='POLICY'):
+        validate_policy(wrong_archive)
     retired = copy.deepcopy(policy)
     retired['hostPromotion']['commit'] = BASELINE
     with pytest.raises(Denied, match='POLICY'):
