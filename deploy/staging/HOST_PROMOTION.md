@@ -49,11 +49,20 @@ the reviewed deployment module that creates backups at mode 0600. Keep the
 existing unsafe backup out of inspection and restore selection. The earlier
 verified Host backup establishes restore feasibility for that historical copy.
 
-After enrollment, inspect the recovery-held receipt and keep Host promotion
-blocked. Any later latch release requires explicit separate review of current
-staging evidence and a verified recovery path. Neither package installation
-nor controller enrollment authorizes enabling Event Manager, restoring data,
-or dispatching the protected Host promotion.
+After enrollment, use the checksum-verified owner-only
+`tools/staging_host_promotion_diagnostics.py` collector for the corrected
+controller. A `RECOVERY_HOLD_VERIFIED` receipt binds the installed controller
+files to the reviewed source, checks the current image, wheel and mounted
+database, and verifies that the earlier Host backup still passes the
+in-memory restore probe. The receipt confirms that the unsafe Skill-update
+backup remains excluded. The read-only operation never releases the latch.
+Routine health, smoke and history are read-only, but do not replace this
+combined verification. The routine `recover` operation remains blocked.
+
+Keep Host promotion blocked. Any later latch release requires explicit
+separate review and approval. Neither package installation nor controller
+enrollment authorizes enabling Event Manager, restoring data, or dispatching
+the protected Host promotion.
 
 ## Event Manager V2.1 pin replacement
 
