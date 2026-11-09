@@ -89,6 +89,30 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         done, _ = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
         self.assertEqual(done, [])
 
+    async def test_setup_does_not_duplicate_legacy_games_category(self):
+        actor = self.owner()
+        legacy = self.guild.add_category('GAMING')
+        key = 'managed_category:1:games'
+        draft = await ops.preview(self.guild, actor, 'reconcile', self.bot)
+        row = next(r for r in draft['rows'] if r['key'] == key)
+        self.assertEqual(row['status'], 'SAFE_ADOPTION')
+        self.assertEqual(row['safe'], [legacy.id])
+        db.set_setting('managed_category:1:gaming', legacy.id)
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot)
+        draft['rows'] = [r for r in draft['rows'] if r['key'] == key]
+        self.assertEqual(draft['rows'][0]['status'], 'EXACT_MATCH')
+        self.assertEqual(await ops.apply(self.guild, actor, draft, self.bot, confirmed=True), ([], []))
+        self.assertEqual([category.id for category in self.guild.categories if ops.alias(category.name) in {'games', 'gaming'}],
+                         [legacy.id])
+        canonical = self.guild.add_category('GAMES')
+        db.set_setting(key, canonical.id)
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot)
+        draft['rows'] = [r for r in draft['rows'] if r['key'] == key]
+        self.assertEqual(draft['rows'][0]['status'], 'AMBIGUOUS')
+        self.assertEqual(await ops.apply(self.guild, actor, draft, self.bot, confirmed=True), ([], []))
+        self.assertEqual(db.get_setting(key), str(canonical.id))
+        self.assertEqual(db.get_setting('managed_category:1:gaming'), str(legacy.id))
+
     async def test_setup_skips_existing_ambiguous_resource(self):
         actor = self.owner()
         self.guild.add_channel('community-events', self.staff)

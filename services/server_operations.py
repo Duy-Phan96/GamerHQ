@@ -85,7 +85,10 @@ def mapped(row):
     if row['kind'] == 'role':
         stored = db.get_managed_role_by_key('base', row['name'])
         return str(stored['role_id']) if stored else None
-    return messages.mapping(row['key']) if row['kind'] == 'message' else db.get_setting(row['key'])
+    if row['kind'] == 'message':
+        return messages.mapping(row['key'])
+    raw = db.get_setting(row['key'])
+    return raw or (db.get_setting(row['legacy_key']) if row.get('legacy_key') else None)
 
 
 def private(resource):
@@ -118,7 +121,15 @@ def wire(resource):
 
 def target(guild, row):
     raw = db.get_setting(row['parent']) if row.get('parent') else None
+    games_parent = row['parent'] == f'managed_category:{guild.id}:games'
+    if games_parent:
+        legacy = db.get_setting(f'managed_category:{guild.id}:gaming')
+        if raw and legacy and raw != legacy:
+            raise ServerMessageError('Games category mappings conflict. Review Server Structure.')
+        raw = raw or legacy
     parent = guild.get_channel(int(raw)) if raw and raw.isdigit() else None
+    if games_parent and raw and not isinstance(parent, discord.CategoryChannel):
+        raise ServerMessageError('Saved Games category is unavailable. Review Server Structure.')
     from services import structure_adoption_service as runtime
     logical = f"game:{row['game_id']}" if row.get('game_id') else row['name']
     state = runtime.channel_state(guild, logical)
@@ -292,6 +303,15 @@ async def _scan(guild, bot, *, message_keys=None):
             placed = (not row.get('parent') or (len(candidates) == 1 and candidates[0].category and
                       (candidates[0].category == expected_parent or alias(candidates[0].category.name) in expected_names)))
             status = 'SAFE_ADOPTION' if len(candidates) == 1 and len(safe) == 1 and placed else 'AMBIGUOUS'
+        if row.get('legacy_key'):
+            canonical = db.get_setting(row['key'])
+            legacy = db.get_setting(row['legacy_key'])
+            # A recorded category is preserved even when temporarily unavailable.
+            # Conflicting records or a tombstone must be resolved before setup.
+            removed = any(db.get_setting(f'managed_category_removed:{guild.id}:{name}') == '1'
+                          for name in ('games', 'gaming'))
+            placement_error |= bool((canonical and legacy and canonical != legacy)
+                                    or (raw and existing is None) or (removed and existing is None))
         if placement_error: safe, status = [], 'AMBIGUOUS'
         row.update(raw=raw, candidates=candidates, safe=safe, status=status,
                    signature=[wire(r) for r in candidates], resource=existing)
@@ -321,11 +341,12 @@ async def _scan(guild, bot, *, message_keys=None):
                              changed=[c.id for c in current] != [c.id for c in ordered]))
     except ServerMessageError:
         warnings.append('Channel order: link ambiguous categories/channels before repair.')
-    defaults = managed.canonical_boards(guild, bot, warnings=warnings, defaults=True)
-    jobs = [inspect_message(guild, key, channel, content, defaults.get(key, (None, content))[1], warnings) for key, (channel, content) in
-            managed.canonical_boards(guild, bot, warnings=warnings).items()
-            if (message_keys is None or key in message_keys) and channel in guild.text_channels and content is not None]
-    rows.extend(row for row in await gather_reads(jobs) if row is not None)
+    if message_keys is None or message_keys:
+        defaults = managed.canonical_boards(guild, bot, warnings=warnings, defaults=True)
+        jobs = [inspect_message(guild, key, channel, content, defaults.get(key, (None, content))[1], warnings) for key, (channel, content) in
+                managed.canonical_boards(guild, bot, warnings=warnings).items()
+                if (message_keys is None or key in message_keys) and channel in guild.text_channels and content is not None]
+        rows.extend(row for row in await gather_reads(jobs) if row is not None)
     for warning in dict.fromkeys(warnings):
         rows.append(dict(key=warning, kind='warning', name=warning, label=warning, status='AMBIGUOUS',
                          candidates=[], safe=[], raw=None, resource=None, signature=[]))
