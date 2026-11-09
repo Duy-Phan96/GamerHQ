@@ -135,10 +135,9 @@
       "display_group": "🌍 MMO & RPG",
       "aliases": [
         "GTA V",
-        "GTA 5",
-        "Grand Theft Auto 5"
+        "GTA 5"
       ],
-      "review_note": "The seed uses GTA V and GTA 5 as aliases of GTA Online. Verify the target game and channel before choosing a separate entry or an existing match."
+      "existing_name": "GTA Online"
     },
     {
       "name": "Red Dead Redemption 2",
