@@ -128,3 +128,24 @@ jobs:
           umask 077
           image=$(docker image inspect gamerhq-bot:local --format '{{.Id}}')
           python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl
+
+  staging-configuration-preview-archive:
+    if: github.event_name == 'pull_request' && github.head_ref == 'staging/configuration-preview' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Record the exact candidate archive for protected staging review
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REVIEWED_COMMIT"
+          git archive --format=tar --output="$RUNNER_TEMP/staging-configuration-preview.tar" "$REVIEWED_COMMIT"
+          sha256sum "$RUNNER_TEMP/staging-configuration-preview.tar"

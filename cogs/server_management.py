@@ -2298,6 +2298,7 @@ class DeveloperView(Menu):
         self.action('Duplicate Scan', self.duplicates)
         self.action('Production Doctor', self.doctor)
         self.action('Legacy Game Migration', self.legacy_games)
+        self.action('Configuration Preview', self.configuration_preview)
 
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
@@ -2308,6 +2309,20 @@ class DeveloperView(Menu):
         await interaction.response.defer(ephemeral=True)
         findings = await scan(self.guild, interaction.client, messages=False)
         await interaction.edit_original_response(content=summary(findings), view=HealthView(self.guild, self.admin_id, findings))
+
+    async def configuration_preview(self, interaction):
+        from services import server_configuration_preview
+        await interaction.response.defer(ephemeral=True)
+        try:
+            summary, rows = await server_configuration_preview.preview(
+                interaction.guild, interaction.user, interaction.client)
+        except (ServerMessageError, discord.HTTPException, OSError, ValueError, TimeoutError):
+            return await interaction.edit_original_response(
+                content='Configuration could not be verified. Retry from the configured guild as its owner.',
+                view=None)
+        view = ConfigurationPreviewView(self.guild, self.admin_id, summary, rows)
+        await interaction.edit_original_response(content=view.text(), view=view,
+                                                 allowed_mentions=discord.AllowedMentions.none())
 
     async def duplicates(self, interaction):
         from services.message_reconciliation import audit
@@ -2326,6 +2341,38 @@ class DeveloperView(Menu):
         await interaction.response.send_message('Production Doctor runs on the VPS without Discord changes:\n'
             '```sh\npython -m tools.production_doctor --help\n```\n'
             'Follow docs/PRODUCTION_OPERATIONS.md. Never paste `.env` contents into Discord.', ephemeral=True)
+
+
+class ConfigurationPreviewView(Menu):
+    def __init__(self, guild, actor_id, summary, rows):
+        super().__init__(guild, actor_id)
+        self.summary, self.rows, self.page = summary, rows, 0
+        self.last = (len(rows) + 7) // 8
+
+    async def interaction_check(self, interaction):
+        return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
+
+    def text(self):
+        lines = ['# Server Configuration Preview', 'Read-only. Review each action in the existing setup tools.']
+        if self.page == 0:
+            lines.extend(self.summary)
+        else:
+            offset = (self.page - 1) * 8
+            for kind, name, action, detail in self.rows[offset:offset + 8]:
+                label = discord.utils.escape_mentions(discord.utils.escape_markdown(name[:80]))
+                lines.append(f'• {kind} / {label} · {action} · {detail}')
+        lines.append(f'Page {self.page + 1}/{self.last + 1}')
+        return '\n'.join(lines)[:1950]
+
+    @discord.ui.button(label='Previous')
+    async def previous(self, interaction, button):
+        self.page = max(0, self.page - 1)
+        await interaction.response.edit_message(content=self.text(), view=self)
+
+    @discord.ui.button(label='Next')
+    async def next_page(self, interaction, button):
+        self.page = min(self.last, self.page + 1)
+        await interaction.response.edit_message(content=self.text(), view=self)
 
 
 class RemovedResourcesView(Menu):

@@ -379,8 +379,9 @@ def canonical_boards(guild, bot=None, *, warnings=None, defaults=False):
     if lfg:
         result[setting_key_for(lfg)] = (lfg, guarded(resolve_channel_placeholders)(guild, default_copy_for(lfg)))
     from services import game_service as games
-    board = guild.get_channel(games.CHOOSE_GAMES_CHANNEL_ID)
-    if board in guild.text_channels:
+    board = guild.get_channel(games.choose_games_channel_id(guild.id))
+    from services.server_operations import private
+    if board in guild.text_channels and (games.CHOOSE_GAMES_CHANNEL_ID or not private(board)):
         result['choose_games_message_id'] = (board, games.build_choose_games_message())
         for title, _ in games.build_choose_games_sections():
             result['choose_games_section_message_ids:' + games._choose_games_section_key(title)] = (board, title)

@@ -5,6 +5,7 @@ from difflib import SequenceMatcher
 
 import discord
 
+import config
 from config import CHOOSE_GAMES_CHANNEL_ID, DISPLAY_GROUP_ORDER
 from database import db
 from services.game_area_safety import coordinated_game_creation
@@ -205,13 +206,22 @@ def _managed_message_matches(message, content, view):
             and without_ids(actual) == without_ids(desired))
 
 
+def choose_games_channel_id(guild_id):
+    """Retain an explicit legacy target; otherwise use this guild's managed link."""
+    if CHOOSE_GAMES_CHANNEL_ID:
+        return CHOOSE_GAMES_CHANNEL_ID
+    raw = db.get_setting(f'managed_channel:{guild_id}:choose-your-games')
+    return int(raw) if raw and raw.isdecimal() else 0
+
+
 async def refresh_choose_games_message(bot, view=None, intro_view=None):
     from services.managed_message_service import lock
-    async with lock(f'choose_games_refresh:{CHOOSE_GAMES_CHANNEL_ID}'):
-        return await _refresh_choose_games_message(bot, view, intro_view)
+    channel_id = choose_games_channel_id(config.GUILD_ID)
+    async with lock(f'choose_games_refresh:{channel_id}'):
+        return await _refresh_choose_games_message(bot, view, intro_view, channel_id=channel_id)
 
 
-async def _refresh_choose_games_message(bot, view=None, intro_view=None):
+async def _refresh_choose_games_message(bot, view=None, intro_view=None, *, channel_id):
     """
     Maintain pinned, bot-managed Choose Your Games messages.
 
@@ -220,7 +230,7 @@ async def _refresh_choose_games_message(bot, view=None, intro_view=None):
     bot-managed overview/category messages require manual review; refresh never
     deletes candidate duplicates or unknown content.
     """
-    if CHOOSE_GAMES_CHANNEL_ID == 0:
+    if channel_id == 0:
         return
     if view is None or intro_view is None:
         raise GameStructureError(
@@ -228,14 +238,18 @@ async def _refresh_choose_games_message(bot, view=None, intro_view=None):
             ValueError("Both category and intro views are required for a safe refresh."),
         )
 
-    channel = bot.get_channel(CHOOSE_GAMES_CHANNEL_ID)
-    if not isinstance(channel, discord.TextChannel):
+    channel = bot.get_channel(channel_id)
+    if (not isinstance(channel, discord.TextChannel)
+            or (config.GUILD_ID and channel.guild.id != config.GUILD_ID)):
         raise GameStructureError(
             "UPDATE CHOOSE-YOUR-GAMES",
             RuntimeError("Configured choose-your-games channel was not found."),
         )
 
     try:
+        from services.server_operations import private
+        if not CHOOSE_GAMES_CHANNEL_ID and private(channel):
+            raise ValueError("The Choose Your Games destination is private; review its managed mapping.")
         bot_user = channel.guild.me
         bot_id = bot_user.id if bot_user else getattr(bot.user, "id", None)
 
