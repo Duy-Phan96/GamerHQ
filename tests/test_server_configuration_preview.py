@@ -48,7 +48,7 @@ class ConfigurationPreviewTests(unittest.IsolatedAsyncioTestCase):
         event_area = self.guild.add_category('EVENT TESTING')
         chat = self.guild.add_channel('legacy game chat', gaming)
         event_chat = self.guild.add_channel('community-events', event_area)
-        shared_chat = self.guild.add_channel('gaming-chat', gaming)
+        shared_chat = self.guild.add_channel('💬・gaming-chat', gaming)
         voice = MagicMock(spec=discord.VoiceChannel)
         voice.id, voice.name, voice.guild = 8000, '🔊 Chill Lounge', self.guild
         voice.category, voice.category_id = self.voice, self.voice.id
