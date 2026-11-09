@@ -18,7 +18,7 @@ def ledger(path):
             CREATE TABLE skill_domain_authority (guild_id, domain, skill_id);
             CREATE TABLE skill_guild_state (guild_id, skill_id, installed, configured, enabled, version);
             CREATE TABLE skill_deployments
-                (id, skill_id, state, created_at, updated_at, previous_image, evidence_json);
+                (id, skill_id, state, created_at, updated_at, previous_image, evidence_json, image, version);
             INSERT INTO skill_domain_authority VALUES(12, 'event-manager', 'event-manager');
             INSERT INTO skill_guild_state VALUES(12, 'event-manager', 1, 1, 1, '0.1.2');
             INSERT INTO skill_guild_state VALUES(34, 'event-manager', 1, 1, 1, '9.9.9');
@@ -27,7 +27,7 @@ def ledger(path):
 
 def record(path, ident, state, time, evidence):
     with closing(sqlite3.connect(path)) as conn, conn:
-        conn.execute("INSERT INTO skill_deployments VALUES(?, 'event-manager', ?, ?, ?, ?, ?)",
+        conn.execute("INSERT INTO skill_deployments VALUES(?, 'event-manager', ?, ?, ?, ?, ?, 'approved-image', '0.1.2')",
                      (ident, state, time, time, 'private-image-id', json.dumps(evidence)))
 
 
@@ -59,7 +59,7 @@ def test_candidate_backup_and_restore_evidence_are_separately_verified(tmp_path)
     attempt = result['attemptsSinceFailedRun'][0]
     assert attempt['previousImageRecorded'] and attempt['offlineProbePassed']
     assert attempt['backup'] == {'recorded': True, 'filePresent': True, 'checksumMatches': True,
-                                 'integrityPass': True, 'restoreProbeRecorded': True}
+                                 'integrityPass': True, 'restoreProbe': 'UNAVAILABLE', 'restoreProbeRecorded': True}
     assert checksum not in str(result) and 'b' * 32 not in str(result)
 
 
@@ -78,15 +78,23 @@ def test_container_probe_uses_only_approved_rootless_daemon(tmp_path, monkeypatc
     account = SimpleNamespace(pw_uid=os.geteuid(), pw_dir=str(tmp_path))
     state = {'approvedImage': 'stage-image'}
     profile = {'dockerDaemonId': 'approved-daemon', 'baseImage': 'stage-image'}
+    (tmp_path / 'data').mkdir()
+    host_db = tmp_path / 'data/gamerhq.db'
+    host_db.write_bytes(b'test')
+    info = host_db.stat()
+    monkeypatch.setattr(diagnostic, 'ROOT', tmp_path)
     calls = []
 
     def run(argv, *, env, cwd, **kwargs):
         assert env['DOCKER_HOST'] == 'unix://' + str(path)
         assert cwd == diagnostic.ROOT
         calls.append(argv)
+        if argv[1] == 'inspect' and '.Mounts' in argv[-2]:
+            return SimpleNamespace(stdout='bind|' + str(tmp_path / 'data'))
         outputs = {
             'info': '["name=rootless"]|approved-daemon',
             'ps': 'container-present',
+            'exec': json.dumps({'device': info.st_dev, 'inode': info.st_ino, 'version': '0.1.2'}),
             'inspect': '/gamerhq-staging-bot|stage-image|running|healthy|gamerhq-staging|gamerhq-staging|'
                        + diagnostic.BASELINE,
         }
@@ -98,9 +106,31 @@ def test_container_probe_uses_only_approved_rootless_daemon(tmp_path, monkeypatc
         receipt = diagnostic.container_status(account, path, profile, state)
         assert receipt['hostCommit'] == diagnostic.BASELINE and receipt['dockerHealthy']
         assert receipt['matchesApprovedImage']
-        assert [command[1] for command in calls] == ['info', 'ps', 'inspect']
+        assert receipt['runtimeDatabaseMatchesProfile'] and receipt['packageVersion'] == '0.1.2'
+        assert [command[1] for command in calls] == ['info', 'ps', 'inspect', 'inspect', 'exec']
         assert 'stage-image' not in str(receipt)
         calls.clear()
         with pytest.raises(ValueError, match='ROOTLESS_SOCKET_SCOPE_REJECTED'):
             diagnostic.container_status(account, path, {**profile, 'dockerDaemonId': 'wrong-daemon'}, state)
         assert [command[1] for command in calls] == ['info']
+
+
+def test_known_update_and_restore_probe_preserve_disk_bytes(tmp_path):
+    db = tmp_path / 'stage.sqlite'
+    backup = tmp_path / (diagnostic.KNOWN_SKILL_UPDATE + '.sqlite')
+    ledger(db)
+    ledger(backup)
+    backup.chmod(0o600)
+    before = backup.read_bytes()
+    evidence = {'release': {'reviewedCommit': diagnostic.SKILL_WHEEL_COMMIT, 'sha256': diagnostic.SKILL_WHEEL_SHA256},
+                'backup': {'sha256': hashlib.sha256(before).hexdigest()}}
+    record(db, diagnostic.KNOWN_SKILL_UPDATE, 'APPLIED', diagnostic.RUN_STARTED - 60, evidence)
+    result = diagnostic.evidence_from_database(db, tmp_path, 12, os.getuid(), approved_image='approved-image')
+    assert result['knownSkillUpdateMatchesApprovedImageAndArtifact']
+    assert result['latestPreRunBackup']['restoreProbe'] == 'PASS'
+    assert backup.read_bytes() == before
+    sidecar = backup.with_name(backup.name + '-wal')
+    sidecar.write_bytes(b'unreviewed')
+    result = diagnostic.receipt_for_backup(tmp_path, diagnostic.KNOWN_SKILL_UPDATE, evidence, os.getuid(), guild_id=12)
+    assert result['checksumMatches'] and result['inspection'] == 'SIDECARS_PRESENT'
+    assert result['restoreProbe'] == 'UNAVAILABLE' and sidecar.read_bytes() == b'unreviewed'

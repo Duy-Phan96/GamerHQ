@@ -19,6 +19,11 @@ TARGET = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
 BASELINE = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
 ARCHIVE = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
 MAX_BACKUP_BYTES = 256 * 1024 ** 2
+MAX_MEMORY_RESTORE_BYTES = 32 * 1024 ** 2
+KNOWN_SKILL_UPDATE = '1b01158008ff4839988a97911d31a1c9'
+KNOWN_HOST_BACKUP = '8fbba0198bef4f71be26cd149260184f'
+SKILL_WHEEL_COMMIT = '41a7d968852453d815a52f2f03e4ccac7e93eff9'
+SKILL_WHEEL_SHA256 = '84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465'
 STATES = {'STAGING', 'READY', 'FAILED', 'APPLYING', 'APPLIED', 'ROLLED_BACK', 'RECOVERY_REQUIRED'}
 
 
@@ -68,32 +73,52 @@ def integrity(conn):
     return conn.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
 
 
-def receipt_for_backup(root, ident, evidence, uid):
+def receipt_for_backup(root, ident, evidence, uid, *, guild_id=None):
     if not re.fullmatch('[0-9a-f]{32}', ident):
         raise ValueError('BACKUP_SCOPE_REJECTED')
     path = root / (ident + '.sqlite')
     saved = evidence.get('backup', {})
     verified = saved.get('verification', {})
     result = {'recorded': 'backup' in evidence, 'filePresent': path.exists(),
-              'checksumMatches': None, 'integrityPass': None,
+              'checksumMatches': None, 'integrityPass': None, 'restoreProbe': 'UNAVAILABLE',
               'restoreProbeRecorded': verified.get('restoreProbe') == 'PASS'}
     if not result['filePresent']:
-        return result
+        return {**result, 'inspection': 'FILE_MISSING'}
     try:
-        info = fixed_file(path, uid=uid, private=True, limit=MAX_BACKUP_BYTES)
-        if any(path.with_name(path.name + suffix).exists() for suffix in ('-wal', '-shm', '-journal')):
-            raise ValueError('BACKUP_SCOPE_REJECTED')
+        info = fixed_file(path)
+        if info.st_uid != uid:
+            return {**result, 'inspection': 'OWNER_MISMATCH'}
+        if info.st_mode & 0o077:
+            return {**result, 'inspection': 'MODE_UNSAFE'}
+        if not 0 < info.st_size <= MAX_BACKUP_BYTES:
+            return {**result, 'inspection': 'SIZE_REJECTED'}
         actual = digest(path)
         if 'sha256' in saved:
             result['checksumMatches'] = actual == saved['sha256']
+        if any(path.with_name(path.name + suffix).exists() or path.with_name(path.name + suffix).is_symlink()
+               for suffix in ('-wal', '-shm', '-journal')):
+            return {**result, 'inspection': 'SIDECARS_PRESENT'}
         with closing(read_database(path, immutable=True)) as conn:
             result['integrityPass'] = integrity(conn)
+            if not result['checksumMatches'] or not result['integrityPass'] or guild_id is None:
+                pass
+            elif info.st_size > MAX_MEMORY_RESTORE_BYTES:
+                result['restoreProbe'] = 'DEFERRED_SIZE_LIMIT'
+            else:
+                with closing(sqlite3.connect(':memory:')) as clone:
+                    conn.backup(clone)
+                    authority = clone.execute(
+                        "SELECT guild_id,skill_id FROM skill_domain_authority WHERE domain='event-manager'"
+                    ).fetchall()
+                    same_schema = clone.execute('PRAGMA user_version').fetchone() == conn.execute('PRAGMA user_version').fetchone()
+                    result['restoreProbe'] = ('PASS' if integrity(clone) and same_schema
+                                              and authority == [(guild_id, 'event-manager')] else 'FAILED')
         checked = fixed_file(path, uid=uid, private=True, limit=MAX_BACKUP_BYTES)
         identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
         if identity(checked) != identity(info):
             raise ValueError('BACKUP_CHANGED')
     except (OSError, ValueError, sqlite3.Error):
-        result.update(checksumMatches=None, integrityPass=None, inspection='UNAVAILABLE')
+        result.update(checksumMatches=None, integrityPass=None, restoreProbe='UNAVAILABLE', inspection='UNAVAILABLE')
     return result
 
 
@@ -101,7 +126,7 @@ def safe_commit(value):
     return value if isinstance(value, str) and re.fullmatch('[0-9a-f]{40}', value) else None
 
 
-def evidence_from_database(path, backup_root, guild_id, uid):
+def evidence_from_database(path, backup_root, guild_id, uid, *, approved_image=None):
     with closing(read_database(path)) as conn:
         conn.execute('PRAGMA query_only=ON')
         conn.execute('BEGIN')
@@ -122,8 +147,16 @@ def evidence_from_database(path, backup_root, guild_id, uid):
         preceding = conn.execute(
             "SELECT id,evidence_json FROM skill_deployments WHERE skill_id='event-manager' "
             "AND state IN ('APPLIED','ROLLED_BACK') AND updated_at<? "
-            "AND json_type(evidence_json,'$.backup.sha256')='text' ORDER BY updated_at DESC LIMIT 1",
-            (RUN_STARTED,),
+            "ORDER BY updated_at DESC LIMIT 1", (RUN_STARTED,),
+        ).fetchone()
+        known = conn.execute(
+            "SELECT id,image,evidence_json FROM skill_deployments "
+            "WHERE id=? AND skill_id='event-manager' AND state='APPLIED' AND version='0.1.2'",
+            (KNOWN_SKILL_UPDATE,),
+        ).fetchone()
+        older = conn.execute(
+            "SELECT id,evidence_json FROM skill_deployments WHERE id=? AND skill_id='event-manager' AND state='APPLIED'",
+            (KNOWN_HOST_BACKUP,),
         ).fetchone()
     if len(rows) > 20:
         raise ValueError('DEPLOYMENT_HISTORY_LIMIT')
@@ -144,12 +177,20 @@ def evidence_from_database(path, backup_root, guild_id, uid):
         elif state in {'APPLYING', 'RECOVERY_REQUIRED'}:
             blockers.append({'state': state, 'targetHostCommit': safe_commit(target), 'updatedAt': updated})
     version = skill[3] if skill and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-.][a-z0-9.]+)?', str(skill[3])) else None
+    known_release = json.loads(known[2]).get('release', {}) if known else {}
+    known_matches = bool(known and approved_image and known[1] == approved_image
+                         and known_release.get('reviewedCommit') == SKILL_WHEEL_COMMIT
+                         and known_release.get('sha256') == SKILL_WHEEL_SHA256)
     return {'integrityPass': db_ok, 'eventManagerAuthority': authority == [('event-manager',)],
+            'knownSkillUpdateMatchesApprovedImageAndArtifact': known_matches,
             'skillInstalled': bool(skill and skill[0]), 'skillConfigured': bool(skill and skill[1]),
             'skillEnabled': bool(skill and skill[2]), 'skillVersion': version,
             'attemptsSinceFailedRun': attempts, 'preexistingHostBlockers': blockers,
-            'latestPreRunBackup': (receipt_for_backup(backup_root, preceding[0], json.loads(preceding[1]), uid)
-                                   if preceding else None)}
+            'latestPreRunBackup': (receipt_for_backup(backup_root, preceding[0], json.loads(preceding[1]), uid,
+                                                       guild_id=guild_id) if preceding else None),
+            'lastVerifiedHostBackup': (receipt_for_backup(backup_root, older[0], json.loads(older[1]), uid,
+                                                          guild_id=guild_id)
+                                       if older and (not preceding or older[0] != preceding[0]) else None)}
 
 
 def container_status(account, socket, profile, state):
@@ -186,9 +227,38 @@ def container_status(account, socket, profile, state):
     if len(fields) != 7 or fields[0] != '/' + container or fields[4:6] != ['gamerhq-staging'] * 2:
         raise ValueError('CONTAINER_SCOPE_REJECTED')
     _, image, status, health, _, _, commit = fields
-    return {'present': True, 'running': status == 'running', 'dockerHealthy': health == 'healthy',
-            'hostCommit': safe_commit(commit), 'matchesApprovedImage': image == state.get('approvedImage'),
-            'matchesProfileBaseImage': image == profile.get('baseImage')}
+    approved = image == state.get('approvedImage')
+    report = {'present': True, 'running': status == 'running', 'dockerHealthy': health == 'healthy',
+              'hostCommit': safe_commit(commit), 'matchesApprovedImage': approved,
+              'matchesProfileBaseImage': image == profile.get('baseImage')}
+    if status != 'running' or not approved or commit != BASELINE:
+        return report
+    mount = read('inspect', '--type', 'container', '--format',
+                 '{{range .Mounts}}{{if eq .Destination "/app/runtime/data"}}{{.Type}}|{{.Source}}{{end}}{{end}}',
+                 container)
+    if mount != 'bind|' + str(ROOT / 'data'):
+        return {**report, 'runtimeInspection': 'MOUNT_SCOPE_REJECTED'}
+    probe = """
+import importlib.metadata
+import json
+import os
+path = '/app/runtime/data/gamerhq.db'
+if os.environ.get('GAMERHQ_DB_PATH') != path:
+    raise SystemExit(1)
+info = os.stat(path)
+print(json.dumps({'device': info.st_dev, 'inode': info.st_ino,
+                  'version': importlib.metadata.version('gamerhq-skill-event-manager')}))
+"""
+    try:
+        facts = json.loads(read('exec', '--user', '10001:10001', container, 'python', '-I', '-B', '-c', probe))
+        host_db = fixed_file(ROOT / 'data/gamerhq.db')
+        version = facts.get('version')
+        valid_version = version if isinstance(version, str) and re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-.][a-z0-9.]+)?', version) else None
+        return {**report, 'runtimeInspection': 'PASS', 'packageVersion': valid_version,
+                'runtimeDatabaseMatchesProfile': (facts.get('device'), facts.get('inode'))
+                == (host_db.st_dev, host_db.st_ino)}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {**report, 'runtimeInspection': 'UNAVAILABLE'}
 
 
 def collect():
@@ -249,7 +319,8 @@ def collect():
         except (OSError, ValueError, subprocess.SubprocessError):
             report['container'] = {'inspection': 'UNAVAILABLE'}
         try:
-            report['database'] = evidence_from_database(db, backup_root, int(profile['stagingGuildId']), uid)
+            report['database'] = evidence_from_database(db, backup_root, int(profile['stagingGuildId']), uid,
+                                                        approved_image=state.get('approvedImage'))
         except (OSError, ValueError, sqlite3.Error):
             report['database'] = {'inspection': 'UNAVAILABLE'}
     return report
