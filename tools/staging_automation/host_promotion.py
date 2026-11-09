@@ -17,29 +17,36 @@ from contextlib import closing
 from .deployment import SkillUpdateController, application_fingerprint
 from .policy import Denied
 
-COMMIT = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
-BASELINE = '17858f47480e914956dd241b9f37a328b4c6ac2b'
-CI_RUN = '42060126446'
-BASELINE_SKILL_VERSION = '0.1.1'
-BASELINE_SKILL_COMMIT = '2663f8ea84408286a118a01f60a47c574dae5ff8'
-BASELINE_SKILL_SHA256 = 'ba7336e3c1244777f2cbc17a02fe70a6310e4a284eb4cc1b30e960b6e75f9faa'
+COMMIT = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
+ARCHIVE_SHA256 = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
+BASELINE = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
+CI_RUN = '42646395695'
+BASELINE_SKILL_VERSION = '0.1.2'
+BASELINE_SKILL_COMMIT = '41a7d968852453d815a52f2f03e4ccac7e93eff9'
+BASELINE_SKILL_SHA256 = '84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 DIRECTORIES = ('cogs', 'skill_runtime', 'hosts', 'skills', 'services', 'database', 'tools')
-FILES = ('bot.py', 'config.py', 'release_info.py', 'VERSION', 'CHANGELOG.md', '.env.example', 'data/games_seed.json')
-COMPATIBILITY = ('Dockerfile', 'requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml', 'database/db.py')
+FILES = ('bot.py', 'config.py', 'release_info.py', 'VERSION', 'CHANGELOG.md', '.env.example',
+         'data/games_seed.json', 'data/game_catalog_expansion.json')
+COMPATIBILITY = ('requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml',
+                 'database', 'skill_runtime', 'skills', 'hosts', 'data/games_seed.json')
 REVIEWED_HOST_CHANGES = frozenset({
-    'hosts/gamerhq/web_platform.py',
+    '.dockerignore', '.github/workflows/tests.yml', 'Dockerfile',
+    'cogs/server_management.py', 'data/game_catalog_expansion.json',
+    'services/game_service.py', 'services/managed_message_service.py',
+    'services/server_configuration_preview.py', 'services/server_operations.py',
+    'tests/test_server_configuration_preview.py', 'tests/test_server_operations.py',
+    'tools/game_catalog_import.py',
 })
 
 
 def verify_compatibility(git):
-    for path in (*COMPATIBILITY, 'database', 'skill_runtime', 'skills', 'services'):
+    for path in COMPATIBILITY:
         if git('rev-parse', BASELINE + ':' + path) != git('rev-parse', COMMIT + ':' + path):
             raise Denied('MIGRATION_REQUIRES_OWNER')
-    changed = git('diff', '--no-renames', '--name-only', '-z', BASELINE, COMMIT, '--', 'hosts')
+    changed = git('diff', '--no-renames', '--name-only', '-z', BASELINE, COMMIT, '--')
     if frozenset(changed.decode().rstrip('\0').split('\0')) != REVIEWED_HOST_CHANGES:
         raise Denied('MIGRATION_REQUIRES_OWNER')
-
 
 def extract_application(archive, destination):
     """No links, special files or runtime/configuration mounts in the build context."""
@@ -145,7 +152,8 @@ def source_commit(backend, image):
 
 def build_overlay(backend, current):
     policy, p = backend.policy['hostPromotion'], backend.profile
-    if policy['commit'] != COMMIT or source_commit(backend, current) != BASELINE:
+    if (policy['commit'] != COMMIT or policy['archiveSha256'] != ARCHIVE_SHA256
+            or source_commit(backend, current) != BASELINE):
         raise Denied('IMMUTABLE_RELEASE_CHANGED')
     with tempfile.TemporaryDirectory(dir=p['workRoot'], prefix='host-source-') as directory:
         root = Path(directory)
@@ -165,7 +173,7 @@ def build_overlay(backend, current):
         verify_compatibility(git)
         archive = root / 'source.tar'
         git('archive', '--format=tar', '--output=' + str(archive), COMMIT)
-        if archive.stat().st_size > 32 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != policy['archiveSha256']:
+        if archive.stat().st_size > 32 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != ARCHIVE_SHA256:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
         context = root / 'context'; context.mkdir()
         extract_application(archive, context)
