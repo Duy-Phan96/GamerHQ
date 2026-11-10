@@ -1,5 +1,28 @@
 # Reviewed staging Host promotion
 
+## Structure phases candidate
+
+[Candidate PR #244](https://github.com/Duy-Phan96/GamerHQ/pull/244) overlays the
+ten application and test paths from merged Host PR #243 on the existing
+`6734b756685d90de8e56ddc299560ec13625300e` staging Host. The exact candidate is
+`de6447a25d36dc002070b2f0e94b4df0dcc9ef0b`, with uncompressed Git archive
+SHA256 `260c8f886d7485bd6fafa7701ac9021d07d4cf1d8cff81c8387034d00731faf6`
+and [candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42876302300).
+
+Before enrolling, confirm the active staging controller is
+`ff519f698f973b056eeae0b9d026a71dbf8fbaae` with the current Host pin and a
+clear recovery latch. The owner uses the checksum-verified installer from the
+reviewed controller head with `--structure-phases --approval 'ENROLL STAGING STRUCTURE PHASES'`.
+Enrollment only updates the exact Host pin and immutable controller selection.
+The protected workflow registration and `deployment-security` review remain
+separate steps. The Event Manager 0.1.2 artifact and lifecycle are retained.
+
+After promotion, health, backup and restore verification, the first owner
+acceptance is a read-only review of the two existing `Allgemein` channels.
+Record each ID, type, parent, ownership and permission result. Confirm text
+history access and voice connection access. Do not select or confirm a link
+or move until that evidence has been reviewed.
+
 ## Managed-message Configuration Preview candidate
 
 Draft staging source [PR #240](https://github.com/Duy-Phan96/GamerHQ/pull/240)

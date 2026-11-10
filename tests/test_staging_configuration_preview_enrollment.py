@@ -195,3 +195,37 @@ def test_recovery_revision_refuses_unreviewed_changes(installation, monkeypatch,
         install_held(installation)
     assert [file.read_bytes() for file in (installation.state, installation.policy_path, installation.entry)] == before
     assert not (installation.revisions / installation.commit).exists()
+
+
+@pytest.mark.parametrize('baseline', [True, False])
+def test_structure_enrollment_requires_the_installed_managed_message_host(installation, monkeypatch, baseline):
+    old, commit = installation.policy['controllerCommit'], installation.commit
+    monkeypatch.setattr(enrollment, 'ACTIVE_MANAGED_MESSAGES_CONTROLLER', old)
+    installation.policy['hostPromotion'].update(
+        commit=enrollment.MANAGED_MESSAGES_HOST, archiveSha256=enrollment.MANAGED_MESSAGES_ARCHIVE)
+    installation.policy_path.write_text(json.dumps(installation.policy))
+    for name in ('policy.py', 'host_promotion.py'):
+        path = f'tools/staging_automation/{name}'
+        installation.git[f'{commit}:{path}'] = (installation.git[f'{old}:{path}'] if name == 'policy.py'
+                                                 else f'COMMIT = {enrollment.STRUCTURE_HOST!r}'.encode())
+    profile = enrollment.CONTROL / 'settings/profile.json'
+    profile.parent.mkdir()
+    profile.write_text(json.dumps({
+        'environment': 'staging',
+        'applicationHostCommit': enrollment.MANAGED_MESSAGES_HOST if baseline else enrollment.CONFIGURATION_HOST,
+        'baseImage': json.loads(installation.state.read_bytes())['approvedImage'],
+    }))
+    before = [file.read_bytes() for file in (installation.state, profile)]
+    if not baseline:
+        with pytest.raises(ValueError, match='INSTALLED_STAGING_BASELINE_REQUIRED'):
+            enrollment.extension(commit, 'ENROLL STAGING STRUCTURE PHASES', structure=True)
+        assert not (installation.revisions / commit).exists()
+    else:
+        for _ in range(2):
+            receipt = enrollment.extension(commit, 'ENROLL STAGING STRUCTURE PHASES', structure=True)
+            assert receipt['previousHostCommit'] == enrollment.MANAGED_MESSAGES_HOST
+            assert receipt['approvedHostCommit'] == enrollment.STRUCTURE_HOST
+            assert receipt['archiveSha256'] == enrollment.STRUCTURE_ARCHIVE
+            assert receipt['catalogPreviewPolicyPreserved'] is True
+            assert receipt['hostPromotionRequiresProtectedOwnerReview'] is True
+    assert [file.read_bytes() for file in (installation.state, profile)] == before

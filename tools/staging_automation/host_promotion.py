@@ -17,10 +17,10 @@ from contextlib import closing
 from .deployment import SkillUpdateController, application_fingerprint
 from .policy import Denied
 
-COMMIT = '6734b756685d90de8e56ddc299560ec13625300e'
-ARCHIVE_SHA256 = '5f22a55a8d13d8a48fcb040d308bba240ba8d805939d9b51017a5f26efb368eb'
-BASELINE = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
-CI_RUN = '42834032907'
+COMMIT = 'de6447a25d36dc002070b2f0e94b4df0dcc9ef0b'
+ARCHIVE_SHA256 = '260c8f886d7485bd6fafa7701ac9021d07d4cf1d8cff81c8387034d00731faf6'
+BASELINE = '6734b756685d90de8e56ddc299560ec13625300e'
+CI_RUN = '42876302300'
 BASELINE_SKILL_VERSION = '0.1.2'
 BASELINE_SKILL_COMMIT = '41a7d968852453d815a52f2f03e4ccac7e93eff9'
 BASELINE_SKILL_SHA256 = '84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465'
@@ -31,9 +31,9 @@ FILES = ('bot.py', 'config.py', 'release_info.py', 'VERSION', 'CHANGELOG.md', '.
 COMPATIBILITY = ('requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml',
                  'database', 'skill_runtime', 'skills', 'hosts', 'data/games_seed.json')
 REVIEWED_HOST_CHANGES = frozenset({
-    'cogs/server_management.py', 'services/managed_message_service.py',
-    'services/server_configuration_preview.py', 'services/server_operations.py',
-    'tests/test_onboarding.py', 'tests/test_server_configuration_preview.py',
+    'cogs/server.py', 'cogs/server_management.py', 'services/community_structure_service.py',
+    'services/health_service.py', 'services/server_configuration_preview.py', 'services/server_operations.py',
+    'services/server_setup_service.py', 'tests/test_community_structure.py', 'tests/test_scan_performance.py',
     'tests/test_server_operations.py',
 })
 
