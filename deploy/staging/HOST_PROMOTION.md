@@ -8,7 +8,8 @@ is based on Host `89709625d9ea0c74c2b731436d1d13c9dcb453c4`. Its exact head is
 SHA256 `5f22a55a8d13d8a48fcb040d308bba240ba8d805939d9b51017a5f26efb368eb`.
 The seven changed files match [Host PR #239](https://github.com/Duy-Phan96/GamerHQ/pull/239).
 [Candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42834032907)
-runs the Linux matrix and records the exact archive hash.
+runs the Linux matrix. The scoped controller rehearsal independently verifies
+and prints the exact archive hash on Linux.
 
 The previous protected [promotion receipt](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42718803421)
 reports Host `89709625`, Event Manager package `0.1.2`, a verified backup,

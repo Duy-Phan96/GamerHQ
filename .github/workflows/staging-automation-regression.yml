@@ -17,6 +17,16 @@ jobs:
         with:
           ref: 92db47042d58055cb0debdfd83f11f8508e19809
           path: installed-worker-source
+      - name: Verify the exact candidate archive independently on Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate=6734b756685d90de8e56ddc299560ec13625300e
+          git fetch origin "$candidate"
+          archive="$RUNNER_TEMP/managed-message-preview.tar"
+          git archive --format=tar --output="$archive" "$candidate"
+          echo "5f22a55a8d13d8a48fcb040d308bba240ba8d805939d9b51017a5f26efb368eb  $archive" | sha256sum --check --strict
+          sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
         run: |
