@@ -1,5 +1,62 @@
 # Reviewed staging Host promotion
 
+## Managed-message Configuration Preview candidate
+
+Draft staging source [PR #240](https://github.com/Duy-Phan96/GamerHQ/pull/240)
+is based on Host `89709625d9ea0c74c2b731436d1d13c9dcb453c4`. Its exact head is
+`6734b756685d90de8e56ddc299560ec13625300e`, with uncompressed Git archive
+SHA256 `5f22a55a8d13d8a48fcb040d308bba240ba8d805939d9b51017a5f26efb368eb`.
+The seven changed files match [Host PR #239](https://github.com/Duy-Phan96/GamerHQ/pull/239).
+[Candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42834032907)
+runs the Linux matrix. The scoped controller rehearsal independently verifies
+and prints the exact archive hash on Linux.
+
+The previous protected [promotion receipt](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42718803421)
+reports Host `89709625`, Event Manager package `0.1.2`, a verified backup,
+a passing restore probe and retained Event Manager authority. A subsequent
+[smoke receipt](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42777421404)
+confirms the same Host and installed package. Before enrollment, obtain a
+fresh **Policy-bound staging automation → Run workflow → main → status**
+receipt. It must report `ACTIVE`, `bootstrapVerified: true`,
+`controllerCommit: 4b15a48574f7c6ff3cc20f441afbc75160fd0bfb`,
+`hostPromotionCommit: 89709625d9ea0c74c2b731436d1d13c9dcb453c4` and
+`recoveryRequired: false`. A mismatch stops this handoff. The status command
+records normal controller access bookkeeping without changing the application.
+
+After controller review, run the checksum-verified installer as the owner in
+the staging VPS root session. Use the exact controller commit and installer
+SHA256 from the controller PR's scoped automation CI receipt.
+
+```sh
+set -eu
+umask 077
+controller='<reviewed controller commit>'
+installer_sha256='<CI-verified installer SHA256>'
+work=$(mktemp -d)
+installer="$work/extend_staging_host_promotion.py"
+curl --fail --silent --show-error --location \
+  "https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/$controller/tools/extend_staging_host_promotion.py" \
+  --output "$installer"
+printf '%s  %s\n' "$installer_sha256" "$installer" | sha256sum --check --strict
+python3 "$installer" --commit "$controller" --managed-message-preview \
+  --approval 'ENROLL STAGING MANAGED MESSAGE PREVIEW'
+```
+
+The installer accepts only the prior reviewed controller, workflow and catalog
+pins. It requires an active staging baseline and a clear recovery latch under
+the existing operation lock. The enrollment receipt records the new Host pin
+and leaves the profile, database, containers, catalog authorization and SSH
+policy intact. The existing `host-promote` operation still requires the
+registered `main` workflow and separate `deployment-security` owner approval.
+The offline image rehearsal checks imports and controls without Gateway login.
+Review live startup's existing command sync, operational logging and temporary
+voice cleanup before authorizing any restart.
+
+After separately approved promotion and health verification, run
+**/server dev → Configuration Preview** in the staging guild and classify the
+24 unresolved conflict rows from live evidence. Reconcile, setup, repair and
+catalog import have separate review and approval.
+
 ## Configuration Preview promotion
 
 The exact reviewed Host candidate is `89709625d9ea0c74c2b731436d1d13c9dcb453c4`

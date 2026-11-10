@@ -32,6 +32,9 @@ FAILED_CONFIGURATION_CONTROLLER = '0931e16e85db6024b3142aacc072f7721ec28e2d'
 SKILL_UPDATE_BACKUP = '1b01158008ff4839988a97911d31a1c9.sqlite'
 CONFIGURATION_HOST = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
 CONFIGURATION_ARCHIVE = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
+ACTIVE_CONFIGURATION_CONTROLLER = '4b15a48574f7c6ff3cc20f441afbc75160fd0bfb'
+MANAGED_MESSAGES_HOST = '6734b756685d90de8e56ddc299560ec13625300e'
+MANAGED_MESSAGES_ARCHIVE = '5f22a55a8d13d8a48fcb040d308bba240ba8d805939d9b51017a5f26efb368eb'
 CATALOG_SOURCES = {
     'catalog_preview.py': 'tools/staging_automation/catalog_preview.py',
     'catalog_import.py': 'tools/game_catalog_import.py',
@@ -39,13 +42,16 @@ CATALOG_SOURCES = {
 }
 
 
-def configuration_pin(policy, *, commit, previous_workflow, workflow, catalog_workflow):
+def configuration_pin(policy, *, commit, previous_workflow, workflow, catalog_workflow, managed_messages=False):
     catalog_digest = hashlib.sha256(catalog_workflow).hexdigest()
     if 'webDeployment' in policy or policy.get('catalogPreviewWorkflowSha256') != catalog_digest:
         raise ValueError('EXISTING_CATALOG_POLICY_CHANGED')
-    previous_pin = {'commit': HOST, 'archiveSha256': ARCHIVE,
+    previous_host, previous_archive = (CONFIGURATION_HOST, CONFIGURATION_ARCHIVE) if managed_messages else (HOST, ARCHIVE)
+    target_host, target_archive = (MANAGED_MESSAGES_HOST, MANAGED_MESSAGES_ARCHIVE) if managed_messages else (
+        CONFIGURATION_HOST, CONFIGURATION_ARCHIVE)
+    previous_pin = {'commit': previous_host, 'archiveSha256': previous_archive,
                     'workflowSha256': hashlib.sha256(previous_workflow).hexdigest()}
-    pin = {'commit': CONFIGURATION_HOST, 'archiveSha256': CONFIGURATION_ARCHIVE,
+    pin = {'commit': target_host, 'archiveSha256': target_archive,
            'workflowSha256': hashlib.sha256(workflow).hexdigest()}
     expected = pin if policy.get('controllerCommit') == commit else previous_pin
     if policy.get('hostPromotion') != expected:
@@ -114,13 +120,15 @@ def skill_update_backup_mode():
 
 
 def extension(commit, approval, *, web_hostname=None, previous_web_controller=None,
-              catalog_preview=False, configuration_preview=False, configuration_recovery=False):
+              catalog_preview=False, configuration_preview=False, configuration_recovery=False,
+              managed_messages=False):
     import pwd
     web = web_hostname is not None
-    if sum((web, catalog_preview, configuration_preview, configuration_recovery)) > 1:
+    if sum((web, catalog_preview, configuration_preview, configuration_recovery, managed_messages)) > 1:
         raise ValueError('SELECT_ONE_EXTENSION')
-    configuration_preview = configuration_preview or configuration_recovery
-    expected_approval = ('INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD' if configuration_recovery else
+    configuration_preview = configuration_preview or configuration_recovery or managed_messages
+    expected_approval = ('ENROLL STAGING MANAGED MESSAGE PREVIEW' if managed_messages else
+                         'INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD' if configuration_recovery else
                          'ENROLL STAGING CONFIGURATION PREVIEW' if configuration_preview else
                          'ENROLL STAGING CATALOG PREVIEW' if catalog_preview else
                          'ENROLL ISOLATED STAGING WEB' if web else 'REPLACE REVIEWED STAGING HOST PIN')
@@ -131,7 +139,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         raise ValueError('VERIFIED_WEB_HOSTNAME_REQUIRED')
     if previous_web_controller is not None and not web:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
-    previous_commit = (FAILED_CONFIGURATION_CONTROLLER if configuration_recovery else
+    previous_commit = (ACTIVE_CONFIGURATION_CONTROLLER if managed_messages else
+                       FAILED_CONFIGURATION_CONTROLLER if configuration_recovery else
                        CATALOG_CONTROLLER if configuration_preview else
                        (previous_web_controller or WEB_BASE) if web or catalog_preview else OLD)
     if not all(re.fullmatch('[0-9a-f]{40}', value) for value in (commit, previous_commit)):
@@ -179,7 +188,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if git('show', commit + ':tools/extend_staging_host_promotion.py') != Path(__file__).read_bytes():
             raise ValueError('VERIFIED_INSTALLER_SOURCE_MISMATCH')
         blobs = {name: git('show', commit + ':tools/staging_automation/' + name) for name in MODULES}
-        target_host = CONFIGURATION_HOST if configuration_preview else HOST
+        target_host = MANAGED_MESSAGES_HOST if managed_messages else CONFIGURATION_HOST if configuration_preview else HOST
         if f'COMMIT = {target_host!r}'.encode() not in blobs['host_promotion.py'].splitlines():
             raise ValueError('REVIEWED_HOST_SOURCE_MISMATCH')
         if web:
@@ -201,7 +210,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if (web or catalog_preview) and policy.get('hostPromotion') != {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}:
             raise ValueError('EXISTING_HOST_POLICY_CHANGED')
         previous_modules = (*MODULES, 'web.py') if web and previous_commit != WEB_BASE else MODULES
-        changed_modules = {'host_promotion.py', 'backend.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'}
+        changed_modules = {'host_promotion.py'} if managed_messages else (
+            {'host_promotion.py', 'backend.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'})
         for name in previous_modules:
             installed = trusted(previous / 'staging_automation' / name)
             if installed != git('show', previous_commit + ':tools/staging_automation/' + name):
@@ -222,7 +232,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
             # Compare the current policy to that exact pin even on the first run.
             pin_policy = {**policy, 'controllerCommit': commit} if configuration_recovery else policy
             pin = configuration_pin(pin_policy, commit=commit, previous_workflow=previous_workflow,
-                                    workflow=workflow, catalog_workflow=catalog_workflow)
+                                    workflow=workflow, catalog_workflow=catalog_workflow,
+                                    managed_messages=managed_messages)
             for name, path in CATALOG_SOURCES.items():
                 installed = trusted(previous / 'staging_automation' / name)
                 if installed != git('show', previous_commit + ':' + path):
@@ -266,7 +277,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1:
             raise ValueError('EXISTING_OPERATION_LOCK_REQUIRED')
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if configuration_recovery:
+        if configuration_recovery or managed_messages:
             if stat.S_IMODE(info.st_mode) != 0o600:
                 raise ValueError('PRIVATE_OPERATION_LOCK_REQUIRED')
         else:
@@ -282,6 +293,11 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
             raise ValueError('REVIEWED_RECOVERY_REQUIRED')
         if not state.get('enabled') or not state.get('bootstrapVerified') or not re.fullmatch('sha256:[0-9a-f]{64}', state.get('approvedImage', '')):
             raise ValueError('ACTIVE_STAGING_REQUIRED')
+        if managed_messages:
+            profile = json.loads(trusted(CONTROL / 'settings/profile.json', uid, private=True))
+            if (profile.get('environment') != 'staging' or profile.get('applicationHostCommit') != CONFIGURATION_HOST
+                    or profile.get('baseImage') != state['approvedImage']):
+                raise ValueError('INSTALLED_STAGING_BASELINE_REQUIRED')
         # A crash after policy replace but before entry replace is recoverable
         # only with the same exact root-owned old/new entry and immutable policy.
         if policy['controllerCommit'] == commit and (policy != new_policy or old_entry not in (launch, previous_launch)):
@@ -336,7 +352,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
     syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'replace-staging-host-promotion-pin', 'controllerCommit': commit,
         'approvedHostCommit': target_host, 'state': 'PIN_INSTALLED', 'productionChanged': False}))
     return {'operation': 'replace-staging-host-promotion-pin', 'state': 'PIN_INSTALLED', 'controllerCommit': commit,
-        'previousHostCommit': HOST if configuration_preview else PREVIOUS_HOST, 'approvedHostCommit': target_host,
+        'previousHostCommit': CONFIGURATION_HOST if managed_messages else HOST if configuration_preview else PREVIOUS_HOST,
+        'approvedHostCommit': target_host,
         'archiveSha256': new_policy['hostPromotion']['archiveSha256'],
         'catalogPreviewPolicyPreserved': configuration_preview, 'hostPromotionRequiresProtectedOwnerReview': True,
         'automationEnabled': bool(state.get('enabled')), 'gatewayStarted': False, 'productionChanged': False,
@@ -351,12 +368,14 @@ if __name__ == '__main__':
     parser.add_argument('--catalog-preview', action='store_true')
     parser.add_argument('--configuration-preview', action='store_true')
     parser.add_argument('--configuration-preview-recovery', action='store_true')
+    parser.add_argument('--managed-message-preview', action='store_true')
     args = parser.parse_args()
     try:
         print(json.dumps(extension(args.commit, args.approval, web_hostname=args.web_hostname,
                                    previous_web_controller=args.previous_web_controller, catalog_preview=args.catalog_preview,
                                    configuration_preview=args.configuration_preview,
-                                   configuration_recovery=args.configuration_preview_recovery), indent=2))
+                                   configuration_recovery=args.configuration_preview_recovery,
+                                   managed_messages=args.managed_message_preview), indent=2))
     except Exception as error:
         code = str(error) if re.fullmatch('[A-Z_]{1,80}', str(error)) else 'HOST_EXTENSION_REJECTED'
         raise SystemExit(json.dumps({'extensionError': code, 'productionChanged': False})) from None

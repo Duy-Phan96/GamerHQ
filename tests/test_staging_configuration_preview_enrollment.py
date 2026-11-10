@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 from tools import extend_staging_host_promotion as enrollment
-from tools.staging_automation import host_promotion
 
 
 @pytest.fixture
@@ -63,7 +62,7 @@ def installation(tmp_path, monkeypatch):
         (previous / name).write_bytes(original)
         git[f'{old}:{path}'] = original
         git[f'{commit}:{path}'] = original
-    git[f'{commit}:{module_paths["host_promotion.py"]}'] = f'COMMIT = {host_promotion.COMMIT!r}'.encode()
+    git[f'{commit}:{module_paths["host_promotion.py"]}'] = f'COMMIT = {enrollment.CONFIGURATION_HOST!r}'.encode()
     git[f'{commit}:{module_paths["policy.py"]}'] = b'new validation'
 
     def run(argv, **kwargs):
@@ -98,15 +97,15 @@ def test_enrollment_reuses_the_catalog_controller_and_is_retry_safe(installation
     for _ in range(2):
         receipt = enroll(installation)
         assert receipt['state'] == 'PIN_INSTALLED'
-        assert receipt['approvedHostCommit'] == host_promotion.COMMIT
-        assert receipt['archiveSha256'] == host_promotion.ARCHIVE_SHA256
+        assert receipt['approvedHostCommit'] == enrollment.CONFIGURATION_HOST
+        assert receipt['archiveSha256'] == enrollment.CONFIGURATION_ARCHIVE
         assert receipt['catalogPreviewPolicyPreserved'] is True
         assert receipt['hostPromotionRequiresProtectedOwnerReview'] is True
         for key in ('databaseChanged', 'containersChanged', 'gatewayStarted', 'sshPolicyChanged', 'productionChanged'):
             assert receipt[key] is False
     policy = json.loads(installation.policy_path.read_bytes())
     assert policy == {**installation.policy, 'controllerCommit': installation.commit,
-                      'hostPromotion': {'commit': host_promotion.COMMIT, 'archiveSha256': host_promotion.ARCHIVE_SHA256,
+                      'hostPromotion': {'commit': enrollment.CONFIGURATION_HOST, 'archiveSha256': enrollment.CONFIGURATION_ARCHIVE,
                                         'workflowSha256': hashlib.sha256(b'new workflow').hexdigest()}}
     destination = installation.revisions / installation.commit / 'staging_automation'
     for name in (*enrollment.CATALOG_SOURCES, 'bridge.py', 'oidc.py', 'deployment.py'):
@@ -147,7 +146,7 @@ def held_configuration(installation, monkeypatch, *, latched=True):
     installation.git[f'{commit}:{workflow}'] = reviewed_workflow
     policy_module = 'tools/staging_automation/policy.py'
     installation.git[f'{commit}:{policy_module}'] = installation.git[f'{old}:{policy_module}']
-    installation.policy['hostPromotion'] = {'commit': host_promotion.COMMIT, 'archiveSha256': host_promotion.ARCHIVE_SHA256,
+    installation.policy['hostPromotion'] = {'commit': enrollment.CONFIGURATION_HOST, 'archiveSha256': enrollment.CONFIGURATION_ARCHIVE,
                                              'workflowSha256': hashlib.sha256(reviewed_workflow).hexdigest()}
     installation.policy_path.write_text(json.dumps(installation.policy))
     state = json.loads(installation.state.read_bytes())
