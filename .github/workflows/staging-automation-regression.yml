@@ -34,10 +34,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin 29ecf575f3d865b0f32a9d82adf1b06d7969cdc9
+          baseline=89709625d9ea0c74c2b731436d1d13c9dcb453c4
+          git fetch origin "$baseline"
           mkdir /tmp/gamerhq-host-baseline
-          git archive 29ecf575f3d865b0f32a9d82adf1b06d7969cdc9 | tar -x -C /tmp/gamerhq-host-baseline
-          docker build --build-arg VCS_REF=29ecf575f3d865b0f32a9d82adf1b06d7969cdc9 --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
+          git archive "$baseline" | tar -x -C /tmp/gamerhq-host-baseline
+          docker build --build-arg VCS_REF="$baseline" --iidfile /tmp/gamerhq-host-baseline-image /tmp/gamerhq-host-baseline
           sudo /opt/gamerhq-staging/deployment-worker/.venv/bin/python -m tools.staging_host_promotion_smoke --base-image "$(cat /tmp/gamerhq-host-baseline-image)"
 
       - name: Publish checksum of the exact reviewed enrollment installer

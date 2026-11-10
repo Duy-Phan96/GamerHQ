@@ -134,7 +134,7 @@ def test_only_the_exact_reviewed_candidate_paths_can_change():
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
     host_changes.remove('hosts/gamerhq/unreviewed.py')
-    changed_path = 'data/game_catalog_expansion.json'
+    changed_path = 'services/server_configuration_preview.py'
     host_changes.remove(changed_path)
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
@@ -142,6 +142,25 @@ def test_only_the_exact_reviewed_candidate_paths_can_change():
     changed_tree = 'database'
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
+
+
+def test_existing_host_and_event_resource_bindings_are_retained(deployment_fixture):
+    seed()
+    db.set_setting('managed_channel:1:guide', '250')
+    with db.connect() as conn:
+        conn.execute("INSERT INTO skill_managed_resources(guild_id,skill_id,resource_key,kind,state_json) "
+            "VALUES(1,'event-manager','voice:one','voice',?)", (json.dumps({'channelId': 300}),))
+    before = retained_state(db.DB_PATH, 1)
+    assert before['mappings']['voice:one']['channelId'] == 300
+    db.set_setting('managed_channel:1:guide', '251')
+    with pytest.raises(Denied, match='RECOVERY'):
+        require_retained(before, retained_state(db.DB_PATH, 1))
+    db.set_setting('managed_channel:1:guide', '250')
+    with db.connect() as conn:
+        conn.execute("UPDATE skill_managed_resources SET state_json=json_set(state_json,'$.channelId',301) "
+                     "WHERE resource_key='voice:one'")
+    with pytest.raises(Denied, match='RECOVERY'):
+        require_retained(before, retained_state(db.DB_PATH, 1))
 
 
 def test_legacy_or_wrong_authority_cannot_be_promoted(deployment_fixture):

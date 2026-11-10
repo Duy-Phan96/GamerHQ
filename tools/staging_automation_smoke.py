@@ -99,7 +99,8 @@ def main():
             assert json.loads(call('status').stdout)['state'] == 'NOT_ACTIVATED'
             # Install the reviewed extension under the same restrictive umask,
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
-            from tools.extend_staging_host_promotion import CATALOG_CONTROLLER, CONFIGURATION_HOST, FAILED_CONFIGURATION_CONTROLLER, HOST, OLD, WEB_BASE, extension
+            from tools.extend_staging_host_promotion import (ACTIVE_CONFIGURATION_CONTROLLER, CATALOG_CONTROLLER,
+                CONFIGURATION_HOST, FAILED_CONFIGURATION_CONTROLLER, HOST, MANAGED_MESSAGES_HOST, OLD, WEB_BASE, extension)
             from urllib.request import urlopen
 
             def install_pin(commit, digest, approval, *flags):
@@ -151,21 +152,54 @@ def main():
             state_path.write_text(json.dumps(held))
             active_bytes = state_path.read_bytes()
             for _ in range(2):
-                previous = os.umask(0o077)
-                try: extended = extension(args.commit, 'INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD', configuration_recovery=True)
-                finally: os.umask(previous)
+                extended = install_pin(ACTIVE_CONFIGURATION_CONTROLLER,
+                    '7f4cabf6cd4d2f1c5319ec18948e5dfdf568d56d4b68d1a5ec43d094c981b1a5',
+                    'INSTALL STAGING PROMOTION FIX WITH RECOVERY HELD', '--configuration-preview-recovery')
                 assert extended['state'] == 'FIX_INSTALLED_RECOVERY_HELD' and extended['recoveryRequired'] is True
                 assert extended['approvedHostCommit'] == CONFIGURATION_HOST and extended['promotionPinChanged'] is False
                 assert extended['catalogPreviewPolicyPreserved'] is True
                 assert (root / 'worker/operation.lock').stat().st_mode & 0o777 == 0o600
                 assert state_path.read_bytes() == active_bytes
             extended_status = json.loads(call('status').stdout)
-            assert extended_status['controllerCommit'] == args.commit and extended_status['hostPromotionCommit'] == CONFIGURATION_HOST
+            assert extended_status['controllerCommit'] == ACTIVE_CONFIGURATION_CONTROLLER
+            assert extended_status['hostPromotionCommit'] == CONFIGURATION_HOST
             assert extended_status['state'] == 'ACTIVE' and extended_status['recoveryRequired'] is True
             installed_policy = json.loads(policy_path.read_bytes())
-            assert installed_policy == {**configured_policy, 'controllerCommit': args.commit}
+            assert installed_policy == {**configured_policy, 'controllerCommit': ACTIVE_CONFIGURATION_CONTROLLER}
             assert {k: v for k, v in installed_policy.items() if k not in {'controllerCommit', 'hostPromotion'}} == {
                 k: v for k, v in catalog_policy.items() if k not in {'controllerCommit', 'hostPromotion'}}
+            approval = 'ENROLL STAGING MANAGED MESSAGE PREVIEW'
+            old_entry = (root / 'automation-controller/entry.py').read_bytes()
+            try:
+                extension(args.commit, approval, managed_messages=True)
+            except ValueError as error:
+                assert str(error) == 'REVIEWED_RECOVERY_REQUIRED'
+            else:
+                raise AssertionError('Enrollment ignored the recovery hold')
+            assert json.loads(policy_path.read_bytes()) == installed_policy
+            assert (root / 'automation-controller/entry.py').read_bytes() == old_entry
+            assert state_path.read_bytes() == active_bytes
+            # Reproduce the verified post-promotion baseline with disposable metadata.
+            state_path.write_text(json.dumps({**held, 'recoveryRequired': False}))
+            live_state = state_path.read_bytes()
+            profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': CONFIGURATION_HOST,
+                                                'baseImage': held['approvedImage']}))
+            staged_profile = profile_path.read_bytes()
+            for _ in range(2):
+                previous = os.umask(0o077)
+                try: result = extension(args.commit, approval, managed_messages=True)
+                finally: os.umask(previous)
+                assert result['approvedHostCommit'] == MANAGED_MESSAGES_HOST
+                assert result['previousHostCommit'] == CONFIGURATION_HOST
+                assert result['state'] == 'PIN_INSTALLED' and result['hostPromotionRequiresProtectedOwnerReview']
+            enrolled = json.loads(call('status').stdout)
+            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == MANAGED_MESSAGES_HOST
+            assert enrolled['recoveryRequired'] is False
+            new_policy = json.loads(policy_path.read_bytes())
+            assert new_policy == {**installed_policy, 'controllerCommit': args.commit,
+                                  'hostPromotion': new_policy['hostPromotion']}
+            assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
+            profile_path.write_bytes(originals[str(profile_path)])
             catalog_challenge = json.loads(call('challenge', {'operation': 'catalog-preview'}).stdout)
             assert call('catalog-preview', {'token': 'invalid-jwt', 'challenge': catalog_challenge['challenge']}).returncode != 0
             assert call('host-promote', {'token': 'invalid-jwt', 'challenge': 'invalid'}).returncode != 0
@@ -195,7 +229,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', CONFIGURATION_HOST)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', MANAGED_MESSAGES_HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']
@@ -204,7 +238,8 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
         raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
         'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'catalogPreviewPolicyPreserved': True,
-        'recoveryLatchPreserved': True, 'normalizedContainerLimits': 'PASS',
+        'recoveryLatchPreserved': True, 'heldEnrollmentDenied': True, 'managedMessagePinEnrollment': 'PASS',
+        'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
         'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',
         'gatewayStarted': False, 'productionChanged': False}))

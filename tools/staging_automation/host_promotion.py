@@ -17,10 +17,10 @@ from contextlib import closing
 from .deployment import SkillUpdateController, application_fingerprint
 from .policy import Denied
 
-COMMIT = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
-ARCHIVE_SHA256 = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
-BASELINE = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
-CI_RUN = '42646395695'
+COMMIT = '6734b756685d90de8e56ddc299560ec13625300e'
+ARCHIVE_SHA256 = '5f22a55a8d13d8a48fcb040d308bba240ba8d805939d9b51017a5f26efb368eb'
+BASELINE = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
+CI_RUN = '42834032907'
 BASELINE_SKILL_VERSION = '0.1.2'
 BASELINE_SKILL_COMMIT = '41a7d968852453d815a52f2f03e4ccac7e93eff9'
 BASELINE_SKILL_SHA256 = '84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465'
@@ -31,12 +31,10 @@ FILES = ('bot.py', 'config.py', 'release_info.py', 'VERSION', 'CHANGELOG.md', '.
 COMPATIBILITY = ('requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml',
                  'database', 'skill_runtime', 'skills', 'hosts', 'data/games_seed.json')
 REVIEWED_HOST_CHANGES = frozenset({
-    '.dockerignore', '.github/workflows/tests.yml', 'Dockerfile',
-    'cogs/server_management.py', 'data/game_catalog_expansion.json',
-    'services/game_service.py', 'services/managed_message_service.py',
+    'cogs/server_management.py', 'services/managed_message_service.py',
     'services/server_configuration_preview.py', 'services/server_operations.py',
-    'tests/test_server_configuration_preview.py', 'tests/test_server_operations.py',
-    'tools/game_catalog_import.py',
+    'tests/test_onboarding.py', 'tests/test_server_configuration_preview.py',
+    'tests/test_server_operations.py',
 })
 
 
@@ -94,18 +92,26 @@ def retained_state(path, guild):
                 value = {k: v for k, v in value.items() if k not in ('revision', 'status', 'voice')}
             rows[key] = value
         mappings = {}
-        for key, raw in conn.execute("SELECT resource_key,state_json FROM skill_managed_resources "
-                "WHERE guild_id=? AND skill_id='event-manager' AND kind='text'", (guild,)):
+        for key, kind, raw in conn.execute("SELECT resource_key,kind,state_json FROM skill_managed_resources "
+                "WHERE guild_id=? AND skill_id='event-manager'", (guild,)):
             value = json.loads(raw)
-            if value.get('channelId'):
-                mappings[key] = {field: value[field] for field in ('channelId', 'messageId', 'marker')
-                                 if value.get(field) is not None}
-        return {'authority': authority, 'installed': installed, 'rows': rows, 'mappings': mappings}
+            mappings[key] = {'kind': kind, **{field: value[field] for field in ('channelId', 'messageId', 'marker')
+                                              if value.get(field) is not None}}
+        settings = dict(conn.execute(
+            "SELECT key,value FROM settings WHERE key GLOB 'managed_channel:*' "
+            "OR key GLOB 'managed_category:*' OR key GLOB 'skill_resources:*'"))
+        roles = set(conn.execute("SELECT * FROM managed_roles"))
+        games = set(conn.execute("SELECT id,role_id,channel_id,chat_channel_id,memes_channel_id,"
+                                 "clips_channel_id,lfg_channel_id,create_voice_channel_id FROM games"))
+        return {'authority': authority, 'installed': installed, 'rows': rows, 'mappings': mappings,
+                'settings': settings, 'roles': roles, 'games': games}
 
 
 def require_retained(before, after):
     if (before['authority'] != after['authority'] or before['installed'] != after['installed']
             or any(after['rows'].get(k) != v for k, v in before['rows'].items())
+            or any(after['settings'].get(k) != v for k, v in before['settings'].items())
+            or not before['roles'] <= after['roles'] or not before['games'] <= after['games']
             or any(after['mappings'].get(key, {}).get(field) != value
                    for key, mapping in before['mappings'].items() for field, value in mapping.items())):
         raise Denied('RECOVERY_REQUIRES_OWNER')
