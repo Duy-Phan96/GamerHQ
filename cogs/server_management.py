@@ -31,6 +31,8 @@ def friendly_plan(view):
     mode = view.draft['mode']
     scope = view.draft.get('scope')
     title = PHASE_TITLES.get(scope) or {'setup': 'Add Missing Resources', 'repair': 'Fix Common Issues', 'reconcile': 'Review Structure'}[mode]
+    if scope == 'messages' and mode == 'reconcile':
+        title = 'Review Existing Managed Messages'
     lines = ['# ' + title, 'Review every page. Changes require confirmation; resources that change during review are skipped.']
     for row in view.draft['rows'][view.page * 8:(view.page + 1) * 8]:
         label = 'Channel settings need review' if row['kind'] == 'warning' else row['label']
@@ -2137,6 +2139,7 @@ class StructureView(Menu):
         if actor_id == guild.owner_id:
             entries.extend((PHASE_TITLES[scope], mode, scope) for mode, scope in (
                 ('setup', 'foundations'), ('setup', 'channels'), ('repair', 'placement'), ('setup', 'messages')))
+            entries.append(('Review Existing Managed Messages', 'reconcile', 'messages'))
         for label, mode, scope in entries:
             async def run(interaction, selected=mode, phase=scope):
                 from cogs.server import open_operation

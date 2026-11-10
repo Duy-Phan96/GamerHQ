@@ -45,7 +45,8 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    resources with **Review Structure**. Use **Preview Missing Categories & Roles**
    and **Preview Missing Channels** for their separate confirmations. Use
    **Preview Reused Channel Placement** after the intended categories are linked.
-   Review **Preview Missing Managed Messages** separately. Repeat the
+   Use **Review Existing Managed Messages** and **Preview Missing Managed Messages**
+   separately. Repeat the
    preview after each confirmed phase. Use Games recovery separately for
    ambiguous game resources and preserve their IDs and overwrites. Review
    Event Manager category bindings through the existing Host integration.

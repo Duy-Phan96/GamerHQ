@@ -246,7 +246,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(setup['rows'][0]['status'], 'SAFE_ADOPTION')
         self.assertEqual(await ops.apply(self.guild, actor, setup, self.bot, confirmed=True), ([], []))
 
-        reconcile = await ops.preview(self.guild, actor, 'reconcile', self.bot)
+        reconcile = await ops.preview(self.guild, actor, 'reconcile', self.bot, scope='messages')
+        self.assertTrue(all(r['kind'] in ('message', 'warning') for r in reconcile['rows']))
         reconcile['rows'] = [r for r in reconcile['rows'] if r['key'] == key]
         done, skipped = await ops.apply(self.guild, actor, reconcile, self.bot, confirmed=True)
         self.assertEqual((len(done), skipped), (1, []))
