@@ -170,6 +170,7 @@ def main():
                 k: v for k, v in catalog_policy.items() if k not in {'controllerCommit', 'hostPromotion'}}
             approval = 'ENROLL STAGING MANAGED MESSAGE PREVIEW'
             old_entry = (root / 'automation-controller/entry.py').read_bytes()
+            held_state = state_path.read_bytes()
             try:
                 extension(args.commit, approval, managed_messages=True)
             except ValueError as error:
@@ -178,7 +179,7 @@ def main():
                 raise AssertionError('Enrollment ignored the recovery hold')
             assert json.loads(policy_path.read_bytes()) == installed_policy
             assert (root / 'automation-controller/entry.py').read_bytes() == old_entry
-            assert state_path.read_bytes() == active_bytes
+            assert state_path.read_bytes() == held_state
             # Reproduce the verified post-promotion baseline with disposable metadata.
             state_path.write_text(json.dumps({**held, 'recoveryRequired': False}))
             live_state = state_path.read_bytes()
@@ -192,13 +193,13 @@ def main():
                 assert result['approvedHostCommit'] == MANAGED_MESSAGES_HOST
                 assert result['previousHostCommit'] == CONFIGURATION_HOST
                 assert result['state'] == 'PIN_INSTALLED' and result['hostPromotionRequiresProtectedOwnerReview']
+            assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
             enrolled = json.loads(call('status').stdout)
             assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == MANAGED_MESSAGES_HOST
             assert enrolled['recoveryRequired'] is False
             new_policy = json.loads(policy_path.read_bytes())
             assert new_policy == {**installed_policy, 'controllerCommit': args.commit,
                                   'hostPromotion': new_policy['hostPromotion']}
-            assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
             profile_path.write_bytes(originals[str(profile_path)])
             catalog_challenge = json.loads(call('challenge', {'operation': 'catalog-preview'}).stdout)
             assert call('catalog-preview', {'token': 'invalid-jwt', 'challenge': catalog_challenge['challenge']}).returncode != 0

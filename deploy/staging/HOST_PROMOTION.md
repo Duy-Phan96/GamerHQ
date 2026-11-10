@@ -20,7 +20,8 @@ fresh **Policy-bound staging automation → Run workflow → main → status**
 receipt. It must report `ACTIVE`, `bootstrapVerified: true`,
 `controllerCommit: 4b15a48574f7c6ff3cc20f441afbc75160fd0bfb`,
 `hostPromotionCommit: 89709625d9ea0c74c2b731436d1d13c9dcb453c4` and
-`recoveryRequired: false`. A mismatch stops this handoff.
+`recoveryRequired: false`. A mismatch stops this handoff. The status command
+records normal controller access bookkeeping without changing the application.
 
 After controller review, run the checksum-verified installer as the owner in
 the staging VPS root session. Use the exact controller commit and installer
