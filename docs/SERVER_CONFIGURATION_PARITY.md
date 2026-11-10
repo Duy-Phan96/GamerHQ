@@ -34,21 +34,47 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    describes a difference for separate repair review. **Conflict** requires
    a manual identity, permission or destination decision. **Leave unchanged**
    preserves optional and runtime-owned resources. The updated preview checks
-   unsaved message links using the same bounded discovery as Review Structure
-   and Add Missing Resources. It reads up to 101 pins and 101 history entries
+   unsaved message links using the same bounded discovery as the existing
+   reconciliation and missing-message setup. It reads up to 101 pins and 101 history entries
    per destination. The channel and category policy must establish public
    history access, and the REST roles and bot membership must establish bot
    access. It displays action and reason metadata. Existing saved
    message links are listed as recorded and unverified. Verify native Discord
    onboarding privately in Discord Server Settings.
 4. Submit the staging action list for owner review. First link approved existing
-   resources with **Review Structure**. Then open a fresh **Add Missing
-   Resources** or **Fix Common Issues** plan and confirm only the approved
-   scope. Cancel if the built-in plan includes additional changes. Repeat the
+   resources with **Review Structure**. Use **Preview Missing Categories & Roles**
+   and **Preview Missing Channels** for their separate confirmations. Use
+   **Preview Reused Channel Placement** after the intended categories are linked.
+   Use **Review Existing Managed Messages** and **Preview Missing Managed Messages**
+   separately. Repeat the
    preview after each confirmed phase. Use Games recovery separately for
    ambiguous game resources and preserve their IDs and overwrites. Review
    Event Manager category bindings through the existing Host integration.
    Keep the installed Skill, its authority and all event resources in place.
+
+## Staging structure decisions, November 10, 2026
+
+Use the existing Server Structure menu. Each preview limits confirmation to
+its own resource types. Review Structure only links existing IDs that were
+explicitly selected. Select localized Discord defaults as the owner. A competing
+ownership record, private source, inaccessible history or voice, or Skill-owned
+destination holds the link for review. The existing channel picker shows IDs
+and whether Discord supplies a last-message ID. The preview does not read
+message bodies for these structural checks.
+
+The intended Staging links are the existing `Allgemein` text channel under
+`Textkanäle` for Community/general, and the existing `Allgemein` voice channel
+under `Sprachkanäle` for Voice Channels/Chill Lounge. Review each live channel
+and its overrides before confirming its mapping. After the new parent
+categories are linked, preview moving and renaming each channel in place with
+its current permission overrides. Preserve the default categories and all
+existing Event Manager test areas.
+
+The blueprint treats `gaming-chat` as optional. Existing channels and
+mappings stay in place. Review the proposed Staff, Support Tickets and
+Affiliate Stats visibility grants against the intended staff and integration
+identities before confirming their phase. Keep the 24 message conflicts and
+the 32-title catalog import for separate review.
 
 ## Staging reconciliation preview, November 10, 2026
 
@@ -78,7 +104,7 @@ fresh read of the staging destinations. The other 16 rows were not supplied.
 
 - **Reuse** means a unique bot-authored match with the expected body and
   controls, consistent with any saved identity and free of conflicting
-  references. Review Structure links the original ID and preserves its pin,
+  references. The existing message reconciliation links the original ID and preserves its pin,
   body and interactions.
 - **Create** means the verified public destination had a complete bounded scan
   and no matching message, plausible legacy board, unexplained bot or webhook

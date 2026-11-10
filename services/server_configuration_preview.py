@@ -70,10 +70,12 @@ def structure_row(guild, row, protected):
     if any(r.id in protected or getattr(r, 'category_id', None) in protected for r in resources):
         return (kind, name, 'Conflict', 'Skill-owned resource or destination')
     status = row['status']
+    if row.get('optional') and status != 'EXACT_MATCH':
+        return (kind, name, 'Leave unchanged', 'Optional channel excluded from setup')
     if status == 'SAFE_ADOPTION':
         return (kind, name, 'Reuse', 'Review link to existing resource')
     if status in {'AMBIGUOUS', 'STALE'}:
-        return (kind, name, 'Conflict', 'Ambiguous or unavailable identity')
+        return (kind, name, 'Conflict', row.get('reason', 'Ambiguous or unavailable identity'))
     if status == 'MISSING':
         action = 'Leave unchanged' if row.get('existing_only') else 'Create'
         return (kind, name, action, 'No matching resource')
@@ -146,7 +148,7 @@ async def preview(guild, actor, bot=None):
             raise ServerMessageError('Discord inventory does not belong to the configured guild.')
         snapshot = operations.GuildSnapshot(guild, channels, roles)
         protected, skill_rows = skill_configuration(snapshot)
-        definitions = await operations._scan(snapshot, bot, message_keys=())
+        definitions = await operations._scan(snapshot, bot, message_keys=(), protected=protected)
         rows = [structure_row(snapshot, row, protected) for row in definitions]
         matched = {r.id for row in definitions for r in row['candidates']}
         extra = sum(channel.id not in matched for channel in channels)

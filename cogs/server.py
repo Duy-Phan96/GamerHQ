@@ -754,14 +754,14 @@ class ServerAdmin(commands.Cog):
             await interaction.edit_original_response(content=str(exc), view=None)
 
 
-async def open_operation(interaction, mode, *, replace=False, friendly=False):
+async def open_operation(interaction, mode, *, replace=False, friendly=False, scope=None):
     from services.server_operations import preview
     if not await check_admin(interaction, interaction.guild): return
     await interaction.response.defer(ephemeral=True)
     titles = {'reconcile': 'Reviewing existing resources', 'repair': 'Checking common issues', 'setup': 'Checking missing resources'}
-    await interaction.edit_original_response(content=f'🔄 {titles[mode]}…\nChecking existing channels, roles and managed messages.', view=None)
+    await interaction.edit_original_response(content=f'🔄 {titles[mode]}…\nChecking the selected resources.', view=None)
     try:
-        draft = await preview(interaction.guild, interaction.user, mode, interaction.client)
+        draft = await preview(interaction.guild, interaction.user, mode, interaction.client, scope=scope)
         view = OperationsView(interaction.guild, draft, interaction.client, friendly=friendly)
         await interaction.edit_original_response(content=view.text(), view=view, allowed_mentions=discord.AllowedMentions.none())
     except TimeoutError:
@@ -788,6 +788,9 @@ class ResourceChoice(discord.ui.Select):
                 lines.append(f"• {getattr(resource, 'name', 'Managed message')} in {getattr(category, 'name', 'this server')} · {'available' if resource.id in row['safe'] else 'protected; cannot link'}")
             else:
                 lines.append(f"ID {resource.id} · {getattr(category, 'name', 'No category')} · Created {discord.utils.snowflake_time(resource.id).date()} · {'eligible' if resource.id in row['safe'] else 'protected; cannot link'}")
+            if row['kind'] in ('text', 'voice') and row['name'] in ('general', 'chill-lounge'):
+                history = ' · existing message recorded' if getattr(resource, 'last_message_id', None) else ''
+                lines.append(f"  ID {resource.id} · {len(resource.overwrites)} permission overwrites retained{history}")
         await interaction.response.edit_message(content='\n'.join(lines)[:1900], view=view, allowed_mentions=discord.AllowedMentions.none())
 
 
@@ -906,7 +909,7 @@ class ConfirmOperationsView(RoleAdminSession):
             text += '\nRun /server health. After linking channels, rescan reconciliation for their messages. Use /server setup only for missing resources.'
             if self.parent.friendly:
                 text = f'Applied {len(done)} changes; {len(skipped)} items need another review.\nOpen `/server manage` to continue. After linking channels, review their messages before adding missing resources.'
-            if done:
+            if done and self.parent.draft.get('scope') not in ('structure', 'foundations', 'channels', 'placement'):
                 from services.server_log_service import emit
                 await emit(self.guild, f"fixes:{self.parent.draft['created']}:{self.admin_id}", '🔧 Server Management Updated',
                     f'{len(done)} reviewed changes applied; {len(skipped)} items need review. Open `/server manage`.')

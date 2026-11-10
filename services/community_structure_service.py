@@ -127,7 +127,7 @@ async def migrate_boards(guild, changed, failed):
     if game_target and game_target.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: GAMES category is private; public adoption refused.')
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
-    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'gaming-chat', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
+    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
     for name in ('guide', 'suggestions', 'community-events'):
         if not channels[name] and unique(guild.text_channels, name):
             raise ServerMessageError(f'#{name} exists outside the core categories; review its location before setup. No duplicate was created.')
@@ -173,20 +173,6 @@ async def migrate_boards(guild, changed, failed):
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
-    if not channels['gaming-chat'] and not removed(guild, 'gaming-chat'):
-        channels['gaming-chat'] = await games.create_text_channel(
-            desired_channel_name(guild, 'gaming-chat', '💬・gaming-chat'),
-            reason='GamerHQ shared gaming chat')
-        changed.append('Created GAMES/gaming-chat')
-    elif channels['gaming-chat'] and channels['gaming-chat'].category_id != games.id:
-        channels['gaming-chat'] = await channels['gaming-chat'].edit(
-            category=games, sync_permissions=False, reason='GamerHQ shared gaming chat location'
-        )
-        changed.append('Moved gaming-chat → GAMES')
-    if channels['gaming-chat']:
-        await set_writable(channels['gaming-chat'])
-        db.set_setting(resource_key(guild, 'gaming-chat'), channels['gaming-chat'].id)
-
     for name, target in [('guide', start), ('suggestions', community), ('community-events', events)]:
         channel = channels[name]
         if removed(guild, name):

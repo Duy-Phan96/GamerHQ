@@ -209,7 +209,7 @@ class ScanPerformanceTests(unittest.IsolatedAsyncioTestCase):
         actor = self.owner()
         interaction = SimpleNamespace(guild=self.guild, user=actor, client=self.bot,
             response=SimpleNamespace(defer=AsyncMock()), edit_original_response=AsyncMock())
-        async def preview(*args):
+        async def preview(*args, **kwargs):
             interaction.response.defer.assert_awaited_once_with(ephemeral=True)
             self.assertEqual(interaction.edit_original_response.await_count, 1)
             return dict(guild_id=self.guild.id, actor_id=actor.id, mode='reconcile', rows=[])

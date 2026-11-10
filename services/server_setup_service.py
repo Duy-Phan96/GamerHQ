@@ -13,6 +13,7 @@ _repair_locks = {}
 class ChannelSpec:
     name: str
     kind: str = "text"  # text | voice
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
     CategorySpec(
         "🎮 GAMES",
         (
-            ChannelSpec("💬・gaming-chat"),
+            ChannelSpec("💬・gaming-chat", optional=True),
             ChannelSpec("🎯・looking-for-group"),
         ),
     ),
@@ -156,13 +157,13 @@ def analyze_server(guild: discord.Guild) -> dict:
         channel_rows = []
         if category is None:
             missing_categories += 1
-            missing_channels += len(spec.channels)
+            missing_channels += sum(not c.optional for c in spec.channels)
             for channel_spec in spec.channels:
                 channel_rows.append({"spec": channel_spec, "channel": None})
         else:
             for channel_spec in spec.channels:
                 channel = _find_channel(category, channel_spec)
-                if channel is None:
+                if channel is None and not channel_spec.optional:
                     missing_channels += 1
                 channel_rows.append({"spec": channel_spec, "channel": channel})
         categories.append({"spec": spec, "category": category, "channels": channel_rows})
@@ -214,9 +215,9 @@ def render_summary(guild: discord.Guild, report: dict) -> str:
     for row in report["categories"]:
         spec: CategorySpec = row["spec"]
         category = row["category"]
-        missing = sum(1 for ch in row["channels"] if ch["channel"] is None)
+        missing = sum(1 for ch in row["channels"] if ch["channel"] is None and not ch["spec"].optional)
         if category is None:
-            status = f"❌ Missing (+{len(spec.channels)} channels)"
+            status = f"❌ Missing (+{missing} channels)"
         elif missing:
             status = f"⚠️ {missing} channel{'s' if missing != 1 else ''} missing"
         else:
