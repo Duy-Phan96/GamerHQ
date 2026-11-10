@@ -11,6 +11,10 @@ from services.server_service import ServerMessageError
 from tests import test_onboarding as fixtures
 
 
+class DefaultVoice(fixtures.FakeChannel):
+    __class__ = discord.VoiceChannel
+
+
 class OperationTests(unittest.IsolatedAsyncioTestCase):
     setUp = fixtures.OnboardingTests.setUp
     add_message = fixtures.OnboardingTests.add_message
@@ -20,6 +24,73 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         actor = SimpleNamespace(id=42, guild_permissions=discord.Permissions(administrator=True))
         self.guild.members = [actor]
         return actor
+
+    async def test_structure_phases_link_localized_channels_without_inspecting_messages(self):
+        actor = self.owner()
+        default_text = self.guild.add_category('Textkanäle')
+        default_voice = self.guild.add_category('Sprachkanäle')
+        text = self.guild.add_channel('allgemein', default_text)
+        voice = DefaultVoice(self.guild, 'Allgemein', default_voice, 7001)
+        self.guild.fetch_channels = AsyncMock(return_value=[*self.guild.channels, voice])
+        history = self.add_message(text, 'Existing conversation')
+        voice.overwrites[self.guild.custom] = discord.PermissionOverwrite(speak=False)
+        existing = {channel.id for channel in [text, voice]}
+
+        with patch.object(ops, 'inspect_message', AsyncMock(side_effect=AssertionError('message scan'))):
+            draft = await ops.preview(self.guild, actor, 'reconcile', self.bot, scope='structure')
+            rows = [r for r in draft['rows'] if r['name'] in ops.REUSE_ALIASES]
+            self.assertEqual({r['status'] for r in rows}, {'AMBIGUOUS'})
+            self.assertEqual({r['safe'][0] for r in rows}, existing)
+            done, _ = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+            self.assertEqual(done, [])
+            choices = {r['key']: r['safe'][0] for r in rows}
+            done, skipped = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True, choices=choices)
+            self.assertEqual((len(done), skipped), (2, []))
+            self.assertEqual(text.edits + voice.edits, [])
+            db.set_setting('managed_category:1:community', self.community.id)
+            db.set_setting('managed_category:1:voice-channels', self.voice.id)
+            plan = await ops.preview(self.guild, actor, 'repair', self.bot, scope='placement')
+            db.set_setting('managed_channel:1:conflicting', text.id)
+            plan['rows'] = [r for r in plan['rows'] if r['name'] == 'general']
+            done, skipped = await ops.apply(self.guild, actor, plan, self.bot, confirmed=True)
+            self.assertEqual(done, [])
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(text.edits, [])
+            db.set_setting('managed_channel:1:conflicting', '')
+            plan = await ops.preview(self.guild, actor, 'repair', self.bot, scope='placement')
+            done, skipped = await ops.apply(self.guild, actor, plan, self.bot, confirmed=True)
+            self.assertEqual((len(done), skipped), (2, []))
+        self.assertEqual({text.id, voice.id}, existing)
+        self.assertEqual(text.name, '💬・general')
+        self.assertEqual(voice.name, '🔊 Chill Lounge')
+        self.assertEqual((text.category, voice.category), (self.community, self.voice))
+        self.assertEqual(text.messages[history.id], history)
+        self.assertTrue(voice.overwrites[self.guild.custom].speak is False)
+        self.assertTrue(all(c.edits[0]['sync_permissions'] is False and 'overwrites' not in c.edits[0]
+                            for c in (text, voice)))
+
+    async def test_phases_hold_owned_defaults_and_never_create_optional_chat(self):
+        actor = self.owner()
+        default = self.guild.add_channel('allgemein', self.guild.add_category('Textkanäle'))
+        db.set_setting('managed_channel:1:custom', default.id)
+        with patch.object(ops, 'inspect_message', AsyncMock(side_effect=AssertionError('message scan'))):
+            plan = await ops.preview(self.guild, actor, 'setup', self.bot, scope='channels')
+            general = next(r for r in plan['rows'] if r['name'] == 'general')
+            optional = next(r for r in plan['rows'] if r['name'] == 'gaming-chat')
+            self.assertEqual((general['status'], general['safe']), ('AMBIGUOUS', []))
+            self.assertTrue(optional['optional'])
+            self.assertTrue(all(r['kind'] in ('text', 'voice', 'warning') for r in plan['rows']))
+            plan['rows'] = [general, optional]
+            self.assertEqual(await ops.apply(self.guild, actor, plan, self.bot, confirmed=True), ([], []))
+            foundations = await ops.preview(self.guild, actor, 'setup', self.bot, scope='foundations')
+            self.assertTrue(all(r['kind'] in ('category', 'role', 'bot-role', 'warning') for r in foundations['rows']))
+            foundations['rows'] = [r for r in foundations['rows'] if r['name'] in ('events', 'pc')]
+            done, skipped = await ops.apply(self.guild, actor, foundations, self.bot, confirmed=True)
+            self.assertEqual((len(done), skipped), (2, []))
+            self.assertTrue(db.get_setting('managed_category:1:events'))
+            self.assertIsNotNone(db.get_managed_role_by_key('base', 'pc'))
+        self.assertEqual(default.edits, [])
+        self.assertIsNone(db.get_setting('managed_channel:1:general'))
 
     async def test_fresh_database_links_existing_structure_without_discord_writes(self):
         actor = self.owner()
@@ -175,7 +246,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(setup['rows'][0]['status'], 'SAFE_ADOPTION')
         self.assertEqual(await ops.apply(self.guild, actor, setup, self.bot, confirmed=True), ([], []))
 
-        reconcile = await ops.preview(self.guild, actor, 'reconcile', self.bot)
+        reconcile = await ops.preview(self.guild, actor, 'reconcile', self.bot, scope='messages')
+        self.assertTrue(all(r['kind'] in ('message', 'warning') for r in reconcile['rows']))
         reconcile['rows'] = [r for r in reconcile['rows'] if r['key'] == key]
         done, skipped = await ops.apply(self.guild, actor, reconcile, self.bot, confirmed=True)
         self.assertEqual((len(done), skipped), (1, []))

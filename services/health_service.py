@@ -104,6 +104,9 @@ async def _scan(guild, bot=None, *, messages=True):
                 add(name,'MANUAL_REVIEW','Existing channel needs review. Open /server reconcile to review matches; nothing has changed.'); continue
             channels[name]=channel
             if not channel:
+                if name == 'gaming-chat':
+                    add(name, 'INFO', 'Optional community channel is absent.')
+                    continue
                 add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
             if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
                 add(f'{name} mapping', 'RECONCILE', 'Existing channel needs linking. Run /server reconcile; no duplicate will be created.')
