@@ -42,6 +42,8 @@ def friendly_plan(view):
                 if needs_repair(view.guild, row): status = 'Update managed placement, permissions or message'
             except ServerMessageError:
                 status = 'Needs review before changing'
+        if row['kind'] == 'message' and row['status'] == 'AMBIGUOUS' and row.get('reason'):
+            status = row['reason']
         if row['key'] in view.choices:
             status = 'Selected for linking' if view.choices[row['key']] else 'Skipped'
         lines.append(f'• {discord.utils.escape_markdown(label)[:80]}: {status}')
