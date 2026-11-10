@@ -41,7 +41,6 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             rows = [r for r in draft['rows'] if r['name'] in ops.REUSE_ALIASES]
             self.assertEqual({r['status'] for r in rows}, {'AMBIGUOUS'})
             self.assertEqual({r['safe'][0] for r in rows}, existing)
-            draft['rows'] = rows
             done, _ = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
             self.assertEqual(done, [])
             choices = {r['key']: r['safe'][0] for r in rows}
@@ -50,6 +49,14 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(text.edits + voice.edits, [])
             db.set_setting('managed_category:1:community', self.community.id)
             db.set_setting('managed_category:1:voice-channels', self.voice.id)
+            plan = await ops.preview(self.guild, actor, 'repair', self.bot, scope='placement')
+            db.set_setting('managed_channel:1:conflicting', text.id)
+            plan['rows'] = [r for r in plan['rows'] if r['name'] == 'general']
+            done, skipped = await ops.apply(self.guild, actor, plan, self.bot, confirmed=True)
+            self.assertEqual(done, [])
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(text.edits, [])
+            db.set_setting('managed_channel:1:conflicting', '')
             plan = await ops.preview(self.guild, actor, 'repair', self.bot, scope='placement')
             done, skipped = await ops.apply(self.guild, actor, plan, self.bot, confirmed=True)
             self.assertEqual((len(done), skipped), (2, []))

@@ -313,12 +313,13 @@ def message_view(guild, key):
 
 
 @measured('server_scan')
-async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None):
+async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None, verify_placement=False):
     with read_scope():
         channels, roles = list(guild.channels), list(guild.roles)
         structure = affected is None or any(r['kind'] in ('text', 'voice', 'category', 'order', 'message') for r in affected)
         role_check = affected is None or any(
-            r['kind'] in ('role', 'bot-role', 'message') or 'create_overwrites' in r for r in affected)
+            r['kind'] in ('role', 'bot-role', 'message') or 'create_overwrites' in r
+            or r['name'] in REUSE_ALIASES for r in affected)
         if not channels or (fresh and structure):
             ids = {r.id for row in affected or [] if row['kind'] in ('text', 'voice') for r in row['candidates']}
             ids.update(r.category_id for row in affected or [] if row['kind'] in ('text', 'voice')
@@ -332,7 +333,7 @@ async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None
                 try: parent = target(guild, row) if row.get('parent') else None
                 except ServerMessageError: parent = None
                 if parent: ids.add(parent.id)
-            targeted = (affected and ids and len(ids) <= 2 and hasattr(guild, 'fetch_channel')
+            targeted = (not verify_placement and affected and ids and len(ids) <= 2 and hasattr(guild, 'fetch_channel')
                         and all((r['kind'] in ('text', 'voice', 'message')
                                 and r['resource'] is not None and str(r['resource'].id) == r['raw']) for r in affected))
             if targeted:
@@ -348,11 +349,12 @@ async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None
             roles = await read_once(('roles', guild.id), guild.fetch_roles)
         snapshot = GuildSnapshot(guild, channels, roles)
         with db.read_only():
-            return await _scan(snapshot, bot, message_keys=message_keys)
+            return await _scan(snapshot, bot, message_keys=message_keys, verify_placement=verify_placement)
 
 
-async def _scan(guild, bot, *, message_keys=None, protected=None):
+async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placement=False):
     from services.role_service import normalize_role_name
+    from services.structure_adoption_service import channel_mapping
     if protected is None:
         from services.server_configuration_preview import skill_configuration
         protected, _ = skill_configuration(guild)
@@ -406,7 +408,7 @@ async def _scan(guild, bot, *, message_keys=None, protected=None):
                 r.id != existing.id and alias(r.name) == row['name'] for r in collection):
             placement_error = True
             row['reason'] = 'A different channel already uses the intended name'
-        if review_candidates or (review_aliases and candidates and not existing):
+        if review_aliases and candidates and (not existing or verify_placement):
             for candidate in candidates:
                 if candidate.id not in safe:
                     continue
@@ -420,10 +422,14 @@ async def _scan(guild, bot, *, message_keys=None, protected=None):
                 if not (access.view_channel and getattr(access, permission)):
                     safe.remove(candidate.id)
                     continue
-                try:
-                    messages.assert_unreferenced(candidate.id, row['key'])
-                except ServerMessageError:
-                    safe.remove(candidate.id)
+                if existing:
+                    if channel_mapping(guild, candidate.id) != row['name']:
+                        safe.remove(candidate.id)
+                else:
+                    try:
+                        messages.assert_unreferenced(candidate.id, row['key'])
+                    except ServerMessageError:
+                        safe.remove(candidate.id)
             if (review_candidates or not safe) and not placement_error:
                 status = 'AMBIGUOUS'
                 row['reason'] = ('Select the intended existing channel' if safe
@@ -437,6 +443,9 @@ async def _scan(guild, bot, *, message_keys=None, protected=None):
                                     if (parent := guild.get_channel(getattr(r, 'category_id', None))))
             row['signature'].append(('destination', wire(expected_parent) if expected_parent else None))
             row['signature'].append(('desired', db.get_setting(f"managed_channel_state:{guild.id}:{row['name']}")))
+            if verify_placement and review_aliases and status == 'EXACT_MATCH' and existing.id in safe:
+                row['placement_name'] = display_name(guild, row)
+                row['signature'].append(('placement_name', row['placement_name']))
         if row.get('private') and status == 'MISSING' and not row.get('existing_only'):
             blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=expected_parent,
                                     overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
@@ -573,10 +582,13 @@ async def inspect_message(guild, key, channel, content, default_content, *, boar
     return row
 
 
-def needs_repair(guild, row):
+def needs_repair(guild, row, *, placement=False):
     resource = row['resource']
     if row['status'] != 'EXACT_MATCH' or resource is None: return False
     if row.get('optional'): return False
+    if placement:
+        parent, name = row.get('destination'), row.get('placement_name')
+        return bool(parent and name and (resource.category_id != parent.id or resource.name != name))
     if row['kind'] == 'order': return row['changed']
     if row['kind'] == 'message':
         if len(row['candidates']) != 1 or resource.id not in row['safe']: return False
@@ -601,7 +613,8 @@ async def preview(guild, actor, mode, bot=None, *, scope=None):
     if (mode == 'setup' or scope == 'placement') and actor.id != guild.owner_id:
         raise ServerMessageError('Only the owner can review these changes.')
     with operation(f'server_{mode}_preview'):
-        rows = await scan(guild, bot, fresh=True, message_keys=None if scope in (None, 'messages') else ())
+        rows = await scan(guild, bot, fresh=True, message_keys=None if scope in (None, 'messages') else (),
+                          verify_placement=scope == 'placement')
     rows = [r for r in rows if in_phase(r, scope) or r['kind'] == 'warning']
     if mode == 'reconcile' and actor.id != guild.owner_id:
         for row in rows:
@@ -662,13 +675,15 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
         if scope in ('channels', 'placement') and not row.get('destination'):
             return False
         if mode == 'repair':
-            try: return needs_repair(guild, row)
+            try: return needs_repair(guild, row, placement=scope == 'placement')
             except ServerMessageError: return True  # Revalidation reports drift without applying it.
         if mode == 'setup':
             statuses = ('MISSING',) if scope or row['kind'] == 'message' else ('MISSING', 'STALE')
             return row['status'] in statuses and not row['candidates'] and not row.get('existing_only')
         selected = choices.get(row['key'])
-        return (selected is not None and selected in row['safe'] and str(selected) != row['raw']) or (selected is None and row['status'] == 'SAFE_ADOPTION')
+        if selected is not None:
+            return selected in row['safe'] and str(selected) != row['raw']
+        return scope != 'structure' and row['status'] == 'SAFE_ADOPTION'
     planned = [row for row in draft['rows'] if actionable(row)]
     if not planned: return done, skipped
     async with managed.lock(f'operations:{guild.id}'), AsyncExitStack() as locks:
@@ -678,7 +693,8 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
             await locks.enter_async_context(managed.lock(key))
         shared = [r for r in planned if mode != 'repair' or r['kind'] != 'message']
         fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=shared,
-                 message_keys={r['key'] for r in shared if r['kind'] == 'message'})} if shared else {}
+                 message_keys={r['key'] for r in shared if r['kind'] == 'message'},
+                 verify_placement=scope == 'placement')} if shared else {}
         created_resources = {}
         for old in planned:
             row = fresh.get(old['key'])
@@ -758,7 +774,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     persist(guild, row, resource)
                 created_resources[resource.id] = resource
             elif mode == 'repair':
-                if not needs_repair(guild, row): continue
+                if not needs_repair(guild, row, placement=scope == 'placement'): continue
                 resource = row['resource']
                 if kind == 'order':
                     from services.channel_change_service import bulk_positions
@@ -779,12 +795,13 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     if not managed.load(key) and key in managed.specs(guild): persist(guild, row, latest)
                 elif kind in ('text', 'voice'):
                     parent = row['destination'] if scope == 'placement' else target(guild, row)
-                    if scope == 'placement' and (not parent or resource.id not in row['safe']):
-                        skipped.append(row['label'] + ': destination or access needs review'); continue
                     if not row['private'] and private(resource):
                         skipped.append(row['label'] + ': private resource retained'); continue
                     changes = {} if scope == 'placement' else dict(overwrites=rights(guild, row, resource))
-                    if not row.get('existing_only') or row.get('game_id'): changes['name'] = display_name(guild, row)
+                    if scope == 'placement':
+                        changes['name'] = row['placement_name']
+                    elif not row.get('existing_only') or row.get('game_id'):
+                        changes['name'] = display_name(guild, row)
                     if parent and resource.category_id != parent.id: changes.update(category=parent, sync_permissions=False)
                     from services.channel_change_service import edit
                     await edit(resource, **changes, reason='Confirmed GamerHQ repair')

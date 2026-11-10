@@ -34,8 +34,8 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    describes a difference for separate repair review. **Conflict** requires
    a manual identity, permission or destination decision. **Leave unchanged**
    preserves optional and runtime-owned resources. The updated preview checks
-   unsaved message links using the same bounded discovery as Review Structure
-   and Add Missing Resources. It reads up to 101 pins and 101 history entries
+   unsaved message links using the same bounded discovery as the existing
+   reconciliation and missing-message setup. It reads up to 101 pins and 101 history entries
    per destination. The channel and category policy must establish public
    history access, and the REST roles and bot membership must establish bot
    access. It displays action and reason metadata. Existing saved
@@ -54,9 +54,9 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
 ## Staging structure decisions, November 10, 2026
 
 Use the existing Server Structure menu. Each preview limits confirmation to
-its own resource types. Review Structure only links existing IDs. Select
-localized Discord defaults explicitly as the owner. A competing ownership
-record, private source, inaccessible history or voice, or Skill-owned
+its own resource types. Review Structure only links existing IDs that were
+explicitly selected. Select localized Discord defaults as the owner. A competing
+ownership record, private source, inaccessible history or voice, or Skill-owned
 destination holds the link for review. The existing channel picker shows IDs
 and whether Discord supplies a last-message ID. The preview does not read
 message bodies for these structural checks.
@@ -103,7 +103,7 @@ fresh read of the staging destinations. The other 16 rows were not supplied.
 
 - **Reuse** means a unique bot-authored match with the expected body and
   controls, consistent with any saved identity and free of conflicting
-  references. Review Structure links the original ID and preserves its pin,
+  references. The existing message reconciliation links the original ID and preserves its pin,
   body and interactions.
 - **Create** means the verified public destination had a complete bounded scan
   and no matching message, plausible legacy board, unexplained bot or webhook

@@ -38,8 +38,12 @@ def friendly_plan(view):
                   'AMBIGUOUS': 'Choose the intended resource', 'MISSING': 'Not found', 'STALE': 'Previously linked resource is unavailable'}[row['status']]
         if row.get('optional'):
             status = 'Optional channel retained outside setup'
+        elif scope == 'structure' and row['status'] == 'SAFE_ADOPTION':
+            status = 'Select existing resource to link'
         elif scope in ('channels', 'placement') and row['kind'] in ('text', 'voice') and not row.get('destination'):
             status = 'Link or create the intended category first'
+        elif scope == 'placement' and row['status'] == 'EXACT_MATCH' and not row.get('placement_name'):
+            status = 'Verify existing ownership and access'
         elif mode == 'setup' and (row['status'] == 'MISSING' or not scope and row['status'] == 'STALE') and not row['candidates'] and not row.get('existing_only'):
             status = 'Create missing resource'
             if (policy := row.get('create_overwrites')) is not None:
@@ -48,9 +52,15 @@ def friendly_plan(view):
                 status += ' · private · allowed: ' + (', '.join(allowed[:3]) + suffix if allowed else 'owner/admin only')
         elif mode == 'repair':
             try:
-                if needs_repair(view.guild, row):
-                    status = ('Move/rename in place; keep permissions' if scope == 'placement'
-                              else 'Update managed placement, permissions or message')
+                if needs_repair(view.guild, row, placement=scope == 'placement'):
+                    if scope == 'placement':
+                        source = row['resource']
+                        current = discord.utils.escape_markdown(source.name)[:40]
+                        desired = discord.utils.escape_markdown(row['placement_name'])[:40]
+                        parent = discord.utils.escape_markdown(getattr(source.category, 'name', 'No category'))[:40]
+                        status = f'{current} in {parent} (ID {source.id}) → {desired} · keep permissions'
+                    else:
+                        status = 'Update managed placement, permissions or message'
             except ServerMessageError:
                 status = 'Needs review before changing'
         if not row.get('optional') and row['status'] == 'AMBIGUOUS' and row.get('reason'):
@@ -58,7 +68,8 @@ def friendly_plan(view):
         if scope in ('channels', 'placement') and (destination := row.get('destination')):
             status += f' → {discord.utils.escape_markdown(destination.name)[:40]}'
         if row['key'] in view.choices:
-            status = 'Selected for linking' if view.choices[row['key']] else 'Skipped'
+            choice = view.choices[row['key']]
+            status = f'Selected for linking (ID {choice})' if choice else 'Skipped'
         lines.append(f'• {discord.utils.escape_markdown(label)[:80]}: {status}')
     lines.append(f'Page {view.page + 1}/{max(1, (len(view.draft["rows"]) + 7) // 8)}. Preview Changes → Confirm Changes.')
     return '\n'.join(lines)[:1950]
