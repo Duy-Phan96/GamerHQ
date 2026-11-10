@@ -1,4 +1,5 @@
 """Separate operational intents over disposable SQLite and Discord fakes."""
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock
@@ -65,8 +66,17 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         from cogs.server import future_community_copies
         channel = next(c for c in self.guild.text_channels if c.name == 'giveaways')
         first, second = [self.add_message(channel, future_community_copies()['giveaways']) for _ in range(2)]
-        draft = await ops.preview(self.guild, actor, 'reconcile', self.bot)
         key = 'server_future_giveaways_message_id'
+        admin = SimpleNamespace(id=43, guild_permissions=discord.Permissions(administrator=True))
+        self.guild.members.append(admin)
+        draft = await ops.preview(self.guild, admin, 'reconcile', self.bot)
+        row = next(r for r in draft['rows'] if r['key'] == key)
+        self.assertEqual((row['status'], row['safe']), ('AMBIGUOUS', []))
+        await ops.apply(self.guild, admin, dict(draft, rows=[row]), self.bot,
+                        confirmed=True, choices={key: first.id})
+        self.assertIsNone(db.get_setting(key))
+
+        draft = await ops.preview(self.guild, actor, 'reconcile', self.bot)
         await ops.apply(self.guild, actor, draft, self.bot, confirmed=True, choices={key: first.id})
         self.assertEqual(db.get_setting(key), str(first.id))
         self.assertFalse(first.deleted or second.deleted)
@@ -131,7 +141,10 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(db.get_setting('managed_channel:1:community-events'))
         again = await ops.preview(self.guild, actor, 'setup', self.bot)
         again['rows'] = [r for r in again['rows'] if r['key'] == 'community_events:1']
-        await ops.apply(self.guild, actor, again, self.bot, confirmed=True)
+        await asyncio.gather(
+            ops.apply(self.guild, actor, again, self.bot, confirmed=True),
+            ops.apply(self.guild, actor, again, self.bot, confirmed=True),
+        )
         cid = int(db.get_setting('managed_channel:1:community-events'))
         channel = self.guild.get_channel(cid)
         self.assertEqual(channel.sends, 1)
@@ -139,6 +152,72 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         again['rows'] = [r for r in again['rows'] if r['key'] == 'community_events:1']
         await ops.apply(self.guild, actor, again, self.bot, confirmed=True)
         self.assertEqual(channel.sends, 1)
+
+    async def test_unlinked_board_with_discord_assigned_component_ids_is_linked_in_place(self):
+        from services.community_structure_service import EVENTS_INTRO
+        from discord.components import _component_factory
+
+        actor = self.owner()
+        key = 'community_events:1'
+        channel = self.guild.add_channel('community-events', self.guild.add_category('EVENTS'))
+        message = self.add_message(channel, EVENTS_INTRO, pinned=True)
+        review = await ops.preview(self.guild, actor, 'reconcile', self.bot)
+        row = next(r for r in review['rows'] if r['key'] == key)
+        self.assertEqual((row['status'], row['safe']), ('AMBIGUOUS', []))
+        rows = ops.message_view(self.guild, key).to_components()
+        for index, component in enumerate(rows, 1):
+            component['id'] = index * 10
+            for offset, child in enumerate(component['components'], 1):
+                child['id'] = index * 10 + offset
+        message.components = [_component_factory(row) for row in rows]
+        setup = await ops.preview(self.guild, actor, 'setup', self.bot)
+        setup['rows'] = [r for r in setup['rows'] if r['key'] == key]
+        self.assertEqual(setup['rows'][0]['status'], 'SAFE_ADOPTION')
+        self.assertEqual(await ops.apply(self.guild, actor, setup, self.bot, confirmed=True), ([], []))
+
+        reconcile = await ops.preview(self.guild, actor, 'reconcile', self.bot)
+        reconcile['rows'] = [r for r in reconcile['rows'] if r['key'] == key]
+        done, skipped = await ops.apply(self.guild, actor, reconcile, self.bot, confirmed=True)
+        self.assertEqual((len(done), skipped), (1, []))
+        self.assertEqual(db.get_setting(key), str(message.id))
+        self.assertTrue(message.pinned)
+        self.assertFalse(message.deleted)
+        self.assertEqual((channel.sends, message.edits), (0, 0))
+
+    async def test_message_created_after_preview_blocks_confirmed_setup(self):
+        from cogs.server import future_community_copies
+        actor = self.owner()
+        channel = next(c for c in self.guild.text_channels if c.name == 'giveaways')
+        key = 'server_future_giveaways_message_id'
+        setup = await ops.preview(self.guild, actor, 'setup', self.bot)
+        setup['rows'] = [r for r in setup['rows'] if r['key'] == key]
+        self.assertEqual(setup['rows'][0]['status'], 'MISSING')
+        self.add_message(channel, future_community_copies()['giveaways'] + '\nPrevious wording', pinned=True)
+        done, skipped = await ops.apply(self.guild, actor, setup, self.bot, confirmed=True)
+        self.assertEqual((len(done), len(skipped)), (0, 1))
+        self.assertIsNone(db.get_setting(key))
+        self.assertEqual(channel.sends, 0)
+
+    async def test_incomplete_history_and_saved_state_cannot_authorize_creation(self):
+        from cogs.server import future_community_copies
+        from services import managed_message_service as managed
+        actor = self.owner()
+        key = 'server_future_giveaways_message_id'
+        channel = next(c for c in self.guild.text_channels if c.name == 'giveaways')
+        for _ in range(101):
+            self.add_message(channel, 'Community conversation', author=20)
+        plan = await ops.preview(self.guild, actor, 'setup', self.bot)
+        self.assertEqual(next(r for r in plan['rows'] if r['key'] == key)['status'], 'AMBIGUOUS')
+
+        channel.messages.clear()
+        content = future_community_copies()['giveaways']
+        managed.store(dict(key=key, guild_id=self.guild.id, channel_id=channel.id, message_id=9001,
+                           content=content, content_hash=managed.digest(content), pending=True))
+        plan = await ops.preview(self.guild, actor, 'setup', self.bot)
+        row = next(r for r in plan['rows'] if r['key'] == key)
+        self.assertEqual(row['status'], 'AMBIGUOUS')
+        self.assertEqual(await ops.apply(self.guild, actor, dict(plan, rows=[row]), self.bot, confirmed=True), ([], []))
+        self.assertEqual(channel.sends, 0)
 
     async def test_health_and_scan_are_database_read_only(self):
         self.owner()
@@ -198,6 +277,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         db.set_setting('managed_channel:1:community-events', channel.id)
         db.set_setting('managed_category:1:events', events.id)
         message = self.add_message(channel, EVENTS_INTRO)
+        message.components = [SimpleNamespace(to_dict=lambda row=row: row)
+                              for row in ops.message_view(self.guild, 'community_events:1').to_components()]
         db.set_setting('community_events:1', message.id)
         draft = await ops.preview(self.guild, actor, 'repair', self.bot)
         await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
@@ -207,6 +288,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         state.update(content='Custom owner text', customized=True, content_hash=managed.digest('Custom owner text'))
         managed.store(state)
         message.content, message.pinned = state['content'], False
+        message.components = [SimpleNamespace(to_dict=lambda row=row: row)
+                              for row in ops.message_view(self.guild, 'community_events:1').to_components()]
         draft = await ops.preview(self.guild, actor, 'repair', self.bot)
         await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
         self.assertTrue(message.pinned)
@@ -268,7 +351,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             return {'test-board': (self.intro, None if defaults else 'Known body')}
         with patch.object(managed, 'canonical_boards', side_effect=boards):
             draft = await ops.preview(self.guild, actor, 'repair', self.bot)
-            self.assertTrue(any('default content unavailable' in r['label'] for r in draft['rows']))
+            self.assertTrue(any(r.get('reason', '').startswith('Default content unavailable') for r in draft['rows']))
             await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
         self.assertEqual(message.content, 'Known body')
         self.assertEqual(message.edits, 0)
@@ -299,6 +382,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         db.set_setting('managed_channel:1:community-events', channel.id)
         db.set_setting('managed_category:1:events', events.id)
         message = self.add_message(channel, EVENTS_INTRO.split('\n')[0] + '\nOld generated text')
+        message.components = [SimpleNamespace(to_dict=lambda row=row: row)
+                              for row in ops.message_view(self.guild, 'community_events:1').to_components()]
         db.set_setting('community_events:1', message.id)
         returned = copy.copy(message)
         returned.content = EVENTS_INTRO

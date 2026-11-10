@@ -9,7 +9,6 @@ import discord
 import config
 from database import db
 from services import game_service, server_configuration_preview as configuration
-from services import server_operations as operations
 from services.server_service import ServerMessageError
 from tests import test_onboarding as fixtures
 
@@ -31,21 +30,58 @@ class ConfigurationPreviewTests(unittest.IsolatedAsyncioTestCase):
         configured_guild.start()
         self.addCleanup(configured_guild.stop)
 
-    async def test_seed_catalog_preview_is_stable_and_never_reads_discord_messages(self):
+    async def test_seed_catalog_preview_is_stable_and_read_only(self):
         db.seed_catalog()
         before = db.get_all_games()
-        with patch.object(operations, 'inspect_message', new_callable=AsyncMock) as inspect_message:
-            summary, rows = await configuration.preview(self.guild, self.owner, self.bot)
-            self.assertEqual(await configuration.preview(self.guild, self.owner, self.bot), (summary, rows))
-            inspect_message.assert_not_awaited()
+        original_db = db.DB_PATH.read_bytes()
+        summary, rows = await configuration.preview(self.guild, self.owner, self.bot)
+        self.assertEqual(await configuration.preview(self.guild, self.owner, self.bot), (summary, rows))
         self.assertTrue(any('0 active, 0 visible' in line for line in summary))
         self.assertTrue(any('38 matches, 32 proposed additions' in line for line in summary))
         self.assertIn(('category', 'events', 'Create', 'No matching resource'), rows)
         self.assertTrue(any(kind == 'onboarding' for kind, _, _, _ in rows))
         self.assertTrue(any(kind == 'message' for kind, _, _, _ in rows))
         self.assertEqual(before, db.get_all_games())
+        self.assertEqual(original_db, db.DB_PATH.read_bytes())
         self.assertIsNone(db.get_setting('managed_category:1:events'))
         self.assertFalse(any(c.edits or c.sends for c in self.guild.text_channels))
+
+    async def test_unlinked_message_outcomes_use_public_history_and_publish_only_metadata(self):
+        from cogs.server import future_community_copies
+        from services import managed_message_service as managed
+        copies = future_community_copies()
+        private = self.guild.add_channel('private destination', self.staff)
+        private.overwrites[self.guild.default_role] = discord.PermissionOverwrite(read_message_history=False)
+        private.history = private.pins = AsyncMock(side_effect=AssertionError('private message read'))
+        private.fetch_message = AsyncMock(side_effect=AssertionError('private message read'))
+        giveaways = next(c for c in self.guild.text_channels if c.name == 'giveaways')
+        fixtures.OnboardingTests.add_message(self, giveaways, copies['giveaways'], pinned=True)
+        empty = self.guild.add_channel('test-empty', self.community)
+        denied = self.guild.add_channel('test-denied', self.community)
+        denied.permissions_for = MagicMock(return_value=discord.Permissions(view_channel=True))
+        denied.history = denied.pins = AsyncMock(side_effect=AssertionError('unreadable history'))
+        unknown = self.guild.add_channel('test-unknown', self.community)
+        fixtures.OnboardingTests.add_message(self, unknown, 'content sentinel', pinned=True)
+        boards = {
+            'server_future_giveaways_message_id': (giveaways, copies['giveaways']),
+            'test-empty': (empty, '# Public default'),
+            'test-unknown': (unknown, '# Another default'),
+            'test-private': (private, '# Private default'),
+            'test-denied': (denied, '# Default'),
+            'test-no-destination': (None, '# Default'),
+        }
+        with patch.object(managed, 'canonical_boards', return_value=boards):
+            summary, rows = await configuration.preview(self.guild, self.owner, self.bot)
+        outcomes = {name: (action, detail) for kind, name, action, detail in rows if kind == 'message'}
+        self.assertEqual(outcomes['server_future_giveaways_message_id'][0], 'Reuse')
+        self.assertEqual(outcomes['test-empty'][0], 'Create')
+        for key in ('test-unknown', 'test-private', 'test-denied', 'test-no-destination'):
+            self.assertEqual(outcomes[key][0], 'Conflict')
+        self.assertNotIn('content sentinel', str((summary, rows)))
+        self.assertNotIn('Private default', str((summary, rows)))
+        private.history.assert_not_called()
+        private.fetch_message.assert_not_awaited()
+        denied.history.assert_not_called()
 
     async def test_linked_resources_legacy_chat_and_skill_state_are_preserved(self):
         gaming = self.guild.add_category('GAMING')

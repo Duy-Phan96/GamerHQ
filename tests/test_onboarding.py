@@ -149,7 +149,7 @@ class FakeGuild:
         self.categories, self.text_channels = [], []
         self.position_updates = []
         self._state = SimpleNamespace(http=SimpleNamespace(bulk_channel_update=self.bulk_channel_update))
-        self.default_role = self.role(1, default=True)
+        self.default_role = self.role(1, default=True, view_channel=True, read_message_history=True)
         self.mod = self.role(2, manage_messages=True)
         self.custom = self.role(3)
         self.roles = [self.default_role, self.mod, self.custom]
