@@ -33,11 +33,14 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    linking. **Create** is a candidate for the existing setup flow. **Update**
    describes a difference for separate repair review. **Conflict** requires
    a manual identity, permission or destination decision. **Leave unchanged**
-   preserves optional and runtime-owned resources. Message status here is saved
-   link metadata. Verify message existence separately in the existing Managed
-   Messages tools. Verify native Discord onboarding privately in Discord Server
-   Settings. No messages, member listings or membership records are fetched by
-   the configuration preview.
+   preserves optional and runtime-owned resources. The updated preview checks
+   unsaved message links using the same bounded discovery as Review Structure
+   and Add Missing Resources. It reads up to 101 pins and 101 history entries
+   per destination. The channel and category policy must establish public
+   history access, and the REST roles and bot membership must establish bot
+   access. It displays action and reason metadata. Existing saved
+   message links are listed as recorded and unverified. Verify native Discord
+   onboarding privately in Discord Server Settings.
 4. Submit the staging action list for owner review. First link approved existing
    resources with **Review Structure**. Then open a fresh **Add Missing
    Resources** or **Fix Common Issues** plan and confirm only the approved
@@ -46,6 +49,69 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    ambiguous game resources and preserve their IDs and overwrites. Review
    Event Manager category bindings through the existing Host integration.
    Keep the installed Skill, its authority and all event resources in place.
+
+## Staging reconciliation preview, November 10, 2026
+
+The owner reported 60 catalogued games, zero active or visible games and zero
+saved game role/channel mappings. The inventory reported 9 unmatched channels
+or categories. It proposed 9 categories, 34 text channels, 3 voice channels,
+18 roles and 2 bot roles. Treat those counts as proposals from the current
+staging snapshot. Preserve unmatched resources and review each identity and
+destination before confirming a structural change. Native onboarding and
+profile role assignments still require separate parity checks.
+
+The live preview reported 24 message conflicts. Its missing-link label describes
+the stored mapping alone. The supplied evidence verifies zero reusable and zero
+genuinely missing messages. The eight examples below remain unresolved until a
+fresh read of the staging destinations. The other 16 rows were not supplied.
+
+| Managed message | Expected logical destination | Disposition from available evidence |
+| --- | --- | --- |
+| Amazon | amazon | Unresolved saved link |
+| Free Games | free-games | Unresolved saved link |
+| Electricity | electricity or its legacy mapping | Unresolved saved link |
+| Gaming Deals | gaming-deals | Unresolved saved link |
+| Support GamerHQ | support-gamerhq | Unresolved saved link |
+| AI Tools | ai-tools | Unresolved saved link |
+| `server_community_commands_message_1_id` | bot-commands or its existing guide mapping | Unresolved saved link |
+| `server_future_giveaways_message_id` | giveaways | Unresolved saved link |
+
+- **Reuse** means a unique bot-authored match with the expected body and
+  controls, consistent with any saved identity and free of conflicting
+  references. Review Structure links the original ID and preserves its pin,
+  body and interactions.
+- **Create** means the verified public destination had a complete bounded scan
+  and no matching message, plausible legacy board, unexplained bot or webhook
+  message, or unresolved saved identity. Only confirmed Add Missing Resources
+  may post the canonical message. Apply repeats the check under the message lock.
+- **Conflict** covers unresolved destinations, inaccessible or truncated
+  history, uncertain saved state, and competing or incompatible candidates,
+  including a canonical match alongside a message with the same board heading.
+  Resolve the destination or review the original mapping before approving a
+  change. Private destinations stay outside generic message inspection.
+
+The local Host candidate is based on
+`b8a3b0b40f01783a6bbb389abbb50fc8f5b7b45d`. The affected implementation files
+match the reviewed Configuration Preview baseline
+`89709625d9ea0c74c2b731436d1d13c9dcb453c4` before this change. Prepare the next
+candidate against the verified installed staging baseline with only the
+reviewed reconciliation delta. Before promotion, verify the installed Host
+and Skill pins and the exact candidate archive. Review startup separately
+because the worker runs operational logging and temporary voice cleanup when
+it connects. Use the existing protected promotion path after separate owner
+approval. Review a fresh owner-only Configuration Preview before approving
+links, creations or repairs.
+
+The offline regression suite checks in-place linking with Discord component
+IDs, concurrent setup without duplicate sends, a board appearing after
+preview, truncated history, missing history access, private destinations,
+pending delivery, and owner review of competing candidates. Keep all 24
+reported message conflicts unresolved until the refreshed live preview can
+evaluate each row. For live acceptance, record the action and reason for each
+row, compare destination identities and permissions with the intended server
+layout, and verify onboarding and profile management through their existing
+Discord surfaces. Review the resulting action list before confirming any
+reconciliation phase.
 
 ## Owner-reported Production baseline, November 9, 2026
 

@@ -152,21 +152,36 @@ async def preview(guild, actor, bot=None):
         extra = sum(channel.id not in matched for channel in channels)
         boards = managed.canonical_boards(snapshot, bot)
         specs = managed.specs(snapshot)
+        defaults = managed.canonical_boards(snapshot, bot, defaults=True)
         board_keys = set(boards) | set(specs) | {'choose_games_message_id'}
+        pending = []
         for key in sorted(board_keys):
-            channel = boards.get(key, (None,))[0]
+            channel, content = boards.get(key, (None, None))
             if key in specs:
                 name = specs[key][0]
             elif key.startswith('server_pinned_message_'):
                 name = operations.alias(channel.name) if channel else 'pinned board'
             else:
                 name = key.replace(f':{guild.id}:', ':').removesuffix(f':{guild.id}')
-            recorded = messages.mapping(key)
+            try:
+                recorded = messages.mapping(key)
+            except (ValueError, ServerMessageError):
+                rows.append(('message', name, 'Conflict', 'Saved message link needs review'))
+                continue
             if recorded:
-                action, detail = 'Leave unchanged', 'Recorded; live message unverified'
+                rows.append(('message', name, 'Leave unchanged', 'Recorded; live message unverified'))
+            elif channel not in snapshot.text_channels:
+                rows.append(('message', name, 'Conflict', 'Resolve the destination before verifying this message'))
+            elif channel.id in protected or channel.category_id in protected:
+                rows.append(('message', name, 'Conflict', 'Skill-owned destination; use its owning tools'))
             else:
-                action, detail = 'Conflict', 'No saved message link; verify in Managed Messages'
-            rows.append(('message', name, action, detail))
+                pending.append((name, operations.inspect_message(
+                    snapshot, key, channel, content, defaults.get(key, (None, content))[1], boards=boards)))
+        results = await gather_reads([job for _, job in pending])
+        require_owner(guild, actor)
+        for (name, _), message in zip(pending, results):
+            action = {'SAFE_ADOPTION': 'Reuse', 'MISSING': 'Create'}.get(message['status'], 'Conflict')
+            rows.append(('message', name, action, message['reason']))
         for name in ('welcome', 'choose-your-roles', 'looking-for-group'):
             if not any(r['name'] == name and r['resource'] for r in definitions):
                 rows.append(('message', f'{name} board', 'Conflict', 'Review the destination channel first'))
