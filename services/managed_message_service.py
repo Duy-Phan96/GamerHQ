@@ -220,8 +220,13 @@ def mapped(guild, state):
                 and str(state['message_id']) == db.get_setting(state['key']))
 
 
+def partner_migration_pending(guild, key):
+    return key.startswith('partner_message:') and any(
+        db.get_setting(f'{name}:{guild.id}') for name in ('partner_reorder', 'partner_split', 'household_migration'))
+
+
 async def inspect(guild, state):
-    if state['key'].startswith('partner_message:') and any(db.get_setting(f'{name}:{guild.id}') for name in ('partner_reorder', 'partner_split', 'household_migration')):
+    if partner_migration_pending(guild, state['key']):
         raise ServerMessageError('Partner migration is pending. Review its owning migration before editing; generic repair preserves it.')
     if not mapped(guild, state):
         raise ServerMessageError('Managed mapping changed or is missing. Run /server health and /server reconcile.')

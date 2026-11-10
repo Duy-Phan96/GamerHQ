@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from contextlib import AsyncExitStack
+from copy import copy
 from types import SimpleNamespace
 
 import discord
@@ -99,6 +100,43 @@ def private(resource):
     everyone = resource.guild.default_role
     return (resource.overwrites_for(everyone).view_channel is False or
             (getattr(resource, 'category', None) and resource.category.overwrites_for(everyone).view_channel is False))
+
+
+async def public_message_channel(guild, channel):
+    if channel not in guild.text_channels or channel.guild.id != guild.id:
+        return False
+    everyone = guild.get_role(guild.id)
+    parent_id = channel.category_id
+    parent = guild.get_channel(parent_id) if parent_id is not None else None
+    if everyone is None or guild.me is None or getattr(channel, 'nsfw', False):
+        return False
+    if parent_id is not None:
+        if not isinstance(parent, discord.CategoryChannel):
+            return False
+        inherited = parent.overwrites_for(everyone)
+        if inherited.view_channel is False or inherited.read_message_history is False:
+            return False
+    overwrite = channel.overwrites_for(everyone)
+    access = ('view_channel', 'read_message_history')
+    for name in access:
+        public = getattr(overwrite, name)
+        if public is None:
+            public = getattr(everyone.permissions, name)
+        if not public:
+            return False
+    try:
+        bot_member = await read_once(('message-permissions-member', guild.id), lambda: guild.fetch_member(guild.me.id))
+    except (discord.HTTPException, TimeoutError):
+        return False
+    if bot_member.id != guild.me.id:
+        return False
+    # Resolve effective permissions against the REST roles and channel overwrites
+    # without changing the Discord gateway cache or reimplementing permission rules.
+    detached = copy(channel)
+    detached.guild = SimpleNamespace(id=guild.id, owner_id=getattr(guild, 'owner_id', None),
+                                     default_role=everyone, get_role=guild.get_role)
+    bot_permissions = detached.permissions_for(bot_member)
+    return all(getattr(bot_permissions, name) for name in access)
 
 
 def eligible(guild, row, resource):
@@ -236,6 +274,9 @@ def message_view(guild, key):
     if key.startswith('ticket_entry:'):
         from cogs.tickets import TicketEntry
         return TicketEntry()
+    if key.startswith('community_events:'):
+        from cogs.lfg import build_lfg_hub_view
+        return build_lfg_hub_view()
     if key == 'streamer_guide_message_id':
         import config
         from cogs.twitch_hub import HubView
@@ -247,18 +288,23 @@ def message_view(guild, key):
 async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None):
     with read_scope():
         channels, roles = list(guild.channels), list(guild.roles)
-        structure = affected is None or any(r['kind'] in ('text', 'voice', 'category', 'order') for r in affected)
-        role_check = affected is None or any(r['kind'] in ('role', 'bot-role') for r in affected)
+        structure = affected is None or any(r['kind'] in ('text', 'voice', 'category', 'order', 'message') for r in affected)
+        role_check = affected is None or any(r['kind'] in ('role', 'bot-role', 'message') for r in affected)
         if not channels or (fresh and structure):
             ids = {r.id for row in affected or [] if row['kind'] in ('text', 'voice') for r in row['candidates']}
             ids.update(r.category_id for row in affected or [] if row['kind'] in ('text', 'voice')
                        for r in row['candidates'] if r.category_id is not None)
             for row in affected or []:
+                if row['kind'] == 'message':
+                    ids.add(row['channel'].id)
+                    if row['channel'].category_id is not None:
+                        ids.add(row['channel'].category_id)
+            for row in affected or []:
                 try: parent = target(guild, row) if row.get('parent') else None
                 except ServerMessageError: parent = None
                 if parent: ids.add(parent.id)
             targeted = (affected and ids and len(ids) <= 2 and hasattr(guild, 'fetch_channel')
-                        and all(r['kind'] == 'message' or (r['kind'] in ('text', 'voice')
+                        and all((r['kind'] in ('text', 'voice', 'message')
                                 and r['resource'] is not None and str(r['resource'].id) == r['raw']) for r in affected))
             if targeted:
                 async def fetch(cid):
@@ -347,41 +393,108 @@ async def _scan(guild, bot, *, message_keys=None):
         warnings.append('Channel order: link ambiguous categories/channels before repair.')
     if message_keys is None or message_keys:
         defaults = managed.canonical_boards(guild, bot, warnings=warnings, defaults=True)
-        jobs = [inspect_message(guild, key, channel, content, defaults.get(key, (None, content))[1], warnings) for key, (channel, content) in
-                managed.canonical_boards(guild, bot, warnings=warnings).items()
-                if (message_keys is None or key in message_keys) and channel in guild.text_channels and content is not None]
-        rows.extend(row for row in await gather_reads(jobs) if row is not None)
+        boards = managed.canonical_boards(guild, bot, warnings=warnings)
+        jobs = [inspect_message(guild, key, channel, content, defaults.get(key, (None, content))[1], boards=boards)
+                for key, (channel, content) in boards.items()
+                if (message_keys is None or key in message_keys) and channel in guild.text_channels]
+        rows.extend(await gather_reads(jobs))
     for warning in dict.fromkeys(warnings):
         rows.append(dict(key=warning, kind='warning', name=warning, label=warning, status='AMBIGUOUS',
                          candidates=[], safe=[], raw=None, resource=None, signature=[]))
     return rows
 
 
-async def inspect_message(guild, key, channel, content, default_content, warnings):
-    row = dict(key=key, name=key, label=content.split('\n', 1)[0].lstrip('# '), kind='message', channel=channel,
-               content=default_content, parent=None, resource=None, safe=[], candidates=[], raw=None, status='MISSING')
-    if row['content'] is None:
-        warnings.append(row['label'] + ': default content unavailable; review its channel mappings first.')
-        return None
+def component_payload_matches(actual, expected):
+    # Discord assigns numeric IDs to components that the owning renderer leaves
+    # unspecified. Custom IDs, link targets, options and ordering still must match.
+    if len(actual) != len(expected):
+        return False
+    for received, configured in zip(actual, expected):
+        received = dict(received)
+        configured = dict(configured)
+        if 'id' not in configured:
+            received.pop('id', None)
+        if not component_payload_matches(received.pop('components', []), configured.pop('components', [])):
+            return False
+        if received != configured:
+            return False
+    return True
+
+
+async def inspect_message(guild, key, channel, content, default_content, *, boards):
+    row = dict(key=key, name=key, label=key, kind='message', channel=channel, guild=guild,
+               content=default_content, parent=None, resource=None, safe=[], candidates=[],
+               raw=None, status='AMBIGUOUS', signature=[])
+    if not await public_message_channel(guild, channel):
+        return dict(row, reason='Destination or public history access could not be verified')
+    if content is None or default_content is None:
+        return dict(row, reason='Default content unavailable; review the destination configuration')
     try:
-        data = await messages.inspect_board(guild, key, channel, content, mapped_first=True)
+        state = managed.load(key)
+        raw = messages.mapping(key)
+        row['raw'] = raw
+        spec = managed.specs(guild).get(key)
+        row['label'] = spec[0] if spec else key if state else content.split('\n', 1)[0].lstrip('# ')
+        linked_channel = db.get_setting(spec[1]) if spec else None
+        if linked_channel and linked_channel != str(channel.id):
+            return dict(row, reason='Saved destination conflicts with the discovered channel')
+        if managed.partner_migration_pending(guild, key):
+            return dict(row, reason='Existing partner migration needs review')
+        aliases = tuple(db.get_setting(alias_key) for alias_key in messages.equivalent_keys(key))
+        if state and (state.get('pending') or state.get('retired') or state.get('channel_id') != channel.id
+                      or state.get('guild_id') != guild.id or state.get('key') != key
+                      or managed.digest(state.get('content')) != state.get('content_hash')):
+            return dict(row, reason='Saved message state needs review')
         view = message_view(guild, key)
         expected = view.to_components() if view else []
+        snapshot = await messages.history_snapshot(channel) if not raw else None
+        data = await messages.inspect_board(guild, key, channel, content, snapshot=snapshot, mapped_first=True)
         candidates = data['matches']
-        raw = messages.mapping(key)
-        safe = [m.id for m in candidates if (not hasattr(m, 'components') or
-                ([p.to_dict() for p in m.components] == expected and not m.embeds and not m.attachments))]
         existing = next((m for m in candidates if str(m.id) == raw), None)
-        status = 'EXACT_MATCH' if existing else 'SAFE_ADOPTION' if len(candidates) == len(safe) == 1 else 'AMBIGUOUS' if candidates else 'STALE' if raw else 'MISSING'
-        if data['state'] and (data['state'].get('pending') or data['state']['channel_id'] != channel.id
-                              or data['state'].get('guild_id') != guild.id or data['state'].get('key') != key
-                              or managed.digest(data['state']['content']) != data['state'].get('content_hash')):
-            safe, status = [], 'AMBIGUOUS'
-        row.update(candidates=candidates, safe=safe, raw=raw, resource=existing, status=status)
-    except (ServerMessageError, discord.HTTPException, ValueError, TimeoutError):
-        row['status'] = 'AMBIGUOUS'
-    row['signature'] = [wire(r) for r in row['candidates']]
-    row['signature'].append(('state', json.dumps(managed.load(key), sort_keys=True), row['content']))
+        known = {value for value in (*aliases, str(state['message_id']) if state else None) if value}
+        safe = []
+        for message in candidates:
+            if (message.channel.id != channel.id or (known and known != {str(message.id)})
+                    or (state and not managed.owns(state, channel, message))
+                    or not component_payload_matches([p.to_dict() for p in getattr(message, 'components', [])], expected)
+                    or message.embeds or getattr(message, 'attachments', [])):
+                continue
+            if message is not existing:
+                try:
+                    messages.references(message.id, key)
+                except ServerMessageError:
+                    continue
+            safe.append(message.id)
+        if existing:
+            status, reason = 'EXACT_MATCH', 'Existing saved message'
+        elif len(candidates) == len(safe) == 1:
+            heading = content.split('\n', 1)[0]
+            found, _ = snapshot if snapshot is not None else await messages.history_snapshot(channel)
+            other_board = any(m.id != safe[0] and m.type == discord.MessageType.default
+                              and m.content.split('\n', 1)[0] == heading for m in found.values())
+            status, reason = ('AMBIGUOUS', 'A second message has the board heading; owner review required') if other_board else (
+                'SAFE_ADOPTION', 'Verified existing bot message; link its ID')
+        elif candidates or known or (raw and not raw.isdigit()):
+            status, reason = 'AMBIGUOUS', 'Saved identity, competing matches or message controls need review'
+        else:
+            if snapshot is None:
+                # A numeric saved ID can reach here only after the exact lookup
+                # returned NotFound and the bounded candidate scan completed.
+                snapshot = await messages.history_snapshot(channel)
+            sibling_ids = {messages.mapping(other) for other, (destination, _) in boards.items()
+                           if other != key and destination is not None and destination.id == channel.id}
+            heading = content.split('\n', 1)[0]
+            unidentified = any(m.type == discord.MessageType.default and str(m.id) not in sibling_ids
+                               and (m.author.id == guild.me.id or getattr(m.author, 'bot', False)
+                                    or getattr(m, 'webhook_id', None) or m.content.split('\n', 1)[0] == heading)
+                               for m in snapshot[0].values())
+            status, reason = ('AMBIGUOUS', 'Unlinked messages could include an existing board') if unidentified else (
+                'MISSING', 'No managed message found in complete public history')
+        row.update(candidates=candidates, safe=safe, resource=existing, status=status, reason=reason)
+        row['signature'] = [(channel.id, status, tuple(safe), aliases, state, default_content, expected),
+                            *(wire(message) for message in candidates)]
+    except (ServerMessageError, discord.HTTPException, ValueError, TimeoutError, KeyError, TypeError):
+        row['reason'] = 'Message identity or complete public history could not be verified'
     return row
 
 
@@ -412,7 +525,11 @@ async def preview(guild, actor, mode, bot=None):
     if mode == 'setup' and actor.id != guild.owner_id:
         raise ServerMessageError('Only the owner can create missing server resources.')
     with operation(f'server_{mode}_preview'):
-        rows = await scan(guild, bot, fresh=mode == 'repair')
+        rows = await scan(guild, bot, fresh=True)
+    if mode == 'reconcile' and actor.id != guild.owner_id:
+        for row in rows:
+            if row['kind'] == 'message' and row['status'] == 'AMBIGUOUS' and row['safe']:
+                row.update(safe=[], reason='The owner must review competing message candidates')
     return dict(guild_id=guild.id, actor_id=actor.id, mode=mode, created=time.time(), rows=rows)
 
 
@@ -463,46 +580,48 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
         if mode == 'repair':
             try: return needs_repair(guild, row)
             except ServerMessageError: return True  # Revalidation reports drift without applying it.
-        if mode == 'setup': return row['kind'] != 'warning' and row['status'] in ('MISSING', 'STALE') and not row['candidates']
+        if mode == 'setup':
+            statuses = ('MISSING',) if row['kind'] == 'message' else ('MISSING', 'STALE')
+            return row['status'] in statuses and not row['candidates'] and not row.get('existing_only')
         selected = choices.get(row['key'])
         return (selected is not None and selected in row['safe'] and str(selected) != row['raw']) or (selected is None and row['status'] == 'SAFE_ADOPTION')
     planned = [row for row in draft['rows'] if actionable(row)]
     if not planned: return done, skipped
     async with managed.lock(f'operations:{guild.id}'), AsyncExitStack() as locks:
-        if mode != 'setup':
-            keys = {(f"choose_games_refresh:{r['channel'].id}" if r['key'].startswith('choose_games_') else r['key'])
-                    for r in planned if r['kind'] == 'message'}
-            for key in sorted(keys): await locks.enter_async_context(managed.lock(key))
-        fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=planned,
-                 message_keys={r['key'] for r in planned if r['kind'] == 'message' and mode != 'repair'})}
+        keys = {(f"choose_games_refresh:{r['channel'].id}" if r['key'].startswith('choose_games_') else r['key'])
+                for r in planned if r['kind'] == 'message'}
+        for key in sorted(keys):
+            await locks.enter_async_context(managed.lock(key))
+        shared = [r for r in planned if mode != 'repair' or r['kind'] != 'message']
+        fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=shared,
+                 message_keys={r['key'] for r in shared if r['kind'] == 'message'})} if shared else {}
         created_resources = {}
-        if mode == 'repair':
-            with db.read_only():
-                boards = managed.canonical_boards(guild, bot)
-                defaults = managed.canonical_boards(guild, bot, defaults=True)
         for old in planned:
             row = fresh.get(old['key'])
             if mode == 'repair' and old['kind'] == 'message':
-                channel, content = boards.get(old['key'], (None, None))
-                if channel in guild.text_channels and content is not None:
-                    # Validate just this board immediately before its write, once, under its lock.
-                    with read_scope(), db.read_only():
-                        row = await inspect_message(guild, old['key'], channel, content,
-                                                    defaults.get(old['key'], (None, content))[1], [])
+                # Re-read only this board immediately before repairing it.
+                rows = await scan(guild, bot, fresh=True, affected=[old], message_keys={old['key']})
+                row = next((r for r in rows if r['key'] == old['key']), None)
             if not row or (row['raw'], row['signature']) != (old['raw'], old['signature']):
                 skipped.append(old['label'] + ': changed; scan again')
                 continue
             managed.require_admin(guild, actor)
             key, kind = row['key'], row['kind']
             if mode == 'reconcile':
+                if kind == 'message' and row['status'] == 'AMBIGUOUS' and actor.id != guild.owner_id:
+                    skipped.append(row['label'] + ': owner review required')
+                    continue
                 selected = choices.get(key)
                 if selected is None and row['status'] == 'SAFE_ADOPTION': selected = row['safe'][0]
                 if selected is None or selected not in row['safe'] or str(selected) == row['raw']: continue
                 resource = next(r for r in row['candidates'] if r.id == selected)
                 if kind == 'message':
                     latest = await row['channel'].fetch_message(selected)
-                    if wire(latest) != wire(resource): raise ServerMessageError('Message changed; reopen reconciliation.')
+                    if (latest.channel.id != row['channel'].id or latest.author.id != guild.me.id
+                            or latest.type != discord.MessageType.default or wire(latest) != wire(resource)):
+                        raise ServerMessageError('Message changed; reopen reconciliation.')
                     messages.references(selected, key)
+                    managed.require_admin(guild, actor)
                 elif kind in ('role', 'bot-role'):
                     if any(g.get('role_id') == selected for g in db.get_all_games(active_only=False)):
                         skipped.append(row['label'] + ': belongs to a game'); continue
@@ -513,7 +632,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                 persist(guild, row, resource)
                 row['raw'] = str(selected)
             elif mode == 'setup':
-                if row.get('existing_only') or row['status'] not in ('MISSING', 'STALE') or row['candidates']: continue
+                if not actionable(row): continue
                 if kind in ('role', 'bot-role'):
                     resource = await guild.create_role(name=row['label'], permissions=discord.Permissions.none(), reason='Confirmed GamerHQ setup')
                 elif kind == 'category':
@@ -531,15 +650,27 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     create = parent.create_voice_channel if kind == 'voice' else parent.create_text_channel
                     resource = await create(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
                 elif kind == 'message':
-                    async with managed.lock(key):
-                        if await messages.candidates(row['channel'], content=row['content']):
-                            skipped.append(row['label'] + ': an existing message needs linking'); continue
-                        view = message_view(guild, key)
-                        resource = await row['channel'].send(content=row['content'], view=view, allowed_mentions=discord.AllowedMentions.none())
-                        persist(guild, row, resource)
-                        await resource.pin(reason='Confirmed GamerHQ setup')
+                    with read_scope(), db.read_only():
+                        boards = managed.canonical_boards(row['guild'], bot)
+                        destination, content = boards.get(key, (None, None))
+                        defaults = managed.canonical_boards(row['guild'], bot, defaults=True)
+                        default_content = defaults.get(key, (None, content))[1]
+                        current = await inspect_message(row['guild'], key, destination, content, default_content, boards=boards)
+                    if current['signature'] != row['signature']:
+                        skipped.append(row['label'] + ': message evidence changed; scan again')
+                        continue
+                    managed.require_admin(guild, actor)
+                    if actor.id != guild.owner_id:
+                        raise ServerMessageError('Owner required.')
+                    view = message_view(row['guild'], key)
+                    nonce = managed.digest([guild.id, destination.id, key])[:25]
+                    resource = await destination.send(content=row['content'], view=view, nonce=nonce,
+                                                      allowed_mentions=discord.AllowedMentions.none())
+                    persist(guild, row, resource)
+                    await resource.pin(reason='Confirmed GamerHQ setup')
                 else: continue
-                persist(guild, row, resource)
+                if kind != 'message':
+                    persist(guild, row, resource)
                 created_resources[resource.id] = resource
             elif mode == 'repair':
                 if not needs_repair(guild, row): continue
