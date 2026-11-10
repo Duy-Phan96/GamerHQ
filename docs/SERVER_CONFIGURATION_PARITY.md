@@ -35,9 +35,10 @@ GitHub. Keep PatchBot and optional Skill installation outside this rollout.
    a manual identity, permission or destination decision. **Leave unchanged**
    preserves optional and runtime-owned resources. The updated preview checks
    unsaved message links using the same bounded discovery as Review Structure
-   and Add Missing Resources. It reads pins and up to 101 history entries per
-   destination only where the current channel and category policy establish
-   public history access. It displays action and reason metadata. Existing saved
+   and Add Missing Resources. It reads up to 101 pins and 101 history entries
+   per destination. The channel and category policy must establish public
+   history access, and the REST roles and bot membership must establish bot
+   access. It displays action and reason metadata. Existing saved
    message links are listed as recorded and unverified. Verify native Discord
    onboarding privately in Discord Server Settings.
 4. Submit the staging action list for owner review. First link approved existing
@@ -84,7 +85,8 @@ fresh read of the staging destinations. The other 16 rows were not supplied.
   message, or unresolved saved identity. Only confirmed Add Missing Resources
   may post the canonical message. Apply repeats the check under the message lock.
 - **Conflict** covers unresolved destinations, inaccessible or truncated
-  history, uncertain saved state, and competing or incompatible candidates.
+  history, uncertain saved state, and competing or incompatible candidates,
+  including a canonical match alongside a message with the same board heading.
   Resolve the destination or review the original mapping before approving a
   change. Private destinations stay outside generic message inspection.
 

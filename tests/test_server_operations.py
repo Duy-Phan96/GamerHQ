@@ -184,6 +184,24 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(message.deleted)
         self.assertEqual((channel.sends, message.edits), (0, 0))
 
+    async def test_exact_match_with_a_competing_legacy_heading_needs_owner_choice(self):
+        from cogs.server import future_community_copies
+
+        actor = self.owner()
+        key = 'server_future_giveaways_message_id'
+        channel = next(c for c in self.guild.text_channels if c.name == 'giveaways')
+        content = future_community_copies()['giveaways']
+        exact = self.add_message(channel, content, pinned=True)
+        legacy = self.add_message(channel, content.split('\n', 1)[0] + '\nLegacy body', pinned=True)
+        reconcile = await ops.preview(self.guild, actor, 'reconcile', self.bot)
+        row = next(r for r in reconcile['rows'] if r['key'] == key)
+        self.assertEqual((row['status'], row['safe']), ('AMBIGUOUS', [exact.id]))
+        for mode in ('reconcile', 'setup'):
+            await ops.apply(self.guild, actor, dict(reconcile, mode=mode, rows=[row]), self.bot, confirmed=True)
+        self.assertIsNone(db.get_setting(key))
+        self.assertEqual((channel.sends, exact.edits, legacy.edits), (0, 0, 0))
+        self.assertTrue(exact.pinned and legacy.pinned)
+
     async def test_message_created_after_preview_blocks_confirmed_setup(self):
         from cogs.server import future_community_copies
         actor = self.owner()
@@ -341,6 +359,31 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         again['rows'] = [r for r in again['rows'] if r['kind'] == 'order']
         done, _ = await ops.apply(self.guild, actor, again, self.bot, confirmed=True)
         self.assertEqual(done, [])
+
+    async def test_repair_rechecks_later_board_after_an_earlier_pin(self):
+        from services import managed_message_service as managed
+
+        actor = self.owner()
+        first = self.add_message(self.intro, '# First board')
+        second = self.add_message(self.intro, '# Second board')
+        boards = {'first-board': (self.intro, first.content), 'second-board': (self.intro, second.content)}
+        db.set_setting('first-board', first.id)
+        db.set_setting('second-board', second.id)
+
+        async def pin_and_change_later_board(**kwargs):
+            first.pinned = True
+            second.content = '# Changed while repair was applying'
+
+        first.pin = pin_and_change_later_board
+        with patch.object(managed, 'canonical_boards', return_value=boards):
+            draft = await ops.preview(self.guild, actor, 'repair', self.bot)
+            draft['rows'] = [r for r in draft['rows'] if r['key'] in boards]
+            done, skipped = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+        self.assertEqual((len(done), len(skipped)), (1, 1))
+        self.assertTrue(first.pinned)
+        self.assertFalse(second.pinned)
+        self.assertEqual(second.content, '# Changed while repair was applying')
+        self.assertEqual(db.get_setting('second-board'), str(second.id))
 
     async def test_unavailable_generated_content_never_clears_existing_message(self):
         from services import managed_message_service as managed

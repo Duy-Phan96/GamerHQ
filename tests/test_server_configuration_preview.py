@@ -8,7 +8,7 @@ import discord
 
 import config
 from database import db
-from services import game_service, server_configuration_preview as configuration
+from services import game_service, server_configuration_preview as configuration, server_operations as operations
 from services.server_service import ServerMessageError
 from tests import test_onboarding as fixtures
 
@@ -82,6 +82,29 @@ class ConfigurationPreviewTests(unittest.IsolatedAsyncioTestCase):
         private.history.assert_not_called()
         private.fetch_message.assert_not_awaited()
         denied.history.assert_not_called()
+
+    async def test_history_permission_uses_rest_member_and_roles_instead_of_gateway_grants(self):
+        admin_id = 88
+        stale_admin = self.guild.role(admin_id, administrator=True)
+        stale_admin._permissions = stale_admin.permissions.value
+        self.guild.roles.append(stale_admin)
+        current_role = self.guild.role(admin_id)
+        current_role._permissions = current_role.permissions.value
+        member = SimpleNamespace(id=self.guild.me.id, _roles=discord.utils.SnowflakeList([admin_id]),
+                                 is_timed_out=lambda: False)
+        channel = discord.TextChannel(state=self.guild._state, guild=self.guild, data={
+            'id': '8500', 'type': 0, 'name': 'test-history', 'position': 0,
+            'permission_overwrites': [{'id': str(member.id), 'type': 1, 'allow': '0',
+                                       'deny': str(discord.Permissions(read_message_history=True).value)}],
+        })
+        snapshot = operations.GuildSnapshot(self.guild, [channel], [self.guild.default_role, current_role])
+        self.assertTrue(channel.permissions_for(member).read_message_history)
+        with patch.object(self.guild, 'fetch_member', AsyncMock(return_value=member)) as fetch:
+            row = await operations.inspect_message(snapshot, 'test-board', channel, '# Board', '# Board', boards={})
+        fetch.assert_awaited_once_with(member.id)
+        self.assertEqual(row['status'], 'AMBIGUOUS')
+        self.assertIn('access could not be verified', row['reason'])
+        self.assertIs(channel.guild, self.guild)
 
     async def test_linked_resources_legacy_chat_and_skill_state_are_preserved(self):
         gaming = self.guild.add_category('GAMING')

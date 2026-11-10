@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from contextlib import AsyncExitStack
+from copy import copy
 from types import SimpleNamespace
 
 import discord
@@ -101,7 +102,7 @@ def private(resource):
             (getattr(resource, 'category', None) and resource.category.overwrites_for(everyone).view_channel is False))
 
 
-def public_message_channel(guild, channel):
+async def public_message_channel(guild, channel):
     if channel not in guild.text_channels or channel.guild.id != guild.id:
         return False
     everyone = guild.get_role(guild.id)
@@ -116,14 +117,26 @@ def public_message_channel(guild, channel):
         if inherited.view_channel is False or inherited.read_message_history is False:
             return False
     overwrite = channel.overwrites_for(everyone)
-    bot_permissions = channel.permissions_for(guild.me)
-    for name in ('view_channel', 'read_message_history'):
+    access = ('view_channel', 'read_message_history')
+    for name in access:
         public = getattr(overwrite, name)
         if public is None:
             public = getattr(everyone.permissions, name)
-        if not public or not getattr(bot_permissions, name):
+        if not public:
             return False
-    return True
+    try:
+        bot_member = await read_once(('message-permissions-member', guild.id), lambda: guild.fetch_member(guild.me.id))
+    except (discord.HTTPException, TimeoutError):
+        return False
+    if bot_member.id != guild.me.id:
+        return False
+    # Resolve effective permissions against the REST roles and channel overwrites
+    # without changing the Discord gateway cache or reimplementing permission rules.
+    detached = copy(channel)
+    detached.guild = SimpleNamespace(id=guild.id, owner_id=getattr(guild, 'owner_id', None),
+                                     default_role=everyone, get_role=guild.get_role)
+    bot_permissions = detached.permissions_for(bot_member)
+    return all(getattr(bot_permissions, name) for name in access)
 
 
 def eligible(guild, row, resource):
@@ -412,7 +425,7 @@ async def inspect_message(guild, key, channel, content, default_content, *, boar
     row = dict(key=key, name=key, label=key, kind='message', channel=channel, guild=guild,
                content=default_content, parent=None, resource=None, safe=[], candidates=[],
                raw=None, status='AMBIGUOUS', signature=[])
-    if not public_message_channel(guild, channel):
+    if not await public_message_channel(guild, channel):
         return dict(row, reason='Destination or public history access could not be verified')
     if content is None or default_content is None:
         return dict(row, reason='Default content unavailable; review the destination configuration')
@@ -455,7 +468,12 @@ async def inspect_message(guild, key, channel, content, default_content, *, boar
         if existing:
             status, reason = 'EXACT_MATCH', 'Existing saved message'
         elif len(candidates) == len(safe) == 1:
-            status, reason = 'SAFE_ADOPTION', 'Verified existing bot message; link its ID'
+            heading = content.split('\n', 1)[0]
+            found, _ = snapshot if snapshot is not None else await messages.history_snapshot(channel)
+            other_board = any(m.id != safe[0] and m.type == discord.MessageType.default
+                              and m.content.split('\n', 1)[0] == heading for m in found.values())
+            status, reason = ('AMBIGUOUS', 'A second message has the board heading; owner review required') if other_board else (
+                'SAFE_ADOPTION', 'Verified existing bot message; link its ID')
         elif candidates or known or (raw and not raw.isdigit()):
             status, reason = 'AMBIGUOUS', 'Saved identity, competing matches or message controls need review'
         else:
@@ -574,11 +592,16 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                 for r in planned if r['kind'] == 'message'}
         for key in sorted(keys):
             await locks.enter_async_context(managed.lock(key))
-        fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=planned,
-                 message_keys={r['key'] for r in planned if r['kind'] == 'message'})}
+        shared = [r for r in planned if mode != 'repair' or r['kind'] != 'message']
+        fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=shared,
+                 message_keys={r['key'] for r in shared if r['kind'] == 'message'})} if shared else {}
         created_resources = {}
         for old in planned:
             row = fresh.get(old['key'])
+            if mode == 'repair' and old['kind'] == 'message':
+                # Re-read only this board immediately before repairing it.
+                rows = await scan(guild, bot, fresh=True, affected=[old], message_keys={old['key']})
+                row = next((r for r in rows if r['key'] == old['key']), None)
             if not row or (row['raw'], row['signature']) != (old['raw'], old['signature']):
                 skipped.append(old['label'] + ': changed; scan again')
                 continue

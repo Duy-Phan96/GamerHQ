@@ -171,6 +171,12 @@ class FakeGuild:
         return result
     def get_role(self, rid): return next((r for r in self.roles if r.id == rid), None)
     def get_member(self, uid): return next((m for m in getattr(self, 'members', []) if m.id == uid), None)
+
+    async def fetch_member(self, uid):
+        member = self.me if self.me and uid == self.me.id else self.get_member(uid)
+        if member is None:
+            raise missing()
+        return member
     async def create_role(self, *, name, **kwargs):
         self.sequence += 1
         role = self.role(self.sequence)
