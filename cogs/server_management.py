@@ -27,23 +27,36 @@ _PROGRESSION_UPDATE_CONFIG_API = "progression.update-config.v1"
 
 
 def friendly_plan(view):
-    from services.server_operations import needs_repair
+    from services.server_operations import PHASE_TITLES, needs_repair
     mode = view.draft['mode']
-    title = {'setup': 'Add Missing Resources', 'repair': 'Fix Common Issues', 'reconcile': 'Review Structure'}[mode]
+    scope = view.draft.get('scope')
+    title = PHASE_TITLES.get(scope) or {'setup': 'Add Missing Resources', 'repair': 'Fix Common Issues', 'reconcile': 'Review Structure'}[mode]
     lines = ['# ' + title, 'Review every page. Changes require confirmation; resources that change during review are skipped.']
     for row in view.draft['rows'][view.page * 8:(view.page + 1) * 8]:
         label = 'Channel settings need review' if row['kind'] == 'warning' else row['label']
         status = {'EXACT_MATCH': 'Already linked', 'SAFE_ADOPTION': 'Link existing resource',
                   'AMBIGUOUS': 'Choose the intended resource', 'MISSING': 'Not found', 'STALE': 'Previously linked resource is unavailable'}[row['status']]
-        if mode == 'setup' and row['status'] in ('MISSING', 'STALE') and not row['candidates']:
+        if row.get('optional'):
+            status = 'Optional channel retained outside setup'
+        elif scope in ('channels', 'placement') and row['kind'] in ('text', 'voice') and not row.get('destination'):
+            status = 'Link or create the intended category first'
+        elif mode == 'setup' and (row['status'] == 'MISSING' or not scope and row['status'] == 'STALE') and not row['candidates'] and not row.get('existing_only'):
             status = 'Create missing resource'
+            if (policy := row.get('create_overwrites')) is not None:
+                allowed = [discord.utils.escape_markdown(str(p.name))[:20] for p, rights in policy.items() if rights.view_channel is True]
+                suffix = f' +{len(allowed)-3}' if len(allowed) > 3 else ''
+                status += ' · private · allowed: ' + (', '.join(allowed[:3]) + suffix if allowed else 'owner/admin only')
         elif mode == 'repair':
             try:
-                if needs_repair(view.guild, row): status = 'Update managed placement, permissions or message'
+                if needs_repair(view.guild, row):
+                    status = ('Move/rename in place; keep permissions' if scope == 'placement'
+                              else 'Update managed placement, permissions or message')
             except ServerMessageError:
                 status = 'Needs review before changing'
-        if row['kind'] == 'message' and row['status'] == 'AMBIGUOUS' and row.get('reason'):
+        if not row.get('optional') and row['status'] == 'AMBIGUOUS' and row.get('reason'):
             status = row['reason']
+        if scope in ('channels', 'placement') and (destination := row.get('destination')):
+            status += f' → {discord.utils.escape_markdown(destination.name)[:40]}'
         if row['key'] in view.choices:
             status = 'Selected for linking' if view.choices[row['key']] else 'Skipped'
         lines.append(f'• {discord.utils.escape_markdown(label)[:80]}: {status}')
@@ -2108,16 +2121,17 @@ class RecurringPostDeleteConfirmView(Menu):
 class StructureView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
-        for label, mode in [('Review Structure', 'reconcile'), ('Fix Common Issues', 'repair')]:
-            async def run(interaction, selected=mode):
+        from services.server_operations import PHASE_TITLES
+        entries = [('Review Structure', 'reconcile', 'structure'), ('Fix Common Issues', 'repair', None)]
+        if actor_id == guild.owner_id:
+            entries.extend((PHASE_TITLES[scope], mode, scope) for mode, scope in (
+                ('setup', 'foundations'), ('setup', 'channels'), ('repair', 'placement'), ('setup', 'messages')))
+        for label, mode, scope in entries:
+            async def run(interaction, selected=mode, phase=scope):
                 from cogs.server import open_operation
-                await open_operation(interaction, selected, friendly=True)
+                await open_operation(interaction, selected, friendly=True, scope=phase)
             self.action(label, run)
         if actor_id == guild.owner_id:
-            async def missing(interaction):
-                from cogs.server import open_operation
-                await open_operation(interaction, 'setup', friendly=True)
-            self.action('Preview Missing Resources', missing)
             self.action('Removed Resources', self.removed_resources)
         self.action('Review Duplicate Messages', self.duplicates)
         self.action('Back to Management', self.back)
