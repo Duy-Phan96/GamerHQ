@@ -886,15 +886,20 @@ class OperationsView(RoleAdminSession):
             value = row['bulk_action']
             if value == 'choose' and self.choices.get(row['key']) == row['bulk_id']:
                 return 'reuse'
+            if value == 'reuse' and row['status'] == 'EXACT_MATCH':
+                return 'configured'
+            if value == 'skip' and not (row.get('optional') or row.get('existing_only')):
+                return 'blocked' if row.get('bulk_blocked') else 'review'
             return value
-        labels = {'create': 'Create', 'reuse': 'Reuse', 'choose': 'Choose reuse', 'skip': 'Skip'}
+        labels = {'create': 'Create', 'reuse': 'Link existing', 'choose': 'Choose reuse',
+                  'configured': 'Already configured', 'skip': 'Skip by policy',
+                  'blocked': 'Blocked by parent', 'review': 'Needs review'}
         kinds = {'category': 'categories', 'text': 'text channels', 'voice': 'voice channels',
                  'role': 'profile roles', 'bot-role': 'bot grouping roles'}
         creates = [r for r in rows if action(r) == 'create']
         lines = ['# Setup All Missing',
                  'Confirm Setup applies this entire preview. Select any offered existing channels you want to reuse.',
-                 f"Create {len(creates)} · Reuse {sum(action(r) == 'reuse' for r in rows)} · "
-                 f"Choose reuse {sum(action(r) == 'choose' for r in rows)} · Skip {sum(action(r) == 'skip' for r in rows)}",
+                 ' · '.join(f'{label} {sum(action(r) == state for r in rows)}' for state, label in labels.items()),
                  'Create by type · ' + ', '.join(f"{sum(r['kind'] == kind for r in creates)} {label}"
                                                   for kind, label in kinds.items())]
         for row in rows[self.page * 8:(self.page + 1) * 8]:
@@ -905,9 +910,9 @@ class OperationsView(RoleAdminSession):
                 allowed = [discord.utils.escape_mentions(discord.utils.escape_markdown(str(principal.name)))[:20]
                            for principal, overwrite in row['create_overwrites'].items() if overwrite.view_channel is True]
                 detail += ' · private' + (' · access ' + ', '.join(sorted(allowed)[:3]) if allowed else '')
-            if state == 'skip' and row.get('reason'):
+            if state in ('skip', 'blocked', 'review') and row.get('reason'):
                 detail += ' · ' + row['reason']
-            if state in ('reuse', 'choose') and row.get('bulk_id'):
+            if state in ('reuse', 'choose', 'configured') and row.get('bulk_id'):
                 candidate = next(item for item in row['candidates'] if item.id == row['bulk_id'])
                 detail += ' · ' + discord.utils.escape_mentions(discord.utils.escape_markdown(candidate.name))[:55]
             lines.append(f'• {name} · {detail}')
@@ -956,8 +961,9 @@ class ConfirmOperationsView(RoleAdminSession):
                                  confirmed=True, choices=self.choices)
             if self.parent.draft.get('scope') == 'bulk':
                 from io import BytesIO
-                counts = ' · '.join(f'{label.title()} {len(items)}' for label, items in result.items())
-                details = '\n\n'.join(label.title() + '\n' + '\n'.join(items) for label, items in result.items() if items)
+                sections = [(label.replace('_', ' ').title(), items) for label, items in result.items()]
+                counts = ' · '.join(f'{label} {len(items)}' for label, items in sections)
+                details = '\n\n'.join(label + '\n' + '\n'.join(items) for label, items in sections if items)
                 report = discord.File(BytesIO(details.encode()), filename='bulk-setup-results.txt')
                 await interaction.edit_original_response(content=counts, attachments=[report], view=None,
                                                          allowed_mentions=discord.AllowedMentions.none())

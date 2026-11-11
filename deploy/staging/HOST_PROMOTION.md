@@ -1,5 +1,50 @@
 # Reviewed staging Host promotion
 
+## Recovering a partially applied bulk server setup
+
+The Staging deployment of Host `c4985b0df53fffad7b83790b257368ac243c013a`
+reported `HOST_READY`, Event Manager `0.1.2`, verified backup and a passed
+restore probe in [promotion run 43042142949](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43042142949).
+The owner's subsequent setup report recorded 32 created, 15 failed and 19
+skipped. Sixteen skips named a parent dependency. Two required verification of
+existing Allgemein channels and one intentionally excluded optional gaming-chat.
+The old handler discarded exception details, so this report cannot establish
+the historical Discord status or exception for the 15 failures. All four failed
+categories and all eleven directly failed text channels take an explicit
+overwrite path. Compare the current Host role with the permissions named by the
+new preflight before assigning any additional permissions.
+
+After protected deployment, use **/server setup → Server Structure → Setup All
+Missing** on GamerHQ Staging to open a new owner-only preview. Stop at the
+preview. Compare **Already configured** against the original 32 resources
+using the current mappings and Discord inventory. If any are missing or appear
+under **Link existing**, verify the actual existing IDs before approval.
+Review **Blocked by parent** separately from **Needs review**. A permission
+preflight rejection requires a review of the exact bit and policy. Do not
+grant Administrator, remove required overwrites or open private resources to
+get past a rejection.
+
+For STAFF, SUPPORT TICKETS and AFFILIATE STATS, confirm the expected Staff
+roles and the Host access and check that @everyone is denied. Confirm the
+selected Instant Gaming bot under Server Management → Integrations before
+allowing affiliate-specific access. For server-log, verify Staff read access
+and Host posting under the existing log policy. Leave ambiguous roles, bot
+identity, or permissions unresolved until reviewed.
+
+For Allgemein, check the ID, type, current parent, absence of conflicting
+mappings, and @everyone history access (text) or Connect (voice). Select a
+verified offer only to link its ID. Use a separate placement preview for any
+move or rename. Use the full new preview for explicit owner approval before
+clicking **Confirm Setup**. Keep the Event Manager resources, managed
+messages and game catalog outside recovery.
+
+After confirmation, keep the downloadable result. A transport timeout or
+mapping-write failure may leave a Discord resource present. Open a fresh
+preview and verify its identity, mapping, parent and permissions before retry.
+Never use a prior confirmation, delete an existing resource, or create a
+replacement to resolve an ambiguous result. Share only the aggregate counts
+and sanitized resource-level error codes in GitHub.
+
 ## Managed-message Configuration Preview candidate
 
 Draft staging source [PR #240](https://github.com/Duy-Phan96/GamerHQ/pull/240)
