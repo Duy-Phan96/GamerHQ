@@ -1,5 +1,23 @@
 # Reviewed staging Host promotion
 
+## Bulk setup preview report candidate
+
+[Candidate PR #256](https://github.com/Duy-Phan96/GamerHQ/pull/256) overlays
+[Host PR #255](https://github.com/Duy-Phan96/GamerHQ/pull/255) on the
+verified Staging Host `96855865b746c214f4197b9f2808cbae1c21b7ff`.
+The exact candidate is `1539eb13cb242a765ea89130c28b0438ce8dcb48`, archive SHA256 `1faa932bc6c4878256e09444b0f2a7c8ac327a4f57bfe580d4a24baaba0b501a`.
+[Candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43081548397).
+
+Use the checksum-verified owner installer with `--bulk-preview-report --approval 'ENROLL STAGING BULK PREVIEW REPORT'`.
+It requires the current controller `b7753c60461bd4281758b66b0cb2b6d1687b22be`, the approved Staging image,
+and a clear recovery latch. Keep workflow registration and protected promotion
+separate from enrollment.
+
+After promotion, the owner opens **/server setup → Server Structure → Setup All
+Missing** in Staging and downloads the complete preview from the first
+response. Compare the configured resource IDs, reason for each review item, and
+parent blockers. Stop before **Confirm Setup**.
+
 ## Bulk setup recovery candidate
 
 [Candidate PR #252](https://github.com/Duy-Phan96/GamerHQ/pull/252) overlays
