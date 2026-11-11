@@ -49,10 +49,10 @@ async def candidates(channel, *, content, recover_match=None, require_complete=T
                    and (canonical_equal(m.content, content) or (recover_match and recover_match(m)))), key=lambda m: m.id)
 
 
-def assert_unreferenced(message_id, key, *, equivalent_keys=()):
-    """Conservatively check all runtime references, including JSON; never print data."""
-    # IDs embedded in hexadecimal fingerprints are not runtime references.
-    pattern = re.compile(r'(?<![A-Za-z0-9])' + str(message_id) + r'(?![A-Za-z0-9])')
+def runtime_reference_locations(resource_id, key, *, equivalent_keys=(), limit=1):
+    """Report where an ID is referenced without including stored values."""
+    pattern = re.compile(r'(?<![A-Za-z0-9])' + str(resource_id) + r'(?![A-Za-z0-9])')
+    locations = []
     with db.connect() as conn:
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
         for table in tables:
@@ -65,8 +65,24 @@ def assert_unreferenced(message_id, key, *, equivalent_keys=()):
                     continue
                 if table == 'managed_message_content' and data['setting_key'] == key:
                     continue
-                if any(pattern.search(str(value)) for value in data.values() if value is not None):
-                    raise ServerMessageError('MANUAL_REVIEW: message is referenced elsewhere; nothing removed or adopted.')
+                for field, value in data.items():
+                    if value is None or not pattern.search(str(value)):
+                        continue
+                    location = f'{table}.{field}'
+                    setting = data.get('key') if table == 'settings' else None
+                    if isinstance(setting, str) and re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_.:-]{0,119}', setting):
+                        location += f' ({setting})'
+                    if location not in locations:
+                        locations.append(location)
+                        if len(locations) >= limit:
+                            return locations
+    return locations
+
+
+def assert_unreferenced(message_id, key, *, equivalent_keys=()):
+    """Conservatively check all runtime references, including JSON."""
+    if runtime_reference_locations(message_id, key, equivalent_keys=equivalent_keys):
+        raise ServerMessageError('MANUAL_REVIEW: message is referenced elsewhere; nothing removed or adopted.')
 
 
 def boards(guild, bot=None, *, warnings=None):
