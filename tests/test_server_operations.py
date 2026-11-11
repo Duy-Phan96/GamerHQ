@@ -21,6 +21,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
 
     def owner(self):
         self.guild.owner_id = 42
+        self.guild.me.guild_permissions = discord.Permissions.all()
         actor = SimpleNamespace(id=42, guild_permissions=discord.Permissions(administrator=True))
         self.guild.members = [actor]
         return actor
@@ -56,7 +57,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             draft['rows'] = [r for r in draft['rows'] if r['name'] in ops.REUSE_ALIASES]
             self.assertEqual({row['bulk_action'] for row in draft['rows']}, {'choose'})
             unselected = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
-            self.assertEqual((unselected['reused'], len(unselected['skipped'])), ([], 2))
+            self.assertEqual((unselected['reused'], len(unselected['needs_review'])), ([], 2))
             choices = {row['key']: row['bulk_id'] for row in draft['rows']}
             result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True, choices=choices)
             self.assertEqual((len(result['reused']), result['created'], result['remaining']), (2, [], []))
@@ -110,7 +111,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             again = await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
             self.assertEqual(again['created'], [])
-            self.assertEqual(len(again['reused']), 6)
+            self.assertEqual(len(again['already_configured']), 6)
             self.assertEqual(len(voice_channels), 1)
             self.assertTrue(db.get_setting('managed_channel:1:community-events'))
 
@@ -134,6 +135,108 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(db.get_setting('managed_channel:1:community-events'))
         tickets = self.guild.get_channel(int(db.get_setting('managed_category:1:support-tickets')))
         self.assertIs(tickets.overwrites_for(self.guild.default_role).view_channel, False)
+
+    async def test_bulk_setup_checks_explicit_allow_and_deny_against_host_permissions(self):
+        actor = self.owner()
+        permissions = discord.Permissions.all()
+        permissions.administrator = permissions.manage_messages = permissions.create_private_threads = False
+        self.guild.me.guild_permissions = permissions
+        original = ops.definitions
+        self.guild.categories.remove(self.staff)
+        names = {'start-here', 'guide', 'staff', 'ticket-logs'}
+        with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            rows = {r['name']: r for r in draft['rows']}
+            self.assertEqual(rows['start-here']['bulk_action'], 'reuse')
+            self.assertEqual(rows['guide']['bulk_action'], 'skip')
+            self.assertIn('Create Private Threads', rows['guide']['reason'])
+            self.assertIn('Manage Messages', rows['staff']['reason'])
+            self.assertIn('STAFF', rows['ticket-logs']['reason'])
+            result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+        self.assertEqual((len(result['reused']), len(result['needs_review']), len(result['blocked'])), (1, 2, 1))
+        self.assertEqual(result['failed'], [])
+        self.assertIsNone(db.get_setting('managed_category:1:staff'))
+
+    async def test_bulk_setup_requires_verified_private_principals(self):
+        actor = self.owner()
+        self.guild.roles.remove(self.guild.mod)
+        self.guild.categories.remove(self.staff)
+        original = ops.definitions
+        names = {'staff', 'affiliate-stats'}
+        with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            self.assertTrue(all('verified Staff role' in r['reason'] for r in draft['rows']))
+            self.guild.roles.append(self.guild.mod)
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            rows = {r['name']: r for r in draft['rows']}
+            self.assertEqual(rows['staff']['bulk_action'], 'create')
+            self.assertIn('Verify the installed Instant Gaming bot', rows['affiliate-stats']['reason'])
+
+    async def test_bulk_setup_reports_sanitized_api_failures_and_resumes_from_fresh_inventory(self):
+        actor = self.owner()
+        original = ops.definitions
+        names = {'events', 'community-events', 'start-here', 'community', 'suggestions', 'guide'}
+        create_category = self.guild.create_category
+        rejected = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'),
+                                     {'code': 50013, 'message': 'private API detail'})
+        throttled = discord.HTTPException(SimpleNamespace(status=429, reason='Too Many Requests'),
+                                          {'code': 0, 'message': 'private API detail'})
+
+        async def deny_events(name, **kwargs):
+            if ops.alias(name) == 'events':
+                raise rejected
+            return await create_category(name, **kwargs)
+
+        create_channel = fixtures.FakeCategory.create_text_channel
+
+        async def rate_limit_guide(parent, name, **kwargs):
+            if ops.alias(name) == 'guide':
+                raise throttled
+            return await create_channel(parent, name, **kwargs)
+
+        with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild)
+                          if r['name'] in names and r['kind'] not in ('role', 'bot-role')]):
+            with (patch.object(self.guild, 'create_category', deny_events),
+                  patch.object(fixtures.FakeCategory, 'create_text_channel', rate_limit_guide),
+                  self.assertLogs(ops.log, level='WARNING') as logs):
+                draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+                first = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+            self.assertEqual((len(first['created']), len(first['failed']), len(first['blocked']),
+                              len(first['remaining'])), (1, 2, 1, 3))
+            self.assertTrue(any('HTTP 403, code 50013' in line for line in first['failed']))
+            self.assertTrue(any('HTTP 429' in line for line in first['failed']))
+            self.assertIn('EVENTS', first['blocked'][0])
+            self.assertNotIn('private API detail', str(first) + str(logs.output))
+            keys = ['managed_category:1:start-here', 'managed_category:1:community', 'managed_channel:1:suggestions']
+            retained = {key: db.get_setting(key) for key in keys}
+            fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            second = await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
+            self.assertEqual((len(second['created']), len(second['already_configured']), second['remaining']), (3, 3, []))
+            self.assertEqual({key: db.get_setting(key) for key in keys}, retained)
+            self.assertEqual(sum(ops.alias(c.name) == 'events' for c in self.guild.categories), 1)
+            self.assertEqual(sum(ops.alias(c.name) == 'suggestions' for c in self.guild.text_channels), 1)
+
+    async def test_bulk_setup_does_not_create_duplicate_after_mapping_write_failure(self):
+        actor = self.owner()
+        original = ops.definitions
+        persist = ops.persist
+
+        def fail_mapping(guild, row, resource):
+            if row['name'] == 'events':
+                raise ops.sqlite3.OperationalError('private storage detail')
+            return persist(guild, row, resource)
+
+        with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild)
+                          if r['kind'] == 'category' and r['name'] == 'events']):
+            with patch.object(ops, 'persist', fail_mapping):
+                draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+                first = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+            self.assertIn('save mapping after Discord creation', first['failed'][0])
+            existing = next(c for c in self.guild.categories if ops.alias(c.name) == 'events')
+            fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            second = await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
+            self.assertEqual((len(second['reused']), second['created'], second['remaining']), (1, [], []))
+            self.assertEqual(db.get_setting('managed_category:1:events'), str(existing.id))
 
     async def test_bulk_setup_skips_changed_private_permissions_and_protected_matches(self):
         actor = self.owner()

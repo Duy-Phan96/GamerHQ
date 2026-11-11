@@ -36,8 +36,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
+          missing=()
+          for package in openssh-server uidmap dbus-user-session acl slirp4netns; do
+            if [[ $(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
+              missing+=("$package")
+            fi
+          done
+          if ((${#missing[@]})); then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${missing[@]}"
+          fi
+          if ! command -v rootlesskit >/dev/null; then
+            # RootlessKit v2.0.2 matches the runner's Ubuntu package version.
+            upstream=https://github.com/rootless-containers/rootlesskit/releases/download/v2.0.2
+            kit=$(mktemp -d)
+            (
+              cd "$kit"
+              curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 60 -o SHA256SUMS "$upstream/SHA256SUMS"
+              echo 'b1e3afe86589cffe1ffa8e5978922df28924637c62ba08ffb8c9fb41231494e9  SHA256SUMS' | sha256sum --check --strict
+              curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 90 -o rootlesskit-x86_64.tar.gz "$upstream/rootlesskit-x86_64.tar.gz"
+              grep -E '^[a-f0-9]{64}  rootlesskit-x86_64\.tar\.gz$' SHA256SUMS | sha256sum --check --strict
+              tar -xzf rootlesskit-x86_64.tar.gz -- rootlesskit rootlessctl rootlesskit-docker-proxy
+              # Ubuntu's existing AppArmor profile matches /usr/bin/rootlesskit.
+              sudo install -m 0755 rootlesskit rootlessctl rootlesskit-docker-proxy /usr/bin/
+            )
+          fi
+          rootlesskit --version
           sudo systemctl start ssh
           sudo mkdir -p /opt/gamerhq/data
           printf 'synthetic production sentinel\n' | sudo tee /opt/gamerhq/data/production-fixture >/dev/null
@@ -130,7 +154,7 @@ jobs:
           python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl
 
   staging-bulk-setup-archive:
-    if: github.event_name == 'pull_request' && github.head_ref == 'staging/bulk-structure-setup' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.head_ref == 'staging/bulk-setup-recovery' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -147,5 +171,5 @@ jobs:
           set -euo pipefail
           [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$REVIEWED_COMMIT"
-          git archive --format=tar --output="$RUNNER_TEMP/staging-bulk-structure-setup.tar" "$REVIEWED_COMMIT"
-          sha256sum "$RUNNER_TEMP/staging-bulk-structure-setup.tar"
+          git archive --format=tar --output="$RUNNER_TEMP/staging-bulk-setup-recovery.tar" "$REVIEWED_COMMIT"
+          sha256sum "$RUNNER_TEMP/staging-bulk-setup-recovery.tar"
