@@ -36,8 +36,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
+          apt_source=()
+          if ! timeout 5s getent ahosts security.ubuntu.com >/dev/null; then
+            echo 'Runner mirror DNS unavailable; using the signed Ubuntu archive for this job.'
+            . /etc/os-release
+            source_list="$RUNNER_TEMP/staging-ubuntu.list"
+            printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu %s main restricted universe multiverse\n' \
+              "$VERSION_CODENAME" "$VERSION_CODENAME-updates" "$VERSION_CODENAME-security" > "$source_list"
+            apt_source=(-o "Dir::Etc::sourcelist=$source_list" -o 'Dir::Etc::sourceparts=-')
+          fi
+          sudo apt-get "${apt_source[@]}" update -qq
+          sudo apt-get "${apt_source[@]}" install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
           sudo systemctl start ssh
           sudo mkdir -p /opt/gamerhq/data
           printf 'synthetic production sentinel\n' | sudo tee /opt/gamerhq/data/production-fixture >/dev/null
