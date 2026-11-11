@@ -26,8 +26,8 @@ jobs:
             python3 -m tools.staging_rhel_smoke
           '
   staging-access:
-    # Use the LTS hosted image for repeatable rootless package provisioning.
-    runs-on: ubuntu-24.04
+    # This provisions only the disposable hosted runner, never the GamerHQ VPS.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Test owner preparation and restricted SSH on disposable runner
