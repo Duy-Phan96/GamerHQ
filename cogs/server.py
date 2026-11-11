@@ -763,7 +763,7 @@ async def open_operation(interaction, mode, *, replace=False, friendly=False, sc
     try:
         draft = await preview(interaction.guild, interaction.user, mode, interaction.client, scope=scope)
         view = OperationsView(interaction.guild, draft, interaction.client, friendly=friendly)
-        await interaction.edit_original_response(content=view.text(), view=view, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.edit_original_response(**view.preview_message(include_report=True))
     except TimeoutError:
         await interaction.edit_original_response(content='Checks could not finish while Discord was busy. Nothing was changed; open a fresh preview later.', view=None)
     except (ServerMessageError, discord.HTTPException) as exc:
@@ -802,7 +802,7 @@ class CandidateChoice(discord.ui.Select):
 
     async def callback(self, interaction):
         self.view.parent.choices[self.view.row['key']] = int(self.values[0])
-        await interaction.response.edit_message(content=self.view.parent.text(), view=self.view.parent)
+        await interaction.response.edit_message(**self.view.parent.preview_message(include_report=True))
         self.view.stop()
 
 
@@ -819,7 +819,7 @@ class MappingChoiceView(RoleAdminSession):
     @discord.ui.button(label='Ignore for now')
     async def ignore(self, interaction, button):
         self.parent.choices[self.row['key']] = 0
-        await interaction.response.edit_message(content=self.parent.text(), view=self.parent)
+        await interaction.response.edit_message(**self.parent.preview_message(include_report=True))
         self.stop()
 
     @discord.ui.button(label='Cancel')
@@ -833,12 +833,33 @@ class OperationsView(RoleAdminSession):
     def __init__(self, guild, draft, bot, *, friendly=False):
         super().__init__(timeout=240)
         self.guild, self.admin_id, self.draft, self.bot = guild, draft['actor_id'], draft, bot
-        self.page, self.choices, self.finished = 0, {}, False
+        self.bulk = draft.get('scope') == 'bulk'
+        self.page, self.choices, self.finished = (None if self.bulk else 0), {}, False
         self.friendly = friendly
-        self.page_size = 6 if draft.get('scope') == 'bulk' else 8
-        if draft.get('scope') == 'bulk':
+        self.page_size = 6 if self.bulk else 8
+        if self.bulk:
             self.confirm_preview.label = 'Confirm Setup'
         self.refresh_choices()
+
+    @property
+    def page_count(self):
+        return max(1, (len(self.draft['rows']) + self.page_size - 1) // self.page_size)
+
+    def page_rows(self):
+        start = self.page * self.page_size
+        return self.draft['rows'][start:start + self.page_size]
+
+    def preview_message(self, *, include_report=False):
+        from services.server_operations import bulk_decision, bulk_preview_report
+        payload = {'content': self.text(), 'view': self, 'allowed_mentions': discord.AllowedMentions.none()}
+        if self.bulk:
+            self.confirm_preview.disabled = not any(
+                bulk_decision(row, self.choices) in ('create', 'reuse') for row in self.draft['rows'])
+            if include_report:
+                from io import BytesIO
+                report = bulk_preview_report(self.draft, self.choices)
+                payload['attachments'] = [discord.File(BytesIO(report.encode('utf-8')), filename='bulk-setup-preview.txt')]
+        return payload
 
     async def interaction_check(self, interaction):
         if self.finished:
@@ -849,17 +870,22 @@ class OperationsView(RoleAdminSession):
     def refresh_choices(self):
         for child in list(self.children):
             if isinstance(child, ResourceChoice): self.remove_item(child)
-        rows = [r for r in self.draft['rows'][self.page * self.page_size:(self.page + 1) * self.page_size] if r['candidates'] and r['status'] != 'EXACT_MATCH']
-        if self.draft.get('scope') == 'bulk':
-            rows = [row for row in rows if row['bulk_action'] == 'choose']
-            if rows:
-                self.add_item(ResourceChoice(rows, self.friendly))
-        elif self.draft['mode'] == 'reconcile' and rows:
+        if self.bulk:
+            rows = [row for row in self.draft['rows'] if row['bulk_action'] == 'choose']
+            if self.page is None:
+                self.next_page.label = 'Browse details'
+            else:
+                self.next_page.label = 'Back to summary' if self.page + 1 == self.page_count else 'Next Page'
+        elif self.draft['mode'] == 'reconcile':
+            rows = [row for row in self.page_rows() if row['candidates'] and row['status'] != 'EXACT_MATCH']
+        else:
+            return
+        if rows:
             self.add_item(ResourceChoice(rows, self.friendly))
 
     def text(self):
         mode = self.draft['mode']
-        if self.draft.get('scope') == 'bulk':
+        if self.bulk:
             return self.bulk_text()
         if self.friendly:
             from cogs.server_management import friendly_plan
@@ -873,40 +899,33 @@ class OperationsView(RoleAdminSession):
                   'AMBIGUOUS': 'Needs your review', 'MISSING': 'Not found', 'STALE': 'Stored resource no longer found'}
         counts = {status: sum(r['status'] == status for r in self.draft['rows']) for status in ('EXACT_MATCH', 'SAFE_ADOPTION', 'AMBIGUOUS', 'MISSING', 'STALE')}
         lines.append(' · '.join(f'{labels[k]}: {v}' for k, v in counts.items()))
-        for row in self.draft['rows'][self.page*8:(self.page+1)*8]:
+        for row in self.page_rows():
             state = labels[row['status']]
             if mode == 'repair' and needs_repair(self.guild, row): state = 'Repair name/placement/order/permissions/pin/content'
             selected = f" → {self.choices[row['key']] or 'ignored'}" if row['key'] in self.choices else ''
             lines.append(f"• {discord.utils.escape_markdown(row['label'])[:75]}: {state}{selected}")
-        lines.append(f"Page {self.page+1}/{max(1,(len(self.draft['rows']) + self.page_size - 1) // self.page_size)}. Review pages/matches, then Preview Changes. Safe single matches are linked only on confirmation.")
+        lines.append(f"Page {self.page+1}/{self.page_count}. Review pages/matches, then Preview Changes. Safe single matches are linked only on confirmation.")
         return '\n'.join(lines)[:1950]
 
     def bulk_text(self):
+        from services.server_operations import BULK_DECISIONS, bulk_decision
         rows = self.draft['rows']
-        def action(row):
-            value = row['bulk_action']
-            if value == 'choose' and self.choices.get(row['key']) == row['bulk_id']:
-                return 'reuse'
-            if value == 'reuse' and row['status'] == 'EXACT_MATCH':
-                return 'configured'
-            if value == 'skip' and not (row.get('optional') or row.get('existing_only')):
-                return 'blocked' if row.get('bulk_blocked') else 'review'
-            return value
-        labels = {'create': 'Create', 'reuse': 'Link existing', 'choose': 'Choose reuse',
-                  'configured': 'Already configured', 'skip': 'Skip by policy',
-                  'blocked': 'Blocked by parent', 'review': 'Needs review'}
+        decisions = [bulk_decision(row, self.choices) for row in rows]
         kinds = {'category': 'categories', 'text': 'text channels', 'voice': 'voice channels',
                  'role': 'profile roles', 'bot-role': 'bot grouping roles'}
-        creates = [r for r in rows if action(r) == 'create']
+        creates = [row for row, decision in zip(rows, decisions) if decision == 'create']
         lines = ['# Setup All Missing',
-                 'Confirm Setup applies this entire preview. Select any offered existing channels you want to reuse.',
-                 ' · '.join(f'{label} {sum(action(r) == state for r in rows)}' for state, label in labels.items()),
+                 'Download **bulk-setup-preview.txt** for every resource, reason, dependency, and verified ID.',
+                 ' · '.join(f'{label} {decisions.count(state)}' for state, label in BULK_DECISIONS.items()),
                  'Create by type · ' + ', '.join(f"{sum(r['kind'] == kind for r in creates)} {label}"
                                                   for kind, label in kinds.items())]
-        for row in rows[self.page * self.page_size:(self.page + 1) * self.page_size]:
-            state = action(row)
+        if self.page is None:
+            lines.append('Review the complete preview before confirming. Use the selector for any offered existing channels.')
+            return '\n'.join(lines)
+        for row in self.page_rows():
+            state = bulk_decision(row, self.choices)
             name = discord.utils.escape_mentions(discord.utils.escape_markdown(row['label']))[:75]
-            detail = labels[state]
+            detail = BULK_DECISIONS[state]
             if state == 'create' and row.get('private'):
                 allowed = [discord.utils.escape_mentions(discord.utils.escape_markdown(str(principal.name)))[:20]
                            for principal, overwrite in row['create_overwrites'].items() if overwrite.view_channel is True]
@@ -918,14 +937,19 @@ class OperationsView(RoleAdminSession):
                 detail += ' · ' + discord.utils.escape_mentions(discord.utils.escape_markdown(candidate.name))[:40]
                 detail += f' · ID `{candidate.id}`'
             lines.append(f'• {name} · {detail}')
-        lines.append(f'Page {self.page + 1}/{max(1, (len(rows) + self.page_size - 1) // self.page_size)}')
+        lines.append(f'Page {self.page + 1}/{self.page_count}')
         return '\n'.join(lines)[:1950]
 
     @discord.ui.button(label='Next Page')
     async def next_page(self, interaction, button):
-        self.page = (self.page + 1) % max(1, (len(self.draft['rows'])+7)//8)
+        if self.page is None:
+            self.page = 0
+        else:
+            self.page = (self.page + 1) % self.page_count
+            if self.bulk and self.page == 0:
+                self.page = None
         self.refresh_choices()
-        await interaction.response.edit_message(content=self.text(), view=self)
+        await interaction.response.edit_message(**self.preview_message())
 
     @discord.ui.button(label='Preview Changes', style=discord.ButtonStyle.primary)
     async def confirm_preview(self, interaction, button):

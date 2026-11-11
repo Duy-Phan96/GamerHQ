@@ -626,7 +626,7 @@ def bulk_plan(guild, rows, member):
                     parent = reviewed.get(row['parent'])
                     if row['parent'] and (not parent or parent['bulk_action'] != 'reuse'
                                           or match.category_id != parent.get('bulk_id')):
-                        raise ServerMessageError('Existing private parent needs review')
+                        raise BulkPolicyError('Existing private parent mapping or placement needs review')
                     if match.overwrites_for(guild.default_role).view_channel is not False:
                         raise BulkPolicyError('Existing private resource needs an explicit @everyone view deny')
                     policy = setup_policy(guild, row, row.get('destination'))
@@ -634,7 +634,7 @@ def bulk_plan(guild, rows, member):
                     allowed = {principal.id for principal, overwrite in policy.items() if overwrite.view_channel is True}
                     if any(overwrite.view_channel is True and principal.id not in allowed
                            for principal, overwrite in match.overwrites.items()):
-                        raise ServerMessageError('Existing private resource has additional access grants')
+                        raise BulkPolicyError('Existing private resource grants access outside the reviewed policy')
             except BulkPolicyError as exc:
                 row['reason'] = str(exc)
                 continue
@@ -648,6 +648,18 @@ def bulk_plan(guild, rows, member):
                 row.update(bulk_action='choose', bulk_id=match.id)
                 continue
         if status != 'MISSING' or candidates:
+            if not row.get('reason'):
+                if status == 'STALE' or row['raw'] and row['resource'] is None:
+                    row['reason'] = 'Saved resource ID could not be verified in the current inventory'
+                elif len(candidates) > 1:
+                    row['reason'] = 'Multiple existing candidates need an explicit ownership review'
+                elif candidates and not row['safe']:
+                    row['reason'] = ('Existing role is outside the Host hierarchy or has an unsafe assignment'
+                                     if role else 'Existing resource visibility conflicts with its intended policy')
+                elif candidates:
+                    row['reason'] = 'Existing resource placement or ownership could not be verified'
+                else:
+                    row['reason'] = 'Saved resource or destination needs review'
             continue
         if role:
             if permissions.manage_roles:
@@ -655,8 +667,11 @@ def bulk_plan(guild, rows, member):
             else:
                 row['reason'] = 'GamerHQ needs Manage Roles'
             continue
-        if not permissions.manage_channels or (row.get('private') and not permissions.manage_roles):
-            row['reason'] = 'GamerHQ needs permissions to create this resource'
+        if not permissions.manage_channels:
+            row['reason'] = 'Host lacks Manage Channels'
+            continue
+        if row.get('private') and not permissions.manage_roles:
+            row['reason'] = 'Host lacks Manage Roles for this private resource'
             continue
         parent = reviewed.get(row['parent'])
         if row['parent'] and (not parent or parent['bulk_action'] not in ('reuse', 'create')
@@ -685,6 +700,80 @@ def bulk_plan(guild, rows, member):
         row['signature'].append(('bulk-policy', policy_signature(row['create_overwrites'])))
         row['bulk_action'] = 'create'
     return rows
+
+
+BULK_DECISIONS = {
+    'create': 'Create',
+    'reuse': 'Link existing',
+    'choose': 'Choose reuse',
+    'configured': 'Already configured',
+    'skip': 'Skip by policy',
+    'blocked': 'Blocked by parent',
+    'review': 'Needs review',
+}
+
+
+def bulk_decision(row, choices):
+    action = row['bulk_action']
+    if action == 'choose' and choices.get(row['key']) == row['bulk_id']:
+        return 'reuse'
+    if action == 'reuse' and row['status'] == 'EXACT_MATCH':
+        return 'configured'
+    if action == 'skip' and not (row.get('optional') or row.get('existing_only')):
+        return 'blocked' if row.get('bulk_blocked') else 'review'
+    return action
+
+
+def bulk_preview_report(draft, choices):
+    """Serialize the existing owner-only preview without making another Discord request."""
+    if draft.get('scope') != 'bulk' or draft['mode'] != 'setup':
+        raise ValueError('Bulk setup preview required')
+
+    def single_line(value):
+        return ' '.join(str(value).split())
+
+    rows = draft['rows']
+    by_key = {row['key']: row for row in rows}
+    decisions = [bulk_decision(row, choices) for row in rows]
+    lines = [
+        'GamerHQ Setup All Missing — read-only preview',
+        f"Guild ID {draft['guild_id']} · {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(draft['created']))}",
+        f'{len(rows)} resource decisions. Confirmation requires a fresh preview and revalidation.',
+        ' · '.join(f'{label}: {decisions.count(key)}' for key, label in BULK_DECISIONS.items()),
+    ]
+    for number, (row, decision) in enumerate(zip(rows, decisions), 1):
+        lines.extend(('', f"{number}. [{BULK_DECISIONS[decision]}] {single_line(row['label'])} ({row['kind']})",
+                      f"   Inventory status: {row['status']}"))
+        if row.get('reason') and decision in ('review', 'blocked', 'skip', 'choose'):
+            lines.append(f"   Reason: {single_line(row['reason'])}")
+        if decision == 'choose' and choices.get(row['key']) == 0:
+            lines.append('   Existing channel left unselected for this preview.')
+        if row.get('raw'):
+            mapped_id = str(row['raw'])
+            lines.append(f"   Saved ID: {mapped_id if mapped_id.isdecimal() else 'invalid saved value'}")
+        if row.get('bulk_id') and decision in ('reuse', 'configured'):
+            lines.append(f"   Verified resource ID: {row['bulk_id']}")
+        if row.get('parent'):
+            parent = by_key.get(row['parent'])
+            if parent:
+                parent_decision = bulk_decision(parent, choices)
+                lines.append(f"   Parent: {single_line(parent['label'])} [{BULK_DECISIONS[parent_decision]}]")
+                if parent.get('bulk_id'):
+                    lines.append(f"   Verified parent ID: {parent['bulk_id']}")
+                if decision == 'blocked' and parent.get('reason'):
+                    lines.append(f"   Parent reason: {single_line(parent['reason'])}")
+            else:
+                lines.append('   Parent: missing from this plan; review the saved destination.')
+        for candidate in sorted(row['candidates'], key=lambda item: item.id):
+            verified = 'verified for reuse' if candidate.id == row.get('bulk_id') else 'unverified for reuse'
+            label = single_line(getattr(candidate, 'name', row['label']))
+            location = getattr(candidate, 'category_id', None)
+            lines.append(f'   Candidate: {label} · ID {candidate.id} · {verified}'
+                         + (f' · current category ID {location}' if location else ''))
+        if decision == 'create' and row.get('private'):
+            grants = sum(overwrite.view_channel is True for overwrite in row['create_overwrites'].values())
+            lines.append(f'   Private policy: @everyone view denied; {grants} verified access grants.')
+    return '\n'.join(lines) + '\n'
 
 
 def confirmed_setup_policy(row, added_roles, parent=None):

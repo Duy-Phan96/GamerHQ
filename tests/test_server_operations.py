@@ -43,6 +43,82 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.confirm_preview.label, 'Confirm Setup')
         self.assertIn('Create by type', view.text())
 
+    async def test_bulk_setup_initial_response_attaches_complete_read_only_preview(self):
+        from cogs import server
+
+        actor = self.owner()
+        interaction = SimpleNamespace(guild=self.guild, user=actor, client=self.bot,
+                                      response=SimpleNamespace(defer=AsyncMock()),
+                                      edit_original_response=AsyncMock())
+        original = ops.definitions
+        names = {'staff', 'staff-chat', 'affiliate-stats', 'ig-purchases', 'gaming-chat'}
+        self.guild.roles.remove(self.guild.mod)
+        self.guild.categories.remove(self.staff)
+        with (patch.object(server, 'check_admin', AsyncMock(return_value=True)),
+              patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]),
+              patch.object(ops, 'apply', AsyncMock(side_effect=AssertionError('write operation'))),
+              patch.object(ops, 'inspect_message', AsyncMock(side_effect=AssertionError('message inventory')))):
+            await server.open_operation(interaction, 'setup', scope='bulk', friendly=True)
+
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        payload = interaction.edit_original_response.await_args.kwargs
+        self.assertIsNone(payload['view'].page)
+        self.assertTrue(payload['view'].confirm_preview.disabled)
+        self.assertIn('Needs review 2', payload['content'])
+        self.assertIn('Blocked by parent 2', payload['content'])
+        self.assertNotIn('Page 1/', payload['content'])
+        (file,) = payload['attachments']
+        self.assertEqual(file.filename, 'bulk-setup-preview.txt')
+        report = file.fp.read().decode()
+        self.assertIn('5 resource decisions', report)
+        self.assertIn('No verified Staff role', report)
+        self.assertIn('Parent: 🔒 STAFF [Needs review]', report)
+        self.assertIn('Parent: 🔒 AFFILIATE STATS [Needs review]', report)
+        self.assertIn('[Skip by policy] 💬・gaming-chat', report)
+        self.assertIsNone(db.get_setting('managed_category:1:staff'))
+
+    async def test_bulk_setup_optional_pages_include_every_resource_and_return_to_summary(self):
+        from cogs.server import OperationsView
+
+        actor = self.owner()
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        view = OperationsView(self.guild, draft, self.bot)
+        interaction = SimpleNamespace(response=SimpleNamespace(edit_message=AsyncMock()))
+        self.assertEqual(view.next_page.label, 'Browse details')
+        visited = []
+        for page in range(view.page_count):
+            await view.next_page.callback(interaction)
+            self.assertEqual(view.page, page)
+            self.assertIn(f'Page {page + 1}/{view.page_count}', view.text())
+            visited.extend(view.page_rows())
+        self.assertEqual(visited, draft['rows'])
+        self.assertEqual(view.next_page.label, 'Back to summary')
+        await view.next_page.callback(interaction)
+        self.assertIsNone(view.page)
+
+    async def test_bulk_setup_attachment_tracks_explicit_localized_choice_and_preserves_ids(self):
+        from cogs.server import OperationsView, ResourceChoice
+
+        actor = self.owner()
+        category = self.guild.add_category('Textkanäle')
+        text = self.guild.add_channel('Allgemein', category)
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        row = next(r for r in draft['rows'] if r['name'] == 'general')
+        draft['rows'] = [row]
+        view = OperationsView(self.guild, draft, self.bot)
+        self.assertTrue(any(isinstance(item, ResourceChoice) for item in view.children))
+        first = view.preview_message(include_report=True)['attachments'][0].fp.read().decode()
+        self.assertIn('[Choose reuse]', first)
+        self.assertIn(f'Candidate: Allgemein · ID {text.id} · verified for reuse', first)
+        self.assertTrue(view.confirm_preview.disabled)
+        view.choices[row['key']] = text.id
+        second = view.preview_message(include_report=True)['attachments'][0].fp.read().decode()
+        self.assertIn('[Link existing]', second)
+        self.assertIn(f'Verified resource ID: {text.id}', second)
+        self.assertFalse(view.confirm_preview.disabled)
+        self.assertEqual(text.edits, [])
+        self.assertIsNone(db.get_setting(row['key']))
+
     async def test_bulk_setup_reuses_local_defaults_only_with_explicit_choice(self):
         actor = self.owner()
         default_text = self.guild.add_category('Textkanäle')
