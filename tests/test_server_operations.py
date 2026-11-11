@@ -125,7 +125,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
                 raise TimeoutError
             return await create_category(name, **kwargs)
 
-        with (patch.object(ops, 'definitions', lambda guild: [row for row in original(guild) if row['name'] in names]),
+        with (patch.object(ops, 'definitions', lambda guild: [row for row in original(guild)
+                    if row['name'] in names and row['kind'] not in ('role', 'bot-role')]),
               patch.object(self.guild, 'create_category', sometimes_fail)):
             draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
