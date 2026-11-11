@@ -154,7 +154,7 @@ jobs:
           python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl
 
   staging-bulk-setup-archive:
-    if: github.event_name == 'pull_request' && github.head_ref == 'staging/bulk-setup-preview-report' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.head_ref == 'staging/bulk-setup-permission-blockers' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -171,5 +171,5 @@ jobs:
           set -euo pipefail
           [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$REVIEWED_COMMIT"
-          git archive --format=tar --output="$RUNNER_TEMP/staging-bulk-setup-preview-report.tar" "$REVIEWED_COMMIT"
-          sha256sum "$RUNNER_TEMP/staging-bulk-setup-preview-report.tar"
+          git archive --format=tar --output="$RUNNER_TEMP/staging-bulk-setup-permission-blockers.tar" "$REVIEWED_COMMIT"
+          sha256sum "$RUNNER_TEMP/staging-bulk-setup-permission-blockers.tar"
