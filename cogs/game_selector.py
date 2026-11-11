@@ -102,22 +102,18 @@ class GameSelectionSession(SafeView):
         if self.busy or game_id not in self.role_ids:
             return await interaction.response.send_message('Please wait, then choose a game again.', ephemeral=True)
         self.busy = True
-        await interaction.response.defer()
         try:
-            from database import db
-            game = db.get_game_by_id(game_id)
-            if not game or not game['active'] or not game['selectable']:
-                raise ValueError('Game is no longer selectable')
-            # Explicit desired state makes stale double delivery idempotent. The shared
-            # role service refreshes this member and checks ownership and hierarchy.
-            enabled = game_id not in self.selected
-            await set_game_selection(interaction.user, [(game_id, self.role_ids[game_id], enabled, False)])
+            await interaction.response.defer()
+            try:
+                # Explicit desired state makes stale double delivery idempotent.
+                enabled = game_id not in self.selected
+                await set_game_selection(interaction.user, [(game_id, self.role_ids[game_id], enabled, False)])
+            except (ValueError, discord.HTTPException) as exc:
+                log.warning('Personal game unavailable: guild=%s game=%s reviewed_role=%s error=%s',
+                            self.guild_id, game_id, self.role_ids[game_id], type(exc).__name__)
+                return await interaction.followup.send('This game is temporarily unavailable.', ephemeral=True)
             (self.selected.add if enabled else self.selected.discard)(game_id)
             self.rebuild()
             await interaction.edit_original_response(content=self.status_text(), view=self)
-        except (ValueError, discord.HTTPException) as exc:
-            log.warning('Personal game unavailable: guild=%s game=%s reviewed_role=%s error=%s',
-                        self.guild_id, game_id, self.role_ids[game_id], type(exc).__name__)
-            await interaction.followup.send('This game is temporarily unavailable.', ephemeral=True)
         finally:
             self.busy = False

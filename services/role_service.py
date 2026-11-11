@@ -20,7 +20,7 @@ def assignable(role, guild):
 
 def game_role(guild, game_id, expected_role_id, *, selectable_only=True):
     """Resolve only the reviewed, currently selectable game-access mapping."""
-    games = db.get_selectable_games() if selectable_only else db.get_all_games()
+    games = db.get_selector_games() if selectable_only else db.get_all_games()
     game = next((g for g in games if g['id'] == game_id), None)
     role = guild.get_role(int(game['role_id'])) if game and game.get('role_id') else None
     if not assignable(role, guild) or role.id != expected_role_id:

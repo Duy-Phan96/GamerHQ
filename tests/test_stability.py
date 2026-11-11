@@ -238,6 +238,27 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
                 await game_service.refresh_choose_games_message(bot)
         bot.get_channel.assert_not_called()
 
+    async def test_refresh_edits_legacy_intro_in_place_and_preserves_history(self):
+        intro = message(1, '# 🎮 Choose Your Games\n\n**Game Buttons**\nBrowse categories.\n\n**LFG Notifications**',
+                        games_cog.ChooseGamesButtons())
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild.me.id = 99
+        channel.send = AsyncMock()
+
+        async def history(**kwargs):
+            yield intro
+
+        channel.history = history
+        with patch.object(game_service, 'CHOOSE_GAMES_CHANNEL_ID', 1), patch.object(db, 'get_setting', return_value=None), \
+                patch.object(db, 'set_setting') as store, patch.object(game_service, 'cleanup_pin_system_messages', new_callable=AsyncMock):
+            await game_service.refresh_choose_games_message(SimpleNamespace(get_channel=lambda _: channel),
+                view=games_cog.GameCategoryView, intro_view=games_cog.ChooseGamesButtons)
+        channel.send.assert_not_awaited()
+        intro.delete.assert_not_awaited()
+        intro.edit.assert_awaited_once()
+        self.assertEqual(intro.edit.call_args.kwargs['content'], game_service.build_choose_games_message())
+        store.assert_any_call('choose_games_message_id', '1')
+
     async def test_refresh_reuses_history_and_edits_only_changed_section(self):
         for changed in (False, True):
             with self.subTest(changed=changed):

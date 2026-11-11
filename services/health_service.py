@@ -1,5 +1,6 @@
 """Read-only acceptance diagnostics over existing mappings; never creates or repairs."""
 from dataclasses import dataclass
+from collections import Counter
 import sqlite3
 import time
 import discord
@@ -366,10 +367,24 @@ async def _scan(guild, bot=None, *, messages=True):
             add('Legacy game resources', 'MANUAL_REVIEW', f'Game {game["id"]}: retained migration hints; preview migration in /server dev. No automatic deletion.')
     for current, ordered in game_channels.order_plan(guild):
         add('Game channel order', 'PASS' if current == ordered else 'REPAIRABLE', 'Dedicated game channels use alphabetical order.')
+    from services.role_service import assignable
+    role_uses = Counter(game['role_id'] for game in games if game.get('role_id'))
+    reserved_roles = {int(row['role_id']) for row in db.get_managed_roles()}
+    usable_games = 0
     mapped=set()
     for game in games:
-        if game.get('selectable') and not game.get('role_id'): add('Game role','MANUAL_REVIEW',f'Game {game["id"]}: visible game has no role mapping.')
-        if game.get('role_id') and not guild.get_role(game['role_id']): add('Game role','MANUAL_REVIEW',f'Game {game["id"]}: mapped role missing.')
+        role_id = game.get('role_id')
+        role = guild.get_role(role_id) if role_id else None
+        visible = bool(game.get('active') and game.get('selectable'))
+        name = discord.utils.escape_mentions(game['name'])
+        if (visible or role_id) and role is None:
+            add('Game role', 'MANUAL_REVIEW', f'{name}: role mapping is missing. Review the game in Manage Visible Games.')
+        elif visible and (role_uses[role_id] > 1 or role_id in reserved_roles):
+            add('Game role', 'MANUAL_REVIEW', f'{name}: role is shared with another game or preference. Review the mapping.')
+        elif visible and not assignable(role, guild):
+            add('Game role', 'MANUAL_REVIEW', f'{name}: the bot cannot safely assign this role. Review its permissions and hierarchy.')
+        elif visible:
+            usable_games += 1
         cid=game.get('category_id')
         if cid:
             if cid in mapped: add('Game Area duplicate','MANUAL_REVIEW',f'Category {cid} is mapped to multiple games.')
@@ -379,6 +394,9 @@ async def _scan(guild, bot=None, *, messages=True):
                 ch=guild.get_channel(game[field]) if game.get(field) else None
                 if game.get(field) and (not ch or ch.category_id!=cid): add('Game Area mapping','MANUAL_REVIEW',f'Game {game["id"]}: {field} missing/moved.')
         elif game.get('area_enabled'): add('Game Area','MANUAL_REVIEW',f'Game {game["id"]}: enabled area lacks category ID.')
+    add('Game selector roles', 'PASS' if usable_games else 'MANUAL_REVIEW',
+        f'{usable_games} games have a usable role in the server cache.' if usable_games else
+        'Members cannot choose a game yet. Review game visibility and role mappings in Manage Visible Games.')
     if not any(f.name.startswith('Game') and f.state!='PASS' for f in findings): add('Game Areas','PASS',f'{len(mapped)} area mappings checked.')
     known_categories={'gaming','start-here','community','events','staff','staff-area','moderators','moderator','mods','mod','team','streamers','gamerhq-streamers','voice-channels','support-gamerhq','support-tickets','partners-benefits','marketplace'}
     unknown=[c for c in guild.categories if c.id not in mapped and alias(c.name) not in known_categories]
