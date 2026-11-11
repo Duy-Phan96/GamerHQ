@@ -56,17 +56,122 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apt_source=()
-          if ! timeout 5s getent ahosts security.ubuntu.com >/dev/null; then
-            echo 'Runner mirror DNS unavailable; using the signed Ubuntu archive for this job.'
-            . /etc/os-release
-            source_list="$RUNNER_TEMP/staging-ubuntu.list"
-            printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu %s main restricted universe multiverse\n' \
-              "$VERSION_CODENAME" "$VERSION_CODENAME-updates" "$VERSION_CODENAME-security" > "$source_list"
-            apt_source=(-o "Dir::Etc::sourcelist=$source_list" -o 'Dir::Etc::sourceparts=-')
+          missing=()
+          for package in openssh-server uidmap dbus-user-session acl slirp4netns; do
+            if [[ $(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
+              missing+=("$package")
+            fi
+          done
+          if ((${#missing[@]})); then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${missing[@]}"
           fi
-          sudo apt-get "${apt_source[@]}" update -qq
-          sudo apt-get "${apt_source[@]}" install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
+          if ! command -v rootlesskit >/dev/null; then
+            # RootlessKit v2.0.2 matches the runner's Ubuntu package version.
+            upstream=https://github.com/rootless-containers/rootlesskit/releases/download/v2.0.2
+            kit=$(mktemp -d)
+            (
+              cd "$kit"
+              curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 60 -o SHA256SUMS "$upstream/SHA256SUMS"
+              echo 'b1e3afe86589cffe1ffa8e5978922df28924637c62ba08ffb8c9fb41231494e9  SHA256SUMS' | sha256sum --check --strict
+              curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 90 -o rootlesskit-x86_64.tar.gz "$upstream/rootlesskit-x86_64.tar.gz"
+              grep -E '^[a-f0-9]{64}  rootlesskit-x86_64\.tar\.gz
+          sudo systemctl start ssh
+          sudo mkdir -p /opt/gamerhq/data
+          printf 'synthetic production sentinel\n' | sudo tee /opt/gamerhq/data/production-fixture >/dev/null
+          sudo chmod 755 /opt/gamerhq /opt/gamerhq/data
+          sudo chmod 644 /opt/gamerhq/data/production-fixture
+          docker run -d --name gamerhq-production-fixture alpine:3.21 sleep 1200
+          docker inspect --format '{{.Id}}' gamerhq-production-fixture > /tmp/production-fixture-id
+          ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-ci-key
+          commit="$REVIEWED_COMMIT"
+          sudo python3 -m tools.prepare_staging_access --commit "$commit" --public-key-file /tmp/staging-ci-key.pub
+          git fetch origin "$commit"
+          python3 -m tools.bootstrap_command --commit "$commit" --public-key-file /tmp/staging-ci-key.pub --output /tmp/verified-staging-bootstrap.sh
+          sudo bash /tmp/verified-staging-bootstrap.sh
+          sudo bash /tmp/verified-staging-bootstrap.sh
+          sudo env GITHUB_ACTIONS=true python3 -m tools.staging_access_smoke --key /tmp/staging-ci-key
+      - name: Inspect disposable rootless fixture failure without credentials
+        if: failure()
+        shell: bash
+        run: |
+          if id gamerhq-staging-bridge >/dev/null 2>&1; then
+            uid=$(id -u gamerhq-staging-bridge)
+            sudo journalctl --no-pager -u "user@$uid.service" -n 60
+            sudo systemctl show "user@$uid.service" -p User -p ProtectSystem -p ReadWritePaths -p InaccessiblePaths -p MainPID
+            manager=$(sudo systemctl show "user@$uid.service" -p MainPID --value)
+            if [[ "$manager" != 0 ]]; then
+              sudo nsenter -t "$manager" -m -- stat -c '%u:%g %a %n' "/run/user/$uid"
+            fi
+            sudo runuser -u gamerhq-staging-bridge -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+              DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+              journalctl --user --no-pager -u docker.service -n 100
+          fi
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements.lock -r requirements-dev.txt
+      - run: python -m pip install --no-deps -r requirements-skills.lock
+      - run: python -m pip check
+      - name: Compile portable platform packages
+        run: python -m compileall -q skill_runtime hosts/gamerhq skills cogs
+      - name: Build Skill SDK wheel
+        if: matrix.python == '3.12'
+        run: python -m pip wheel . --no-deps --wheel-dir /tmp/gamerhq-sdk-dist
+      - name: Run release metadata preflight
+        if: matrix.python == '3.12'
+        shell: bash
+        run: |
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          base="${GITHUB_BASE_REF:-}"
+          if [[ "$base" == "main" || ( -z "$base" && "$GITHUB_REF_NAME" == "main" ) ]]; then
+            channel="main"
+          elif [[ "$branch" == release/* ]]; then
+            channel="candidate"
+          else
+            channel="develop"
+          fi
+          python -m tools.release_preflight --expect-channel "$channel"
+      - run: python -m pytest
+      - run: python -m tools.repository_audit --history
+      - run: bash -n scripts/update.sh scripts/backup.sh
+        if: always()
+      - name: Validate Compose without credentials
+        if: always()
+        run: |
+          touch ../.env
+          docker compose config --quiet
+      - name: Build production image (no bot login)
+        if: always() && matrix.python == '3.12'
+        run: docker compose build
+      - name: Validate isolated staging Compose without credentials
+        if: always() && matrix.python == '3.12'
+        env:
+          GAMERHQ_STAGING_IMAGE: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: docker compose --file deploy/staging/compose.json --profile live-acceptance config --quiet
+      - name: Verify isolated Host-owned Skill staging with public fixture
+        if: success() && matrix.python == '3.12'
+        shell: bash
+        run: |
+          umask 077
+          image=$(docker image inspect gamerhq-bot:local --format '{{.Id}}')
+          python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl
+ SHA256SUMS | sha256sum --check --strict
+              tar -xzf rootlesskit-x86_64.tar.gz -- rootlesskit rootlessctl rootlesskit-docker-proxy
+              sudo install -m 0755 rootlesskit rootlessctl rootlesskit-docker-proxy /usr/local/bin/
+            )
+          fi
+          rootlesskit --version
           sudo systemctl start ssh
           sudo mkdir -p /opt/gamerhq/data
           printf 'synthetic production sentinel\n' | sudo tee /opt/gamerhq/data/production-fixture >/dev/null
