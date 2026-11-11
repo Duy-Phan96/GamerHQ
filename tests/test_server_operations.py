@@ -25,6 +25,138 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [actor]
         return actor
 
+    async def test_bulk_setup_owner_sees_one_confirmation_and_manual_actions(self):
+        from cogs.server import OperationsView
+        from cogs.server_management import StructureView
+
+        actor = self.owner()
+        owner_menu = StructureView(self.guild, actor.id)
+        admin_menu = StructureView(self.guild, actor.id + 1)
+        labels = [button.label for button in owner_menu.children]
+        self.assertEqual(labels[0], 'Setup All Missing')
+        self.assertIn(ops.PHASE_TITLES['foundations'], labels)
+        self.assertIn(ops.PHASE_TITLES['channels'], labels)
+        self.assertNotIn('Setup All Missing', [button.label for button in admin_menu.children])
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        view = OperationsView(self.guild, draft, self.bot, friendly=True)
+        self.assertEqual(view.confirm_preview.label, 'Confirm Setup')
+        self.assertIn('Create by type', view.text())
+
+    async def test_bulk_setup_reuses_local_defaults_only_with_explicit_choice(self):
+        actor = self.owner()
+        default_text = self.guild.add_category('Textkanäle')
+        default_voice = self.guild.add_category('Sprachkanäle')
+        text = self.guild.add_channel('Allgemein', default_text)
+        voice = DefaultVoice(self.guild, 'Allgemein', default_voice, 7001)
+        self.guild.fetch_channels = AsyncMock(return_value=[*self.guild.channels, voice])
+        message = self.add_message(text, 'Existing conversation')
+        voice.overwrites[self.guild.custom] = discord.PermissionOverwrite(speak=False)
+        with patch.object(ops, 'inspect_message', AsyncMock(side_effect=AssertionError('message scan'))):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            draft['rows'] = [r for r in draft['rows'] if r['name'] in ops.REUSE_ALIASES]
+            self.assertEqual({row['bulk_action'] for row in draft['rows']}, {'choose'})
+            unselected = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+            self.assertEqual((unselected['reused'], len(unselected['skipped'])), ([], 2))
+            choices = {row['key']: row['bulk_id'] for row in draft['rows']}
+            result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True, choices=choices)
+            self.assertEqual((len(result['reused']), result['created'], result['remaining']), (2, [], []))
+        self.assertEqual(db.get_setting('managed_channel:1:general'), str(text.id))
+        self.assertEqual(db.get_setting('managed_channel:1:chill-lounge'), str(voice.id))
+        self.assertEqual((text.category, voice.category), (default_text, default_voice))
+        self.assertEqual(text.messages[message.id], message)
+        self.assertFalse(voice.overwrites[self.guild.custom].speak)
+        self.assertEqual(text.edits + voice.edits, [])
+
+    async def test_bulk_setup_orders_dependencies_and_serializes_confirmations(self):
+        actor = self.owner()
+        original = ops.definitions
+        names = {'pc', 'gaming', 'events', 'community-events', 'voice-channels', 'afk'}
+        voice_channels = []
+        calls = []
+
+        async def create_voice(parent, name, **kwargs):
+            channel = DefaultVoice(self.guild, name, parent, 7900)
+            channel.overwrites = kwargs['overwrites']
+            voice_channels.append(channel)
+            return channel
+
+        async def inventory():
+            return [*self.guild.channels, *voice_channels]
+
+        create_category = self.guild.create_category
+        create_role = self.guild.create_role
+        async def category(*args, **kwargs):
+            calls.append('category')
+            return await create_category(*args, **kwargs)
+        async def role(*args, **kwargs):
+            calls.append('role')
+            return await create_role(*args, **kwargs)
+
+        self.guild.fetch_channels = inventory
+        self.guild.create_category = category
+        self.guild.create_role = role
+        with (patch.object(ops, 'definitions', lambda guild: [row for row in original(guild) if row['name'] in names and not (row['name'] == 'community-events' and row['kind'] == 'role')]),
+              patch.object(fixtures.FakeCategory, 'create_voice_channel', create_voice, create=True),
+              patch.object(ops, 'inspect_message', AsyncMock(side_effect=AssertionError('message scan')))):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            with self.assertRaises(ServerMessageError):
+                await ops.apply(self.guild, actor, draft, self.bot)
+            first, concurrent = await asyncio.gather(*(
+                ops.apply(self.guild, actor, draft, self.bot, confirmed=True) for _ in range(2)))
+            self.assertEqual(calls[:2], ['role', 'role'])
+            self.assertEqual(calls.count('category'), 1)
+            self.assertEqual(len(first['created']), 5)
+            self.assertEqual(concurrent['created'], [])
+            fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            again = await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
+            self.assertEqual(again['created'], [])
+            self.assertEqual(len(again['reused']), 6)
+            self.assertEqual(len(voice_channels), 1)
+            self.assertTrue(db.get_setting('managed_channel:1:community-events'))
+
+    async def test_bulk_setup_keeps_independent_work_after_category_failure(self):
+        actor = self.owner()
+        original = ops.definitions
+        names = {'events', 'community-events', 'support-tickets'}
+        create_category = self.guild.create_category
+
+        async def sometimes_fail(name, **kwargs):
+            if ops.alias(name) == 'events':
+                raise TimeoutError
+            return await create_category(name, **kwargs)
+
+        with (patch.object(ops, 'definitions', lambda guild: [row for row in original(guild)
+                    if row['name'] in names and row['kind'] not in ('role', 'bot-role')]),
+              patch.object(self.guild, 'create_category', sometimes_fail)):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+        self.assertEqual((len(result['created']), len(result['failed']), len(result['remaining'])), (1, 1, 2))
+        self.assertIsNone(db.get_setting('managed_channel:1:community-events'))
+        tickets = self.guild.get_channel(int(db.get_setting('managed_category:1:support-tickets')))
+        self.assertIs(tickets.overwrites_for(self.guild.default_role).view_channel, False)
+
+    async def test_bulk_setup_skips_changed_private_permissions_and_protected_matches(self):
+        actor = self.owner()
+        self.staff.overwrites[self.guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+        db.set_setting('managed_category:1:staff', self.staff.id)
+        event_area = self.guild.add_category('Events')
+        protected = self.guild.add_channel('community-events', event_area)
+        protected.topic = 'skill-resource:event-manager'
+        original = ops.definitions
+        names = {'staff', 'staff-chat', 'events', 'community-events', 'gaming-chat'}
+        with patch.object(ops, 'definitions', lambda guild: [row for row in original(guild) if row['name'] in names]):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            rows = {row['name']: row for row in draft['rows']}
+            self.assertEqual(rows['staff-chat']['bulk_action'], 'create')
+            self.assertEqual(rows['community-events']['bulk_action'], 'skip')
+            self.assertEqual(rows['gaming-chat']['bulk_action'], 'skip')
+            self.staff.overwrites[self.guild.custom] = discord.PermissionOverwrite(view_channel=True)
+            result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+        self.assertIsNone(db.get_setting('managed_channel:1:staff-chat'))
+        self.assertIn(rows['staff-chat']['label'], result['remaining'])
+        self.assertIsNone(db.get_setting('managed_channel:1:community-events'))
+        self.assertEqual(protected.edits, [])
+
     async def test_structure_phases_link_localized_channels_without_inspecting_messages(self):
         actor = self.owner()
         default_text = self.guild.add_category('Textkanäle')

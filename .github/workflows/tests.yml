@@ -129,8 +129,8 @@ jobs:
           image=$(docker image inspect gamerhq-bot:local --format '{{.Id}}')
           python -m tools.skill_stage_smoke --base-image "$image" --sdk-wheel /tmp/gamerhq-sdk-dist/gamerhq_skill_sdk-0.3.0-py3-none-any.whl
 
-  staging-configuration-preview-archive:
-    if: github.event_name == 'pull_request' && github.head_ref == 'staging/configuration-preview' && github.event.pull_request.head.repo.full_name == github.repository
+  staging-bulk-setup-archive:
+    if: github.event_name == 'pull_request' && github.head_ref == 'staging/bulk-structure-setup' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -147,5 +147,5 @@ jobs:
           set -euo pipefail
           [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$REVIEWED_COMMIT"
-          git archive --format=tar --output="$RUNNER_TEMP/staging-configuration-preview.tar" "$REVIEWED_COMMIT"
-          sha256sum "$RUNNER_TEMP/staging-configuration-preview.tar"
+          git archive --format=tar --output="$RUNNER_TEMP/staging-bulk-structure-setup.tar" "$REVIEWED_COMMIT"
+          sha256sum "$RUNNER_TEMP/staging-bulk-structure-setup.tar"
