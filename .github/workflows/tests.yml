@@ -77,7 +77,8 @@ jobs:
               curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 90 -o rootlesskit-x86_64.tar.gz "$upstream/rootlesskit-x86_64.tar.gz"
               grep -E '^[a-f0-9]{64}  rootlesskit-x86_64\.tar\.gz$' SHA256SUMS | sha256sum --check --strict
               tar -xzf rootlesskit-x86_64.tar.gz -- rootlesskit rootlessctl rootlesskit-docker-proxy
-              sudo install -m 0755 rootlesskit rootlessctl rootlesskit-docker-proxy /usr/local/bin/
+              # Ubuntu's existing AppArmor profile matches /usr/bin/rootlesskit.
+              sudo install -m 0755 rootlesskit rootlessctl rootlesskit-docker-proxy /usr/bin/
             )
           fi
           rootlesskit --version
