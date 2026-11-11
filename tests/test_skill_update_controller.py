@@ -1,6 +1,8 @@
 import hashlib
 import asyncio
+from contextlib import closing
 import json
+import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -139,6 +141,37 @@ def test_failed_update_that_wrote_data_stops_without_unsafe_code_or_database_rol
     assert controller.get(record["id"])["state"] == "RECOVERY_REQUIRED"
     assert ("activate", "sha256:" + "a" * 64) not in backend.calls
     assert db.get_setting("synthetic-user-data") == "new version wrote data"
+
+
+def test_invitation_grace_write_blocks_image_only_rollback(fixture):
+    controller, backend, _, _, root = fixture
+    key = "event.v2:staging-fixture"
+    original = {"id": "staging-fixture", "revision": 4, "invited": ["60"]}
+    with db.connect() as conn:
+        conn.execute("INSERT INTO skill_storage VALUES (1, 'event-manager', ?, ?, 1)",
+                     (key, json.dumps(original)))
+    backend.health = [False]
+    record = stage(fixture)
+    activate = backend.activate
+
+    def activate_and_backfill_grace(image):
+        activate(image)
+        with db.connect() as conn:
+            conn.execute("UPDATE skill_storage SET value_json=? WHERE guild_id=1 AND skill_id='event-manager' AND storage_key=?",
+                         (json.dumps({**original, "invitationExpiresAt": {"60": 2000000000}}), key))
+
+    with patch.object(backend, "activate", side_effect=activate_and_backfill_grace):
+        with pytest.raises(ValueError, match="health"):
+            controller.apply(record["id"], approval="APPROVE " + record["id"])
+
+    assert controller.get(record["id"])["state"] == "RECOVERY_REQUIRED"
+    assert ("activate", backend.current_image()) not in backend.calls
+    with db.connect() as conn:
+        current = conn.execute("SELECT value_json FROM skill_storage WHERE storage_key=?", (key,)).fetchone()[0]
+    assert json.loads(current) == {**original, "invitationExpiresAt": {"60": 2000000000}}
+    backup = root / "backups" / (record["id"] + ".sqlite")
+    with closing(sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+        assert json.loads(conn.execute("SELECT value_json FROM skill_storage WHERE storage_key=?", (key,)).fetchone()[0]) == original
 
 
 @pytest.mark.parametrize("change", [{"sourceReviewed": False}, {"runtimeApi": "2"}, {"capabilities": ["unknown"]}, {"migrationMode": "destructive"}])
