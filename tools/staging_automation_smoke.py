@@ -102,7 +102,8 @@ def main():
             from tools.extend_staging_host_promotion import (ACTIVE_CONFIGURATION_CONTROLLER,
                 ACTIVE_MANAGED_MESSAGES_CONTROLLER, ACTIVE_STRUCTURE_CONTROLLER,
                 ACTIVE_BULK_STRUCTURE_CONTROLLER, ACTIVE_BULK_RECOVERY_CONTROLLER,
-                BULK_PREVIEW_HOST, BULK_RECOVERY_HOST, BULK_STRUCTURE_HOST,
+                ACTIVE_BULK_PREVIEW_CONTROLLER, BULK_PERMISSIONS_HOST, BULK_PREVIEW_HOST,
+                BULK_RECOVERY_HOST, BULK_STRUCTURE_HOST,
                 CATALOG_CONTROLLER, CONFIGURATION_HOST,
                 FAILED_CONFIGURATION_CONTROLLER, HOST, MANAGED_MESSAGES_HOST, OLD, STRUCTURE_HOST, WEB_BASE, extension)
             from urllib.request import urlopen
@@ -206,12 +207,20 @@ def main():
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': BULK_RECOVERY_HOST,
                                                 'baseImage': held['approvedImage']}))
+            state_path.write_text(json.dumps({**held, 'recoveryRequired': False}))
+            preview_pin = install_pin(ACTIVE_BULK_PREVIEW_CONTROLLER,
+                '5d1555a04342e28a097b42be5d896f77fae7ceb66650b74763a008d7ad45d0ba',
+                'ENROLL STAGING BULK PREVIEW REPORT', '--bulk-preview-report')
+            assert preview_pin['approvedHostCommit'] == BULK_PREVIEW_HOST
+            installed_policy = json.loads(policy_path.read_bytes())
+            profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': BULK_PREVIEW_HOST,
+                                                'baseImage': held['approvedImage']}))
             state_path.write_text(json.dumps(held))
-            approval = 'ENROLL STAGING BULK PREVIEW REPORT'
+            approval = 'ENROLL STAGING BULK PERMISSION FIX'
             old_entry = (root / 'automation-controller/entry.py').read_bytes()
             held_state = state_path.read_bytes()
             try:
-                extension(args.commit, approval, bulk_preview=True)
+                extension(args.commit, approval, bulk_permissions=True)
             except ValueError as error:
                 assert str(error) == 'REVIEWED_RECOVERY_REQUIRED'
             else:
@@ -225,14 +234,14 @@ def main():
             staged_profile = profile_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)
-                try: result = extension(args.commit, approval, bulk_preview=True)
+                try: result = extension(args.commit, approval, bulk_permissions=True)
                 finally: os.umask(previous)
-                assert result['approvedHostCommit'] == BULK_PREVIEW_HOST
-                assert result['previousHostCommit'] == BULK_RECOVERY_HOST
+                assert result['approvedHostCommit'] == BULK_PERMISSIONS_HOST
+                assert result['previousHostCommit'] == BULK_PREVIEW_HOST
                 assert result['state'] == 'PIN_INSTALLED' and result['hostPromotionRequiresProtectedOwnerReview']
             assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
             enrolled = json.loads(call('status').stdout)
-            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == BULK_PREVIEW_HOST
+            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == BULK_PERMISSIONS_HOST
             assert enrolled['recoveryRequired'] is False
             new_policy = json.loads(policy_path.read_bytes())
             assert new_policy == {**installed_policy, 'controllerCommit': args.commit,
@@ -267,7 +276,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', BULK_PREVIEW_HOST)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', BULK_PERMISSIONS_HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']
@@ -276,7 +285,7 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
         raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
         'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'catalogPreviewPolicyPreserved': True,
-        'recoveryLatchPreserved': True, 'heldEnrollmentDenied': True, 'bulkPreviewPinEnrollment': 'PASS',
+        'recoveryLatchPreserved': True, 'heldEnrollmentDenied': True, 'bulkPermissionsPinEnrollment': 'PASS',
         'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
         'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',

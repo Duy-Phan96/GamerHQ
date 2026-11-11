@@ -1,5 +1,22 @@
 # Reviewed staging Host promotion
 
+## Bulk setup permission candidate
+
+[Candidate PR #260](https://github.com/Duy-Phan96/GamerHQ/pull/260) overlays
+[Host PR #259](https://github.com/Duy-Phan96/GamerHQ/pull/259) on the verified
+Staging Host `1539eb13cb242a765ea89130c28b0438ce8dcb48`. The exact candidate is `71e1fcbb0cf3904365d1ed020a866b50755f58e4` and
+the archive SHA256 is `8636420eacd2f106b6b7a2b4ded497a02bfa29ac50af41122711f351b0d7aa0b`. [Candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43089158534).
+
+After scoped CI, use the checksum-verified owner installer with
+`--bulk-permission-fix --approval 'ENROLL STAGING BULK PERMISSION FIX'`. It requires the current
+controller `8eea84e96a706b82e1ffb66a70b6e3c6fd01bd64`, the approved Staging image, and a clear recovery latch.
+Register the matching workflow after enrollment and use the existing protected
+owner review for promotion.
+
+After promotion, collect the owner-only Bulk Setup attachment. Review the existing
+Staff role evidence and the saved references for both Allgemein channel IDs.
+Keep the preview unconfirmed pending the reviewed setup plan.
+
 ## Bulk setup preview report candidate
 
 [Candidate PR #256](https://github.com/Duy-Phan96/GamerHQ/pull/256) overlays
