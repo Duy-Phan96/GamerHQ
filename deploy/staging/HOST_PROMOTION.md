@@ -4,8 +4,8 @@
 
 [Candidate PR #248](https://github.com/Duy-Phan96/GamerHQ/pull/248) overlays the reviewed
 bulk setup on the installed staging Host `de6447a25d36dc002070b2f0e94b4df0dcc9ef0b`.
-The exact candidate is `418747043b72309c2d2c666f8c20019569e8d902` and its uncompressed archive SHA256 is `c705eb7ef654a2cf23a8e67e546039b835e884b48e7436a39e5440606f7e5e28`.
-[Candidate Linux CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43026571793)
+The exact candidate is `c4985b0df53fffad7b83790b257368ac243c013a` and its uncompressed archive SHA256 is `ad7db7f7c85f0e5ea94439148d8c63e5651dfdbc0080a677036f4afc6e2a73b8`.
+[Candidate Linux CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43027658058)
 verifies the archive and application.
 
 Enrollment requires the existing structure controller `aefa82516ee227c4281bb65e08a16a083f1f7460`, the

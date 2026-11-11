@@ -21,11 +21,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate=418747043b72309c2d2c666f8c20019569e8d902
+          candidate=c4985b0df53fffad7b83790b257368ac243c013a
           git fetch origin "$candidate"
           archive="$RUNNER_TEMP/bulk-structure-setup.tar"
           git archive --format=tar --output="$archive" "$candidate"
-          echo "c705eb7ef654a2cf23a8e67e546039b835e884b48e7436a39e5440606f7e5e28  $archive" | sha256sum --check --strict
+          echo "ad7db7f7c85f0e5ea94439148d8c63e5651dfdbc0080a677036f4afc6e2a73b8  $archive" | sha256sum --check --strict
           sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
