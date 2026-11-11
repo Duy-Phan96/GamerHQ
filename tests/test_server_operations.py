@@ -175,7 +175,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
     async def test_bulk_setup_reports_sanitized_api_failures_and_resumes_from_fresh_inventory(self):
         actor = self.owner()
         original = ops.definitions
-        names = {'events', 'community-events', 'start-here', 'newbies', 'guide'}
+        names = {'events', 'community-events', 'start-here', 'community', 'suggestions', 'guide'}
         create_category = self.guild.create_category
         rejected = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'),
                                      {'code': 50013, 'message': 'private API detail'})
@@ -207,14 +207,14 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any('HTTP 429' in line for line in first['failed']))
             self.assertIn('EVENTS', first['blocked'][0])
             self.assertNotIn('private API detail', str(first) + str(logs.output))
-            keys = ['managed_category:1:start-here', 'managed_channel:1:newbies']
+            keys = ['managed_category:1:start-here', 'managed_category:1:community', 'managed_channel:1:suggestions']
             retained = {key: db.get_setting(key) for key in keys}
             fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             second = await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
-            self.assertEqual((len(second['created']), len(second['already_configured']), second['remaining']), (3, 2, []))
+            self.assertEqual((len(second['created']), len(second['already_configured']), second['remaining']), (3, 3, []))
             self.assertEqual({key: db.get_setting(key) for key in keys}, retained)
             self.assertEqual(sum(ops.alias(c.name) == 'events' for c in self.guild.categories), 1)
-            self.assertEqual(sum(ops.alias(c.name) == 'newbies' for c in self.guild.text_channels), 1)
+            self.assertEqual(sum(ops.alias(c.name) == 'suggestions' for c in self.guild.text_channels), 1)
 
     async def test_bulk_setup_does_not_create_duplicate_after_mapping_write_failure(self):
         actor = self.owner()
