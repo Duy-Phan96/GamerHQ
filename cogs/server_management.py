@@ -128,8 +128,8 @@ class Menu(RoleAdminSession):
         super().__init__(timeout=240)
         self.guild, self.admin_id = guild, actor_id
 
-    def action(self, label, callback, *, row=None):
-        button = discord.ui.Button(label=label, row=row)
+    def action(self, label, callback, *, row=None, style=discord.ButtonStyle.secondary):
+        button = discord.ui.Button(label=label, row=row, style=style)
         button.callback = callback
         self.add_item(button)
 
@@ -2137,6 +2137,7 @@ class StructureView(Menu):
         from services.server_operations import PHASE_TITLES
         entries = [('Review Structure', 'reconcile', 'structure'), ('Fix Common Issues', 'repair', None)]
         if actor_id == guild.owner_id:
+            entries.insert(0, (PHASE_TITLES['bulk'], 'setup', 'bulk'))
             entries.extend((PHASE_TITLES[scope], mode, scope) for mode, scope in (
                 ('setup', 'foundations'), ('setup', 'channels'), ('repair', 'placement'), ('setup', 'messages')))
             entries.append(('Review Existing Managed Messages', 'reconcile', 'messages'))
@@ -2144,7 +2145,7 @@ class StructureView(Menu):
             async def run(interaction, selected=mode, phase=scope):
                 from cogs.server import open_operation
                 await open_operation(interaction, selected, friendly=True, scope=phase)
-            self.action(label, run)
+            self.action(label, run, style=discord.ButtonStyle.primary if scope == 'bulk' else discord.ButtonStyle.secondary)
         if actor_id == guild.owner_id:
             self.action('Removed Resources', self.removed_resources)
         self.action('Review Duplicate Messages', self.duplicates)
