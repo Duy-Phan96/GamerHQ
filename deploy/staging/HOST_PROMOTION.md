@@ -15,8 +15,10 @@ overwrite path. Compare the current Host role with the permissions named by the
 new preflight before assigning any additional permissions.
 
 After protected deployment, use **/server setup → Server Structure → Setup All
-Missing** on GamerHQ Staging to open a new owner-only preview. Stop at the
-preview. Compare **Already configured** against the original 32 resources
+Missing** on GamerHQ Staging to open a new owner-only preview. Download
+`bulk-setup-preview.txt` from the first response. It contains every decision,
+review reason, parent dependency and verified resource ID from the same scan.
+The detail pages are optional. Stop at the preview. Compare **Already configured** against the original 32 resources
 using the current mappings and Discord inventory. If any are missing or appear
 under **Link existing**, verify the actual existing IDs before approval.
 Review **Blocked by parent** separately from **Needs review**. A permission
