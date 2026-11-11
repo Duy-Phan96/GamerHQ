@@ -1,5 +1,24 @@
 # Reviewed staging Host promotion
 
+## Reviewing permission and ownership blockers
+
+Bulk structure creation omits explicit Manage Messages grants. Existing
+channel and managed-message permission flows retain their own policies.
+Review any remaining overwrite bits individually. Do not grant Administrator
+or grant guild-wide moderation just to finish creating channels.
+
+The owner-only preview reports roles that satisfy the current Staff policy.
+A role name alone is insufficient evidence. If no suitable role exists, review
+a dedicated Staff role with access limited to the approved private categories
+before changing the policy. Verify the Instant Gaming integration separately.
+Private categories must deny @everyone from creation.
+
+For the two Allgemein channels, the report lists saved reference locations
+alongside each candidate ID. Check which settings are active owners and which
+are legacy aliases or feature references before reconciling the mapping.
+Preserve both IDs and use separate approval for any placement change. Open a
+fresh preview to review dependent channels after the parent decisions.
+
 ## Recovering a partially applied bulk server setup
 
 The Staging deployment of Host `c4985b0df53fffad7b83790b257368ac243c013a`
