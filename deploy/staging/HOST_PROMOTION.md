@@ -1,5 +1,48 @@
 # Reviewed staging Host promotion
 
+## Bulk structure setup candidate
+
+[Candidate PR #248](https://github.com/Duy-Phan96/GamerHQ/pull/248) overlays the reviewed
+bulk setup on the installed staging Host `de6447a25d36dc002070b2f0e94b4df0dcc9ef0b`.
+The exact candidate is `c4985b0df53fffad7b83790b257368ac243c013a` and its uncompressed archive SHA256 is `ad7db7f7c85f0e5ea94439148d8c63e5651dfdbc0080a677036f4afc6e2a73b8`.
+[Candidate Linux CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43027658058)
+verifies the archive and application.
+
+Enrollment requires the existing structure controller `aefa82516ee227c4281bb65e08a16a083f1f7460`, the
+installed approved staging image and a clear recovery latch. Use the
+checksum-verified installer with `--bulk-structure-setup --approval 'ENROLL STAGING BULK STRUCTURE SETUP'`.
+Register the matching workflow on main after verified enrollment, then queue the
+protected promotion for the owner. Deployment preserves the installed Event
+Manager 0.1.2 package and its existing lifecycle configuration.
+
+After deployment, open `/server setup → Server Structure → Setup All Missing`
+in GamerHQ Staging. Review the counts, private permission summaries and eligible
+Allgemein channels. Keep confirmation pending until the owner explicitly approves
+the displayed plan.
+
+## Structure phases candidate
+
+[Candidate PR #244](https://github.com/Duy-Phan96/GamerHQ/pull/244) overlays the
+ten application and test paths from merged Host PR #243 on the existing
+`6734b756685d90de8e56ddc299560ec13625300e` staging Host. The exact candidate is
+`de6447a25d36dc002070b2f0e94b4df0dcc9ef0b`, with uncompressed Git archive
+SHA256 `260c8f886d7485bd6fafa7701ac9021d07d4cf1d8cff81c8387034d00731faf6`
+and [candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42876302300).
+
+Before enrolling, confirm the active staging controller is
+`ff519f698f973b056eeae0b9d026a71dbf8fbaae` with the current Host pin and a
+clear recovery latch. The owner uses the checksum-verified installer from the
+reviewed controller head with `--structure-phases --approval 'ENROLL STAGING STRUCTURE PHASES'`.
+Enrollment only updates the exact Host pin and immutable controller selection.
+The protected workflow registration and `deployment-security` review remain
+separate steps. The Event Manager 0.1.2 artifact and lifecycle are retained.
+
+After promotion, health, backup and restore verification, the first owner
+acceptance is a read-only review of the two existing `Allgemein` channels.
+Record each ID, type, parent, ownership and permission result. Confirm text
+history access and voice connection access. Do not select or confirm a link
+or move until that evidence has been reviewed.
+
 ## Managed-message Configuration Preview candidate
 
 Draft staging source [PR #240](https://github.com/Duy-Phan96/GamerHQ/pull/240)

@@ -21,11 +21,14 @@ from cogs.event_editor import SkillEventEditor,WeekdayView,EventPreviewView
 from cogs.lfg import BuilderDateSelect,BuilderTimeSelect,BuilderPlayersSelect,WeekdayToggle
 from skill_runtime import ManagementField,ManagementFieldOption
 from services.server_configuration_preview import preview
+from cogs.server_management import StructureView
 from tools.game_catalog_import import manifest
 from inspect import iscoroutinefunction
 assert iscoroutinefunction(preview) and iscoroutinefunction(bot.setup_hook) and not bot.is_ready()
 assert len(manifest('/app/data/game_catalog_expansion.json')) == 70
 async def check():
+ structure=StructureView(type('Guild', (), {'owner_id': 10})(),10)
+ assert {'Setup All Missing','Review Structure','Preview Reused Channel Placement','Review Existing Managed Messages'} <= {b.label for b in structure.children}
  fields=(ManagementField(key='weekdays',label='Weekdays',type='multi_select',config_path='weekdays',options=tuple(ManagementFieldOption(str(i),name) for i,name in enumerate(('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')))),)
  draft=dict(name='Offline fixture',kind='recurring',weekdays=[0,2,4],startDate='2030-01-07',localTime='19:00',timezone='Europe/Berlin',maxPlayers=5,visibility='private')
  view=SkillEventEditor(10,fields,draft)
