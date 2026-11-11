@@ -21,11 +21,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate=de6447a25d36dc002070b2f0e94b4df0dcc9ef0b
+          candidate=418747043b72309c2d2c666f8c20019569e8d902
           git fetch origin "$candidate"
-          archive="$RUNNER_TEMP/structure-phases.tar"
+          archive="$RUNNER_TEMP/bulk-structure-setup.tar"
           git archive --format=tar --output="$archive" "$candidate"
-          echo "260c8f886d7485bd6fafa7701ac9021d07d4cf1d8cff81c8387034d00731faf6  $archive" | sha256sum --check --strict
+          echo "c705eb7ef654a2cf23a8e67e546039b835e884b48e7436a39e5440606f7e5e28  $archive" | sha256sum --check --strict
           sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          baseline=6734b756685d90de8e56ddc299560ec13625300e
+          baseline=de6447a25d36dc002070b2f0e94b4df0dcc9ef0b
           git fetch origin "$baseline"
           mkdir /tmp/gamerhq-host-baseline
           git archive "$baseline" | tar -x -C /tmp/gamerhq-host-baseline

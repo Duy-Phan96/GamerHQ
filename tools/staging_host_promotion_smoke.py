@@ -28,7 +28,7 @@ assert iscoroutinefunction(preview) and iscoroutinefunction(bot.setup_hook) and 
 assert len(manifest('/app/data/game_catalog_expansion.json')) == 70
 async def check():
  structure=StructureView(type('Guild', (), {'owner_id': 10})(),10)
- assert {'Review Structure','Preview Reused Channel Placement','Review Existing Managed Messages'} <= {b.label for b in structure.children}
+ assert {'Setup All Missing','Review Structure','Preview Reused Channel Placement','Review Existing Managed Messages'} <= {b.label for b in structure.children}
  fields=(ManagementField(key='weekdays',label='Weekdays',type='multi_select',config_path='weekdays',options=tuple(ManagementFieldOption(str(i),name) for i,name in enumerate(('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')))),)
  draft=dict(name='Offline fixture',kind='recurring',weekdays=[0,2,4],startDate='2030-01-07',localTime='19:00',timezone='Europe/Berlin',maxPlayers=5,visibility='private')
  view=SkillEventEditor(10,fields,draft)

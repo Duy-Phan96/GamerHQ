@@ -1,5 +1,25 @@
 # Reviewed staging Host promotion
 
+## Bulk structure setup candidate
+
+[Candidate PR #248](https://github.com/Duy-Phan96/GamerHQ/pull/248) overlays the reviewed
+bulk setup on the installed staging Host `de6447a25d36dc002070b2f0e94b4df0dcc9ef0b`.
+The exact candidate is `418747043b72309c2d2c666f8c20019569e8d902` and its uncompressed archive SHA256 is `c705eb7ef654a2cf23a8e67e546039b835e884b48e7436a39e5440606f7e5e28`.
+[Candidate Linux CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43026571793)
+verifies the archive and application.
+
+Enrollment requires the existing structure controller `aefa82516ee227c4281bb65e08a16a083f1f7460`, the
+installed approved staging image and a clear recovery latch. Use the
+checksum-verified installer with `--bulk-structure-setup --approval 'ENROLL STAGING BULK STRUCTURE SETUP'`.
+Register the matching workflow on main after verified enrollment, then queue the
+protected promotion for the owner. Deployment preserves the installed Event
+Manager 0.1.2 package and its existing lifecycle configuration.
+
+After deployment, open `/server setup → Server Structure → Setup All Missing`
+in GamerHQ Staging. Review the counts, private permission summaries and eligible
+Allgemein channels. Keep confirmation pending until the owner explicitly approves
+the displayed plan.
+
 ## Structure phases candidate
 
 [Candidate PR #244](https://github.com/Duy-Phan96/GamerHQ/pull/244) overlays the

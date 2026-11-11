@@ -229,3 +229,36 @@ def test_structure_enrollment_requires_the_installed_managed_message_host(instal
             assert receipt['catalogPreviewPolicyPreserved'] is True
             assert receipt['hostPromotionRequiresProtectedOwnerReview'] is True
     assert [file.read_bytes() for file in (installation.state, profile)] == before
+
+@pytest.mark.parametrize('baseline', [True, False])
+def test_bulk_structure_enrollment_requires_the_installed_structure_host(installation, monkeypatch, baseline):
+    old, commit = installation.policy['controllerCommit'], installation.commit
+    monkeypatch.setattr(enrollment, 'ACTIVE_STRUCTURE_CONTROLLER', old)
+    installation.policy['hostPromotion'].update(
+        commit=enrollment.STRUCTURE_HOST, archiveSha256=enrollment.STRUCTURE_ARCHIVE)
+    installation.policy_path.write_text(json.dumps(installation.policy))
+    for name in ('policy.py', 'host_promotion.py'):
+        path = f'tools/staging_automation/{name}'
+        installation.git[f'{commit}:{path}'] = (installation.git[f'{old}:{path}'] if name == 'policy.py'
+                                                 else f'COMMIT = {enrollment.BULK_STRUCTURE_HOST!r}'.encode())
+    profile = enrollment.CONTROL / 'settings/profile.json'
+    profile.parent.mkdir()
+    profile.write_text(json.dumps({
+        'environment': 'staging',
+        'applicationHostCommit': enrollment.STRUCTURE_HOST if baseline else enrollment.CONFIGURATION_HOST,
+        'baseImage': json.loads(installation.state.read_bytes())['approvedImage'],
+    }))
+    before = [file.read_bytes() for file in (installation.state, profile)]
+    if not baseline:
+        with pytest.raises(ValueError, match='INSTALLED_STAGING_BASELINE_REQUIRED'):
+            enrollment.extension(commit, 'ENROLL STAGING BULK STRUCTURE SETUP', bulk_structure=True)
+        assert not (installation.revisions / commit).exists()
+    else:
+        for _ in range(2):
+            receipt = enrollment.extension(commit, 'ENROLL STAGING BULK STRUCTURE SETUP', bulk_structure=True)
+            assert receipt['previousHostCommit'] == enrollment.STRUCTURE_HOST
+            assert receipt['approvedHostCommit'] == enrollment.BULK_STRUCTURE_HOST
+            assert receipt['archiveSha256'] == enrollment.BULK_STRUCTURE_ARCHIVE
+            assert receipt['catalogPreviewPolicyPreserved'] is True
+            assert receipt['hostPromotionRequiresProtectedOwnerReview'] is True
+    assert [file.read_bytes() for file in (installation.state, profile)] == before
