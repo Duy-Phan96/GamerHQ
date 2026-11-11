@@ -901,6 +901,10 @@ class OperationsView(RoleAdminSession):
             state = action(row)
             name = discord.utils.escape_mentions(discord.utils.escape_markdown(row['label']))[:75]
             detail = labels[state]
+            if state == 'create' and row.get('private'):
+                allowed = [discord.utils.escape_mentions(discord.utils.escape_markdown(str(principal.name)))[:20]
+                           for principal, overwrite in row['create_overwrites'].items() if overwrite.view_channel is True]
+                detail += ' · private' + (' · access ' + ', '.join(sorted(allowed)[:3]) if allowed else '')
             if state == 'skip' and row.get('reason'):
                 detail += ' · ' + row['reason']
             if state in ('reuse', 'choose') and row.get('bulk_id'):

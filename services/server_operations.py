@@ -534,6 +534,9 @@ def bulk_plan(guild, rows, member):
         candidates = row['candidates']
         match = candidates[0] if len(candidates) == 1 else None
         if match and match.id in row['safe']:
+            if role and (not permissions.manage_roles or not match < member.top_role):
+                row['reason'] = 'GamerHQ cannot manage the existing role'
+                continue
             if any(other['key'] != row['key'] and
                    (str(match.id) == other['raw'] or any(item.id == match.id for item in other['candidates']))
                    for other in rows):
