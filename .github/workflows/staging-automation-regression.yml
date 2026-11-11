@@ -21,18 +21,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate=c4985b0df53fffad7b83790b257368ac243c013a
+          candidate=96855865b746c214f4197b9f2808cbae1c21b7ff
           git fetch origin "$candidate"
-          archive="$RUNNER_TEMP/bulk-structure-setup.tar"
+          archive="$RUNNER_TEMP/bulk-setup-recovery.tar"
           git archive --format=tar --output="$archive" "$candidate"
-          echo "ad7db7f7c85f0e5ea94439148d8c63e5651dfdbc0080a677036f4afc6e2a73b8  $archive" | sha256sum --check --strict
+          echo "4b6eb69666f4268ac715cd94797b35139c917dd5a074bb5a8a5d082386ade37f  $archive" | sha256sum --check --strict
           sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq openssh-server uidmap dbus-user-session acl slirp4netns rootlesskit
+          missing=()
+          for package in openssh-server uidmap dbus-user-session acl slirp4netns; do
+            if [[ $(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
+              missing+=("$package")
+            fi
+          done
+          if ((${#missing[@]})); then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "${missing[@]}"
+          fi
+          if ! command -v rootlesskit >/dev/null; then
+            # RootlessKit v2.0.2 matches the runner's Ubuntu package version.
+            upstream=https://github.com/rootless-containers/rootlesskit/releases/download/v2.0.2
+            kit=$(mktemp -d)
+            (
+              cd "$kit"
+              curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 60 -o SHA256SUMS "$upstream/SHA256SUMS"
+              echo 'b1e3afe86589cffe1ffa8e5978922df28924637c62ba08ffb8c9fb41231494e9  SHA256SUMS' | sha256sum --check --strict
+              curl --proto '=https' --tlsv1.2 -fsSL --retry 2 --max-time 90 -o rootlesskit-x86_64.tar.gz "$upstream/rootlesskit-x86_64.tar.gz"
+              grep -E '^[a-f0-9]{64}  rootlesskit-x86_64\.tar\.gz$' SHA256SUMS | sha256sum --check --strict
+              tar -xzf rootlesskit-x86_64.tar.gz -- rootlesskit rootlessctl rootlesskit-docker-proxy
+              # Ubuntu's existing AppArmor profile matches /usr/bin/rootlesskit.
+              sudo install -m 0755 rootlesskit rootlessctl rootlesskit-docker-proxy /usr/bin/
+            )
+          fi
+          rootlesskit --version
           sudo systemctl start ssh
           ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-legacy-ci-key
           sudo python3 -m tools.prepare_staging_access --commit 92db47042d58055cb0debdfd83f11f8508e19809 --public-key-file /tmp/staging-legacy-ci-key.pub --apply --install-prerequisites --approval 'PREPARE ISOLATED STAGING'
@@ -44,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          baseline=de6447a25d36dc002070b2f0e94b4df0dcc9ef0b
+          baseline=c4985b0df53fffad7b83790b257368ac243c013a
           git fetch origin "$baseline"
           mkdir /tmp/gamerhq-host-baseline
           git archive "$baseline" | tar -x -C /tmp/gamerhq-host-baseline

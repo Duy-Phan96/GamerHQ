@@ -17,10 +17,10 @@ from contextlib import closing
 from .deployment import SkillUpdateController, application_fingerprint
 from .policy import Denied
 
-COMMIT = 'c4985b0df53fffad7b83790b257368ac243c013a'
-ARCHIVE_SHA256 = 'ad7db7f7c85f0e5ea94439148d8c63e5651dfdbc0080a677036f4afc6e2a73b8'
-BASELINE = 'de6447a25d36dc002070b2f0e94b4df0dcc9ef0b'
-CI_RUN = '43027658058'
+COMMIT = '96855865b746c214f4197b9f2808cbae1c21b7ff'
+ARCHIVE_SHA256 = '4b6eb69666f4268ac715cd94797b35139c917dd5a074bb5a8a5d082386ade37f'
+BASELINE = 'c4985b0df53fffad7b83790b257368ac243c013a'
+CI_RUN = '43057102226'
 BASELINE_SKILL_VERSION = '0.1.2'
 BASELINE_SKILL_COMMIT = '41a7d968852453d815a52f2f03e4ccac7e93eff9'
 BASELINE_SKILL_SHA256 = '84121ae4e48c151ec9060faec70e1d262b3c961629c8cdaa535afcba96788465'
@@ -32,7 +32,7 @@ COMPATIBILITY = ('requirements.txt', 'requirements.lock', 'requirements-skills.l
                  'database', 'skill_runtime', 'skills', 'hosts', 'data/games_seed.json')
 REVIEWED_HOST_CHANGES = frozenset({
     '.github/workflows/tests.yml',
-    'cogs/server.py', 'cogs/server_management.py',
+    'cogs/server.py',
     'services/server_operations.py', 'tests/test_server_operations.py',
 })
 
