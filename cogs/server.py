@@ -835,6 +835,8 @@ class OperationsView(RoleAdminSession):
         self.guild, self.admin_id, self.draft, self.bot = guild, draft['actor_id'], draft, bot
         self.page, self.choices, self.finished = 0, {}, False
         self.friendly = friendly
+        if draft.get('scope') == 'bulk':
+            self.confirm_preview.label = 'Confirm Setup'
         self.refresh_choices()
 
     async def interaction_check(self, interaction):
@@ -847,10 +849,17 @@ class OperationsView(RoleAdminSession):
         for child in list(self.children):
             if isinstance(child, ResourceChoice): self.remove_item(child)
         rows = [r for r in self.draft['rows'][self.page*8:(self.page+1)*8] if r['candidates'] and r['status'] != 'EXACT_MATCH']
-        if self.draft['mode'] == 'reconcile' and rows: self.add_item(ResourceChoice(rows, self.friendly))
+        if self.draft.get('scope') == 'bulk':
+            rows = [row for row in rows if row['bulk_action'] == 'choose']
+            if rows:
+                self.add_item(ResourceChoice(rows, self.friendly))
+        elif self.draft['mode'] == 'reconcile' and rows:
+            self.add_item(ResourceChoice(rows, self.friendly))
 
     def text(self):
         mode = self.draft['mode']
+        if self.draft.get('scope') == 'bulk':
+            return self.bulk_text()
         if self.friendly:
             from cogs.server_management import friendly_plan
             return friendly_plan(self)
@@ -871,6 +880,36 @@ class OperationsView(RoleAdminSession):
         lines.append(f"Page {self.page+1}/{max(1,(len(self.draft['rows'])+7)//8)}. Review pages/matches, then Preview Changes. Safe single matches are linked only on confirmation.")
         return '\n'.join(lines)[:1950]
 
+    def bulk_text(self):
+        rows = self.draft['rows']
+        def action(row):
+            value = row['bulk_action']
+            if value == 'choose' and self.choices.get(row['key']) == row['bulk_id']:
+                return 'reuse'
+            return value
+        labels = {'create': 'Create', 'reuse': 'Reuse', 'choose': 'Choose reuse', 'skip': 'Skip'}
+        kinds = {'category': 'categories', 'text': 'text channels', 'voice': 'voice channels',
+                 'role': 'profile roles', 'bot-role': 'bot grouping roles'}
+        creates = [r for r in rows if action(r) == 'create']
+        lines = ['# Setup All Missing',
+                 'Confirm Setup applies this entire preview. Select any offered existing channels you want to reuse.',
+                 f"Create {len(creates)} · Reuse {sum(action(r) == 'reuse' for r in rows)} · "
+                 f"Choose reuse {sum(action(r) == 'choose' for r in rows)} · Skip {sum(action(r) == 'skip' for r in rows)}",
+                 'Create by type · ' + ', '.join(f"{sum(r['kind'] == kind for r in creates)} {label}"
+                                                  for kind, label in kinds.items())]
+        for row in rows[self.page * 8:(self.page + 1) * 8]:
+            state = action(row)
+            name = discord.utils.escape_mentions(discord.utils.escape_markdown(row['label']))[:75]
+            detail = labels[state]
+            if state == 'skip' and row.get('reason'):
+                detail += ' · ' + row['reason']
+            if state in ('reuse', 'choose') and row.get('bulk_id'):
+                candidate = next(item for item in row['candidates'] if item.id == row['bulk_id'])
+                detail += ' · ' + discord.utils.escape_mentions(discord.utils.escape_markdown(candidate.name))[:55]
+            lines.append(f'• {name} · {detail}')
+        lines.append(f'Page {self.page + 1}/{max(1, (len(rows) + 7) // 8)}')
+        return '\n'.join(lines)[:1950]
+
     @discord.ui.button(label='Next Page')
     async def next_page(self, interaction, button):
         self.page = (self.page + 1) % max(1, (len(self.draft['rows'])+7)//8)
@@ -880,6 +919,9 @@ class OperationsView(RoleAdminSession):
     @discord.ui.button(label='Preview Changes', style=discord.ButtonStyle.primary)
     async def confirm_preview(self, interaction, button):
         view = ConfirmOperationsView(self)
+        if self.draft.get('scope') == 'bulk':
+            await view.apply_confirmed(interaction)
+            return
         await interaction.response.edit_message(content=self.text()[:1800] + '\n**Confirm to apply this reviewed plan. Changed resources will be skipped.**', view=view)
 
     @discord.ui.button(label='Cancel')
@@ -897,14 +939,27 @@ class ConfirmOperationsView(RoleAdminSession):
 
     @discord.ui.button(label='Confirm Changes', style=discord.ButtonStyle.success)
     async def confirm(self, interaction, button):
+        await self.apply_confirmed(interaction)
+
+    async def apply_confirmed(self, interaction):
         from services.server_operations import apply
         if self.parent.finished or not await self.interaction_check(interaction): return
         self.parent.finished = True
         await interaction.response.defer(ephemeral=True)
         await interaction.edit_original_response(content='🔄 Applying your reviewed changes…\nChecking the affected resources before making changes.', view=None)
         try:
-            done, skipped = await apply(self.guild, interaction.user, self.parent.draft, self.parent.bot,
-                                        confirmed=True, choices=self.choices)
+            result = await apply(self.guild, interaction.user, self.parent.draft, self.parent.bot,
+                                 confirmed=True, choices=self.choices)
+            if self.parent.draft.get('scope') == 'bulk':
+                from io import BytesIO
+                counts = ' · '.join(f'{label.title()} {len(items)}' for label, items in result.items())
+                details = '\n\n'.join(label.title() + '\n' + '\n'.join(items) for label, items in result.items() if items)
+                report = discord.File(BytesIO(details.encode()), filename='bulk-setup-results.txt')
+                await interaction.edit_original_response(content=counts, attachments=[report], view=None,
+                                                         allowed_mentions=discord.AllowedMentions.none())
+                self.stop()
+                return
+            done, skipped = result
             text = f'Applied {len(done)} changes; {len(skipped)} need another review.\n' + '\n'.join(skipped[:8])
             text += '\nRun /server health. After linking channels, rescan reconciliation for their messages. Use /server setup only for missing resources.'
             if self.parent.friendly:

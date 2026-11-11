@@ -5,6 +5,7 @@ only edits persisted resources. No operation here deletes a Discord resource.
 """
 import json
 import logging
+import sqlite3
 import time
 from contextlib import AsyncExitStack
 from copy import copy
@@ -21,6 +22,7 @@ from services.operation_context import read_scope, read_once, gather_reads, meas
 log = logging.getLogger(__name__)
 
 SETUP_PHASES = {
+    'bulk': frozenset({'category', 'text', 'voice', 'role', 'bot-role'}),
     'structure': frozenset({'category', 'text', 'voice', 'role', 'bot-role'}),
     'foundations': frozenset({'category', 'role', 'bot-role'}),
     'channels': frozenset({'text', 'voice'}),
@@ -30,6 +32,7 @@ SETUP_PHASES = {
 # The localized Discord defaults can be considered only by explicit selection.
 REUSE_ALIASES = {'general': {'allgemein'}, 'chill-lounge': {'allgemein', 'general'}}
 PHASE_TITLES = {
+    'bulk': 'Setup All Missing',
     'structure': 'Review Existing Structure',
     'foundations': 'Preview Missing Categories & Roles',
     'channels': 'Preview Missing Channels',
@@ -313,7 +316,7 @@ def message_view(guild, key):
 
 
 @measured('server_scan')
-async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None, verify_placement=False):
+async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None, verify_placement=False, bulk=False):
     with read_scope():
         channels, roles = list(guild.channels), list(guild.roles)
         structure = affected is None or any(r['kind'] in ('text', 'voice', 'category', 'order', 'message') for r in affected)
@@ -349,10 +352,10 @@ async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None
             roles = await read_once(('roles', guild.id), guild.fetch_roles)
         snapshot = GuildSnapshot(guild, channels, roles)
         with db.read_only():
-            return await _scan(snapshot, bot, message_keys=message_keys, verify_placement=verify_placement)
+            return await _scan(snapshot, bot, message_keys=message_keys, verify_placement=verify_placement, bulk=bulk)
 
 
-async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placement=False):
+async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placement=False, bulk=False):
     from services.role_service import normalize_role_name
     from services.structure_adoption_service import channel_mapping
     if protected is None:
@@ -446,7 +449,7 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
             if verify_placement and review_aliases and status == 'EXACT_MATCH' and existing.id in safe:
                 row['placement_name'] = display_name(guild, row)
                 row['signature'].append(('placement_name', row['placement_name']))
-        if row.get('private') and status == 'MISSING' and not row.get('existing_only'):
+        if not bulk and row.get('private') and status == 'MISSING' and not row.get('existing_only'):
             blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=expected_parent,
                                     overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
             policy = rights(guild, row, blank)
@@ -454,6 +457,8 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
             row['signature'].append(('policy', sorted(
                 (principal.id, allow.value, deny.value)
                 for principal, overwrite in policy.items() for allow, deny in [overwrite.pair()])))
+    if bulk:
+        return bulk_plan(guild, rows)
     warnings = []
     from services.channel_adoption_service import order_plans
     from services.community_structure_service import event_order
@@ -486,6 +491,107 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
         rows.append(dict(key=warning, kind='warning', name=warning, label=warning, status='AMBIGUOUS',
                          candidates=[], safe=[], raw=None, resource=None, signature=[]))
     return rows
+
+
+def setup_policy(guild, row, parent=None):
+    blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=parent,
+                            overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
+    policy = rights(guild, row, blank)
+    if row.get('private') and (
+            policy.get(guild.default_role, discord.PermissionOverwrite()).view_channel is not False
+            or guild.me is None
+            or policy.get(guild.me, discord.PermissionOverwrite()).view_channel is not True):
+        raise ServerMessageError('Private permissions need review')
+    return policy
+
+
+def policy_signature(policy, *, exclude=()):
+    return sorted((principal.id, *[value.value for value in overwrite.pair()])
+                  for principal, overwrite in policy.items() if principal.id not in exclude)
+
+
+def bulk_plan(guild, rows):
+    """Classify the same reconciliation inventory before the owner confirms."""
+    order = {'role': 0, 'bot-role': 0, 'category': 1, 'text': 2, 'voice': 2}
+    rows = sorted(rows, key=lambda row: (order[row['kind']], row['key']))
+    reviewed = {}
+    permissions = guild.me.guild_permissions if guild.me else discord.Permissions.none()
+    for row in rows:
+        row.update(bulk_action='skip', bulk_guild=guild)
+        reviewed[row['key']] = row
+        if row.get('optional') or row.get('existing_only'):
+            row['reason'] = 'Outside bulk setup'
+            continue
+        kind, status = row['kind'], row['status']
+        role = kind in ('role', 'bot-role')
+        candidates = row['candidates']
+        match = candidates[0] if len(candidates) == 1 else None
+        if match and match.id in row['safe']:
+            if any(other['key'] != row['key'] and
+                   (str(match.id) == other['raw'] or any(item.id == match.id for item in other['candidates']))
+                   for other in rows):
+                row['reason'] = 'Resource is shared by competing mappings'
+                continue
+            try:
+                if status != 'EXACT_MATCH':
+                    messages.assert_unreferenced(match.id, row['key'])
+                if kind == 'bot-role' and match.permissions.value:
+                    raise ServerMessageError('Bot grouping role has existing grants')
+                if row.get('private'):
+                    parent = reviewed.get(row['parent'])
+                    if row['parent'] and (not parent or parent['bulk_action'] != 'reuse'
+                                          or match.category_id != parent.get('bulk_id')):
+                        raise ServerMessageError('Existing private parent needs review')
+                    policy = setup_policy(guild, row, row.get('destination'))
+                    allowed = {principal.id for principal, overwrite in policy.items() if overwrite.view_channel is True}
+                    if any(overwrite.view_channel is True and principal.id not in allowed
+                           for principal, overwrite in match.overwrites.items()):
+                        raise ServerMessageError('Existing private resource has additional access grants')
+            except (ServerMessageError, ValueError):
+                row['reason'] = 'Existing ownership or permissions need review'
+                continue
+            if status in ('EXACT_MATCH', 'SAFE_ADOPTION'):
+                row.update(bulk_action='reuse', bulk_id=match.id)
+                continue
+            if row['name'] in REUSE_ALIASES and alias(match.name) in REUSE_ALIASES[row['name']]:
+                row.update(bulk_action='choose', bulk_id=match.id)
+                continue
+        if status != 'MISSING' or candidates:
+            continue
+        if role:
+            if permissions.manage_roles:
+                row['bulk_action'] = 'create'
+            else:
+                row['reason'] = 'GamerHQ needs Manage Roles'
+            continue
+        if not permissions.manage_channels or (row.get('private') and not permissions.manage_roles):
+            row['reason'] = 'GamerHQ needs permissions to create this resource'
+            continue
+        parent = reviewed.get(row['parent'])
+        if row['parent'] and (not parent or parent['bulk_action'] not in ('reuse', 'create')
+                              or (row['destination'] and row['destination'].id != parent.get('bulk_id'))):
+            row['reason'] = 'Parent category needs separate review'
+            continue
+        if parent and parent.get('bulk_id'):
+            destination = guild.get_channel(parent['bulk_id'])
+            if hasattr(destination, 'permissions_for') and not snapshot_permissions(guild, destination, guild.me).manage_channels:
+                row['reason'] = 'GamerHQ cannot manage the existing category'
+                continue
+        try:
+            row['create_overwrites'] = setup_policy(guild, row, row.get('destination'))
+        except (ServerMessageError, ValueError):
+            row['reason'] = 'Creation permissions need review'
+            continue
+        row['signature'].append(('bulk-policy', policy_signature(row['create_overwrites'])))
+        row['bulk_action'] = 'create'
+    return rows
+
+
+def confirmed_setup_policy(row, added_roles, parent=None):
+    policy = setup_policy(row['bulk_guild'], row, parent)
+    if policy_signature(policy, exclude=added_roles) != policy_signature(row['create_overwrites'], exclude=added_roles):
+        raise ServerMessageError('Creation permissions changed during setup')
+    return policy
 
 
 def component_payload_matches(actual, expected):
@@ -610,11 +716,11 @@ def needs_repair(guild, row, *, placement=False):
 
 async def preview(guild, actor, mode, bot=None, *, scope=None):
     managed.require_admin(guild, actor)
-    if (mode == 'setup' or scope == 'placement') and actor.id != guild.owner_id:
+    if (mode == 'setup' or scope in ('placement', 'bulk')) and actor.id != guild.owner_id:
         raise ServerMessageError('Only the owner can review these changes.')
     with operation(f'server_{mode}_preview'):
         rows = await scan(guild, bot, fresh=True, message_keys=None if scope in (None, 'messages') else (),
-                          verify_placement=scope == 'placement')
+                          verify_placement=scope == 'placement', bulk=scope == 'bulk')
     rows = [r for r in rows if in_phase(r, scope) or r['kind'] == 'warning']
     if mode == 'reconcile' and actor.id != guild.owner_id:
         for row in rows:
@@ -668,8 +774,23 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
     if (mode == 'setup' or scope == 'placement') and actor.id != guild.owner_id:
         raise ServerMessageError('Owner required.')
     choices = choices or {}
-    done, skipped = [], []
+    bulk = scope == 'bulk'
+    if bulk and mode != 'setup':
+        raise ServerMessageError('Bulk setup requires the owner setup operation.')
+    result = dict(created=[], reused=[], skipped=[], failed=[], remaining=[]) if bulk else None
+    done = []
+    skipped = result['skipped'] if bulk else []
+    available, added_roles = {}, set()
+
+    def bulk_action(row):
+        action = row.get('bulk_action')
+        if action == 'choose':
+            return 'reuse' if choices.get(row['key']) == row.get('bulk_id') else 'skip'
+        return action
+
     def actionable(row):
+        if bulk:
+            return bulk_action(row) in ('create', 'reuse')
         if not in_phase(row, scope) or row.get('optional'):
             return False
         if scope in ('channels', 'placement') and not row.get('destination'):
@@ -685,16 +806,24 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
             return selected in row['safe'] and str(selected) != row['raw']
         return scope != 'structure' and row['status'] == 'SAFE_ADOPTION'
     planned = [row for row in draft['rows'] if actionable(row)]
-    if not planned: return done, skipped
+    if bulk:
+        for row in draft['rows']:
+            if not actionable(row):
+                reason = row.get('reason') or 'Existing resource needs review'
+                skipped.append(f"{row['label']} · {reason}")
+                if not (row.get('optional') or row.get('existing_only')):
+                    result['remaining'].append(row['label'])
+    elif not planned:
+        return done, skipped
     async with managed.lock(f'operations:{guild.id}'), AsyncExitStack() as locks:
         keys = {(f"choose_games_refresh:{r['channel'].id}" if r['key'].startswith('choose_games_') else r['key'])
                 for r in planned if r['kind'] == 'message'}
         for key in sorted(keys):
             await locks.enter_async_context(managed.lock(key))
         shared = [r for r in planned if mode != 'repair' or r['kind'] != 'message']
-        fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=shared,
+        fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=None if bulk else shared,
                  message_keys={r['key'] for r in shared if r['kind'] == 'message'},
-                 verify_placement=scope == 'placement')} if shared else {}
+                 verify_placement=scope == 'placement', bulk=bulk)} if shared else {}
         created_resources = {}
         for old in planned:
             row = fresh.get(old['key'])
@@ -702,129 +831,171 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                 # Re-read only this board immediately before repairing it.
                 rows = await scan(guild, bot, fresh=True, affected=[old], message_keys={old['key']})
                 row = next((r for r in rows if r['key'] == old['key']), None)
-            if not row or (row['raw'], row['signature']) != (old['raw'], old['signature']):
+            if (not row or (row['raw'], row['signature']) != (old['raw'], old['signature'])
+                    or bulk and (bulk_action(row), row.get('bulk_id')) != (bulk_action(old), old.get('bulk_id'))):
                 skipped.append(old['label'] + ': changed; scan again')
+                if bulk:
+                    result['remaining'].append(old['label'])
                 continue
             managed.require_admin(guild, actor)
+            if bulk and actor.id != guild.owner_id:
+                raise ServerMessageError('Owner required.')
             key, kind = row['key'], row['kind']
-            if mode == 'reconcile':
-                if ((kind == 'message' or row['name'] in REUSE_ALIASES)
-                        and row['status'] == 'AMBIGUOUS' and actor.id != guild.owner_id):
-                    skipped.append(row['label'] + ': owner review required')
-                    continue
-                selected = choices.get(key)
-                if selected is None and row['status'] == 'SAFE_ADOPTION': selected = row['safe'][0]
-                if selected is None or selected not in row['safe'] or str(selected) == row['raw']: continue
-                resource = next(r for r in row['candidates'] if r.id == selected)
-                if kind == 'message':
-                    latest = await row['channel'].fetch_message(selected)
-                    if (latest.channel.id != row['channel'].id or latest.author.id != guild.me.id
-                            or latest.type != discord.MessageType.default or wire(latest) != wire(resource)):
-                        raise ServerMessageError('Message changed; reopen reconciliation.')
-                    messages.references(selected, key)
-                    managed.require_admin(guild, actor)
-                elif kind in ('role', 'bot-role'):
-                    if any(g.get('role_id') == selected for g in db.get_all_games(active_only=False)):
-                        skipped.append(row['label'] + ': belongs to a game'); continue
-                    if any(str(r['role_id']) == str(selected) and ('base:' + r['role_key']) != key for r in db.get_managed_roles()):
-                        skipped.append(row['label'] + ': already linked elsewhere'); continue
-                if any(r['key'] != key and r['raw'] == str(selected) for r in fresh.values()):
-                    skipped.append(row['label'] + ': already linked elsewhere'); continue
-                persist(guild, row, resource)
-                row['raw'] = str(selected)
-            elif mode == 'setup':
-                if not actionable(row): continue
-                if kind in ('role', 'bot-role'):
-                    resource = await guild.create_role(name=row['label'], permissions=discord.Permissions.none(), reason='Confirmed GamerHQ setup')
-                elif kind == 'category':
-                    blank = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
-                    policy = row['create_overwrites'] if scope and 'create_overwrites' in row else rights(guild, row, blank)
-                    resource = await guild.create_category(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
-                elif kind in ('text', 'voice'):
-                    parent = row['destination'] if scope == 'channels' else target(guild, row)
-                    if parent is None:
-                        raw_parent = db.get_setting(row['parent'])
-                        parent = created_resources.get(int(raw_parent)) if raw_parent and raw_parent.isdigit() else None
-                    if not parent: skipped.append(row['label'] + ': link/create parent first'); continue
-                    blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=parent, overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
-                    policy = row['create_overwrites'] if scope and 'create_overwrites' in row else rights(guild, row, blank)
-                    create = parent.create_voice_channel if kind == 'voice' else parent.create_text_channel
-                    resource = await create(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
-                elif kind == 'message':
-                    with read_scope(), db.read_only():
-                        boards = managed.canonical_boards(row['guild'], bot)
-                        destination, content = boards.get(key, (None, None))
-                        defaults = managed.canonical_boards(row['guild'], bot, defaults=True)
-                        default_content = defaults.get(key, (None, content))[1]
-                        current = await inspect_message(row['guild'], key, destination, content, default_content, boards=boards)
-                    if current['signature'] != row['signature']:
-                        skipped.append(row['label'] + ': message evidence changed; scan again')
+            if bulk and bulk_action(row) == 'reuse' and row['status'] == 'EXACT_MATCH':
+                available[key] = row['resource']
+                result['reused'].append(row['label'])
+                continue
+            try:
+                if mode == 'reconcile' or bulk and bulk_action(row) == 'reuse':
+                    if ((kind == 'message' or row['name'] in REUSE_ALIASES)
+                            and row['status'] == 'AMBIGUOUS' and actor.id != guild.owner_id):
+                        skipped.append(row['label'] + ': owner review required')
                         continue
-                    managed.require_admin(guild, actor)
-                    if actor.id != guild.owner_id:
-                        raise ServerMessageError('Owner required.')
-                    view = message_view(row['guild'], key)
-                    nonce = managed.digest([guild.id, destination.id, key])[:25]
-                    resource = await destination.send(content=row['content'], view=view, nonce=nonce,
-                                                      allowed_mentions=discord.AllowedMentions.none())
+                    selected = row['bulk_id'] if bulk else choices.get(key)
+                    if selected is None and row['status'] == 'SAFE_ADOPTION': selected = row['safe'][0]
+                    if selected is None or selected not in row['safe'] or str(selected) == row['raw']: continue
+                    resource = next(r for r in row['candidates'] if r.id == selected)
+                    if kind == 'message':
+                        latest = await row['channel'].fetch_message(selected)
+                        if (latest.channel.id != row['channel'].id or latest.author.id != guild.me.id
+                                or latest.type != discord.MessageType.default or wire(latest) != wire(resource)):
+                            raise ServerMessageError('Message changed; reopen reconciliation.')
+                        messages.references(selected, key)
+                        managed.require_admin(guild, actor)
+                    elif kind in ('role', 'bot-role'):
+                        if any(g.get('role_id') == selected for g in db.get_all_games(active_only=False)):
+                            skipped.append(row['label'] + ': belongs to a game')
+                            if bulk:
+                                result['remaining'].append(row['label'])
+                            continue
+                        if any(str(r['role_id']) == str(selected) and ('base:' + r['role_key']) != key for r in db.get_managed_roles()):
+                            skipped.append(row['label'] + ': already linked elsewhere')
+                            if bulk:
+                                result['remaining'].append(row['label'])
+                            continue
+                    if any(r['key'] != key and r['raw'] == str(selected) for r in fresh.values()):
+                        skipped.append(row['label'] + ': already linked elsewhere')
+                        if bulk:
+                            result['remaining'].append(row['label'])
+                        continue
+                    if bulk:
+                        messages.assert_unreferenced(selected, key)
                     persist(guild, row, resource)
-                    await resource.pin(reason='Confirmed GamerHQ setup')
-                else: continue
-                if kind != 'message':
-                    persist(guild, row, resource)
-                created_resources[resource.id] = resource
-            elif mode == 'repair':
-                if not needs_repair(guild, row, placement=scope == 'placement'): continue
-                resource = row['resource']
-                if kind == 'order':
-                    from services.channel_change_service import bulk_positions
-                    await bulk_positions(guild, row['positions'], reason='Confirmed GamerHQ managed channel order')
-                elif kind == 'message':
-                    if resource.id not in row['safe']: skipped.append(row['label'] + ': unknown controls'); continue
-                    # Repair never calls an upsert that could send a replacement.
-                    latest = resource  # Exact-ID fetch was the immediately preceding revalidation.
-                    messages.references(latest.id, key)
-                    if latest.content != row['content']:
-                        updated = await latest.edit(content=row['content'], view=message_view(guild, key), allowed_mentions=discord.AllowedMentions.none())
-                        if updated is not None: latest = updated
-                        state = managed.load(key)
-                        if state:
-                            state.update(content=row['content'], content_hash=managed.digest(row['content']), version=state['version'] + 1)
-                            managed.store(state)
-                    if not latest.pinned: await latest.pin(reason='Confirmed GamerHQ pin repair')
-                    if not managed.load(key) and key in managed.specs(guild): persist(guild, row, latest)
-                elif kind in ('text', 'voice'):
-                    parent = row['destination'] if scope == 'placement' else target(guild, row)
-                    if not row['private'] and private(resource):
-                        skipped.append(row['label'] + ': private resource retained'); continue
-                    changes = {} if scope == 'placement' else dict(overwrites=rights(guild, row, resource))
-                    if scope == 'placement':
-                        changes['name'] = row['placement_name']
-                    elif not row.get('existing_only') or row.get('game_id'):
-                        changes['name'] = display_name(guild, row)
-                    if parent and resource.category_id != parent.id: changes.update(category=parent, sync_permissions=False)
-                    from services.channel_change_service import edit
-                    await edit(resource, **changes, reason='Confirmed GamerHQ repair')
-                elif kind == 'category':
-                    if not row['private'] and private(resource):
-                        skipped.append(row['label'] + ': private category retained'); continue
-                    known = {r['resource'].id for r in fresh.values() if r['resource'] and r['kind'] in ('text', 'voice')}
-                    if any(getattr(c, 'category_id', None) == resource.id and c.id not in known
-                           and c.overwrites == resource.overwrites for c in await guild.fetch_channels()):
-                        skipped.append(row['label'] + ': unknown permission-synced children retained'); continue
-                    from services.channel_change_service import edit
-                    await edit(resource, overwrites=rights(guild, row, resource), reason='Confirmed GamerHQ category repair')
-                elif kind == 'bot-role':
-                    from services.bot_group_service import GROUPS, member, assigned, safe
-                    if not safe(resource) or resource.permissions.value or any(not m.bot for m in resource.members):
-                        skipped.append(row['label'] + ': unsafe/shared bot role; review manually'); continue
-                    if not resource.hoist: await resource.edit(hoist=True, reason='Confirmed GamerHQ bot grouping')
-                    for name in GROUPS[row['name']][1]:
-                        bot_member = member(guild, name)
-                        if bot_member and not assigned(guild, bot_member, resource):
-                            await bot_member.add_roles(resource, reason='Confirmed GamerHQ bot grouping')
-                else: continue
-            else: raise ServerMessageError('Unknown operation.')
+                    row['raw'] = str(selected)
+                elif mode == 'setup':
+                    if not actionable(row): continue
+                    if kind in ('role', 'bot-role'):
+                        resource = await guild.create_role(name=row['label'], permissions=discord.Permissions.none(),
+                                                           hoist=bulk and kind == 'bot-role', reason='Confirmed GamerHQ setup')
+                    elif kind == 'category':
+                        blank = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
+                        policy = confirmed_setup_policy(row, added_roles) if bulk else (
+                            row['create_overwrites'] if scope and 'create_overwrites' in row else rights(guild, row, blank))
+                        resource = await guild.create_category(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
+                    elif kind in ('text', 'voice'):
+                        parent = available.get(row['parent']) if bulk else (
+                            row['destination'] if scope == 'channels' else target(guild, row))
+                        if parent is None and not bulk:
+                            raw_parent = db.get_setting(row['parent'])
+                            parent = created_resources.get(int(raw_parent)) if raw_parent and raw_parent.isdigit() else None
+                        if not parent:
+                            skipped.append(row['label'] + ': link/create parent first')
+                            if bulk:
+                                result['remaining'].append(row['label'])
+                            continue
+                        blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=parent, overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
+                        policy = confirmed_setup_policy(row, added_roles, parent) if bulk else (
+                            row['create_overwrites'] if scope and 'create_overwrites' in row else rights(guild, row, blank))
+                        create = parent.create_voice_channel if kind == 'voice' else parent.create_text_channel
+                        resource = await create(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
+                    elif kind == 'message':
+                        with read_scope(), db.read_only():
+                            boards = managed.canonical_boards(row['guild'], bot)
+                            destination, content = boards.get(key, (None, None))
+                            defaults = managed.canonical_boards(row['guild'], bot, defaults=True)
+                            default_content = defaults.get(key, (None, content))[1]
+                            current = await inspect_message(row['guild'], key, destination, content, default_content, boards=boards)
+                        if current['signature'] != row['signature']:
+                            skipped.append(row['label'] + ': message evidence changed; scan again')
+                            continue
+                        managed.require_admin(guild, actor)
+                        if actor.id != guild.owner_id:
+                            raise ServerMessageError('Owner required.')
+                        view = message_view(row['guild'], key)
+                        nonce = managed.digest([guild.id, destination.id, key])[:25]
+                        resource = await destination.send(content=row['content'], view=view, nonce=nonce,
+                                                          allowed_mentions=discord.AllowedMentions.none())
+                        persist(guild, row, resource)
+                        await resource.pin(reason='Confirmed GamerHQ setup')
+                    else: continue
+                    if kind != 'message':
+                        persist(guild, row, resource)
+                    created_resources[resource.id] = resource
+                elif mode == 'repair':
+                    if not needs_repair(guild, row, placement=scope == 'placement'): continue
+                    resource = row['resource']
+                    if kind == 'order':
+                        from services.channel_change_service import bulk_positions
+                        await bulk_positions(guild, row['positions'], reason='Confirmed GamerHQ managed channel order')
+                    elif kind == 'message':
+                        if resource.id not in row['safe']: skipped.append(row['label'] + ': unknown controls'); continue
+                        # Repair never calls an upsert that could send a replacement.
+                        latest = resource  # Exact-ID fetch was the immediately preceding revalidation.
+                        messages.references(latest.id, key)
+                        if latest.content != row['content']:
+                            updated = await latest.edit(content=row['content'], view=message_view(guild, key), allowed_mentions=discord.AllowedMentions.none())
+                            if updated is not None: latest = updated
+                            state = managed.load(key)
+                            if state:
+                                state.update(content=row['content'], content_hash=managed.digest(row['content']), version=state['version'] + 1)
+                                managed.store(state)
+                        if not latest.pinned: await latest.pin(reason='Confirmed GamerHQ pin repair')
+                        if not managed.load(key) and key in managed.specs(guild): persist(guild, row, latest)
+                    elif kind in ('text', 'voice'):
+                        parent = row['destination'] if scope == 'placement' else target(guild, row)
+                        if not row['private'] and private(resource):
+                            skipped.append(row['label'] + ': private resource retained'); continue
+                        changes = {} if scope == 'placement' else dict(overwrites=rights(guild, row, resource))
+                        if scope == 'placement':
+                            changes['name'] = row['placement_name']
+                        elif not row.get('existing_only') or row.get('game_id'):
+                            changes['name'] = display_name(guild, row)
+                        if parent and resource.category_id != parent.id: changes.update(category=parent, sync_permissions=False)
+                        from services.channel_change_service import edit
+                        await edit(resource, **changes, reason='Confirmed GamerHQ repair')
+                    elif kind == 'category':
+                        if not row['private'] and private(resource):
+                            skipped.append(row['label'] + ': private category retained'); continue
+                        known = {r['resource'].id for r in fresh.values() if r['resource'] and r['kind'] in ('text', 'voice')}
+                        if any(getattr(c, 'category_id', None) == resource.id and c.id not in known
+                               and c.overwrites == resource.overwrites for c in await guild.fetch_channels()):
+                            skipped.append(row['label'] + ': unknown permission-synced children retained'); continue
+                        from services.channel_change_service import edit
+                        await edit(resource, overwrites=rights(guild, row, resource), reason='Confirmed GamerHQ category repair')
+                    elif kind == 'bot-role':
+                        from services.bot_group_service import GROUPS, member, assigned, safe
+                        if not safe(resource) or resource.permissions.value or any(not m.bot for m in resource.members):
+                            skipped.append(row['label'] + ': unsafe/shared bot role; review manually'); continue
+                        if not resource.hoist: await resource.edit(hoist=True, reason='Confirmed GamerHQ bot grouping')
+                        for name in GROUPS[row['name']][1]:
+                            bot_member = member(guild, name)
+                            if bot_member and not assigned(guild, bot_member, resource):
+                                await bot_member.add_roles(resource, reason='Confirmed GamerHQ bot grouping')
+                    else: continue
+                else: raise ServerMessageError('Unknown operation.')
+            except (discord.HTTPException, TimeoutError, ServerMessageError, ValueError, sqlite3.Error):
+                if not bulk:
+                    raise
+                result['failed'].append(row['label'])
+                result['remaining'].append(row['label'])
+                log.warning('Bulk setup failed guild=%s key=%s', guild.id, key)
+                continue
+            if bulk:
+                available[key] = resource
+                result['created' if bulk_action(row) == 'create' else 'reused'].append(row['label'])
+                if kind in ('role', 'bot-role') and bulk_action(row) == 'create':
+                    row['bulk_guild'].roles.append(resource)
+                    added_roles.add(resource.id)
             done.append(row['label'])
             log.info('Managed operation mode=%s guild=%s actor=%s key=%s resource=%s', mode, guild.id, actor.id, key, resource.id)
-    return done, skipped
+    return result if bulk else (done, skipped)
