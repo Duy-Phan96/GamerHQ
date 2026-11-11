@@ -100,7 +100,8 @@ def main():
             # Install the reviewed extension under the same restrictive umask,
             # retaining keys, state, legacy worker, DB and sandbox. No apply.
             from tools.extend_staging_host_promotion import (ACTIVE_CONFIGURATION_CONTROLLER,
-                ACTIVE_MANAGED_MESSAGES_CONTROLLER, ACTIVE_STRUCTURE_CONTROLLER, BULK_STRUCTURE_HOST,
+                ACTIVE_MANAGED_MESSAGES_CONTROLLER, ACTIVE_STRUCTURE_CONTROLLER,
+                ACTIVE_BULK_STRUCTURE_CONTROLLER, BULK_RECOVERY_HOST, BULK_STRUCTURE_HOST,
                 CATALOG_CONTROLLER, CONFIGURATION_HOST,
                 FAILED_CONFIGURATION_CONTROLLER, HOST, MANAGED_MESSAGES_HOST, OLD, STRUCTURE_HOST, WEB_BASE, extension)
             from urllib.request import urlopen
@@ -188,12 +189,20 @@ def main():
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': STRUCTURE_HOST,
                                                 'baseImage': held['approvedImage']}))
+            state_path.write_text(json.dumps({**held, 'recoveryRequired': False}))
+            bulk_pin = install_pin(ACTIVE_BULK_STRUCTURE_CONTROLLER,
+                '6e61e216157b405a412983eff2ec7dea136faf100b893f164915d6008cbf5275',
+                'ENROLL STAGING BULK STRUCTURE SETUP', '--bulk-structure-setup')
+            assert bulk_pin['approvedHostCommit'] == BULK_STRUCTURE_HOST
+            installed_policy = json.loads(policy_path.read_bytes())
+            profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': BULK_STRUCTURE_HOST,
+                                                'baseImage': held['approvedImage']}))
             state_path.write_text(json.dumps(held))
-            approval = 'ENROLL STAGING BULK STRUCTURE SETUP'
+            approval = 'ENROLL STAGING BULK SETUP RECOVERY'
             old_entry = (root / 'automation-controller/entry.py').read_bytes()
             held_state = state_path.read_bytes()
             try:
-                extension(args.commit, approval, bulk_structure=True)
+                extension(args.commit, approval, bulk_recovery=True)
             except ValueError as error:
                 assert str(error) == 'REVIEWED_RECOVERY_REQUIRED'
             else:
@@ -207,14 +216,14 @@ def main():
             staged_profile = profile_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)
-                try: result = extension(args.commit, approval, bulk_structure=True)
+                try: result = extension(args.commit, approval, bulk_recovery=True)
                 finally: os.umask(previous)
-                assert result['approvedHostCommit'] == BULK_STRUCTURE_HOST
-                assert result['previousHostCommit'] == STRUCTURE_HOST
+                assert result['approvedHostCommit'] == BULK_RECOVERY_HOST
+                assert result['previousHostCommit'] == BULK_STRUCTURE_HOST
                 assert result['state'] == 'PIN_INSTALLED' and result['hostPromotionRequiresProtectedOwnerReview']
             assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
             enrolled = json.loads(call('status').stdout)
-            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == BULK_STRUCTURE_HOST
+            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == BULK_RECOVERY_HOST
             assert enrolled['recoveryRequired'] is False
             new_policy = json.loads(policy_path.read_bytes())
             assert new_policy == {**installed_policy, 'controllerCommit': args.commit,
@@ -249,7 +258,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', BULK_STRUCTURE_HOST)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', BULK_RECOVERY_HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']
@@ -258,7 +267,7 @@ print('NORMALIZED_STAGING_LIMITS_PASS')
         raise RuntimeError('Disposable Docker normalization failed: '+normalized.stderr[-2000:])
     print(json.dumps({'enrollmentRetry': 'PASS', 'realScopedSsh': 'PASS', 'legacyBootstrapDenied': True, 'credentialChangeDenied': True,
         'unsignedActivationDenied': True, 'retainedDatabase': True, 'existingProfileAndPolicyUnchanged': True, 'catalogPreviewPolicyPreserved': True,
-        'recoveryLatchPreserved': True, 'heldEnrollmentDenied': True, 'bulkStructurePinEnrollment': 'PASS',
+        'recoveryLatchPreserved': True, 'heldEnrollmentDenied': True, 'bulkRecoveryPinEnrollment': 'PASS',
         'normalizedContainerLimits': 'PASS',
         'accountForceCommandFailureReproduced': True, 'authenticatedKeyRouting': 'PASS', 'crossIdentityRoutingDenied': True,
         'restrictiveDirectoryAccessFailureReproduced': True, 'ownerInstallerUmask': '077', 'directoryAccessRepair': 'PASS',

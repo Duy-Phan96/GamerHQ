@@ -1,5 +1,27 @@
 # Reviewed staging Host promotion
 
+## Bulk setup recovery candidate
+
+[Candidate PR #252](https://github.com/Duy-Phan96/GamerHQ/pull/252) overlays
+the fix from [Host PR #251](https://github.com/Duy-Phan96/GamerHQ/pull/251)
+on the currently deployed Host `c4985b0df53fffad7b83790b257368ac243c013a`. The exact candidate is
+`96855865b746c214f4197b9f2808cbae1c21b7ff`, archive SHA256 `4b6eb69666f4268ac715cd94797b35139c917dd5a074bb5a8a5d082386ade37f`.
+[Candidate CI](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43057102226).
+
+The owner-only pin installer requires the active bulk setup controller
+`890cdfe91607bf3c47c015a65e2061f18ff1d865`, the currently approved staging image and a clear recovery latch.
+Use `--bulk-setup-recovery --approval 'ENROLL STAGING BULK SETUP RECOVERY'` after verifying the
+immutable installer checksum in scoped CI. The installer leaves the catalog
+authorization, SSH restrictions and live resources in place. Register the
+matching workflow after enrollment and use the existing deployment-security
+review for promotion.
+
+After promotion, verify the backup, restore probe, Host health, Event Manager
+0.1.2 and authority preservation. Open the owner-only bulk setup preview and
+compare the existing resource IDs against the Staging inventory. Stop before
+confirmation. Use the recovery runbook in the Host fix to review private
+policies and both Allgemein channels.
+
 ## Bulk structure setup candidate
 
 [Candidate PR #248](https://github.com/Duy-Phan96/GamerHQ/pull/248) overlays the reviewed
