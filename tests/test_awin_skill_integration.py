@@ -75,6 +75,14 @@ class AwinSkillIntegrationTests(unittest.TestCase):
         self.assertNotIn("must-not-render", text)
         self.assertNotIn("secret", text.lower())
 
+    def test_connect_modal_respects_discord_text_input_limit(self):
+        # Discord rejects modal TextInput.max_length greater than 4000
+        # (HTTP 400, invalid form body) before token entry can open.
+        field = awin_management.AwinConnectModal.access_token
+        self.assertTrue(field.required)
+        self.assertLessEqual(field.max_length, 4000)
+        self.assertGreater(field.max_length, 0)
+
     def test_connect_modal_never_formats_submitted_token_into_user_text(self):
         source = inspect.getsource(awin_management.AwinConnectModal.on_submit)
         self.assertIn('"accessToken": str(self.access_token.value)', source)
