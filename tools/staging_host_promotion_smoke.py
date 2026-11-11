@@ -23,11 +23,13 @@ from skill_runtime import ManagementField,ManagementFieldOption
 from services.server_configuration_preview import preview
 from cogs.server_management import StructureView
 from services.server_operations import bulk_policy_issue, bulk_preview_report
+from services.message_reconciliation import runtime_reference_locations
 from discord import Permissions, PermissionOverwrite
 from tools.game_catalog_import import manifest
 from inspect import iscoroutinefunction
 assert iscoroutinefunction(preview) and iscoroutinefunction(bot.setup_hook) and not bot.is_ready()
 assert len(manifest('/app/data/game_catalog_expansion.json')) == 70
+assert callable(runtime_reference_locations)
 assert 'Manage Messages' in bulk_policy_issue({0: PermissionOverwrite(manage_messages=False)}, Permissions.none())
 assert '0 resource decisions' in bulk_preview_report(dict(scope='bulk',mode='setup',guild_id=1,created=0,rows=[]),{})
 async def check():
