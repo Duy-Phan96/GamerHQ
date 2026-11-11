@@ -835,6 +835,7 @@ class OperationsView(RoleAdminSession):
         self.guild, self.admin_id, self.draft, self.bot = guild, draft['actor_id'], draft, bot
         self.page, self.choices, self.finished = 0, {}, False
         self.friendly = friendly
+        self.page_size = 6 if draft.get('scope') == 'bulk' else 8
         if draft.get('scope') == 'bulk':
             self.confirm_preview.label = 'Confirm Setup'
         self.refresh_choices()
@@ -848,7 +849,7 @@ class OperationsView(RoleAdminSession):
     def refresh_choices(self):
         for child in list(self.children):
             if isinstance(child, ResourceChoice): self.remove_item(child)
-        rows = [r for r in self.draft['rows'][self.page*8:(self.page+1)*8] if r['candidates'] and r['status'] != 'EXACT_MATCH']
+        rows = [r for r in self.draft['rows'][self.page * self.page_size:(self.page + 1) * self.page_size] if r['candidates'] and r['status'] != 'EXACT_MATCH']
         if self.draft.get('scope') == 'bulk':
             rows = [row for row in rows if row['bulk_action'] == 'choose']
             if rows:
@@ -877,7 +878,7 @@ class OperationsView(RoleAdminSession):
             if mode == 'repair' and needs_repair(self.guild, row): state = 'Repair name/placement/order/permissions/pin/content'
             selected = f" → {self.choices[row['key']] or 'ignored'}" if row['key'] in self.choices else ''
             lines.append(f"• {discord.utils.escape_markdown(row['label'])[:75]}: {state}{selected}")
-        lines.append(f"Page {self.page+1}/{max(1,(len(self.draft['rows'])+7)//8)}. Review pages/matches, then Preview Changes. Safe single matches are linked only on confirmation.")
+        lines.append(f"Page {self.page+1}/{max(1,(len(self.draft['rows']) + self.page_size - 1) // self.page_size)}. Review pages/matches, then Preview Changes. Safe single matches are linked only on confirmation.")
         return '\n'.join(lines)[:1950]
 
     def bulk_text(self):
@@ -886,18 +887,23 @@ class OperationsView(RoleAdminSession):
             value = row['bulk_action']
             if value == 'choose' and self.choices.get(row['key']) == row['bulk_id']:
                 return 'reuse'
+            if value == 'reuse' and row['status'] == 'EXACT_MATCH':
+                return 'configured'
+            if value == 'skip' and not (row.get('optional') or row.get('existing_only')):
+                return 'blocked' if row.get('bulk_blocked') else 'review'
             return value
-        labels = {'create': 'Create', 'reuse': 'Reuse', 'choose': 'Choose reuse', 'skip': 'Skip'}
+        labels = {'create': 'Create', 'reuse': 'Link existing', 'choose': 'Choose reuse',
+                  'configured': 'Already configured', 'skip': 'Skip by policy',
+                  'blocked': 'Blocked by parent', 'review': 'Needs review'}
         kinds = {'category': 'categories', 'text': 'text channels', 'voice': 'voice channels',
                  'role': 'profile roles', 'bot-role': 'bot grouping roles'}
         creates = [r for r in rows if action(r) == 'create']
         lines = ['# Setup All Missing',
                  'Confirm Setup applies this entire preview. Select any offered existing channels you want to reuse.',
-                 f"Create {len(creates)} · Reuse {sum(action(r) == 'reuse' for r in rows)} · "
-                 f"Choose reuse {sum(action(r) == 'choose' for r in rows)} · Skip {sum(action(r) == 'skip' for r in rows)}",
+                 ' · '.join(f'{label} {sum(action(r) == state for r in rows)}' for state, label in labels.items()),
                  'Create by type · ' + ', '.join(f"{sum(r['kind'] == kind for r in creates)} {label}"
                                                   for kind, label in kinds.items())]
-        for row in rows[self.page * 8:(self.page + 1) * 8]:
+        for row in rows[self.page * self.page_size:(self.page + 1) * self.page_size]:
             state = action(row)
             name = discord.utils.escape_mentions(discord.utils.escape_markdown(row['label']))[:75]
             detail = labels[state]
@@ -905,13 +911,14 @@ class OperationsView(RoleAdminSession):
                 allowed = [discord.utils.escape_mentions(discord.utils.escape_markdown(str(principal.name)))[:20]
                            for principal, overwrite in row['create_overwrites'].items() if overwrite.view_channel is True]
                 detail += ' · private' + (' · access ' + ', '.join(sorted(allowed)[:3]) if allowed else '')
-            if state == 'skip' and row.get('reason'):
+            if state in ('skip', 'blocked', 'review') and row.get('reason'):
                 detail += ' · ' + row['reason']
-            if state in ('reuse', 'choose') and row.get('bulk_id'):
+            if state in ('reuse', 'choose', 'configured') and row.get('bulk_id'):
                 candidate = next(item for item in row['candidates'] if item.id == row['bulk_id'])
-                detail += ' · ' + discord.utils.escape_mentions(discord.utils.escape_markdown(candidate.name))[:55]
+                detail += ' · ' + discord.utils.escape_mentions(discord.utils.escape_markdown(candidate.name))[:40]
+                detail += f' · ID `{candidate.id}`'
             lines.append(f'• {name} · {detail}')
-        lines.append(f'Page {self.page + 1}/{max(1, (len(rows) + 7) // 8)}')
+        lines.append(f'Page {self.page + 1}/{max(1, (len(rows) + self.page_size - 1) // self.page_size)}')
         return '\n'.join(lines)[:1950]
 
     @discord.ui.button(label='Next Page')
@@ -956,8 +963,9 @@ class ConfirmOperationsView(RoleAdminSession):
                                  confirmed=True, choices=self.choices)
             if self.parent.draft.get('scope') == 'bulk':
                 from io import BytesIO
-                counts = ' · '.join(f'{label.title()} {len(items)}' for label, items in result.items())
-                details = '\n\n'.join(label.title() + '\n' + '\n'.join(items) for label, items in result.items() if items)
+                sections = [(label.replace('_', ' ').title(), items) for label, items in result.items()]
+                counts = ' · '.join(f'{label} {len(items)}' for label, items in sections)
+                details = '\n\n'.join(label + '\n' + '\n'.join(items) for label, items in sections if items)
                 report = discord.File(BytesIO(details.encode()), filename='bulk-setup-results.txt')
                 await interaction.edit_original_response(content=counts, attachments=[report], view=None,
                                                          allowed_mentions=discord.AllowedMentions.none())
