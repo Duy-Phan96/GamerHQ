@@ -142,23 +142,25 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         permissions.administrator = permissions.manage_messages = permissions.create_private_threads = False
         self.guild.me.guild_permissions = permissions
         original = ops.definitions
-        names = {'start-here', 'rules', 'support-tickets', 'ticket-logs'}
+        self.guild.categories.remove(self.staff)
+        names = {'start-here', 'guide', 'staff', 'ticket-logs'}
         with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
             draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             rows = {r['name']: r for r in draft['rows']}
-            self.assertEqual(rows['start-here']['bulk_action'], 'create')
-            self.assertEqual(rows['rules']['bulk_action'], 'skip')
-            self.assertIn('Create Private Threads', rows['rules']['reason'])
-            self.assertIn('Manage Messages', rows['support-tickets']['reason'])
-            self.assertIn('SUPPORT TICKETS', rows['ticket-logs']['reason'])
+            self.assertEqual(rows['start-here']['bulk_action'], 'reuse')
+            self.assertEqual(rows['guide']['bulk_action'], 'skip')
+            self.assertIn('Create Private Threads', rows['guide']['reason'])
+            self.assertIn('Manage Messages', rows['staff']['reason'])
+            self.assertIn('STAFF', rows['ticket-logs']['reason'])
             result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
-        self.assertEqual((len(result['created']), len(result['needs_review']), len(result['blocked'])), (1, 2, 1))
+        self.assertEqual((len(result['reused']), len(result['needs_review']), len(result['blocked'])), (1, 2, 1))
         self.assertEqual(result['failed'], [])
-        self.assertIsNone(db.get_setting('managed_category:1:support-tickets'))
+        self.assertIsNone(db.get_setting('managed_category:1:staff'))
 
     async def test_bulk_setup_requires_verified_private_principals(self):
         actor = self.owner()
         self.guild.roles.remove(self.guild.mod)
+        self.guild.categories.remove(self.staff)
         original = ops.definitions
         names = {'staff', 'affiliate-stats'}
         with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
@@ -173,7 +175,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
     async def test_bulk_setup_reports_sanitized_api_failures_and_resumes_from_fresh_inventory(self):
         actor = self.owner()
         original = ops.definitions
-        names = {'events', 'community-events', 'start-here', 'newbies', 'rules'}
+        names = {'events', 'community-events', 'start-here', 'newbies', 'guide'}
         create_category = self.guild.create_category
         rejected = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'),
                                      {'code': 50013, 'message': 'private API detail'})
@@ -187,20 +189,20 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
 
         create_channel = fixtures.FakeCategory.create_text_channel
 
-        async def rate_limit_rules(parent, name, **kwargs):
-            if ops.alias(name) == 'rules':
+        async def rate_limit_guide(parent, name, **kwargs):
+            if ops.alias(name) == 'guide':
                 raise throttled
             return await create_channel(parent, name, **kwargs)
 
         with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild)
                           if r['name'] in names and r['kind'] not in ('role', 'bot-role')]):
             with (patch.object(self.guild, 'create_category', deny_events),
-                  patch.object(fixtures.FakeCategory, 'create_text_channel', rate_limit_rules),
+                  patch.object(fixtures.FakeCategory, 'create_text_channel', rate_limit_guide),
                   self.assertLogs(ops.log, level='WARNING') as logs):
                 draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
                 first = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
             self.assertEqual((len(first['created']), len(first['failed']), len(first['blocked']),
-                              len(first['remaining'])), (2, 2, 1, 3))
+                              len(first['remaining'])), (1, 2, 1, 3))
             self.assertTrue(any('HTTP 403, code 50013' in line for line in first['failed']))
             self.assertTrue(any('HTTP 429' in line for line in first['failed']))
             self.assertIn('EVENTS', first['blocked'][0])
