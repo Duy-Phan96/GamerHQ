@@ -134,7 +134,7 @@ def test_only_the_exact_reviewed_candidate_paths_can_change():
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
     host_changes.remove('hosts/gamerhq/unreviewed.py')
-    changed_path = 'services/server_configuration_preview.py'
+    changed_path = 'services/server_operations.py'
     host_changes.remove(changed_path)
     with pytest.raises(Denied, match='MIGRATION'):
         verify_compatibility(git)
