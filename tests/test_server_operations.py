@@ -25,6 +25,23 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [actor]
         return actor
 
+    async def test_bulk_setup_owner_sees_one_confirmation_and_manual_actions(self):
+        from cogs.server import OperationsView
+        from cogs.server_management import StructureView
+
+        actor = self.owner()
+        owner_menu = StructureView(self.guild, actor.id)
+        admin_menu = StructureView(self.guild, actor.id + 1)
+        labels = [button.label for button in owner_menu.children]
+        self.assertEqual(labels[0], 'Setup All Missing')
+        self.assertIn(ops.PHASE_TITLES['foundations'], labels)
+        self.assertIn(ops.PHASE_TITLES['channels'], labels)
+        self.assertNotIn('Setup All Missing', [button.label for button in admin_menu.children])
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        view = OperationsView(self.guild, draft, self.bot, friendly=True)
+        self.assertEqual(view.confirm_preview.label, 'Confirm Setup')
+        self.assertIn('Create by type', view.text())
+
     async def test_bulk_setup_reuses_local_defaults_only_with_explicit_choice(self):
         actor = self.owner()
         default_text = self.guild.add_category('Textkanäle')

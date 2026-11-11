@@ -458,7 +458,9 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
                 (principal.id, allow.value, deny.value)
                 for principal, overwrite in policy.items() for allow, deny in [overwrite.pair()])))
     if bulk:
-        return bulk_plan(guild, rows)
+        member = (await read_once(('bulk-setup-member', guild.id), lambda: guild.fetch_member(guild.me.id))
+                  if guild.me else None)
+        return bulk_plan(guild, rows, member)
     warnings = []
     from services.channel_adoption_service import order_plans
     from services.community_structure_service import event_order
@@ -510,12 +512,17 @@ def policy_signature(policy, *, exclude=()):
                   for principal, overwrite in policy.items() if principal.id not in exclude)
 
 
-def bulk_plan(guild, rows):
+def bulk_plan(guild, rows, member):
     """Classify the same reconciliation inventory before the owner confirms."""
     order = {'role': 0, 'bot-role': 0, 'category': 1, 'text': 2, 'voice': 2}
     rows = sorted(rows, key=lambda row: (order[row['kind']], row['key']))
     reviewed = {}
-    permissions = guild.me.guild_permissions if guild.me else discord.Permissions.none()
+    permissions = discord.Permissions.none()
+    if member:
+        member = copy(member)
+        member.guild = SimpleNamespace(id=guild.id, owner_id=guild.owner_id,
+                                       default_role=guild.get_role(guild.id), get_role=guild.get_role)
+        permissions = member.guild_permissions
     for row in rows:
         row.update(bulk_action='skip', bulk_guild=guild)
         reviewed[row['key']] = row
@@ -574,7 +581,7 @@ def bulk_plan(guild, rows):
             continue
         if parent and parent.get('bulk_id'):
             destination = guild.get_channel(parent['bulk_id'])
-            if hasattr(destination, 'permissions_for') and not snapshot_permissions(guild, destination, guild.me).manage_channels:
+            if hasattr(destination, 'permissions_for') and not snapshot_permissions(guild, destination, member).manage_channels:
                 row['reason'] = 'GamerHQ cannot manage the existing category'
                 continue
         try:
@@ -816,6 +823,8 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
     elif not planned:
         return done, skipped
     async with managed.lock(f'operations:{guild.id}'), AsyncExitStack() as locks:
+        if bulk and time.time() - draft['created'] > 240:
+            raise ServerMessageError('Open a fresh setup preview before confirming.')
         keys = {(f"choose_games_refresh:{r['channel'].id}" if r['key'].startswith('choose_games_') else r['key'])
                 for r in planned if r['kind'] == 'message'}
         for key in sorted(keys):
@@ -886,7 +895,8 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     if not actionable(row): continue
                     if kind in ('role', 'bot-role'):
                         resource = await guild.create_role(name=row['label'], permissions=discord.Permissions.none(),
-                                                           hoist=bulk and kind == 'bot-role', reason='Confirmed GamerHQ setup')
+                                                           reason='Confirmed GamerHQ setup',
+                                                           **({'hoist': True} if bulk and kind == 'bot-role' else {}))
                     elif kind == 'category':
                         blank = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
                         policy = confirmed_setup_policy(row, added_roles) if bulk else (
