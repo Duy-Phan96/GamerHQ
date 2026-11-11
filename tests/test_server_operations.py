@@ -119,6 +119,42 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text.edits, [])
         self.assertIsNone(db.get_setting(row['key']))
 
+    async def test_bulk_setup_reports_competing_default_mappings_without_reassigning_ids(self):
+        actor = self.owner()
+        category = self.guild.add_category('Textkanäle')
+        text = self.guild.add_channel('Allgemein', category)
+        voice = DefaultVoice(self.guild, 'Allgemein', category, 7100)
+        self.guild.fetch_channels = AsyncMock(return_value=[*self.guild.channels, voice])
+        keys = {'managed_channel:1:legacy-general': text.id,
+                'managed_channel:1:legacy-voice': voice.id}
+        for key, channel_id in keys.items():
+            db.set_setting(key, channel_id)
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        draft['rows'] = [row for row in draft['rows'] if row['name'] in ops.REUSE_ALIASES]
+        report = ops.bulk_preview_report(draft, {})
+        for key in keys:
+            self.assertIn(f'Saved reference: settings.value ({key})', report)
+        self.assertTrue(all(row['bulk_action'] == 'skip' for row in draft['rows']))
+        result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+        self.assertEqual(result['created'] + result['reused'], [])
+        self.assertEqual({key: db.get_setting(key) for key in keys}, {key: str(value) for key, value in keys.items()})
+        self.assertEqual(text.edits + voice.edits, [])
+
+    async def test_bulk_setup_plans_public_structure_without_message_moderation(self):
+        actor = self.owner()
+        permissions = discord.Permissions.all()
+        permissions.administrator = permissions.manage_messages = False
+        self.guild.me.guild_permissions = permissions
+        original = ops.definitions
+        names = {'partners-benefits', 'ai-tools', 'start-here', 'guide'}
+        with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        rows = {row['name']: row for row in draft['rows']}
+        for name in ('partners-benefits', 'ai-tools', 'guide'):
+            self.assertEqual(rows[name]['bulk_action'], 'create')
+            self.assertFalse(any(value.manage_messages is True for value in rows[name]['create_overwrites'].values()))
+        self.assertIs(rows['guide']['create_overwrites'][self.guild.default_role].send_messages, False)
+
     async def test_bulk_setup_reuses_local_defaults_only_with_explicit_choice(self):
         actor = self.owner()
         default_text = self.guild.add_category('Textkanäle')
@@ -219,29 +255,36 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.me.guild_permissions = permissions
         original = ops.definitions
         self.guild.categories.remove(self.staff)
-        names = {'start-here', 'guide', 'staff', 'ticket-logs'}
+        names = {'start-here', 'guide', 'staff', 'ticket-logs', 'partners-benefits'}
         with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
             draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             rows = {r['name']: r for r in draft['rows']}
             self.assertEqual(rows['start-here']['bulk_action'], 'reuse')
             self.assertEqual(rows['guide']['bulk_action'], 'skip')
             self.assertIn('Create Private Threads', rows['guide']['reason'])
-            self.assertIn('Manage Messages', rows['staff']['reason'])
-            self.assertIn('STAFF', rows['ticket-logs']['reason'])
+            for name in ('staff', 'ticket-logs'):
+                self.assertEqual(rows[name]['bulk_action'], 'create')
+                self.assertIs(rows[name]['create_overwrites'][self.guild.default_role].view_channel, False)
+                self.assertIsNone(rows[name]['create_overwrites'][self.guild.me].manage_messages)
+            self.assertIn('Create Private Threads', rows['partners-benefits']['reason'])
             result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
-        self.assertEqual((len(result['reused']), len(result['needs_review']), len(result['blocked'])), (1, 2, 1))
+        self.assertEqual((len(result['created']), len(result['reused']), len(result['needs_review'])), (2, 1, 2))
         self.assertEqual(result['failed'], [])
-        self.assertIsNone(db.get_setting('managed_category:1:staff'))
+        self.assertTrue(db.get_setting('managed_category:1:staff'))
 
     async def test_bulk_setup_requires_verified_private_principals(self):
         actor = self.owner()
         self.guild.roles.remove(self.guild.mod)
+        self.guild.custom.name = 'Staff'
         self.guild.categories.remove(self.staff)
         original = ops.definitions
         names = {'staff', 'affiliate-stats'}
         with patch.object(ops, 'definitions', lambda guild: [r for r in original(guild) if r['name'] in names]):
             draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             self.assertTrue(all('verified Staff role' in r['reason'] for r in draft['rows']))
+            report = ops.bulk_preview_report(draft, {})
+            self.assertIn('Staff roles verified by the current policy: none', report)
+            self.assertIn(f'Staff-named role without verified authority: Staff (ID {self.guild.custom.id})', report)
             self.guild.roles.append(self.guild.mod)
             draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             rows = {r['name']: r for r in draft['rows']}

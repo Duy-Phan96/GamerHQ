@@ -433,10 +433,12 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
                     if channel_mapping(guild, candidate.id) != row['name']:
                         safe.remove(candidate.id)
                 else:
-                    try:
-                        messages.assert_unreferenced(candidate.id, row['key'])
-                    except ServerMessageError:
+                    references = messages.runtime_reference_locations(candidate.id, row['key'],
+                                                                     limit=8 if bulk else 1)
+                    if references:
                         access_issue = 'Existing channel has a competing saved mapping'
+                        if bulk:
+                            row.setdefault('candidate_references', {})[candidate.id] = references
                         safe.remove(candidate.id)
             if (review_candidates or not safe) and not placement_error:
                 status = 'AMBIGUOUS'
@@ -574,6 +576,11 @@ def setup_policy(guild, row, parent=None):
     blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=parent,
                             overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
     policy = rights(guild, row, blank)
+    # Bulk setup creates structure only. Leave message moderation to its
+    # existing permission flows and preserve all other policy bits.
+    for overwrite in policy.values():
+        if overwrite.manage_messages is True:
+            overwrite.manage_messages = None
     if row.get('private') and (
             policy.get(guild.default_role, discord.PermissionOverwrite()).view_channel is not False
             or guild.me is None
@@ -741,6 +748,16 @@ def bulk_preview_report(draft, choices):
         f'{len(rows)} resource decisions. Confirmation requires a fresh preview and revalidation.',
         ' · '.join(f'{label}: {decisions.count(key)}' for key, label in BULK_DECISIONS.items()),
     ]
+    if rows and any(row.get('private') for row in rows):
+        from services.onboarding_service import is_staff
+        guild = rows[0]['bulk_guild']
+        roles = [role for role in guild.roles if not role.is_default() and not role.managed]
+        staff = [role for role in roles if is_staff(role)]
+        lines.append('Staff roles verified by the current policy: ' + (', '.join(
+            f'{single_line(role.name)} (ID {role.id})' for role in sorted(staff, key=lambda role: role.id)) or 'none'))
+        for role in sorted(roles, key=lambda role: role.id):
+            if role not in staff and set(alias(role.name).split('-')) & {'staff', 'moderator', 'mod', 'admin', 'administrator'}:
+                lines.append(f'Staff-named role without verified authority: {single_line(role.name)} (ID {role.id})')
     for number, (row, decision) in enumerate(zip(rows, decisions), 1):
         lines.extend(('', f"{number}. [{BULK_DECISIONS[decision]}] {single_line(row['label'])} ({row['kind']})",
                       f"   Inventory status: {row['status']}"))
@@ -770,6 +787,8 @@ def bulk_preview_report(draft, choices):
             location = getattr(candidate, 'category_id', None)
             lines.append(f'   Candidate: {label} · ID {candidate.id} · {verified}'
                          + (f' · current category ID {location}' if location else ''))
+            for reference in row.get('candidate_references', {}).get(candidate.id, ()):
+                lines.append(f'     Saved reference: {reference}')
         if decision == 'create' and row.get('private'):
             grants = sum(overwrite.view_channel is True for overwrite in row['create_overwrites'].values())
             lines.append(f'   Private policy: @everyone view denied; {grants} verified access grants.')
