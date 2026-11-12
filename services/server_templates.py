@@ -40,10 +40,11 @@ def progress(guild, template):
     return progress_record(guild, template).get('state')
 
 
-def reviewed_destinations(structure, template):
-    return {row['name']: row['resource'].id for row in structure['rows']
+def reviewed_destinations(structure, template, *, linked_only=False):
+    return {row['name']: row['bulk_id'] for row in structure['rows']
             if row['kind'] == 'text' and row['name'] in template.entry_points
-            and row['status'] == 'EXACT_MATCH' and row['bulk_action'] == 'reuse' and not row.get('private')}
+            and row['bulk_action'] == 'reuse' and not row.get('private')
+            and (not linked_only or row['status'] == 'EXACT_MATCH')}
 
 
 def entry_message_keys(guild, destinations):
@@ -153,6 +154,13 @@ async def apply(guild, owner, draft, bot=None):
         result = await operations.apply(guild, owner, structure, bot, confirmed=True, choices=draft['choices'],
                                         create_checkpoint=checkpoint, on_created=record_created)
 
+        current = await operations.preview(guild, owner, 'setup', bot, scope='bulk')
+        linked = reviewed_destinations(current, template, linked_only=True)
+        approved_ids = {channel_id for name, channel_id in reviewed_destinations(structure, template).items()
+                        if linked.get(name) == channel_id}
+        reviewed_boards = {**draft['boards'], 'rows': [row for row in draft['boards']['rows']
+                           if row['channel'].id in approved_ids]}
+
         async def apply_boards(boards, status, mode, bucket):
             rows = [row for row in boards['rows'] if row['status'] == status]
             if rows:
@@ -160,8 +168,9 @@ async def apply(guild, owner, draft, bot=None):
                                                        bot, confirmed=True, create_checkpoint=checkpoint)
                 result[bucket].extend(done)
                 result['needs_review'].extend(skipped)
-        await apply_boards(draft['boards'], 'SAFE_ADOPTION', 'reconcile', 'reused')
-        await apply_boards(draft['boards'], 'MISSING', 'setup', 'created')
+        await apply_boards(reviewed_boards, 'SAFE_ADOPTION', 'reconcile', 'reused')
+        await apply_boards(reviewed_boards, 'MISSING', 'setup', 'created')
+        created = {name: channel_id for name, channel_id in created.items() if linked.get(name) == channel_id}
         if created:
             boards, _ = await preview_entry_points(guild, owner, bot, created, pending)
             await apply_boards({**boards, 'created': structure['created']}, 'MISSING', 'setup', 'created')
