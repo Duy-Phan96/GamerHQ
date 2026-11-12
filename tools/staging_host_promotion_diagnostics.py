@@ -510,12 +510,18 @@ def snowflake(value):
 
 def event_resource_bindings(profile):
     guild = int(profile['stagingGuildId'])
+    category = int(profile['categoryId'])
     with closing(read_database(Path(profile['database']))) as conn:
         conn.execute('PRAGMA query_only=ON')
         conn.execute('BEGIN')
         policy = conn.execute('SELECT value FROM settings WHERE key=?', (f'skill_resources:{guild}:event-manager',)).fetchone()
         rows = conn.execute("SELECT kind,state_json FROM skill_managed_resources WHERE guild_id=? "
                             "AND skill_id='event-manager' ORDER BY resource_key LIMIT 65", (guild,)).fetchall()
+        history = conn.execute("SELECT action,created_at FROM structure_change_log "
+                               "WHERE guild_id=? AND resource_id=? AND resource_type='category' "
+                               "AND (action IN ('category_delete','observed_category_delete') OR "
+                               "(action='observed_category_offline' AND json_extract(after_json,'$.deleted')=1)) "
+                               "ORDER BY created_at DESC LIMIT 10", (guild, category)).fetchall()
     if len(rows) > 64:
         raise ValueError('EVENT_BINDING_LIMIT')
     policy = json.loads(policy[0]) if policy else {}
@@ -526,7 +532,8 @@ def event_resource_bindings(profile):
         channel = snowflake(state.get('channelId'))
         if kind in {'text', 'voice'} and channel:
             bindings.append((channel, kind, state.get('marker')))
-    return stored, bindings
+    deletions = [{'action': action, 'createdAt': created} for action, created in history if type(created) is int]
+    return stored, bindings, deletions
 
 
 def event_inventory(channels, guild, configured_categories, bindings):
@@ -677,12 +684,13 @@ def installed_discord_preflight(profile, uid):
         raise ValueError('STAGING_BINDING_REJECTED')
     configured = {key: snowflake(profile[key]) for key in ('categoryId', 'voiceCategoryId')}
     try:
-        stored, bindings = event_resource_bindings(profile)
+        stored, bindings, deletions = event_resource_bindings(profile)
     except (OSError, AttributeError, KeyError, TypeError, ValueError, sqlite3.Error):
         result = discord_preflight(profile, token, bindings=[])
         return {**result, 'profileCategoryIds': configured, 'storedResourcePolicy': 'UNAVAILABLE'}
     result = discord_preflight(profile, token, bindings=bindings)
-    return {**result, 'profileCategoryIds': configured, 'storedResourcePolicyCategoryIds': stored}
+    return {**result, 'profileCategoryIds': configured, 'storedResourcePolicyCategoryIds': stored,
+            'configuredTextCategoryDeletionObservations': deletions}
 
 
 def collect(*, release=False, localized_preflight=False):

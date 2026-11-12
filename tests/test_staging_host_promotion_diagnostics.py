@@ -88,16 +88,23 @@ def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(
         conn.executescript('''
             CREATE TABLE settings (key, value);
             CREATE TABLE skill_managed_resources (guild_id, skill_id, resource_key, kind, state_json);
+            CREATE TABLE structure_change_log (guild_id, resource_id, resource_type, action, after_json, created_at);
             INSERT INTO settings VALUES ('skill_resources:1:event-manager','{"categoryId":10,"voiceCategoryId":20}');
             INSERT INTO skill_managed_resources VALUES
                 (1,'event-manager','event:a','text','{"channelId":30,"marker":"private-marker"}'),
                 (1,'event-manager','event:b','voice','{"channelId":40}'),
                 (1,'other','event:c','text','{"channelId":70}'),
                 (2,'event-manager','event:d','text','{"channelId":80}');
+            INSERT INTO structure_change_log VALUES
+                (1,10,'category','observed_category_offline','{"deleted":true}',123),
+                (1,20,'category','observed_category_delete','{}',124),
+                (2,10,'category','observed_category_delete','{}',125);
         ''')
     before = database.read_bytes()
-    stored, bindings = diagnostic.event_resource_bindings({'database': str(database), 'stagingGuildId': '1'})
+    stored, bindings, deletions = diagnostic.event_resource_bindings(
+        {'database': str(database), 'stagingGuildId': '1', 'categoryId': '10'})
     assert stored == {'categoryId': '10', 'voiceCategoryId': '20'}
+    assert deletions == [{'action': 'observed_category_offline', 'createdAt': 123}]
     result = diagnostic.event_inventory([
         {'id': '20', 'type': 4, 'name': 'VOICE TESTING'},
         {'id': '50', 'type': 4, 'name': '🧪 EVENT TESTING'},
