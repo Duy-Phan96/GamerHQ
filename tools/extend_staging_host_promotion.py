@@ -50,6 +50,9 @@ BULK_PREVIEW_ARCHIVE = '1faa932bc6c4878256e09444b0f2a7c8ac327a4f57bfe580d4a24baa
 ACTIVE_BULK_PREVIEW_CONTROLLER = '8eea84e96a706b82e1ffb66a70b6e3c6fd01bd64'
 BULK_PERMISSIONS_HOST = '71e1fcbb0cf3904365d1ed020a866b50755f58e4'
 BULK_PERMISSIONS_ARCHIVE = '8636420eacd2f106b6b7a2b4ded497a02bfa29ac50af41122711f351b0d7aa0b'
+ACTIVE_BULK_PERMISSIONS_CONTROLLER = '7576f8a95003bac40cc007e786a776efb4ddd470'
+LOCALIZED_REUSE_HOST = '77b3d36361bf31a66c6fc4bc6898815cd5e96467'
+LOCALIZED_REUSE_ARCHIVE = 'd52af3f62120b4f50e2b1bc6a7674238f2d6d094fc065e7f6eaad1e0b2cd5be4'
 CATALOG_SOURCES = {
     'catalog_preview.py': 'tools/staging_automation/catalog_preview.py',
     'catalog_import.py': 'tools/game_catalog_import.py',
@@ -58,11 +61,14 @@ CATALOG_SOURCES = {
 
 
 def configuration_pin(policy, *, commit, previous_workflow, workflow, catalog_workflow,
-                      managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False):
+                      managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False, localized_reuse=False):
     catalog_digest = hashlib.sha256(catalog_workflow).hexdigest()
     if 'webDeployment' in policy or policy.get('catalogPreviewWorkflowSha256') != catalog_digest:
         raise ValueError('EXISTING_CATALOG_POLICY_CHANGED')
-    if bulk_permissions:
+    if localized_reuse:
+        previous_host, previous_archive = BULK_PERMISSIONS_HOST, BULK_PERMISSIONS_ARCHIVE
+        target_host, target_archive = LOCALIZED_REUSE_HOST, LOCALIZED_REUSE_ARCHIVE
+    elif bulk_permissions:
         previous_host, previous_archive = BULK_PREVIEW_HOST, BULK_PREVIEW_ARCHIVE
         target_host, target_archive = BULK_PERMISSIONS_HOST, BULK_PERMISSIONS_ARCHIVE
     elif bulk_preview:
@@ -155,13 +161,14 @@ def skill_update_backup_mode():
 
 def extension(commit, approval, *, web_hostname=None, previous_web_controller=None,
               catalog_preview=False, configuration_preview=False, configuration_recovery=False,
-              managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False):
+              managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False, localized_reuse=False):
     import pwd
     web = web_hostname is not None
-    if sum((web, catalog_preview, configuration_preview, configuration_recovery, managed_messages, structure, bulk_structure, bulk_recovery, bulk_preview, bulk_permissions)) > 1:
+    if sum((web, catalog_preview, configuration_preview, configuration_recovery, managed_messages, structure, bulk_structure, bulk_recovery, bulk_preview, bulk_permissions, localized_reuse)) > 1:
         raise ValueError('SELECT_ONE_EXTENSION')
-    configuration_preview = configuration_preview or configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions
-    expected_approval = ('ENROLL STAGING BULK PERMISSION FIX' if bulk_permissions else
+    configuration_preview = configuration_preview or configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse
+    expected_approval = ('ENROLL STAGING LOCALIZED CHANNEL REUSE' if localized_reuse else
+                         'ENROLL STAGING BULK PERMISSION FIX' if bulk_permissions else
                          'ENROLL STAGING BULK PREVIEW REPORT' if bulk_preview else
                          'ENROLL STAGING BULK SETUP RECOVERY' if bulk_recovery else
                          'ENROLL STAGING BULK STRUCTURE SETUP' if bulk_structure else
@@ -178,7 +185,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         raise ValueError('VERIFIED_WEB_HOSTNAME_REQUIRED')
     if previous_web_controller is not None and not web:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
-    previous_commit = (ACTIVE_BULK_PREVIEW_CONTROLLER if bulk_permissions else
+    previous_commit = (ACTIVE_BULK_PERMISSIONS_CONTROLLER if localized_reuse else
+                       ACTIVE_BULK_PREVIEW_CONTROLLER if bulk_permissions else
                        ACTIVE_BULK_RECOVERY_CONTROLLER if bulk_preview else
                        ACTIVE_BULK_STRUCTURE_CONTROLLER if bulk_recovery else
                        ACTIVE_STRUCTURE_CONTROLLER if bulk_structure else
@@ -187,7 +195,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
                        FAILED_CONFIGURATION_CONTROLLER if configuration_recovery else
                        CATALOG_CONTROLLER if configuration_preview else
                        (previous_web_controller or WEB_BASE) if web or catalog_preview else OLD)
-    previous_host = (BULK_PREVIEW_HOST if bulk_permissions else
+    previous_host = (BULK_PERMISSIONS_HOST if localized_reuse else
+                     BULK_PREVIEW_HOST if bulk_permissions else
                      BULK_RECOVERY_HOST if bulk_preview else
                      BULK_STRUCTURE_HOST if bulk_recovery else
                      STRUCTURE_HOST if bulk_structure else MANAGED_MESSAGES_HOST if structure else
@@ -238,7 +247,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if git('show', commit + ':tools/extend_staging_host_promotion.py') != Path(__file__).read_bytes():
             raise ValueError('VERIFIED_INSTALLER_SOURCE_MISMATCH')
         blobs = {name: git('show', commit + ':tools/staging_automation/' + name) for name in MODULES}
-        target_host = (BULK_PERMISSIONS_HOST if bulk_permissions else
+        target_host = (LOCALIZED_REUSE_HOST if localized_reuse else
+                       BULK_PERMISSIONS_HOST if bulk_permissions else
                        BULK_PREVIEW_HOST if bulk_preview else
                        BULK_RECOVERY_HOST if bulk_recovery else
                        BULK_STRUCTURE_HOST if bulk_structure else STRUCTURE_HOST if structure else
@@ -265,7 +275,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if (web or catalog_preview) and policy.get('hostPromotion') != {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}:
             raise ValueError('EXISTING_HOST_POLICY_CHANGED')
         previous_modules = (*MODULES, 'web.py') if web and previous_commit != WEB_BASE else MODULES
-        changed_modules = {'host_promotion.py'} if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions else (
+        changed_modules = {'host_promotion.py'} if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse else (
             {'host_promotion.py', 'backend.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'})
         for name in previous_modules:
             installed = trusted(previous / 'staging_automation' / name)
@@ -289,7 +299,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
             pin = configuration_pin(pin_policy, commit=commit, previous_workflow=previous_workflow,
                                     workflow=workflow, catalog_workflow=catalog_workflow,
                                     managed_messages=managed_messages, structure=structure,
-                                    bulk_structure=bulk_structure, bulk_recovery=bulk_recovery, bulk_preview=bulk_preview, bulk_permissions=bulk_permissions)
+                                    bulk_structure=bulk_structure, bulk_recovery=bulk_recovery, bulk_preview=bulk_preview, bulk_permissions=bulk_permissions,
+                                    localized_reuse=localized_reuse)
             for name, path in CATALOG_SOURCES.items():
                 installed = trusted(previous / 'staging_automation' / name)
                 if installed != git('show', previous_commit + ':' + path):
@@ -333,7 +344,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1:
             raise ValueError('EXISTING_OPERATION_LOCK_REQUIRED')
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions:
+        if configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse:
             if stat.S_IMODE(info.st_mode) != 0o600:
                 raise ValueError('PRIVATE_OPERATION_LOCK_REQUIRED')
         else:
@@ -349,7 +360,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
             raise ValueError('REVIEWED_RECOVERY_REQUIRED')
         if not state.get('enabled') or not state.get('bootstrapVerified') or not re.fullmatch('sha256:[0-9a-f]{64}', state.get('approvedImage', '')):
             raise ValueError('ACTIVE_STAGING_REQUIRED')
-        if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions:
+        if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse:
             profile = json.loads(trusted(CONTROL / 'settings/profile.json', uid, private=True))
             if (profile.get('environment') != 'staging' or profile.get('applicationHostCommit') != previous_host
                     or profile.get('baseImage') != state['approvedImage']):
@@ -430,6 +441,7 @@ if __name__ == '__main__':
     parser.add_argument('--bulk-setup-recovery', action='store_true')
     parser.add_argument('--bulk-preview-report', action='store_true')
     parser.add_argument('--bulk-permission-fix', action='store_true')
+    parser.add_argument('--localized-channel-reuse', action='store_true')
     args = parser.parse_args()
     try:
         print(json.dumps(extension(args.commit, args.approval, web_hostname=args.web_hostname,
@@ -439,7 +451,8 @@ if __name__ == '__main__':
                                    managed_messages=args.managed_message_preview, structure=args.structure_phases,
                                    bulk_structure=args.bulk_structure_setup,
                                    bulk_recovery=args.bulk_setup_recovery, bulk_preview=args.bulk_preview_report,
-                                   bulk_permissions=args.bulk_permission_fix), indent=2))
+                                   bulk_permissions=args.bulk_permission_fix,
+                                   localized_reuse=args.localized_channel_reuse), indent=2))
     except Exception as error:
         code = str(error) if re.fullmatch('[A-Z_]{1,80}', str(error)) else 'HOST_EXTENSION_REJECTED'
         raise SystemExit(json.dumps({'extensionError': code, 'productionChanged': False})) from None
