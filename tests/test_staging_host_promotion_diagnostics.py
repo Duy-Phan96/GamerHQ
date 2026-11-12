@@ -6,10 +6,52 @@ import os
 import sqlite3
 import socket
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 
 from tools import staging_host_promotion_diagnostics as diagnostic
+
+
+@pytest.fixture
+def live_lookup_profile():
+    return {'stagingGuildId': '1567098041641738331', 'stagingBotId': '1567098530525351976',
+            'productionGuildId': '100', 'productionBotId': '200', 'categoryId': '300', 'voiceCategoryId': '400'}
+
+
+@pytest.mark.parametrize(('missing', 'category', 'step'), [
+    ('/members/', None, 'bot-membership'), ('/channels/300', '300', 'text-category'),
+    ('/channels/400', '400', 'voice-category'),
+])
+def test_discord_preflight_identifies_404_without_exposing_credential(live_lookup_profile, missing, category, step):
+    profile = live_lookup_profile
+    guild, bot = profile['stagingGuildId'], profile['stagingBotId']
+    responses = {'/users/@me': {'id': bot}, '/users/@me/guilds?limit=200': [{'id': guild}],
+                 '/guilds/' + guild: {'id': guild}, f'/guilds/{guild}/members/{bot}': {'roles': []},
+                 f'/guilds/{guild}/roles': [], '/channels/300': {'guild_id': guild, 'type': 4},
+                 '/channels/400': {'guild_id': guild, 'type': 4}}
+    seen = []
+
+    def read(path, token):
+        seen.append(path)
+        assert token == 'private-token'
+        if missing in path:
+            raise HTTPError(path, 404, 'private-token', None, None)
+        return responses[path]
+
+    result = diagnostic.discord_preflight(profile, 'private-token', read=read)
+    assert (result['state'], result['step'], result['httpStatus']) == ('HTTP_REJECTED', step, 404)
+    assert result.get('categoryId') == category
+    assert missing in seen[-1] and 'private-token' not in json.dumps(result)
+
+
+def test_discord_preflight_stops_before_guild_lookups_on_wrong_bot(live_lookup_profile):
+    def read(path, _token):
+        assert path == '/users/@me'
+        return {'id': live_lookup_profile['productionBotId']}
+
+    assert diagnostic.discord_preflight(live_lookup_profile, 'private-token', read=read) == {
+        'step': 'bot-identity', 'completed': [], 'state': 'IDENTITY_REJECTED'}
 
 
 def ledger(path):

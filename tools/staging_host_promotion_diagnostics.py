@@ -1,4 +1,4 @@
-"""Verify the staging recovery hold or explicitly release it after backup verification."""
+"""Inspect pinned Staging promotions and handle the separately authorized recovery release."""
 import argparse
 from contextlib import closing
 import fcntl
@@ -13,6 +13,8 @@ import subprocess
 import syslog
 import tempfile
 import uuid
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
@@ -36,6 +38,30 @@ CONTROLLER_FILES = {
 TARGET = '89709625d9ea0c74c2b731436d1d13c9dcb453c4'
 BASELINE = '29ecf575f3d865b0f32a9d82adf1b06d7969cdc9'
 ARCHIVE = 'b4155457b84179aad5263da8d9dda63fd83751e9de29a0c3c34aafbecf964a2c'
+LOCALIZED_PREFLIGHT = {
+    'RUN': 43218555241,
+    'RUN_STARTED': 1794486678,
+    'CONTROLLER': '79584661eaf013ae60bb049ab1e4c58c9c0bcb98',
+    'PROMOTION_WORKFLOW': '705ad33090c9ef47d04724521680ed71d782d1b4eb500021063bccc84c0b9595',
+    'CATALOG_WORKFLOW': '771db3136163984413fa896483bb5a093bc70ec6d8b828f6dd9492768a7a3680',
+    'TARGET': '77b3d36361bf31a66c6fc4bc6898815cd5e96467',
+    'BASELINE': '71e1fcbb0cf3904365d1ed020a866b50755f58e4',
+    'ARCHIVE': 'd52af3f62120b4f50e2b1bc6a7674238f2d6d094fc065e7f6eaad1e0b2cd5be4',
+    'KNOWN_HOST_BACKUP': '5f35de2662a8402ab9df001f2de7b565',
+    'CONTROLLER_FILES': {
+        '__init__.py': 'ff54982103b29d90ebf83e0262b49dc07cc57504475c3f7b156cf743f1035ea5',
+        'policy.py': 'cbe3d190113bcbdaf8252a9353215bf70a283c9f0828d92029f0db556c1c9bf2',
+        'oidc.py': '8a286767bd0799d9f17619dfab3ae15c31200589511969205fbdb5a4c204ec3b',
+        'backend.py': '97d81188707e8a97c22edb94b89e7bb4a09807ab8fe345d266d42b6e11de5855',
+        'bridge.py': '15d54fc8c0f527cfce38f281e371cc892a3c717e7bb92748add8e32bb09f0f15',
+        'host_promotion.py': 'd2d9a15edfb8dc312822a577879aaf6fb475aa65c96ef458ecb6f8eae3504386',
+        'deployment.py': 'f4cf07148f173ab97bd61a48c05116c41d8f74555ba4287728038128008f26b3',
+        'catalog_preview.py': 'af471d827c7c9dc1789fd8621bbaec2d43d03fb7d56edd51a8282a318fa93f83',
+        'catalog_import.py': '9edaedc09dcc69a6e5779c26e1dda7769883da53eb9b179dd87689fe0d1abf09',
+        'catalog_manifest.json': '92483e33bc6b8dce16adfccf1884f1584e4668f1f006190b4254abeba75cbb69',
+    },
+}
+
 MAX_BACKUP_BYTES = 256 * 1024 ** 2
 MAX_MEMORY_RESTORE_BYTES = 32 * 1024 ** 2
 KNOWN_SKILL_UPDATE = '1b01158008ff4839988a97911d31a1c9'
@@ -449,7 +475,77 @@ def release_hold(report, state_path, state, backup_root, uid, refresh):
     return report
 
 
-def collect(*, release=False):
+class NoDiscordRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def discord_get(path, token):
+    request = Request('https://discord.com/api/v10' + path, headers={
+        'User-Agent': 'DiscordBot (https://github.com/Duy-Phan96/GamerHQ, staging-1)'}, method='GET')
+    request.add_unredirected_header('Authorization', 'Bot ' + token)
+    with build_opener(NoDiscordRedirect()).open(request, timeout=15) as response:
+        body = response.read(262145)
+    if len(body) > 262144:
+        raise ValueError('DISCORD_RESPONSE_LIMIT')
+    return json.loads(body)
+
+
+def discord_preflight(profile, token, *, read=discord_get):
+    guild = str(profile['stagingGuildId'])
+    bot = str(profile['stagingBotId'])
+    categories = {step: str(profile[key]) for step, key in
+                  (('text-category', 'categoryId'), ('voice-category', 'voiceCategoryId'))}
+    if (guild != '1567098041641738331' or bot != '1567098530525351976'
+            or str(profile['productionGuildId']) == guild or str(profile['productionBotId']) == bot
+            or any(not re.fullmatch('[1-9][0-9]{0,19}', value) for value in categories.values())):
+        raise ValueError('STAGING_BINDING_REJECTED')
+    checks = [('bot-identity', '/users/@me', lambda row: str(row['id']) == bot),
+              ('guild-membership', '/users/@me/guilds?limit=200',
+               lambda rows: {str(row['id']) for row in rows} == {guild}),
+              ('guild-identity', '/guilds/' + guild, lambda row: str(row['id']) == guild),
+              ('bot-membership', f'/guilds/{guild}/members/{bot}', lambda row: isinstance(row.get('roles'), list)),
+              ('guild-roles', f'/guilds/{guild}/roles', lambda rows: isinstance(rows, list))]
+    for step, category in categories.items():
+        checks.append((step, '/channels/' + category,
+                       lambda row: str(row['guild_id']) == guild and row['type'] == 4))
+    completed = []
+    for step, path, valid in checks:
+        outcome = {'step': step, 'completed': completed}
+        if step in categories:
+            outcome['categoryId'] = categories[step]
+        try:
+            if not valid(read(path, token)):
+                return {**outcome, 'state': 'IDENTITY_REJECTED'}
+        except HTTPError as error:
+            return {**outcome, 'state': 'HTTP_REJECTED', 'httpStatus': error.code}
+        except (OSError, AttributeError, TypeError, KeyError, ValueError):
+            return {**outcome, 'state': 'LOOKUP_UNAVAILABLE'}
+        completed.append(step)
+    return {'state': 'LOOKUPS_PASS', 'completed': completed}
+
+
+def installed_discord_preflight(profile, uid):
+    path = CONTROL / 'settings/bot.env'
+    if profile.get('botEnvFile') != str(path):
+        raise ValueError('STAGING_BINDING_REJECTED')
+    fixed_file(path, uid=uid, private=True, limit=16384)
+    values = {}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if line.strip() and not line.lstrip().startswith('#'):
+            key, sep, value = line.partition('=')
+            if not sep or key in values:
+                raise ValueError('STAGING_BINDING_REJECTED')
+            values[key] = value.strip().strip('"\'')
+    token = values.get('DISCORD_TOKEN', '')
+    if values.get('GUILD_ID') != str(profile['stagingGuildId']) or not re.fullmatch(r'[A-Za-z0-9_.-]{20,2048}', token):
+        raise ValueError('STAGING_BINDING_REJECTED')
+    return discord_preflight(profile, token)
+
+
+def collect(*, release=False, localized_preflight=False):
+    if release and localized_preflight:
+        raise ValueError('EXPLICIT_OWNER_RELEASE_REQUIRED')
     if os.geteuid() != 0:
         raise PermissionError('OWNER_ROOT_SESSION_REQUIRED')
     import pwd
@@ -523,6 +619,14 @@ def collect(*, release=False):
                 report['database'] = {'inspection': 'UNAVAILABLE'}
 
         refresh()
+        if localized_preflight:
+            report.update(operation='verify-staging-promotion-preflight', state='PREFLIGHT_COLLECTED')
+            report.pop('credentialFilesOpened')
+            try:
+                report['discord'] = installed_discord_preflight(profile, uid)
+            except (OSError, ValueError, KeyError):
+                report['discord'] = {'state': 'LOCAL_CONFIGURATION_REJECTED'}
+            return report
         if release:
             return release_hold(report, state_path, state, backup_root, uid, refresh)
         checks = held_baseline_checks(report)
@@ -534,13 +638,17 @@ def collect(*, release=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release-verified-recovery', action='store_true')
+    parser.add_argument('--localized-reuse-preflight', action='store_true')
     parser.add_argument('--approval')
     args = parser.parse_args()
     try:
         if (args.release_verified_recovery and args.approval != RELEASE_APPROVAL
                 or not args.release_verified_recovery and args.approval is not None):
             raise PermissionError('EXPLICIT_OWNER_RELEASE_REQUIRED')
-        print(json.dumps(collect(release=args.release_verified_recovery), indent=2))
+        if args.localized_reuse_preflight:
+            globals().update(LOCALIZED_PREFLIGHT)
+        print(json.dumps(collect(release=args.release_verified_recovery,
+                                 localized_preflight=args.localized_reuse_preflight), indent=2))
     except Exception as error:
         reason = str(error)
         known = {'OWNER_ROOT_SESSION_REQUIRED', 'STAGING_ACCOUNT_SCOPE_REJECTED',
