@@ -109,8 +109,7 @@ async def open_setup(interaction):
         return
     if interaction.user.id != interaction.guild.owner_id:
         return await interaction.response.send_message('Only the server owner can run setup. Use `/server manage` for administration.', ephemeral=True)
-    complete = db.get_setting(setup_key(interaction.guild)) == '1'
-    view = SetupCompleteView(interaction.guild, interaction.user.id) if complete else SetupWizard(interaction.guild, interaction.user.id)
+    view = ServerTemplatesView(interaction.guild, interaction.user.id)
     await interaction.response.send_message(view.text(), view=view, ephemeral=True)
 
 
@@ -169,7 +168,10 @@ class ManagementView(Menu):
         view = GamesMenu(self.guild, self.admin_id)
         await interaction.response.edit_message(content=view.text(), view=view)
 
-    async def structure(self, interaction):
+    async def structure(self, interaction, *, advanced=False):
+        if interaction.user.id == self.guild.owner_id and not advanced:
+            view = ServerTemplatesView(self.guild, self.admin_id)
+            return await interaction.response.edit_message(content=view.text(), view=view)
         issues = structure_issues(self.guild)
         text = '# 🧱 Server Structure\n' + (f'⚠️ {len(issues)} items need attention.' if issues else '✅ Core structure looks good.')
         text += '\nReview existing resources before applying changes. Message checks run only when requested.'
@@ -2131,6 +2133,99 @@ class RecurringPostDeleteConfirmView(Menu):
         )
 
 
+class ServerTemplatesView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        from services.server_templates import TEMPLATES, progress
+        self.templates = TEMPLATES
+        for template in TEMPLATES:
+            async def use(interaction, selected=template):
+                await self.preview(interaction, selected)
+            state = progress(guild, template)
+            label = ('Resume Setup' if state in ('applying', 'remaining') else 'Preview Setup' if state == 'complete'
+                     else 'Use Template') if len(TEMPLATES) == 1 else template.name
+            self.action(label, use, style=discord.ButtonStyle.primary)
+        self.action('Advanced Settings', self.advanced)
+
+    async def interaction_check(self, interaction):
+        return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
+
+    def text(self):
+        return ('# Server Templates\n' + '\n'.join(f'**{template.name}**' for template in self.templates)
+                + '\nReview categories, channels, roles and the existing onboarding, profile, game selection, LFG and Events entry points. '
+                  'Skills and optional integrations are managed separately.')
+
+    async def advanced(self, interaction):
+        await interaction.response.edit_message(content='# Advanced Server Structure', view=StructureView(self.guild, self.admin_id))
+
+    async def preview(self, interaction, template):
+        from io import BytesIO
+        from services import server_templates as templates
+        from services.server_operations import bulk_preview_report
+        await interaction.response.defer(ephemeral=True)
+        try:
+            draft = await templates.preview(self.guild, interaction.user, template, interaction.client)
+        except (ServerMessageError, discord.HTTPException, TimeoutError, ValueError):
+            return await interaction.edit_original_response(content='The setup preview could not be verified. Open a fresh preview to try again.', view=self)
+        view = TemplatePreviewView(self.guild, self.admin_id, draft)
+        summary = templates.counts(draft)
+        view.confirm.disabled = not (summary['Will create'] or summary['Will reuse'])
+        lines = [f'# {template.name}', 'Preview Setup', ' · '.join(f'{key} {value}' for key, value in summary.items()),
+                 'Apply Template confirms the safe actions in this preview. Download the details for every decision.']
+        if any('No verified Staff role' in row.get('reason', '') for row in draft['structure']['rows']):
+            lines.append('Private areas need one owner decision. Identify the intended Staff role or separately approve a dedicated access role.')
+        if draft['new_boards']:
+            lines.append(f"The template will also add default entry points in {len(draft['new_boards'])} new channels after verification.")
+        details = [bulk_preview_report(draft['structure'], draft['choices']), 'Managed entry points']
+        details.extend(f"{row['label']} · {row['status']} · {row.get('reason', '')}" for row in draft['boards']['rows'])
+        details.extend(f'{name} · Review on a fresh preview once its destination is verified.' for name in draft['deferred'])
+        details.extend(f'{name} · Add missing default entry points after this application creates and verifies the channel.'
+                       for name in draft['new_boards'])
+        await interaction.edit_original_response(content='\n'.join(lines), view=view,
+            attachments=[discord.File(BytesIO('\n'.join(details).encode()), filename='template-preview.txt')],
+            allowed_mentions=discord.AllowedMentions.none())
+
+
+class TemplatePreviewView(Menu):
+    def __init__(self, guild, actor_id, draft):
+        super().__init__(guild, actor_id)
+        self.draft = draft
+        self.finished = False
+
+    async def interaction_check(self, interaction):
+        return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
+
+    @discord.ui.button(label='Apply Template', style=discord.ButtonStyle.success)
+    async def confirm(self, interaction, button):
+        from io import BytesIO
+        from services import server_templates as templates
+        if self.finished:
+            return await interaction.response.send_message('This preview has already been used.', ephemeral=True)
+        self.finished = True
+        await interaction.response.defer(ephemeral=True)
+        await interaction.edit_original_response(content='Applying the reviewed template and checking the result…', view=None, attachments=[])
+        try:
+            result, final, remaining = await templates.apply(self.guild, interaction.user, self.draft, interaction.client)
+        except (ServerMessageError, discord.HTTPException, TimeoutError, ValueError):
+            return await interaction.edit_original_response(
+                content='Setup paused. Review the latest state to resume.', view=ServerTemplatesView(self.guild, self.admin_id))
+        view = ServerTemplatesView(self.guild, self.admin_id)
+        title = 'Setup Complete' if not remaining else 'Setup Progress'
+        details = '\n\n'.join(label.replace('_', ' ').title() + '\n' + '\n'.join(items)
+                              for label, items in result.items() if items)
+        await interaction.edit_original_response(
+            content=f"# {title}\nReused {len(result['reused'])} · Created {len(result['created'])} · Updated 0 · "
+                    f"Blocked {final['Blocked']} · Remaining {remaining}", view=view,
+            attachments=[discord.File(BytesIO((details or 'No changes needed.').encode()), filename='template-results.txt')],
+            allowed_mentions=discord.AllowedMentions.none())
+
+    @discord.ui.button(label='Cancel')
+    async def cancel(self, interaction, button):
+        self.finished = True
+        view = ServerTemplatesView(self.guild, self.admin_id)
+        await interaction.response.edit_message(content=view.text(), view=view, attachments=[])
+
+
 class StructureView(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
@@ -2148,6 +2243,7 @@ class StructureView(Menu):
             self.action(label, run, style=discord.ButtonStyle.primary if scope == 'bulk' else discord.ButtonStyle.secondary)
         if actor_id == guild.owner_id:
             self.action('Removed Resources', self.removed_resources)
+            self.action('Setup Wizard', self.wizard)
         self.action('Review Duplicate Messages', self.duplicates)
         self.action('Back to Management', self.back)
 
@@ -2160,6 +2256,10 @@ class StructureView(Menu):
         await interaction.response.send_message(
             '# Removed Resources\nSelect a resource to preview an explicit restore. Nothing is recreated automatically.',
             view=RemovedResourcesView(self.guild, self.admin_id, names), ephemeral=True)
+
+    async def wizard(self, interaction):
+        view = SetupWizard(self.guild, self.admin_id)
+        await interaction.response.edit_message(content=view.text(), view=view)
 
     async def duplicates(self, interaction):
         from services.message_reconciliation import audit
@@ -2286,7 +2386,7 @@ class SetupWizard(Menu):
     async def section(self, interaction, button):
         manager = ManagementView(self.guild, self.admin_id)
         if self.page in (0, 4):
-            await manager.structure(interaction)
+            await manager.structure(interaction, advanced=True)
         elif self.page == 1:
             await manager.integrations(interaction)
         elif self.page == 2:

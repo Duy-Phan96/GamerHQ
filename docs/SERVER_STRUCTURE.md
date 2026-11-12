@@ -2,6 +2,12 @@
 
 Read with [permissions](PERMISSIONS.md) for structural changes. The [README layout](../README.md#discord-server-structure) is the canonical human-readable layout; do not copy live Discord IDs into documentation.
 
+## Server templates
+
+Server owners can open `/server setup`, choose **GamerHQ Gaming Community**, and review one plan before selecting **Apply Template**. The downloadable preview lists safe creations, verified reuse, protected exceptions, and managed entry points. A verified existing resource is linked in place, preserving its identity and permissions. Existing managed messages are preserved.
+
+Use **Resume Setup** to review live state after an interruption. An unconfirmed creation with no verified result is held for review in **Advanced Settings**, which also contains the individual setup and repair tools. Private areas require verified Staff access and trusted integration identities. Optional gaming-chat, game catalog imports, and Skill installations have their own setup controls.
+
 ## Permanent conventions
 
 [server_setup_service.py](../services/server_setup_service.py) defines SERVER_BLUEPRINT. [server_operations.py](../services/server_operations.py) separates confirmed creation, ID reconciliation and known-resource repair using existing policies and mapping keys. The older combined repair helper remains internal compatibility code; slash commands use the [production operations workflow](PRODUCTION_OPERATIONS.md).
