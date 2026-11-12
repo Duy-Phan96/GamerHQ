@@ -570,38 +570,101 @@ def event_inventory(channels, guild, configured_categories, bindings):
     return {'categories': categories, 'storedChannelBindings': tracked, 'childrenOfReportedAreas': children}
 
 
-def inventory_category(read, token, guild, category, bot, member, roles, *, bindings=None, configured_categories=()):
+EVENT_RECOVERY_TEXT_IDS = {'1567919316236763429', '1567837192213106820'}
+EVENT_RECOVERY_TEXT_CATEGORY = '1567098110860206201'
+EVENT_RECOVERY_VOICE_CATEGORY = '1567098154921238569'
+VIEW_CHANNEL = 1 << 10
+MANAGE_CHANNELS = 1 << 4
+MANAGE_ROLES = 1 << 28
+TEXT_CATEGORY_RIGHTS = VIEW_CHANNEL | MANAGE_CHANNELS | MANAGE_ROLES | (1 << 11) | (1 << 16)
+VOICE_CATEGORY_RIGHTS = VIEW_CHANNEL | MANAGE_CHANNELS | MANAGE_ROLES | (1 << 20)
+
+
+def effective_permissions(guild, bot, member, roles, channel):
+    member_roles = set(map(str, member['roles'])) - {guild}
+    role_ids = member_roles | {guild}
+    permissions = 0
+    for role in roles:
+        if str(role['id']) in role_ids:
+            permissions |= int(role['permissions'])
+    if permissions & (1 << 3):  # Administrator bypasses channel overwrites.
+        return (1 << 64) - 1
+    for targets, kind in (({guild}, 0), (member_roles, 0), ({bot}, 1)):
+        allow = deny = 0
+        for row in channel['permission_overwrites']:
+            if row['type'] == kind and str(row['id']) in targets:
+                allow |= int(row['allow'])
+                deny |= int(row['deny'])
+        permissions = (permissions & ~deny) | allow
+    return permissions
+
+
+def overwrite_review(channel, guild):
+    rows = sorted((str(row['id']), row['type'], int(row['allow']), int(row['deny']))
+                  for row in channel['permission_overwrites'])
+    everyone = next(((allow, deny) for ident, kind, allow, deny in rows if ident == guild and kind == 0), (0, 0))
+    visibility = 'ALLOW' if everyone[0] & VIEW_CHANNEL else 'DENY' if everyone[1] & VIEW_CHANNEL else 'INHERIT'
+    return {'overwritesSha256': hashlib.sha256(json.dumps(rows, separators=(',', ':')).encode()).hexdigest(),
+            'overwriteCount': len(rows), 'everyoneViewChannel': visibility}
+
+
+def event_category_recovery_review(read, token, channels, guild, category, bot, member, roles, bindings, configured):
+    if set(configured) != {EVENT_RECOVERY_TEXT_CATEGORY, EVENT_RECOVERY_VOICE_CATEGORY} or category != EVENT_RECOVERY_TEXT_CATEGORY:
+        return {'state': 'CONFIGURATION_SCOPE_CHANGED'}
+    evidence = event_inventory(channels, guild, configured, bindings)
+    by_id = {str(row['id']): row for row in channels}
+    tracked = [row for row in evidence['storedChannelBindings'] if row['channelId'] in EVENT_RECOVERY_TEXT_IDS]
+    for row in tracked:
+        if row.get('presentInBotInventory'):
+            channel = by_id[row['channelId']]
+            row.update(overwrite_review(channel, guild))
+            row['botCanManageChannel'] = bool(effective_permissions(guild, bot, member, roles, channel) & MANAGE_CHANNELS)
+            if row.get('textMarkerMatches'):
+                marker = channel['topic']
+                row['textMarkerUnique'] = sum(item.get('type') == 0 and item.get('topic') == marker for item in channels) == 1
+    exact = (len(tracked) == 2 and {row['channelId'] for row in tracked} == EVENT_RECOVERY_TEXT_IDS
+             and all(row.get('storedKind') == 'text' and row.get('typeMatches') is True
+                     and row.get('textMarkerUnique') is True for row in tracked))
+
+    def category_read(ident, required):
+        try:
+            row = read('/channels/' + ident, token)
+            if str(row['id']) != ident or str(row['guild_id']) != guild or row['type'] != 4:
+                return {'categoryId': ident, 'state': 'IDENTITY_REJECTED'}
+            permissions = effective_permissions(guild, bot, member, roles, row)
+            return {'categoryId': ident, 'state': 'CATEGORY_FOUND', 'botPermissionsPass': permissions & required == required,
+                    **overwrite_review(row, guild)}
+        except HTTPError as error:
+            return {'categoryId': ident, 'state': 'HTTP_REJECTED', 'httpStatus': error.code}
+        except (OSError, AttributeError, TypeError, KeyError, ValueError):
+            return {'categoryId': ident, 'state': 'LOOKUP_UNAVAILABLE'}
+
+    candidates = [category_read(row['categoryId'], TEXT_CATEGORY_RIGHTS) for row in evidence['categories']
+                  if row['matchesEventTestingName'] and row['categoryId'] not in set(configured)]
+    voice = category_read(EVENT_RECOVERY_VOICE_CATEGORY, VOICE_CATEGORY_RIGHTS)
+    return {'state': 'OWNER_REVIEW_REQUIRED' if exact else 'CHANNEL_OWNERSHIP_REJECTED',
+            'voiceCategory': voice, 'namedReplacementCandidates': candidates, 'existingTextChannels': tracked,
+            'bothTextChannelsUnparented': exact and all(row.get('parentCategoryId') is None for row in tracked)}
+
+
+def inventory_category(read, token, guild, category, bot, member, roles, *, bindings=None, configured_categories=(), recovery_review=False):
     """Return only the pinned ID's identity and effective visibility from the guild route."""
     try:
         channels = read(f'/guilds/{guild}/channels', token)
         if not isinstance(channels, list):
             raise ValueError('Unexpected channel inventory')
         detail = {'eventResources': event_inventory(channels, guild, configured_categories, bindings)} if bindings is not None else {}
+        if recovery_review:
+            detail['eventRecoveryReview'] = event_category_recovery_review(
+                read, token, channels, guild, category, bot, member, roles, bindings, configured_categories)
         matches = [row for row in channels if str(row['id']) == category]
         if not matches:
             return {'state': 'ABSENT_FROM_BOT_INVENTORY', **detail}
         if len(matches) != 1 or matches[0].get('type') != 4 or str(matches[0].get('guild_id', guild)) != guild:
             return {'state': 'IDENTITY_REJECTED', **detail}
 
-        # Match Discord's precedence for View Channel without reporting role IDs or overwrites.
-        member_roles = set(map(str, member['roles'])) - {guild}
-        role_ids = member_roles | {guild}
-        permissions = 0
-        for role in roles:
-            if str(role['id']) in role_ids:
-                permissions |= int(role['permissions'])
-        if permissions & (1 << 3):
-            return {'state': 'CATEGORY_FOUND', 'botViewChannel': True, **detail}
-        view = 1 << 10
-        overwrites = matches[0]['permission_overwrites']
-        for targets, kind in (({guild}, 0), (member_roles, 0), ({bot}, 1)):
-            allow = deny = 0
-            for row in overwrites:
-                if row['type'] == kind and str(row['id']) in targets:
-                    allow |= int(row['allow'])
-                    deny |= int(row['deny'])
-            permissions = (permissions & ~deny) | allow
-        return {'state': 'CATEGORY_FOUND', 'botViewChannel': bool(permissions & view), **detail}
+        permissions = effective_permissions(guild, bot, member, roles, matches[0])
+        return {'state': 'CATEGORY_FOUND', 'botViewChannel': bool(permissions & VIEW_CHANNEL), **detail}
     except HTTPError as error:
         return {'state': 'HTTP_REJECTED', 'httpStatus': error.code}
     except (OSError, AttributeError, TypeError, KeyError, ValueError):
@@ -617,7 +680,7 @@ def discord_error_code(error):
     return code if type(code) is int and 0 < code < 1000000 else None
 
 
-def discord_preflight(profile, token, *, read=discord_get, bindings=None):
+def discord_preflight(profile, token, *, read=discord_get, bindings=None, recovery_review=False):
     guild = str(profile['stagingGuildId'])
     bot = str(profile['stagingBotId'])
     categories = {step: str(profile[key]) for step, key in
@@ -654,7 +717,7 @@ def discord_preflight(profile, token, *, read=discord_get, bindings=None):
             if error.code == 404 and step in categories:
                 outcome['guildInventory'] = inventory_category(
                     read, token, guild, categories[step], bot, membership['bot-membership'], membership['guild-roles'],
-                    bindings=bindings, configured_categories=categories.values())
+                    bindings=bindings, configured_categories=categories.values(), recovery_review=recovery_review)
             return {**outcome, 'state': 'HTTP_REJECTED', 'httpStatus': error.code}
         except (OSError, AttributeError, TypeError, KeyError, ValueError):
             return {**outcome, 'state': 'LOOKUP_UNAVAILABLE'}
@@ -667,7 +730,7 @@ def discord_preflight(profile, token, *, read=discord_get, bindings=None):
     return result
 
 
-def installed_discord_preflight(profile, uid):
+def installed_discord_preflight(profile, uid, *, recovery_review=False):
     path = CONTROL / 'settings/bot.env'
     if profile.get('botEnvFile') != str(path):
         raise ValueError('STAGING_BINDING_REJECTED')
@@ -686,14 +749,14 @@ def installed_discord_preflight(profile, uid):
     try:
         stored, bindings, deletions = event_resource_bindings(profile)
     except (OSError, AttributeError, KeyError, TypeError, ValueError, sqlite3.Error):
-        result = discord_preflight(profile, token, bindings=[])
+        result = discord_preflight(profile, token, bindings=[], recovery_review=recovery_review)
         return {**result, 'profileCategoryIds': configured, 'storedResourcePolicy': 'UNAVAILABLE'}
-    result = discord_preflight(profile, token, bindings=bindings)
+    result = discord_preflight(profile, token, bindings=bindings, recovery_review=recovery_review)
     return {**result, 'profileCategoryIds': configured, 'storedResourcePolicyCategoryIds': stored,
             'configuredTextCategoryDeletionObservations': deletions}
 
 
-def collect(*, release=False, localized_preflight=False):
+def collect(*, release=False, localized_preflight=False, recovery_review=False):
     if release and localized_preflight:
         raise ValueError('EXPLICIT_OWNER_RELEASE_REQUIRED')
     if os.geteuid() != 0:
@@ -773,7 +836,7 @@ def collect(*, release=False, localized_preflight=False):
             report.update(operation='verify-staging-promotion-preflight', state='PREFLIGHT_COLLECTED')
             report.pop('credentialFilesOpened')
             try:
-                report['discord'] = installed_discord_preflight(profile, uid)
+                report['discord'] = installed_discord_preflight(profile, uid, recovery_review=recovery_review)
             except (OSError, ValueError, KeyError):
                 report['discord'] = {'state': 'LOCAL_CONFIGURATION_REJECTED'}
             return report
@@ -789,16 +852,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release-verified-recovery', action='store_true')
     parser.add_argument('--localized-reuse-preflight', action='store_true')
+    parser.add_argument('--event-category-recovery-review', action='store_true')
     parser.add_argument('--approval')
     args = parser.parse_args()
     try:
         if (args.release_verified_recovery and args.approval != RELEASE_APPROVAL
                 or not args.release_verified_recovery and args.approval is not None):
             raise PermissionError('EXPLICIT_OWNER_RELEASE_REQUIRED')
-        if args.localized_reuse_preflight:
+        if args.localized_reuse_preflight or args.event_category_recovery_review:
             globals().update(LOCALIZED_PREFLIGHT)
         print(json.dumps(collect(release=args.release_verified_recovery,
-                                 localized_preflight=args.localized_reuse_preflight), indent=2))
+                                 localized_preflight=args.localized_reuse_preflight or args.event_category_recovery_review,
+                                 recovery_review=args.event_category_recovery_review), indent=2))
     except ControllerSourceMismatch as error:
         raise SystemExit(json.dumps({'diagnosticError': str(error), 'controllerCommit': CONTROLLER,
                                      **error.evidence, 'productionChanged': False})) from None

@@ -18,6 +18,48 @@ The installed Event Manager package is 0.1.2. The persisted guild lifecycle
 record is 0.1.1 and disabled. Preserve that record during this investigation.
 Package and Host health evidence does not establish active Skill operation.
 
+### Review the missing Event Manager text category
+
+Use the owner collector's read-only event category recovery review. It queries
+the configured voice category independently of the text 404, checks text
+channel IDs and unique ownership markers, and records overwrite fingerprints.
+The review never selects a replacement from a name match. An empty bot
+inventory does not exclude categories hidden from that bot.
+
+Before asking for approval to apply, confirm the voice category by its exact
+configured ID and full preflight permissions. Confirm whether an existing
+private Event Testing category can be reused. If there is none, review the
+creation of one private category with an explicit `@everyone` View Channel
+deny. Verify the existing Staging bot identity and its effective category
+permissions. Do not add Administrator or a Manage Roles overwrite to get
+around Discord's restrictions.
+
+The owner-approved change record must bind the exact guild, old category ID,
+the two existing channel IDs, their parents and overwrite fingerprints, the
+profile and Skill policy values, and a verified backup and restore probe.
+Recheck this evidence under the existing operation lock before changes. Bind
+the exact approved destination before attempting any moves. For a newly
+created category, record its returned ID and verify the category's permissions
+first. If creation has an uncertain outcome, stop and resolve the identity
+before trying again.
+
+Use the existing Host channel edit contract with `sync_permissions=False`
+for each approved channel. Compare the resulting parents and overwrite
+fingerprints after each move. On retry, a channel already in the approved
+category with identical overwrites is complete. A different parent, ownership
+marker or overwrite fingerprint requires a fresh review. An interrupted
+change can be rolled back by returning moved channels to their verified
+original unparented placement without syncing overwrites. Leave any new
+category for owner review.
+
+After the moves are verified, replace only the text `categoryId` in the
+protected Staging profile and its existing guild-scoped `skill_resources`
+setting, checking the previously recorded values first. Preserve the voice
+ID, other policy fields, Skill lifecycle, and all resource and message
+bindings. A partially applied reference change requires verification and
+review before resuming or reversing. A fresh read-only preflight must pass
+before the separate protected Host promotion.
+
 ## Reviewing permission and ownership blockers
 
 Bulk structure creation omits explicit Manage Messages grants. Existing

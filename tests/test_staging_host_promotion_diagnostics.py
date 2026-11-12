@@ -125,6 +125,44 @@ def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(
     assert 'private-marker' not in json.dumps(result) and database.read_bytes() == before
 
 
+@pytest.mark.parametrize(('voice_exists', 'duplicate_marker'), [(True, False), (False, False), (True, True)])
+def test_recovery_review_checks_voice_independently_and_preserves_exact_text_ownership(voice_exists, duplicate_marker):
+    guild, bot = '100', '200'
+    text = diagnostic.EVENT_RECOVERY_TEXT_CATEGORY
+    voice = diagnostic.EVENT_RECOVERY_VOICE_CATEGORY
+    bindings = [(channel, 'text', f'private-marker-{i}')
+                for i, channel in enumerate(sorted(diagnostic.EVENT_RECOVERY_TEXT_IDS))]
+    overwrites = [{'id': guild, 'type': 0, 'allow': '0', 'deny': str(diagnostic.VIEW_CHANNEL)},
+                  {'id': bot, 'type': 1, 'allow': str(diagnostic.VIEW_CHANNEL), 'deny': '0'}]
+    channels = [{'id': channel, 'type': 0, 'parent_id': None, 'topic': marker, 'permission_overwrites': overwrites}
+                for channel, _, marker in bindings]
+    if duplicate_marker:
+        channels.append({**channels[0], 'id': '600'})
+    calls = []
+
+    def read(path, _token):
+        calls.append(path)
+        assert path == f'/channels/{voice}'
+        if not voice_exists:
+            raise HTTPError(path, 404, 'missing', None, None)
+        return {'id': voice, 'guild_id': guild, 'type': 4, 'permission_overwrites': overwrites}
+
+    roles = [{'id': guild, 'permissions': str(diagnostic.VOICE_CATEGORY_RIGHTS)}]
+    args = (read, 'private-token', channels, guild, text, bot, {'roles': []}, roles, bindings, (text, voice))
+    before = json.dumps(channels)
+    result = diagnostic.event_category_recovery_review(*args)
+    assert diagnostic.event_category_recovery_review(*args) == result
+    assert calls == [f'/channels/{voice}'] * 2 and json.dumps(channels) == before
+    assert result['state'] == ('CHANNEL_OWNERSHIP_REJECTED' if duplicate_marker else 'OWNER_REVIEW_REQUIRED')
+    assert result['voiceCategory']['state'] == ('CATEGORY_FOUND' if voice_exists else 'HTTP_REJECTED')
+    if voice_exists:
+        assert result['voiceCategory']['botPermissionsPass'] is True
+    assert result['namedReplacementCandidates'] == []
+    assert {row['channelId'] for row in result['existingTextChannels']} == diagnostic.EVENT_RECOVERY_TEXT_IDS
+    assert all(row['everyoneViewChannel'] == 'DENY' and row['botCanManageChannel'] for row in result['existingTextChannels'])
+    assert 'private-marker' not in json.dumps(result)
+
+
 def ledger(path):
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.executescript("""
