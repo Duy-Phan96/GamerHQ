@@ -433,8 +433,8 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
                     if channel_mapping(guild, candidate.id) != row['name']:
                         safe.remove(candidate.id)
                 else:
-                    references = messages.runtime_reference_locations(candidate.id, row['key'],
-                                                                     limit=8 if bulk else 1)
+                    references = messages.runtime_reference_locations(
+                        candidate.id, row['key'], limit=8 if bulk else 1, localized_channel_guild=guild.id)
                     if references:
                         access_issue = 'Existing channel has a competing saved mapping'
                         if bulk:
@@ -625,7 +625,7 @@ def bulk_plan(guild, rows, member):
                 row['reason'] = 'Resource is shared by competing mappings'
                 continue
             try:
-                if status != 'EXACT_MATCH':
+                if status != 'EXACT_MATCH' and row['name'] not in REUSE_ALIASES:
                     messages.assert_unreferenced(match.id, row['key'])
                 if kind == 'bot-role' and match.permissions.value:
                     raise ServerMessageError('Bot grouping role has existing grants')
@@ -1113,7 +1113,14 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                         else:
                             skipped.append(row['label'] + ': already linked elsewhere')
                         continue
-                    if bulk:
+                    if kind in ('text', 'voice') and row['name'] in REUSE_ALIASES:
+                        if messages.runtime_reference_locations(selected, key, localized_channel_guild=guild.id):
+                            if bulk:
+                                unresolved('needs_review', row, 'Existing channel references changed; open a fresh preview')
+                            else:
+                                skipped.append(row['label'] + ': existing channel references changed; scan again')
+                            continue
+                    elif bulk:
                         messages.assert_unreferenced(selected, key)
                     persist(guild, row, resource)
                     row['raw'] = str(selected)
