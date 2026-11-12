@@ -132,6 +132,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
         draft['rows'] = [row for row in draft['rows'] if row['name'] in ops.REUSE_ALIASES]
         report = ops.bulk_preview_report(draft, {})
+        self.assertIn('Existing channel has saved references that need ownership review', report)
         for key in keys:
             self.assertIn(f'Saved reference: settings.value ({key})', report)
         self.assertTrue(all(row['bulk_action'] == 'skip' for row in draft['rows']))
@@ -334,6 +335,48 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({key: db.get_setting(key) for key in keys}, retained)
             self.assertEqual(sum(ops.alias(c.name) == 'events' for c in self.guild.categories), 1)
             self.assertEqual(sum(ops.alias(c.name) == 'suggestions' for c in self.guild.text_channels), 1)
+
+    async def test_bulk_feed_reports_overwrite_targets_and_checks_destination_access(self):
+        actor = self.owner()
+        self.guild.me.guild_permissions.administrator = False
+        self.guild.me.top_role = self.guild.role(20)
+        marketplace = self.guild.add_category('MARKETPLACE')
+        db.set_setting('managed_category:1:partners-benefits', marketplace.id)
+        feed_role = self.guild.role(15)
+        self.guild.roles.append(feed_role)
+        from services.bot_group_service import key
+        db.set_setting(key(self.guild, 'gaming'), feed_role.id)
+        names = {'partners-benefits', 'gaming-news', 'gaming-deals'}
+        original = ops.definitions
+        category_permissions = discord.Permissions(view_channel=False, manage_channels=True)
+        rejected = discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'),
+                                     {'code': 50013, 'message': 'private API detail'})
+        with (patch.object(ops, 'definitions', lambda guild: [r for r in original(guild)
+                          if r['name'] in names and r['kind'] in ('category', 'text')]),
+              patch.object(marketplace, 'permissions_for', lambda member: category_permissions, create=True),
+              patch.object(marketplace, 'create_text_channel', AsyncMock(side_effect=rejected)) as create):
+            blocked = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            report = ops.bulk_preview_report(blocked, {})
+            self.assertIn('Host needs effective View Channel and Manage Channels', report)
+            self.assertIn(f'Destination ID {marketplace.id} (View Channel=False, Manage Channels=True)', report)
+            create.assert_not_awaited()
+
+            category_permissions.view_channel = True
+            ready = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            report = ops.bulk_preview_report(ready, {})
+            self.assertIn('Only a Discord administrator can set a Manage Roles overwrite', report)
+            self.assertIn('role 15 at position 15', report)
+            with self.assertLogs(ops.log, level='WARNING') as logs:
+                result = await ops.apply(self.guild, actor, ready, self.bot, confirmed=True)
+
+            create.assert_awaited_once()
+            self.assertEqual(ops.alias(create.await_args.args[0]), 'gaming-news')
+            self.assertIn(f'Destination ID {marketplace.id}', result['failed'][0])
+            self.assertIn('Host role 20 at position 20', result['failed'][0])
+            self.assertIn('HTTP 403, code 50013', result['failed'][0])
+            self.assertNotIn('private API detail', str(result) + str(logs.output))
+            self.assertNotIn('requested overwrites', str(logs.output))
+            self.assertIsNone(db.get_setting('managed_channel:1:gaming-news'))
 
     async def test_bulk_setup_does_not_create_duplicate_after_mapping_write_failure(self):
         actor = self.owner()
