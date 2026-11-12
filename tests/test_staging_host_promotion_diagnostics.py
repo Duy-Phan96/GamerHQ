@@ -3,8 +3,10 @@ from contextlib import closing
 import hashlib
 import json
 import os
+from pathlib import Path
 import sqlite3
 import socket
+import subprocess
 from types import SimpleNamespace
 from urllib.error import HTTPError
 
@@ -201,8 +203,54 @@ def test_controller_verification_rejects_tampered_installed_source(tmp_path, mon
               'catalogPreviewWorkflowSha256': diagnostic.CATALOG_WORKFLOW}
     diagnostic.verify_controller(policy)
     module.write_bytes(b'changed code')
-    with pytest.raises(ValueError, match='CONTROLLER_SOURCE_MISMATCH'):
+    with pytest.raises(diagnostic.ControllerSourceMismatch, match='CONTROLLER_SOURCE_MISMATCH') as error:
         diagnostic.verify_controller(policy)
+    assert error.value.evidence == {
+        'component': module.name, 'reason': 'CHECKSUM_MISMATCH',
+        'expectedSha256': hashlib.sha256(b'reviewed code').hexdigest(),
+        'actualSha256': hashlib.sha256(b'changed code').hexdigest(),
+    }
+
+
+def test_localized_controller_manifest_matches_the_enrollment_bundle(tmp_path, monkeypatch):
+    profile = diagnostic.LOCALIZED_PREFLIGHT
+    for name, value in profile.items():
+        monkeypatch.setattr(diagnostic, name, value)
+    commit = profile['CONTROLLER']
+    repo = Path(__file__).resolve().parents[1]
+    ref = subprocess.run(['git', 'cat-file', '-e', commit + '^{commit}'], cwd=repo, capture_output=True)
+    if ref.returncode and not os.environ.get('GITHUB_ACTIONS'):
+        pytest.skip('Reviewed controller revision unavailable in this local checkout')
+    ref.check_returncode()
+
+    def blob(path):
+        return subprocess.check_output(['git', 'show', f'{commit}:{path}'], cwd=repo)
+
+    monkeypatch.setattr(diagnostic, 'ROOT', tmp_path)
+    controller = tmp_path / 'automation-controller'
+    revision = controller / 'revisions' / commit
+    package = revision / 'staging_automation'
+    package.mkdir(parents=True)
+    (controller / 'entry.py').write_text("import sys\nsys.path[:0]=[" + repr(str(revision))
+        + ",'/opt/gamerhq-staging/deployment-worker']\nfrom staging_automation.bridge import entry\nentry()\n")
+    installed_sources = {'deployment.py': 'hosts/gamerhq/skill_update_controller.py',
+                         'catalog_import.py': 'tools/game_catalog_import.py',
+                         'catalog_manifest.json': 'data/game_catalog_expansion.json'}
+    for name in profile['CONTROLLER_FILES']:
+        (package / name).write_bytes(blob(installed_sources.get(name, 'tools/staging_automation/' + name)))
+    fixed_file = diagnostic.fixed_file
+    monkeypatch.setattr(diagnostic, 'fixed_file', lambda path, *, uid, limit: fixed_file(path, limit=limit))
+    policy = {'controllerCommit': commit,
+              'hostPromotion': {'commit': profile['TARGET'], 'archiveSha256': profile['ARCHIVE'],
+                                'workflowSha256': profile['PROMOTION_WORKFLOW']},
+              'catalogPreviewWorkflowSha256': profile['CATALOG_WORKFLOW']}
+    diagnostic.verify_controller(policy)
+
+    # The checkout shim is valid source for development, but invalid on the VPS.
+    (package / 'deployment.py').write_bytes(blob('tools/staging_automation/deployment.py'))
+    with pytest.raises(diagnostic.ControllerSourceMismatch) as error:
+        diagnostic.verify_controller(policy)
+    assert error.value.evidence['component'] == 'deployment.py'
 
 
 def test_verification_receipt_keeps_unsafe_backup_out_of_read_scope(tmp_path, monkeypatch):

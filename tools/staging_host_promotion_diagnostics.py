@@ -55,7 +55,8 @@ LOCALIZED_PREFLIGHT = {
         'backend.py': '97d81188707e8a97c22edb94b89e7bb4a09807ab8fe345d266d42b6e11de5855',
         'bridge.py': '15d54fc8c0f527cfce38f281e371cc892a3c717e7bb92748add8e32bb09f0f15',
         'host_promotion.py': 'd2d9a15edfb8dc312822a577879aaf6fb475aa65c96ef458ecb6f8eae3504386',
-        'deployment.py': 'f4cf07148f173ab97bd61a48c05116c41d8f74555ba4287728038128008f26b3',
+        # Enrollment installs hosts/gamerhq/skill_update_controller.py here.
+        'deployment.py': '0d4b602dc3d30f4ce40bbc3c6274119ef3412d57c873efbf59248dc2b3a286e1',
         'catalog_preview.py': 'af471d827c7c9dc1789fd8621bbaec2d43d03fb7d56edd51a8282a318fa93f83',
         'catalog_import.py': '9edaedc09dcc69a6e5779c26e1dda7769883da53eb9b179dd87689fe0d1abf09',
         'catalog_manifest.json': '92483e33bc6b8dce16adfccf1884f1584e4668f1f006190b4254abeba75cbb69',
@@ -96,6 +97,14 @@ def digest(path):
     return hasher.hexdigest()
 
 
+class ControllerSourceMismatch(ValueError):
+    def __init__(self, component, reason, expected, actual=None):
+        super().__init__('CONTROLLER_SOURCE_MISMATCH')
+        self.evidence = {'component': component, 'reason': reason, 'expectedSha256': expected}
+        if actual is not None:
+            self.evidence['actualSha256'] = actual
+
+
 def verify_controller(automation):
     if (automation.get('controllerCommit') != CONTROLLER
             or automation.get('hostPromotion') != {
@@ -111,8 +120,11 @@ def verify_controller(automation):
     paths.update({revision / 'staging_automation' / name: value for name, value in CONTROLLER_FILES.items()})
     for path, expected_digest in paths.items():
         info = fixed_file(path, uid=0, limit=262144)
-        if info.st_mode & 0o022 or digest(path) != expected_digest:
-            raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+        if info.st_mode & 0o022:
+            raise ControllerSourceMismatch(path.name, 'WRITABLE_SOURCE', expected_digest)
+        actual_digest = digest(path)
+        if actual_digest != expected_digest:
+            raise ControllerSourceMismatch(path.name, 'CHECKSUM_MISMATCH', expected_digest, actual_digest)
 
 
 def read_database(path, *, immutable=False):
@@ -649,6 +661,9 @@ if __name__ == '__main__':
             globals().update(LOCALIZED_PREFLIGHT)
         print(json.dumps(collect(release=args.release_verified_recovery,
                                  localized_preflight=args.localized_reuse_preflight), indent=2))
+    except ControllerSourceMismatch as error:
+        raise SystemExit(json.dumps({'diagnosticError': str(error), 'controllerCommit': CONTROLLER,
+                                     **error.evidence, 'productionChanged': False})) from None
     except Exception as error:
         reason = str(error)
         known = {'OWNER_ROOT_SESSION_REQUIRED', 'STAGING_ACCOUNT_SCOPE_REJECTED',
