@@ -280,6 +280,10 @@ def test_apply_event_recovery_retries_verified_moves_without_recreating_categori
     assert [method for method, _ in case.writes] == ['POST', 'POST', 'PATCH', 'PATCH']
     assert all(case.channels[ident]['parent_id'] == categories['categoryId'] for ident in diagnostic.EVENT_RECOVERY_TEXT_IDS)
     assert case.saves[0]['creating'] == 'categoryId' and case.saves[2]['creating'] == 'voiceCategoryId'
+    case.channels[next(iter(diagnostic.EVENT_RECOVERY_TEXT_IDS))]['parent_id'] = None
+    with pytest.raises(ValueError, match='MOVE_UNVERIFIED'):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args, verify_only=True)
+    assert len(case.writes) == 4
 
 
 def test_apply_event_recovery_stops_before_duplicate_create_on_unknown_post(recovery_discord):

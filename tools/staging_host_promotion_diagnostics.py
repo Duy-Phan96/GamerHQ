@@ -960,7 +960,7 @@ def category_reference_update(original, old, new):
     return {**original, **{key: int(value) if type(original[key]) is int else value for key, value in new.items()}}
 
 
-def apply_event_recovery_resources(plan, journal, *, save, read, write, token, bindings):
+def apply_event_recovery_resources(plan, journal, *, save, read, write, token, bindings, verify_only=False):
     """Resume by exact IDs. A category POST with an unknown result always stops."""
     guild, bot = plan['guildId'], plan['botId']
     if (read('/users/@me', token).get('id') != bot
@@ -1033,6 +1033,8 @@ def apply_event_recovery_resources(plan, journal, *, save, read, write, token, b
     for spec in plan['createCategories']:
         key = spec['reference']
         if key not in created:
+            if verify_only:
+                raise ValueError('EVENT_RECOVERY_CATEGORY_REJECTED')
             rows = inventory()
             reject_other_categories(rows)
             verify_channels(rows, created.get('categoryId'))
@@ -1054,6 +1056,8 @@ def apply_event_recovery_resources(plan, journal, *, save, read, write, token, b
         rows = inventory()
         verify_channels(rows, parent)
         if rows[ident].get('parent_id') != parent:
+            if verify_only:
+                raise ValueError('EVENT_RECOVERY_MOVE_UNVERIFIED')
             write('PATCH', route, token, [{'id': ident, 'parent_id': parent, 'lock_permissions': False}], journal['auditId'])
         rows = inventory()
         verify_channels(rows, parent)
@@ -1124,7 +1128,7 @@ def apply_event_category_recovery(report, profile, state, uid, account, socket):
         raise ValueError('EVENT_RECOVERY_BASELINE_DRIFT')
     for config_value in (profile, json.loads(policy_raw)):
         refs = {key: snowflake(config_value.get(key)) for key in keys}
-        allowed = [old] if journal['phase'] == 'RESOURCES' else [old, created]
+        allowed = {'RESOURCES': [old], 'REFERENCES': [old, created], 'VERIFIED': [created]}[journal['phase']]
         if refs not in allowed:
             raise ValueError('EVENT_RECOVERY_REFERENCE_DRIFT')
     proof = journal['backup']
@@ -1132,7 +1136,8 @@ def apply_event_category_recovery(report, profile, state, uid, account, socket):
 
     try:
         created = apply_event_recovery_resources(plan, journal, save=save, read=discord_get,
-                                                  write=discord_event_write, token=token, bindings=bindings)
+                                                  write=discord_event_write, token=token, bindings=bindings,
+                                                  verify_only=journal['phase'] != 'RESOURCES')
         next_profile = category_reference_update(profile, old, created)
         next_policy = category_reference_update(json.loads(policy_raw), old, created)
         if config(profile_path, uid, private=True) != profile or event_recovery_snapshot(database, guild) != (policy_raw, data_hash):
