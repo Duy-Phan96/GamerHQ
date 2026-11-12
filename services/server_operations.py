@@ -136,7 +136,7 @@ def snapshot_permissions(guild, channel, subject):
     return detached.permissions_for(subject)
 
 
-async def public_message_channel(guild, channel):
+async def public_message_channel(guild, channel, *, publish=False):
     if channel not in guild.text_channels or channel.guild.id != guild.id:
         return False
     everyone = guild.get_role(guild.id)
@@ -167,7 +167,8 @@ async def public_message_channel(guild, channel):
     # Resolve effective permissions against the REST roles and channel overwrites
     # without changing the Discord gateway cache or reimplementing permission rules.
     bot_permissions = snapshot_permissions(guild, channel, bot_member)
-    return all(getattr(bot_permissions, name) for name in access)
+    return all(getattr(bot_permissions, name) for name in access) and (
+        not publish or bot_permissions.send_messages and bot_permissions.pin_messages)
 
 
 def eligible(guild, row, resource):
@@ -967,12 +968,12 @@ def needs_repair(guild, row, *, placement=False):
     return False
 
 
-async def preview(guild, actor, mode, bot=None, *, scope=None):
+async def preview(guild, actor, mode, bot=None, *, scope=None, message_keys=None):
     managed.require_admin(guild, actor)
     if (mode == 'setup' or scope in ('placement', 'bulk')) and actor.id != guild.owner_id:
         raise ServerMessageError('Only the owner can review these changes.')
     with operation(f'server_{mode}_preview'):
-        rows = await scan(guild, bot, fresh=True, message_keys=None if scope in (None, 'messages') else (),
+        rows = await scan(guild, bot, fresh=True, message_keys=message_keys if scope in (None, 'messages') else (),
                           verify_placement=scope == 'placement', bulk=scope == 'bulk')
     rows = [r for r in rows if in_phase(r, scope) or r['kind'] == 'warning']
     if mode == 'reconcile' and actor.id != guild.owner_id:
@@ -1017,7 +1018,7 @@ def persist(guild, row, resource):
 
 
 @measured('server_apply')
-async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None):
+async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None, create_checkpoint=None, on_created=None):
     managed.require_admin(guild, actor)
     if (not confirmed or draft['actor_id'] != actor.id or draft['guild_id'] != guild.id
             or time.time() - draft['created'] > 240):
@@ -1035,6 +1036,16 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
     done, skipped = [], []
     available, added_roles = {}, set()
     labels = {row['key']: row['label'] for row in draft['rows']} if bulk else {}
+
+    async def create_checked(key, call, *args, **kwargs):
+        if create_checkpoint:
+            create_checkpoint(key, True)
+        try:
+            return await call(*args, **kwargs)
+        except discord.HTTPException as exc:
+            if create_checkpoint and exc.status in (400, 401, 403, 404, 429):
+                create_checkpoint(key, False)
+            raise
 
     def unresolved(bucket, row, reason):
         result[bucket].append(f"{row['label']} · {reason}")
@@ -1163,18 +1174,20 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     elif bulk:
                         messages.assert_unreferenced(selected, key)
                     persist(guild, row, resource)
+                    if create_checkpoint:
+                        create_checkpoint(key, False)
                     row['raw'] = str(selected)
                 elif mode == 'setup':
                     if not actionable(row): continue
                     if kind in ('role', 'bot-role'):
-                        resource = await guild.create_role(name=row['label'], permissions=discord.Permissions.none(),
+                        resource = await create_checked(key, guild.create_role, name=row['label'], permissions=discord.Permissions.none(),
                                                            reason='Confirmed GamerHQ setup',
                                                            **({'hoist': True} if bulk and kind == 'bot-role' else {}))
                     elif kind == 'category':
                         blank = SimpleNamespace(guild=guild, overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
                         policy = confirmed_setup_policy(row, added_roles) if bulk else (
                             row['create_overwrites'] if scope and 'create_overwrites' in row else rights(guild, row, blank))
-                        resource = await guild.create_category(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
+                        resource = await create_checked(key, guild.create_category, row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
                     elif kind in ('text', 'voice'):
                         parent = available.get(row['parent']) if bulk else (
                             row['destination'] if scope == 'channels' else target(guild, row))
@@ -1196,7 +1209,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                             effective = bulk_destination_permissions(row['bulk_guild'], parent, member)
                             row['feed_creation_evidence'] = feed_creation_evidence(parent, member, policy, effective)
                         create = parent.create_voice_channel if kind == 'voice' else parent.create_text_channel
-                        resource = await create(row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
+                        resource = await create_checked(key, create, row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
                     elif kind == 'message':
                         with read_scope(), db.read_only():
                             boards = managed.canonical_boards(row['guild'], bot)
@@ -1204,6 +1217,9 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                             defaults = managed.canonical_boards(row['guild'], bot, defaults=True)
                             default_content = defaults.get(key, (None, content))[1]
                             current = await inspect_message(row['guild'], key, destination, content, default_content, boards=boards)
+                            if create_checkpoint and not await public_message_channel(row['guild'], destination, publish=True):
+                                skipped.append(row['label'] + ': Host cannot safely publish and pin in this destination')
+                                continue
                         if current['signature'] != row['signature']:
                             skipped.append(row['label'] + ': message evidence changed; scan again')
                             continue
@@ -1212,7 +1228,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                             raise ServerMessageError('Owner required.')
                         view = message_view(row['guild'], key)
                         nonce = managed.digest([guild.id, destination.id, key])[:25]
-                        resource = await destination.send(content=row['content'], view=view, nonce=nonce,
+                        resource = await create_checked(key, destination.send, content=row['content'], view=view, nonce=nonce,
                                                           allowed_mentions=discord.AllowedMentions.none())
                         persist(guild, row, resource)
                         await resource.pin(reason='Confirmed GamerHQ setup')
@@ -1220,6 +1236,10 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                     if kind != 'message':
                         phase = 'save mapping after Discord creation'
                         persist(guild, row, resource)
+                    if create_checkpoint:
+                        create_checkpoint(key, False)
+                    if on_created:
+                        on_created(row, resource)
                     created_resources[resource.id] = resource
                 elif mode == 'repair':
                     if not needs_repair(guild, row, placement=scope == 'placement'): continue
@@ -1275,6 +1295,9 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None)
                 else: raise ServerMessageError('Unknown operation.')
             except Exception as exc:
                 if not bulk:
+                    if create_checkpoint and kind == 'message':
+                        skipped.append(f"{row['label']}: {bulk_error_reason(exc)}")
+                        continue
                     raise
                 reason = bulk_error_reason(exc)
                 evidence = row.get('feed_creation_evidence')
