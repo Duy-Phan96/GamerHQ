@@ -157,6 +157,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(rows['guide']['create_overwrites'][self.guild.default_role].send_messages, False)
 
     async def test_bulk_setup_reuses_local_defaults_only_with_explicit_choice(self):
+        from services import server_change_observer as observer
+
         actor = self.owner()
         default_text = self.guild.add_category('Textkanäle')
         default_voice = self.guild.add_category('Sprachkanäle')
@@ -165,6 +167,16 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.fetch_channels = AsyncMock(return_value=[*self.guild.channels, voice])
         message = self.add_message(text, 'Existing conversation')
         voice.overwrites[self.guild.custom] = discord.PermissionOverwrite(speak=False)
+        with db.connect() as conn:
+            for channel in (text, voice):
+                observed = observer.snapshot(channel, 'channel')
+                observer._record(conn, self.guild, 'channel', channel.id, dict(observed, name='previous'), observed)
+            observer._store(conn, observer.key(self.guild.id, 'guild', self.guild.id), {'system_channel_id': text.id})
+            history = [tuple(row) for row in conn.execute('SELECT * FROM structure_change_log ORDER BY id')]
+            observations = [tuple(row) for row in conn.execute(
+                "SELECT * FROM settings WHERE key LIKE 'owner_observation:%' ORDER BY key")]
+        self.assertEqual((len(history), len(observations)), (2, 3))
+        self.assertTrue(duplicates.runtime_reference_locations(text.id, 'managed_channel:1:general'))
         with patch.object(ops, 'inspect_message', AsyncMock(side_effect=AssertionError('message scan'))):
             draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             draft['rows'] = [r for r in draft['rows'] if r['name'] in ops.REUSE_ALIASES]
@@ -174,12 +186,33 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             choices = {row['key']: row['bulk_id'] for row in draft['rows']}
             result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True, choices=choices)
             self.assertEqual((len(result['reused']), result['created'], result['remaining']), (2, [], []))
+            repeat = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            self.assertTrue(all(row['status'] == 'EXACT_MATCH' for row in repeat['rows'] if row['name'] in ops.REUSE_ALIASES))
+        with db.connect() as conn:
+            self.assertEqual(history, [tuple(row) for row in conn.execute('SELECT * FROM structure_change_log ORDER BY id')])
+            self.assertEqual(observations, [tuple(row) for row in conn.execute(
+                "SELECT * FROM settings WHERE key LIKE 'owner_observation:%' ORDER BY key")])
         self.assertEqual(db.get_setting('managed_channel:1:general'), str(text.id))
         self.assertEqual(db.get_setting('managed_channel:1:chill-lounge'), str(voice.id))
         self.assertEqual((text.category, voice.category), (default_text, default_voice))
         self.assertEqual(text.messages[message.id], message)
         self.assertFalse(voice.overwrites[self.guild.custom].speak)
         self.assertEqual(text.edits + voice.edits, [])
+
+    async def test_bulk_setup_revalidates_localized_channel_ownership_before_linking(self):
+        actor = self.owner()
+        category = self.guild.add_category('Textkanäle')
+        text = self.guild.add_channel('Allgemein', category)
+        draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+        row = next(row for row in draft['rows'] if row['name'] == 'general')
+        self.assertEqual(row['bulk_action'], 'choose')
+        draft['rows'] = [row]
+        db.set_setting('managed_channel:1:legacy-general', text.id)
+        result = await ops.apply(self.guild, actor, draft, self.bot, confirmed=True,
+                                 choices={row['key']: text.id})
+        self.assertEqual((result['reused'], result['created'], result['remaining']), ([], [], [row['label']]))
+        self.assertIsNone(db.get_setting(row['key']))
+        self.assertEqual(text.edits, [])
 
     async def test_bulk_setup_orders_dependencies_and_serializes_confirmations(self):
         actor = self.owner()

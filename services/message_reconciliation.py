@@ -49,9 +49,13 @@ async def candidates(channel, *, content, recover_match=None, require_complete=T
                    and (canonical_equal(m.content, content) or (recover_match and recover_match(m)))), key=lambda m: m.id)
 
 
-def runtime_reference_locations(resource_id, key, *, equivalent_keys=(), limit=1):
+def runtime_reference_locations(resource_id, key, *, equivalent_keys=(), limit=1, localized_channel_guild=None):
     """Report where an ID is referenced without including stored values."""
     pattern = re.compile(r'(?<![A-Za-z0-9])' + str(resource_id) + r'(?![A-Za-z0-9])')
+    observation = None
+    if localized_channel_guild is not None:
+        from services.server_change_observer import PREFIX
+        observation = re.compile(rf'{re.escape(PREFIX)}{localized_channel_guild}:(channel|category|role|guild):[0-9]+')
     locations = []
     with db.connect() as conn:
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
@@ -62,6 +66,13 @@ def runtime_reference_locations(resource_id, key, *, equivalent_keys=(), limit=1
             for row in conn.execute('SELECT * FROM ' + quoted):
                 data = dict(row)
                 if table == 'settings' and data['key'] in (key, *equivalent_keys):
+                    continue
+                # Localized channel adoption preserves these records. They describe past
+                # Discord state and never establish a managed channel's current owner.
+                if observation and table == 'settings' and observation.fullmatch(data['key'] or ''):
+                    continue
+                if (observation and table == 'structure_change_log' and data['guild_id'] == localized_channel_guild
+                        and data['status'] != 'UNDOING'):
                     continue
                 if table == 'managed_message_content' and data['setting_key'] == key:
                     continue
