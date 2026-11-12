@@ -333,6 +333,67 @@ def test_fresh_event_recovery_backup_preserves_database_and_verifies_restore(tmp
     assert database.read_bytes() == before
 
 
+def test_event_recovery_resumes_after_policy_commit_without_replaying_discord_writes(tmp_path, monkeypatch, recovery_discord):
+    case = recovery_discord
+    old = case.plan['replaceCategoryReferences']['expected']
+    database = tmp_path / 'stage.sqlite'
+    ledger(database)
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.executescript('''
+            UPDATE skill_domain_authority SET guild_id=100;
+            UPDATE skill_guild_state SET guild_id=100 WHERE guild_id=12;
+            CREATE TABLE settings (key PRIMARY KEY, value);
+            CREATE TABLE skill_storage (guild_id, skill_id, storage_key, value_json);
+            CREATE TABLE skill_managed_resources (guild_id, skill_id, resource_key, kind, state_json);
+            CREATE TABLE structure_change_log (guild_id, resource_id, resource_type, action, after_json, created_at);
+            INSERT INTO skill_storage VALUES (100,'event-manager','event.v2:fixture','{"attendance":[123]}');
+        ''')
+        conn.execute('INSERT INTO settings VALUES (?,?)', ('skill_resources:100:event-manager', json.dumps({**old, 'allowPublic': False})))
+        conn.executemany('INSERT INTO skill_managed_resources VALUES (100,\'event-manager\',?,?,?)',
+                         [(f'event:{i}', kind, json.dumps({'channelId': ident, 'marker': marker}))
+                          for i, (ident, kind, marker) in enumerate(case.args['bindings'])])
+    profile = {**old, 'stagingGuildId': '100', 'database': str(database), 'workRoot': str(tmp_path), 'backupRoot': str(tmp_path)}
+    profile_path = tmp_path / 'settings/profile.json'
+    profile_path.parent.mkdir()
+    diagnostic.save_private_json(profile_path, profile)
+    before = diagnostic.event_recovery_snapshot(database, 100)[1]
+    container = {'hostCommit': diagnostic.BASELINE, 'running': True, 'dockerHealthy': True,
+                 'matchesApprovedImage': True, 'runtimeDatabaseMatchesProfile': True,
+                 'packageVersion': '0.1.2', 'wheelMatchesReviewedArtifact': True}
+    report = {'container': container, 'database': {'integrityPass': True, 'eventManagerAuthority': True, 'pendingDeploymentCount': 0}}
+    plan_sha = diagnostic.event_plan_digest(case.plan)
+    monkeypatch.setattr(diagnostic, 'CONTROL', tmp_path)
+    monkeypatch.setattr(diagnostic, 'APPROVED_EVENT_PLAN', plan_sha)
+    monkeypatch.setattr(diagnostic, 'staging_discord_token', lambda *_: 'private-token')
+    monkeypatch.setattr(diagnostic, 'installed_discord_preflight', lambda *_, **__: {})
+    monkeypatch.setattr(diagnostic, 'event_category_recovery_plan', lambda *_: {'planSha256': plan_sha, 'plan': case.plan})
+    monkeypatch.setattr(diagnostic, 'discord_get', case.args['read'])
+    monkeypatch.setattr(diagnostic, 'discord_event_write', case.args['write'])
+    monkeypatch.setattr(diagnostic, 'container_status', lambda *_: container)
+    monkeypatch.setattr(diagnostic, 'discord_preflight', lambda *_, require_category_permissions: {'state': 'LOOKUPS_PASS'})
+    real_save = diagnostic.save_private_json
+    stopped = False
+
+    def interrupt(path, value):
+        nonlocal stopped
+        if path == profile_path and not stopped:
+            stopped = True
+            raise OSError('simulated profile write failure')
+        real_save(path, value)
+
+    monkeypatch.setattr(diagnostic, 'save_private_json', interrupt)
+    args = (report, profile, {'enabled': True, 'recoveryRequired': False}, os.getuid(), None, None)
+    first = diagnostic.apply_event_category_recovery(*args)
+    assert first['state'] == 'EVENT_CATEGORY_RECOVERY_STOPPED' and first['phase'] == 'REFERENCES'
+    assert diagnostic.config(profile_path, os.getuid(), private=True) == profile
+    assert {key: json.loads(diagnostic.event_recovery_snapshot(database, 100)[0])[key] for key in old} == first['recordedCategoryIds']
+    second = diagnostic.apply_event_category_recovery(*args)
+    assert second['state'] == 'EVENT_CATEGORY_RECOVERY_VERIFIED'
+    assert [method for method, _ in case.writes] == ['POST', 'POST', 'PATCH', 'PATCH']
+    policy, after = diagnostic.event_recovery_snapshot(database, 100)
+    assert json.loads(policy) == {**second['newCategoryIds'], 'allowPublic': False} and before == after
+
+
 def record(path, ident, state, time, evidence):
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute("INSERT INTO skill_deployments VALUES(?, 'event-manager', ?, ?, ?, ?, ?, 'approved-image', '0.1.2')",
