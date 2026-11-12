@@ -68,6 +68,22 @@ if compensation is approved and the current values still match the recorded
 new values. A fresh read-only preflight must pass before the separate protected
 Host promotion.
 
+The one-time owner apply mode accepts the exact approved plan SHA256 and a
+separate confirmation that the owner checked for hidden replacement categories.
+It uses the existing Staging worker identity and operation lock, creates and
+verifies a fresh private SQLite backup, and records progress in the private
+worker journal. It writes only the two category creates, the two single-channel
+placement changes, and the category reference fields. `EVENT_CATEGORY_RECOVERY_STOPPED`
+means stop and review the reported phase. A journaled create without a returned
+ID must be reconciled against Discord before any further create. For a recorded
+ID or an interrupted move, the same owner operation can resume only if the
+approved source, data, IDs and overwrite fingerprints still match.
+
+`EVENT_CATEGORY_RECOVERY_VERIFIED` confirms both category permissions, both
+parents and unchanged overwrite hashes, matching profile and Skill policy,
+unchanged Event Manager data, healthy baseline container and the live Discord
+lookup preflight. It does not dispatch a Host promotion.
+
 ## Reviewing permission and ownership blockers
 
 Bulk structure creation omits explicit Manage Messages grants. Existing

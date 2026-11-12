@@ -214,6 +214,99 @@ def test_event_recovery_plan_binds_two_private_categories_and_fails_closed_on_vo
     assert not diagnostic.event_category_recovery_plan(report, profile)['checks']['existingTextChannelsVerified']
 
 
+@pytest.fixture
+def recovery_discord():
+    guild, bot = '100', '200'
+    old = {'categoryId': diagnostic.EVENT_RECOVERY_TEXT_CATEGORY, 'voiceCategoryId': diagnostic.EVENT_RECOVERY_VOICE_CATEGORY}
+    rights = diagnostic.TEXT_CATEGORY_RIGHTS | diagnostic.VOICE_CATEGORY_RIGHTS
+    overwrites = [{'id': guild, 'type': 0, 'allow': '0', 'deny': '1024'},
+                  {'id': bot, 'type': 1, 'allow': '1024', 'deny': '0'}]
+    bindings = [(ident, 'text', f'marker-{i}') for i, ident in enumerate(sorted(diagnostic.EVENT_RECOVERY_TEXT_IDS))]
+    channels = {ident: {'id': ident, 'guild_id': guild, 'type': 0, 'topic': marker, 'parent_id': None,
+                        'permission_overwrites': overwrites} for ident, _, marker in bindings}
+    route = f'/guilds/{guild}/channels'
+    plan = {'guildId': guild, 'botId': bot, 'replaceCategoryReferences': {'expected': old},
+            'createCategories': [dict(reference=key, name=name, overwrites=overwrites, requiredEffectiveBotPermissions='1024')
+                                 for key, name in zip(old, ('EVENT TESTING', 'EVENT VOICE'))],
+            'moveExistingTextChannels': [dict(channelId=ident, expectedOverwritesSha256=diagnostic.overwrite_review(row, guild)['overwritesSha256'])
+                                         for ident, row in channels.items()]}
+    journal = {'categories': {}, 'auditId': '0' * 32}
+    writes, saves = [], []
+
+    def read(path, _token):
+        identity = {'/users/@me': {'id': bot}, '/users/@me/guilds?limit=200': [{'id': guild}],
+                    '/guilds/' + guild: {'id': guild}, f'/guilds/{guild}/members/{bot}': {'roles': []},
+                    f'/guilds/{guild}/roles': [{'id': guild, 'permissions': str(rights)}]}
+        if path == route:
+            return list(channels.values())
+        if path.startswith('/channels/'):
+            ident = path.split('/')[-1]
+            if ident not in channels:
+                raise HTTPError(path, 404, 'missing', None, None)
+            return channels[ident]
+        return identity[path]
+
+    def write(method, path, _token, body, _audit):
+        assert path == route
+        writes.append((method, body))
+        if method == 'POST':
+            ident = str(300 + len(writes))
+            channels[ident] = {**body, 'id': ident, 'guild_id': guild}
+            return channels[ident]
+        (move,) = body
+        assert method == 'PATCH' and move['lock_permissions'] is False
+        assert set(move) == {'id', 'parent_id', 'lock_permissions'}
+        channels[move['id']]['parent_id'] = move['parent_id']
+
+    return SimpleNamespace(plan=plan, journal=journal, channels=channels, writes=writes,
+                           args=dict(save=lambda value: saves.append(json.loads(json.dumps(value))),
+                                     read=read, write=write, token='private-token', bindings=bindings), saves=saves)
+
+
+def test_apply_event_recovery_retries_verified_moves_without_recreating_categories(recovery_discord):
+    case = recovery_discord
+    write = case.args['write']
+
+    def lose_first_move_response(method, *args):
+        result = write(method, *args)
+        if method == 'PATCH':
+            raise TimeoutError('simulated response loss')
+        return result
+
+    with pytest.raises(TimeoutError):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **{**case.args, 'write': lose_first_move_response})
+    categories = diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args)
+    assert diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args) == categories
+    assert [method for method, _ in case.writes] == ['POST', 'POST', 'PATCH', 'PATCH']
+    assert all(case.channels[ident]['parent_id'] == categories['categoryId'] for ident in diagnostic.EVENT_RECOVERY_TEXT_IDS)
+    assert case.saves[0]['creating'] == 'categoryId' and case.saves[2]['creating'] == 'voiceCategoryId'
+
+
+def test_apply_event_recovery_stops_before_duplicate_create_on_unknown_post(recovery_discord):
+    case = recovery_discord
+
+    def lose_create_response(*args):
+        case.args['write'](*args)
+        raise TimeoutError('simulated response loss')
+
+    with pytest.raises(TimeoutError):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **{**case.args, 'write': lose_create_response})
+    with pytest.raises(ValueError, match='CREATION_UNCERTAIN'):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args)
+    assert len(case.writes) == 1 and case.journal['creating'] == 'categoryId'
+
+
+def test_category_reference_update_preserves_non_category_settings_and_rejects_drift():
+    old = {'categoryId': '10', 'voiceCategoryId': '20'}
+    new = {'categoryId': '30', 'voiceCategoryId': '40'}
+    value = {'categoryId': 10, 'voiceCategoryId': 20, 'allowPublic': False, 'maxResources': 30}
+    updated = diagnostic.category_reference_update(value, old, new)
+    assert updated == {'categoryId': 30, 'voiceCategoryId': 40, 'allowPublic': False, 'maxResources': 30}
+    assert diagnostic.category_reference_update(updated, old, new) is updated
+    with pytest.raises(ValueError, match='REFERENCE_DRIFT'):
+        diagnostic.category_reference_update({**value, 'categoryId': 60}, old, new)
+
+
 def ledger(path):
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.executescript("""

@@ -766,7 +766,7 @@ def discord_preflight(profile, token, *, read=discord_get, bindings=None, recove
     return result
 
 
-def installed_discord_preflight(profile, uid, *, recovery_review=False):
+def staging_discord_token(profile, uid):
     path = CONTROL / 'settings/bot.env'
     if profile.get('botEnvFile') != str(path):
         raise ValueError('STAGING_BINDING_REJECTED')
@@ -781,6 +781,11 @@ def installed_discord_preflight(profile, uid, *, recovery_review=False):
     token = values.get('DISCORD_TOKEN', '')
     if values.get('GUILD_ID') != str(profile['stagingGuildId']) or not re.fullmatch(r'[A-Za-z0-9_.-]{20,2048}', token):
         raise ValueError('STAGING_BINDING_REJECTED')
+    return token
+
+
+def installed_discord_preflight(profile, uid, *, recovery_review=False):
+    token = staging_discord_token(profile, uid)
     configured = {key: snowflake(profile[key]) for key in ('categoryId', 'voiceCategoryId')}
     try:
         stored, bindings, deletions = event_resource_bindings(profile)
@@ -852,11 +857,313 @@ def event_category_recovery_plan(report, profile):
                                              expectedOverwritesSha256=row['overwritesSha256']) for row in channels],
             'replaceCategoryReferences': {'expected': old, 'targets': ['staging-profile', 'event-manager-resource-policy']},
             'ownerMustConfirmNoHiddenReplacement': True, 'temporaryVoiceMoves': []}
-    digest = hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    digest = event_plan_digest(plan)
     return {'state': 'RECOVERY_PLAN_READY_FOR_OWNER_REVIEW', 'checks': checks, 'planSha256': digest, 'plan': plan}
 
 
-def collect(*, release=False, localized_preflight=False, recovery_review=False):
+APPROVED_EVENT_PLAN = 'f2912684ebad8734b02d59e6f6970ec1150c907f317ce4b4166e3b644000f11a'
+EVENT_RECOVERY_APPROVAL = 'APPLY STAGING EVENT CATEGORY RECOVERY'
+NO_HIDDEN_REPLACEMENT = 'I VERIFIED NO HIDDEN EVENT CATEGORY REPLACEMENT'
+
+
+def event_plan_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def save_private_json(path, value):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.event-recovery-', delete=False) as output:
+            temporary = Path(output.name)
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(value, output, sort_keys=True)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(path)
+        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def event_recovery_snapshot(database, guild):
+    """Hash protected data without returning event records, participants or markers."""
+    with closing(read_database(database)) as conn:
+        conn.execute('PRAGMA query_only=ON')
+        conn.execute('BEGIN')
+        policy = conn.execute('SELECT value FROM settings WHERE key=?', (f'skill_resources:{guild}:event-manager',)).fetchone()
+        if not policy:
+            raise ValueError('EVENT_POLICY_MISSING')
+        hasher = hashlib.sha256()
+        for query in (
+            "SELECT * FROM skill_storage WHERE guild_id=? AND skill_id='event-manager' ORDER BY storage_key",
+            "SELECT * FROM skill_managed_resources WHERE guild_id=? AND skill_id='event-manager' ORDER BY resource_key",
+            "SELECT * FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'",
+            "SELECT * FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'",
+        ):
+            for row in conn.execute(query, (guild,)):
+                hasher.update(json.dumps(row, separators=(',', ':')).encode() + b'\n')
+            hasher.update(b'\0')
+        return policy[0], hasher.hexdigest()
+
+
+def event_recovery_backup(database, backup_root, guild, uid):
+    ident = uuid.uuid4().hex
+    backup = backup_root / (ident + '.sqlite')
+    os.close(os.open(backup, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600))
+    with closing(read_database(database)) as source, closing(sqlite3.connect(backup)) as target:
+        source.backup(target)
+    checksum = digest(backup)
+    proof = {'backup': {'sha256': checksum}}
+    verify_event_recovery_backup(backup_root, ident, proof, uid, guild)
+    return {'id': ident, 'sha256': checksum}
+
+
+def verify_event_recovery_backup(root, ident, proof, uid, guild):
+    result = receipt_for_backup(root, ident, proof, uid, guild_id=guild)
+    if (result.get('checksumMatches') is not True or result.get('integrityPass') is not True
+            or result.get('restoreProbe') != 'PASS'):
+        raise ValueError('EVENT_RECOVERY_BACKUP_REJECTED')
+
+
+def discord_event_write(method, path, token, payload, audit_id):
+    request = Request('https://discord.com/api/v10' + path, method=method,
+                      data=json.dumps(payload, separators=(',', ':')).encode(), headers={
+                          'User-Agent': 'DiscordBot (https://github.com/Duy-Phan96/GamerHQ, staging-1)',
+                          'Content-Type': 'application/json', 'X-Audit-Log-Reason': 'Staging event recovery ' + audit_id})
+    request.add_unredirected_header('Authorization', 'Bot ' + token)
+    with build_opener(NoDiscordRedirect()).open(request, timeout=20) as response:
+        body = response.read(65537)
+    if len(body) > 65536:
+        raise ValueError('EVENT_RECOVERY_WRITE_RESPONSE_REJECTED')
+    return json.loads(body) if body else None
+
+
+def category_reference_update(original, old, new):
+    actual = {key: snowflake(original.get(key)) for key in old}
+    if actual == new:
+        return original
+    if actual != old:
+        raise ValueError('EVENT_RECOVERY_REFERENCE_DRIFT')
+    return {**original, **{key: int(value) if type(original[key]) is int else value for key, value in new.items()}}
+
+
+def apply_event_recovery_resources(plan, journal, *, save, read, write, token, bindings):
+    """Resume by exact IDs. A category POST with an unknown result always stops."""
+    guild, bot = plan['guildId'], plan['botId']
+    if (read('/users/@me', token).get('id') != bot
+            or {str(row['id']) for row in read('/users/@me/guilds?limit=200', token)} != {guild}
+            or str(read('/guilds/' + guild, token).get('id')) != guild):
+        raise ValueError('STAGING_BINDING_REJECTED')
+    member = read(f'/guilds/{guild}/members/{bot}', token)
+    roles = read(f'/guilds/{guild}/roles', token)
+    if any(kind == 'voice' for _, kind, _ in bindings):
+        raise ValueError('EVENT_RECOVERY_VOICE_BINDING_FOUND')
+    required = TEXT_CATEGORY_RIGHTS | VOICE_CATEGORY_RIGHTS
+    if effective_permissions(guild, bot, member, roles, {'permission_overwrites': []}) & required != required:
+        raise ValueError('EVENT_RECOVERY_PERMISSION_REJECTED')
+    markers = {ident: marker for ident, kind, marker in bindings if kind == 'text' and ident in EVENT_RECOVERY_TEXT_IDS}
+    if set(markers) != EVENT_RECOVERY_TEXT_IDS or not all(markers.values()):
+        raise ValueError('EVENT_RECOVERY_CHANNEL_DRIFT')
+    old = plan['replaceCategoryReferences']['expected']
+    route = f'/guilds/{guild}/channels'
+
+    def inventory():
+        rows = read(route, token)
+        event_inventory(rows, guild, old.values(), bindings)  # validates guild and unique IDs
+        return {str(row['id']): row for row in rows}
+
+    def verify_channels(rows, parent):
+        for move in plan['moveExistingTextChannels']:
+            ident = move['channelId']
+            row = rows.get(ident, {})
+            marker = markers[ident]
+            if (row.get('type') != 0 or row.get('topic') != marker
+                    or sum(c.get('type') == 0 and c.get('topic') == marker for c in rows.values()) != 1
+                    or row.get('parent_id') not in (None, parent)
+                    or overwrite_review(row, guild)['overwritesSha256'] != move['expectedOverwritesSha256']
+                    or effective_permissions(guild, bot, member, roles, row) & (VIEW_CHANNEL | MANAGE_CHANNELS)
+                       != (VIEW_CHANNEL | MANAGE_CHANNELS)):
+                raise ValueError('EVENT_RECOVERY_CHANNEL_DRIFT')
+
+    def verify_category(ident, spec):
+        row = read('/channels/' + ident, token)
+        rights = int(spec['requiredEffectiveBotPermissions'])
+        if (str(row.get('id')) != ident or str(row.get('guild_id')) != guild or row.get('type') != 4
+                or row.get('name') != spec['name']
+                or overwrite_review(row, guild) != overwrite_review({'permission_overwrites': spec['overwrites']}, guild)
+                or effective_permissions(guild, bot, member, roles, row) & rights != rights):
+            raise ValueError('EVENT_RECOVERY_CATEGORY_REJECTED')
+
+    if journal.get('creating'):
+        raise ValueError('EVENT_RECOVERY_CREATION_UNCERTAIN')
+    created = journal['categories']
+    rows = inventory()
+    verify_channels(rows, created.get('categoryId'))
+    if any(ident in rows or any(str(row.get('parent_id')) == ident for row in rows.values()) for ident in old.values()):
+        raise ValueError('EVENT_RECOVERY_OLD_CATEGORY_VISIBLE')
+    for ident in old.values():
+        try:
+            read('/channels/' + ident, token)
+        except HTTPError as error:
+            if error.code == 404:
+                continue
+            raise
+        raise ValueError('EVENT_RECOVERY_OLD_CATEGORY_VISIBLE')
+    names = {tuple(spec['name'].casefold().split()) for spec in plan['createCategories']}
+
+    def reject_other_categories(rows):
+        if any(row.get('type') == 4 and tuple(re.findall('[a-z0-9]+', row.get('name', '').casefold())) in names
+               and ident not in created.values() for ident, row in rows.items()):
+            raise ValueError('EVENT_RECOVERY_REPLACEMENT_FOUND')
+
+    reject_other_categories(rows)
+    for spec in plan['createCategories']:
+        key = spec['reference']
+        if key not in created:
+            rows = inventory()
+            reject_other_categories(rows)
+            verify_channels(rows, created.get('categoryId'))
+            journal['creating'] = key
+            save(journal)
+            row = write('POST', route, token, {'name': spec['name'], 'type': 4,
+                        'permission_overwrites': spec['overwrites']}, journal['auditId'])
+            ident = snowflake(row.get('id'))
+            if not ident or ident in set(old.values()) | set(created.values()):
+                raise ValueError('EVENT_RECOVERY_CREATION_UNCERTAIN')
+            created[key] = ident
+            journal.pop('creating')
+            save(journal)
+        verify_category(created[key], spec)
+
+    parent = created['categoryId']
+    for move in plan['moveExistingTextChannels']:
+        ident = move['channelId']
+        rows = inventory()
+        verify_channels(rows, parent)
+        if rows[ident].get('parent_id') != parent:
+            write('PATCH', route, token, [{'id': ident, 'parent_id': parent, 'lock_permissions': False}], journal['auditId'])
+        rows = inventory()
+        verify_channels(rows, parent)
+        if rows[ident].get('parent_id') != parent:
+            raise ValueError('EVENT_RECOVERY_MOVE_UNVERIFIED')
+    return created
+
+
+def apply_event_category_recovery(report, profile, state, uid, account, socket):
+    guild = int(profile['stagingGuildId'])
+    database = Path(profile['database'])
+    profile_path = CONTROL / 'settings/profile.json'
+    backup_root = Path(profile['backupRoot'])
+    path = Path(profile['workRoot']) / 'event-category-recovery.json'
+    current = report.get('container', {})
+    db_evidence = report.get('database', {})
+    if (state.get('recoveryRequired') is True or state.get('enabled') is not True
+            or current.get('hostCommit') != BASELINE or current.get('running') is not True
+            or current.get('dockerHealthy') is not True or current.get('matchesApprovedImage') is not True
+            or current.get('runtimeDatabaseMatchesProfile') is not True or current.get('packageVersion') != '0.1.2'
+            or current.get('wheelMatchesReviewedArtifact') is not True or db_evidence.get('integrityPass') is not True
+            or db_evidence.get('eventManagerAuthority') is not True or db_evidence.get('pendingDeploymentCount') != 0):
+        raise ValueError('EVENT_RECOVERY_BASELINE_REJECTED')
+    policy_raw, data_hash = event_recovery_snapshot(database, guild)
+    _, bindings, _ = event_resource_bindings(profile)
+    token = staging_discord_token(profile, uid)
+    keys = ('categoryId', 'voiceCategoryId')
+
+    def unaffected(value):
+        return event_plan_digest({k: v for k, v in value.items() if k not in keys})
+
+    def save(journal):
+        save_private_json(path, journal)
+        syslog.openlog('gamerhq-staging', syslog.LOG_PID, syslog.LOG_AUTHPRIV)
+        syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'event-category-recovery',
+                      'auditId': journal['auditId'], 'phase': journal['phase'], 'categories': journal['categories'],
+                      'creationInFlight': journal.get('creating')}))
+
+    if path.exists() or path.is_symlink():
+        journal = config(path, uid, private=True)
+        plan = journal['plan']
+        if event_plan_digest(plan) != APPROVED_EVENT_PLAN or not re.fullmatch('[0-9a-f]{32}', journal['auditId']):
+            raise ValueError('EVENT_RECOVERY_PLAN_REJECTED')
+    else:
+        report['discord'] = installed_discord_preflight(profile, uid, recovery_review=True)
+        preview = event_category_recovery_plan(report, profile)
+        if preview.get('planSha256') != APPROVED_EVENT_PLAN:
+            raise ValueError('EVENT_RECOVERY_PLAN_REJECTED')
+        plan = preview['plan']
+        journal = {'plan': plan, 'auditId': uuid.uuid4().hex, 'phase': 'RESOURCES', 'categories': {},
+                   'eventDataSha256': data_hash, 'profileUnchangedFields': unaffected(profile),
+                   'policyUnchangedFields': unaffected(json.loads(policy_raw)),
+                   'backup': event_recovery_backup(database, backup_root, guild, uid)}
+        save(journal)
+
+    old = plan['replaceCategoryReferences']['expected']
+    created = journal['categories']
+    if (not isinstance(created, dict) or set(created) - set(keys) or len(set(created.values())) != len(created)
+            or any(snowflake(value) != value or value in old.values() for value in created.values())
+            or journal['phase'] not in {'RESOURCES', 'REFERENCES', 'VERIFIED'}):
+        raise ValueError('EVENT_RECOVERY_JOURNAL_REJECTED')
+    if (journal['eventDataSha256'] != data_hash or journal['profileUnchangedFields'] != unaffected(profile)
+            or journal['policyUnchangedFields'] != unaffected(json.loads(policy_raw))):
+        raise ValueError('EVENT_RECOVERY_BASELINE_DRIFT')
+    for config_value in (profile, json.loads(policy_raw)):
+        refs = {key: snowflake(config_value.get(key)) for key in keys}
+        allowed = [old] if journal['phase'] == 'RESOURCES' else [old, created]
+        if refs not in allowed:
+            raise ValueError('EVENT_RECOVERY_REFERENCE_DRIFT')
+    proof = journal['backup']
+    verify_event_recovery_backup(backup_root, proof['id'], {'backup': {'sha256': proof['sha256']}}, uid, guild)
+
+    try:
+        created = apply_event_recovery_resources(plan, journal, save=save, read=discord_get,
+                                                  write=discord_event_write, token=token, bindings=bindings)
+        next_profile = category_reference_update(profile, old, created)
+        next_policy = category_reference_update(json.loads(policy_raw), old, created)
+        if config(profile_path, uid, private=True) != profile or event_recovery_snapshot(database, guild) != (policy_raw, data_hash):
+            raise ValueError('EVENT_RECOVERY_BASELINE_DRIFT')
+        if journal['phase'] != 'VERIFIED':
+            journal['phase'] = 'REFERENCES'
+            save(journal)
+        if next_policy != json.loads(policy_raw):
+            with closing(sqlite3.connect(database.as_uri() + '?mode=rw', uri=True, timeout=3)) as conn, conn:
+                changed = conn.execute('UPDATE settings SET value=? WHERE key=? AND value=?',
+                                       (json.dumps(next_policy, sort_keys=True), f'skill_resources:{guild}:event-manager', policy_raw))
+                if changed.rowcount != 1:
+                    raise ValueError('EVENT_RECOVERY_REFERENCE_DRIFT')
+        if next_profile != profile:
+            save_private_json(profile_path, next_profile)
+        updated_policy, updated_hash = event_recovery_snapshot(database, guild)
+        after = container_status(account, socket, next_profile, state)
+        if (json.loads(updated_policy) != next_policy or updated_hash != data_hash
+                or config(profile_path, uid, private=True) != next_profile or after != current):
+            raise ValueError('EVENT_RECOVERY_POSTCHECK_REJECTED')
+        preflight = discord_preflight(next_profile, token)
+        if preflight.get('state') != 'LOOKUPS_PASS':
+            raise ValueError('EVENT_RECOVERY_PREFLIGHT_REJECTED')
+        journal['phase'] = 'VERIFIED'
+        save(journal)
+        return {'operation': 'event-category-recovery', 'state': 'EVENT_CATEGORY_RECOVERY_VERIFIED',
+                'auditId': journal['auditId'], 'planSha256': APPROVED_EVENT_PLAN,
+                'newCategoryIds': created, 'textChannelIds': sorted(EVENT_RECOVERY_TEXT_IDS),
+                'textOverwriteHashesUnchanged': True, 'textParentsVerified': True,
+                'stagingReferencesVerified': True, 'backupChecksum': 'PASS', 'backupIntegrity': 'PASS', 'restoreProbe': 'PASS',
+                'eventManagerDataUnchanged': True, 'hostCommit': BASELINE, 'skillPackage': '0.1.2', 'containerHealthy': True,
+                'discordPreflight': 'PASS', 'productionChanged': False}
+    except Exception as error:
+        reason = str(error)
+        public = reason if re.fullmatch('EVENT_RECOVERY_[A-Z_]+', reason) else 'EVENT_RECOVERY_STEP_UNVERIFIED'
+        return {'operation': 'event-category-recovery', 'state': 'EVENT_CATEGORY_RECOVERY_STOPPED',
+                'auditId': journal['auditId'], 'phase': journal['phase'], 'reason': public,
+                'creationInFlight': journal.get('creating'), 'recordedCategoryIds': journal['categories'],
+                'productionChanged': False}
+
+
+def collect(*, release=False, localized_preflight=False, recovery_review=False, apply_event_recovery=False):
     if release and localized_preflight:
         raise ValueError('EXPLICIT_OWNER_RELEASE_REQUIRED')
     if os.geteuid() != 0:
@@ -932,6 +1239,8 @@ def collect(*, release=False, localized_preflight=False, recovery_review=False):
                 report['database'] = {'inspection': 'UNAVAILABLE'}
 
         refresh()
+        if apply_event_recovery:
+            return apply_event_category_recovery(report, profile, state, uid, account, socket)
         if localized_preflight:
             report.update(operation='verify-staging-promotion-preflight', state='PREFLIGHT_COLLECTED')
             report.pop('credentialFilesOpened')
@@ -955,17 +1264,30 @@ if __name__ == '__main__':
     parser.add_argument('--release-verified-recovery', action='store_true')
     parser.add_argument('--localized-reuse-preflight', action='store_true')
     parser.add_argument('--event-category-recovery-review', action='store_true')
+    parser.add_argument('--apply-event-category-recovery', action='store_true')
+    parser.add_argument('--plan-sha256')
+    parser.add_argument('--owner-inventory-confirmation')
     parser.add_argument('--approval')
     args = parser.parse_args()
     try:
-        if (args.release_verified_recovery and args.approval != RELEASE_APPROVAL
-                or not args.release_verified_recovery and args.approval is not None):
+        if args.apply_event_category_recovery:
+            if (args.release_verified_recovery or args.localized_reuse_preflight or args.event_category_recovery_review
+                    or args.approval != EVENT_RECOVERY_APPROVAL or args.plan_sha256 != APPROVED_EVENT_PLAN
+                    or args.owner_inventory_confirmation != NO_HIDDEN_REPLACEMENT):
+                raise PermissionError('EXPLICIT_EVENT_RECOVERY_APPROVAL_REQUIRED')
+        elif (args.plan_sha256 is not None or args.owner_inventory_confirmation is not None
+              or (args.release_verified_recovery and args.approval != RELEASE_APPROVAL)
+              or (not args.release_verified_recovery and args.approval is not None)):
             raise PermissionError('EXPLICIT_OWNER_RELEASE_REQUIRED')
-        if args.localized_reuse_preflight or args.event_category_recovery_review:
+        if args.localized_reuse_preflight or args.event_category_recovery_review or args.apply_event_category_recovery:
             globals().update(LOCALIZED_PREFLIGHT)
-        print(json.dumps(collect(release=args.release_verified_recovery,
-                                 localized_preflight=args.localized_reuse_preflight or args.event_category_recovery_review,
-                                 recovery_review=args.event_category_recovery_review), indent=2))
+        receipt = collect(release=args.release_verified_recovery,
+                          localized_preflight=args.localized_reuse_preflight or args.event_category_recovery_review,
+                          recovery_review=args.event_category_recovery_review,
+                          apply_event_recovery=args.apply_event_category_recovery)
+        print(json.dumps(receipt, indent=2))
+        if args.apply_event_category_recovery and receipt.get('state') != 'EVENT_CATEGORY_RECOVERY_VERIFIED':
+            raise SystemExit(1)
     except ControllerSourceMismatch as error:
         raise SystemExit(json.dumps({'diagnosticError': str(error), 'controllerCommit': CONTROLLER,
                                      **error.evidence, 'productionChanged': False})) from None
@@ -974,6 +1296,9 @@ if __name__ == '__main__':
         known = {'OWNER_ROOT_SESSION_REQUIRED', 'STAGING_ACCOUNT_SCOPE_REJECTED',
                  'STAGING_BINDING_REJECTED', 'FILE_SCOPE_REJECTED',
                  'CONTROLLER_BINDING_REJECTED', 'CONTROLLER_SOURCE_MISMATCH',
-                 'BACKUP_SCOPE_REJECTED', 'RECOVERY_STATE_CHANGED', 'EXPLICIT_OWNER_RELEASE_REQUIRED'}
+                 'BACKUP_SCOPE_REJECTED', 'RECOVERY_STATE_CHANGED', 'EXPLICIT_OWNER_RELEASE_REQUIRED',
+                 'EXPLICIT_EVENT_RECOVERY_APPROVAL_REQUIRED', 'EVENT_RECOVERY_PLAN_REJECTED',
+                 'EVENT_RECOVERY_BASELINE_REJECTED', 'EVENT_RECOVERY_BASELINE_DRIFT',
+                 'EVENT_RECOVERY_BACKUP_REJECTED', 'EVENT_RECOVERY_REFERENCE_DRIFT', 'EVENT_RECOVERY_JOURNAL_REJECTED'}
         code = reason if reason in known else 'DIAGNOSTIC_UNAVAILABLE'
         raise SystemExit(json.dumps({'diagnosticError': code, 'productionChanged': False})) from None
