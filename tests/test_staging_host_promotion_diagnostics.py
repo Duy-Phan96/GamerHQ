@@ -82,6 +82,42 @@ def test_discord_preflight_stops_before_guild_lookups_on_wrong_bot(live_lookup_p
         'step': 'bot-identity', 'completed': [], 'state': 'IDENTITY_REJECTED'}
 
 
+def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(tmp_path):
+    database = tmp_path / 'staging.sqlite'
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.executescript('''
+            CREATE TABLE settings (key, value);
+            CREATE TABLE skill_managed_resources (guild_id, skill_id, resource_key, kind, state_json);
+            INSERT INTO settings VALUES ('skill_resources:1:event-manager','{"categoryId":10,"voiceCategoryId":20}');
+            INSERT INTO skill_managed_resources VALUES
+                (1,'event-manager','event:a','text','{"channelId":30,"marker":"private-marker"}'),
+                (1,'event-manager','event:b','voice','{"channelId":40}'),
+                (1,'other','event:c','text','{"channelId":70}'),
+                (2,'event-manager','event:d','text','{"channelId":80}');
+        ''')
+    before = database.read_bytes()
+    stored, bindings = diagnostic.event_resource_bindings({'database': str(database), 'stagingGuildId': '1'})
+    assert stored == {'categoryId': '10', 'voiceCategoryId': '20'}
+    result = diagnostic.event_inventory([
+        {'id': '20', 'type': 4, 'name': 'VOICE TESTING'},
+        {'id': '50', 'type': 4, 'name': '🧪 EVENT TESTING'},
+        {'id': '60', 'type': 4, 'name': 'unrelated'},
+        {'id': '30', 'type': 0, 'parent_id': '50', 'topic': 'private-marker'},
+        {'id': '70', 'type': 0, 'parent_id': '60'},
+    ], '1', ('10', '20'), bindings)
+    assert result['categories'] == [
+        {'categoryId': '20', 'matchesEventTestingName': False, 'parentOfStoredBinding': False},
+        {'categoryId': '50', 'matchesEventTestingName': True, 'parentOfStoredBinding': True},
+    ]
+    assert result['storedChannelBindings'] == [
+        {'channelId': '30', 'storedKind': 'text', 'presentInBotInventory': True,
+         'parentCategoryId': '50', 'typeMatches': True, 'textMarkerMatches': True},
+        {'channelId': '40', 'storedKind': 'voice', 'presentInBotInventory': False},
+    ]
+    assert result['childrenOfReportedAreas'] == [{'channelId': '30', 'parentCategoryId': '50', 'discordType': 0}]
+    assert 'private-marker' not in json.dumps(result) and database.read_bytes() == before
+
+
 def ledger(path):
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.executescript("""

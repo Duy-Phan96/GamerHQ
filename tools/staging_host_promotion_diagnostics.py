@@ -503,17 +503,78 @@ def discord_get(path, token):
     return json.loads(body)
 
 
-def inventory_category(read, token, guild, category, bot, member, roles):
+def snowflake(value):
+    value = str(value)
+    return value if re.fullmatch('[1-9][0-9]{0,19}', value) else None
+
+
+def event_resource_bindings(profile):
+    guild = int(profile['stagingGuildId'])
+    with closing(read_database(Path(profile['database']))) as conn:
+        conn.execute('PRAGMA query_only=ON')
+        conn.execute('BEGIN')
+        policy = conn.execute('SELECT value FROM settings WHERE key=?', (f'skill_resources:{guild}:event-manager',)).fetchone()
+        rows = conn.execute("SELECT kind,state_json FROM skill_managed_resources WHERE guild_id=? "
+                            "AND skill_id='event-manager' ORDER BY resource_key LIMIT 65", (guild,)).fetchall()
+    if len(rows) > 64:
+        raise ValueError('EVENT_BINDING_LIMIT')
+    policy = json.loads(policy[0]) if policy else {}
+    stored = {key: snowflake(policy.get(key)) for key in ('categoryId', 'voiceCategoryId')}
+    bindings = []
+    for kind, raw in rows:
+        state = json.loads(raw)
+        channel = snowflake(state.get('channelId'))
+        if kind in {'text', 'voice'} and channel:
+            bindings.append((channel, kind, state.get('marker')))
+    return stored, bindings
+
+
+def event_inventory(channels, guild, configured_categories, bindings):
+    # Only disclose exact configured IDs, named test areas and recorded Skill resources.
+    by_id = {}
+    for row in channels:
+        ident = snowflake(row['id'])
+        if not ident or ident in by_id or str(row.get('guild_id', guild)) != guild:
+            raise ValueError('CHANNEL_INVENTORY_SCOPE_REJECTED')
+        by_id[ident] = row
+    named = {ident for ident, row in by_id.items() if row.get('type') == 4
+             and re.findall('[a-z0-9]+', str(row.get('name', '')).casefold()) == ['event', 'testing']}
+    tracked = []
+    parents = set()
+    for ident, kind, marker in bindings:
+        row = by_id.get(ident)
+        entry = {'channelId': ident, 'storedKind': kind, 'presentInBotInventory': row is not None}
+        if row is not None:
+            parent = snowflake(row.get('parent_id'))
+            entry.update(parentCategoryId=parent, typeMatches=row.get('type') == (0 if kind == 'text' else 2))
+            if parent:
+                parents.add(parent)
+            if kind == 'text':
+                entry['textMarkerMatches'] = bool(marker and row.get('topic') == marker)
+        tracked.append(entry)
+    test_areas = named | set(configured_categories)
+    area_ids = test_areas | parents
+    categories = [{'categoryId': ident, 'matchesEventTestingName': ident in named, 'parentOfStoredBinding': ident in parents}
+                  for ident in sorted(area_ids) if by_id.get(ident, {}).get('type') == 4]
+    children = [{'channelId': ident, 'parentCategoryId': snowflake(row.get('parent_id')), 'discordType': row['type']}
+                for ident, row in sorted(by_id.items()) if snowflake(row.get('parent_id')) in test_areas]
+    if len(children) > 128:
+        raise ValueError('EVENT_INVENTORY_LIMIT')
+    return {'categories': categories, 'storedChannelBindings': tracked, 'childrenOfReportedAreas': children}
+
+
+def inventory_category(read, token, guild, category, bot, member, roles, *, bindings=None, configured_categories=()):
     """Return only the pinned ID's identity and effective visibility from the guild route."""
     try:
         channels = read(f'/guilds/{guild}/channels', token)
         if not isinstance(channels, list):
             raise ValueError('Unexpected channel inventory')
+        detail = {'eventResources': event_inventory(channels, guild, configured_categories, bindings)} if bindings is not None else {}
         matches = [row for row in channels if str(row['id']) == category]
         if not matches:
-            return {'state': 'ABSENT_FROM_BOT_INVENTORY'}
+            return {'state': 'ABSENT_FROM_BOT_INVENTORY', **detail}
         if len(matches) != 1 or matches[0].get('type') != 4 or str(matches[0].get('guild_id', guild)) != guild:
-            return {'state': 'IDENTITY_REJECTED'}
+            return {'state': 'IDENTITY_REJECTED', **detail}
 
         # Match Discord's precedence for View Channel without reporting role IDs or overwrites.
         member_roles = set(map(str, member['roles'])) - {guild}
@@ -523,7 +584,7 @@ def inventory_category(read, token, guild, category, bot, member, roles):
             if str(role['id']) in role_ids:
                 permissions |= int(role['permissions'])
         if permissions & (1 << 3):
-            return {'state': 'CATEGORY_FOUND', 'botViewChannel': True}
+            return {'state': 'CATEGORY_FOUND', 'botViewChannel': True, **detail}
         view = 1 << 10
         overwrites = matches[0]['permission_overwrites']
         for targets, kind in (({guild}, 0), (member_roles, 0), ({bot}, 1)):
@@ -533,7 +594,7 @@ def inventory_category(read, token, guild, category, bot, member, roles):
                     allow |= int(row['allow'])
                     deny |= int(row['deny'])
             permissions = (permissions & ~deny) | allow
-        return {'state': 'CATEGORY_FOUND', 'botViewChannel': bool(permissions & view)}
+        return {'state': 'CATEGORY_FOUND', 'botViewChannel': bool(permissions & view), **detail}
     except HTTPError as error:
         return {'state': 'HTTP_REJECTED', 'httpStatus': error.code}
     except (OSError, AttributeError, TypeError, KeyError, ValueError):
@@ -549,7 +610,7 @@ def discord_error_code(error):
     return code if type(code) is int and 0 < code < 1000000 else None
 
 
-def discord_preflight(profile, token, *, read=discord_get):
+def discord_preflight(profile, token, *, read=discord_get, bindings=None):
     guild = str(profile['stagingGuildId'])
     bot = str(profile['stagingBotId'])
     categories = {step: str(profile[key]) for step, key in
@@ -585,12 +646,18 @@ def discord_preflight(profile, token, *, read=discord_get):
                 outcome['discordCode'] = code
             if error.code == 404 and step in categories:
                 outcome['guildInventory'] = inventory_category(
-                    read, token, guild, categories[step], bot, membership['bot-membership'], membership['guild-roles'])
+                    read, token, guild, categories[step], bot, membership['bot-membership'], membership['guild-roles'],
+                    bindings=bindings, configured_categories=categories.values())
             return {**outcome, 'state': 'HTTP_REJECTED', 'httpStatus': error.code}
         except (OSError, AttributeError, TypeError, KeyError, ValueError):
             return {**outcome, 'state': 'LOOKUP_UNAVAILABLE'}
         completed.append(step)
-    return {'state': 'LOOKUPS_PASS', 'completed': completed}
+    result = {'state': 'LOOKUPS_PASS', 'completed': completed}
+    if bindings is not None:
+        result['guildInventory'] = inventory_category(
+            read, token, guild, categories['text-category'], bot, membership['bot-membership'], membership['guild-roles'],
+            bindings=bindings, configured_categories=categories.values())
+    return result
 
 
 def installed_discord_preflight(profile, uid):
@@ -608,7 +675,14 @@ def installed_discord_preflight(profile, uid):
     token = values.get('DISCORD_TOKEN', '')
     if values.get('GUILD_ID') != str(profile['stagingGuildId']) or not re.fullmatch(r'[A-Za-z0-9_.-]{20,2048}', token):
         raise ValueError('STAGING_BINDING_REJECTED')
-    return discord_preflight(profile, token)
+    configured = {key: snowflake(profile[key]) for key in ('categoryId', 'voiceCategoryId')}
+    try:
+        stored, bindings = event_resource_bindings(profile)
+    except (OSError, AttributeError, KeyError, TypeError, ValueError, sqlite3.Error):
+        result = discord_preflight(profile, token, bindings=[])
+        return {**result, 'profileCategoryIds': configured, 'storedResourcePolicy': 'UNAVAILABLE'}
+    result = discord_preflight(profile, token, bindings=bindings)
+    return {**result, 'profileCategoryIds': configured, 'storedResourcePolicyCategoryIds': stored}
 
 
 def collect(*, release=False, localized_preflight=False):

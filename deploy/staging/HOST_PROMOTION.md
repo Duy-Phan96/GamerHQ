@@ -6,9 +6,13 @@ Run 43218555241 stopped on HTTP 404 while reading the configured Event Manager
 text category. The owner diagnostic verified the existing controller, clear
 recovery latch, healthy baseline Host, database integrity and backup restore
 probe. For a category 404, the diagnostic also compares the bot's guild
-inventory by exact ID and reports only the target category's visibility. An
-absent inventory entry does not establish deletion. A diagnostic receipt does
-not authorize promotion or replace the live identity and permission checks.
+inventory by exact ID. The focused Event Manager report distinguishes the
+profile's preflight IDs, the Skill's persisted resource policy, and live
+parents of recorded Skill channels. A matching category name is a candidate
+for review. Use exact IDs and the stored text ownership marker to identify
+existing managed resources. An absent inventory entry does not establish
+deletion. A diagnostic receipt does not authorize promotion or replace the
+live identity and permission checks.
 
 The installed Event Manager package is 0.1.2. The persisted guild lifecycle
 record is 0.1.1 and disabled. Preserve that record during this investigation.
