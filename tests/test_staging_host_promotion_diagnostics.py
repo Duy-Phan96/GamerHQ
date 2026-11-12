@@ -88,6 +88,7 @@ def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(
         conn.executescript('''
             CREATE TABLE settings (key, value);
             CREATE TABLE skill_managed_resources (guild_id, skill_id, resource_key, kind, state_json);
+            CREATE TABLE skill_storage (guild_id, skill_id, storage_key, value_json);
             CREATE TABLE structure_change_log (guild_id, resource_id, resource_type, action, after_json, created_at);
             INSERT INTO settings VALUES ('skill_resources:1:event-manager','{"categoryId":10,"voiceCategoryId":20}');
             INSERT INTO skill_managed_resources VALUES
@@ -95,6 +96,10 @@ def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(
                 (1,'event-manager','event:b','voice','{"channelId":40}'),
                 (1,'other','event:c','text','{"channelId":70}'),
                 (2,'event-manager','event:d','text','{"channelId":80}');
+            INSERT INTO skill_storage VALUES
+                (1,'event-manager','occurrence.v2:a','{"voice":{"channelId":"40"}}'),
+                (1,'event-manager','occurrence.v2:b','{"voice":{"channelId":"41"}}'),
+                (2,'event-manager','occurrence.v2:c','{"voice":{"channelId":"42"}}');
             INSERT INTO structure_change_log VALUES
                 (1,10,'category','observed_category_offline','{"deleted":true}',123),
                 (1,20,'category','observed_category_delete','{}',124),
@@ -120,6 +125,7 @@ def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(
         {'channelId': '30', 'storedKind': 'text', 'presentInBotInventory': True,
          'parentCategoryId': '50', 'typeMatches': True, 'textMarkerMatches': True},
         {'channelId': '40', 'storedKind': 'voice', 'presentInBotInventory': False},
+        {'channelId': '41', 'storedKind': 'voice', 'presentInBotInventory': False},
     ]
     assert result['childrenOfReportedAreas'] == [{'channelId': '30', 'parentCategoryId': '50', 'discordType': 0}]
     assert 'private-marker' not in json.dumps(result) and database.read_bytes() == before
@@ -161,6 +167,51 @@ def test_recovery_review_checks_voice_independently_and_preserves_exact_text_own
     assert {row['channelId'] for row in result['existingTextChannels']} == diagnostic.EVENT_RECOVERY_TEXT_IDS
     assert all(row['everyoneViewChannel'] == 'DENY' and row['botCanManageChannel'] for row in result['existingTextChannels'])
     assert 'private-marker' not in json.dumps(result)
+
+
+def test_event_recovery_plan_binds_two_private_categories_and_fails_closed_on_voice_or_drift():
+    profile = {'stagingGuildId': '1567098041641738331', 'stagingBotId': '1567098530525351976'}
+    old = {'categoryId': diagnostic.EVENT_RECOVERY_TEXT_CATEGORY, 'voiceCategoryId': diagnostic.EVENT_RECOVERY_VOICE_CATEGORY}
+    channels = [dict(channelId=channel, textMarkerUnique=True, typeMatches=True, overwriteCount=4,
+                     everyoneViewChannel='DENY', botCanManageChannel=True, overwritesSha256=str(i) * 64)
+                for i, channel in enumerate(sorted(diagnostic.EVENT_RECOVERY_TEXT_IDS))]
+    review = {'voiceCategory': {'categoryId': old['voiceCategoryId'], 'httpStatus': 404},
+              'namedReplacementCandidates': [], 'namedVoiceReplacementCandidates': [],
+              'temporaryVoiceBindings': [], 'voiceChildrenOfOldCategory': [], 'oldVoicePresentInBotInventory': False,
+              'bothTextChannelsUnparented': True,
+              'existingTextChannels': channels, 'guildPermissionsPass': True}
+    report = {'controllerSourceVerified': True, 'recoveryRequired': False, 'operationLock': 'AVAILABLE',
+              'container': {'running': True, 'dockerHealthy': True, 'hostCommit': diagnostic.BASELINE,
+                            'matchesApprovedImage': True, 'packageVersion': '0.1.2', 'wheelMatchesReviewedArtifact': True,
+                            'runtimeDatabaseMatchesProfile': True},
+              'database': {'integrityPass': True, 'eventManagerAuthority': True,
+                           'latestPreRunBackup': {'checksumMatches': True, 'integrityPass': True, 'restoreProbe': 'PASS'}},
+              'discord': {'profileCategoryIds': old, 'storedResourcePolicyCategoryIds': old,
+                          'step': 'text-category', 'httpStatus': 404, 'configuredTextCategoryDeletionObservations': [{}],
+                          'guildInventory': {'state': 'ABSENT_FROM_BOT_INVENTORY', 'eventRecoveryReview': review}}}
+    preview = diagnostic.event_category_recovery_plan(report, profile)
+    assert diagnostic.event_category_recovery_plan(report, profile) == preview
+    assert preview['state'] == 'RECOVERY_PLAN_READY_FOR_OWNER_REVIEW'
+    plan = preview['plan']
+    assert [category['name'] for category in plan['createCategories']] == ['EVENT TESTING', 'EVENT VOICE']
+    for category in plan['createCategories']:
+        everyone, host = category['overwrites']
+        assert everyone == {'id': profile['stagingGuildId'], 'type': 0, 'allow': '0', 'deny': '1024'}
+        assert host['id'] == profile['stagingBotId'] and host['type'] == 1
+        assert not int(host['allow']) & (diagnostic.MANAGE_CHANNELS | diagnostic.MANAGE_ROLES | 8)
+    assert {row['channelId'] for row in plan['moveExistingTextChannels']} == diagnostic.EVENT_RECOVERY_TEXT_IDS
+    assert all(row['syncPermissions'] is False for row in plan['moveExistingTextChannels'])
+    assert plan['replaceCategoryReferences']['expected'] == old and plan['temporaryVoiceMoves'] == []
+
+    review['temporaryVoiceBindings'] = [{'channelId': '800', 'presentInBotInventory': True}]
+    blocked = diagnostic.event_category_recovery_plan(report, profile)
+    assert blocked['state'] == 'RECOVERY_PLAN_BLOCKED' and not blocked['checks']['noUnresolvedTemporaryVoice']
+    review['temporaryVoiceBindings'] = []
+    review['namedVoiceReplacementCandidates'] = [{'categoryId': '801'}]
+    assert not diagnostic.event_category_recovery_plan(report, profile)['checks']['noVisibleReplacement']
+    review['namedVoiceReplacementCandidates'] = []
+    channels[0]['overwriteCount'] = 3
+    assert not diagnostic.event_category_recovery_plan(report, profile)['checks']['existingTextChannelsVerified']
 
 
 def ledger(path):

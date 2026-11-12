@@ -517,12 +517,17 @@ def event_resource_bindings(profile):
         policy = conn.execute('SELECT value FROM settings WHERE key=?', (f'skill_resources:{guild}:event-manager',)).fetchone()
         rows = conn.execute("SELECT kind,state_json FROM skill_managed_resources WHERE guild_id=? "
                             "AND skill_id='event-manager' ORDER BY resource_key LIMIT 65", (guild,)).fetchall()
+        occurrence_voice = conn.execute("SELECT DISTINCT json_extract(value_json,'$.voice.channelId') FROM skill_storage "
+                                        "WHERE guild_id=? AND skill_id='event-manager' "
+                                        "AND storage_key GLOB 'occurrence.v2:*' "
+                                        "AND json_extract(value_json,'$.voice.channelId') IS NOT NULL LIMIT 65",
+                                        (guild,)).fetchall()
         history = conn.execute("SELECT action,created_at FROM structure_change_log "
                                "WHERE guild_id=? AND resource_id=? AND resource_type='category' "
                                "AND (action IN ('category_delete','observed_category_delete') OR "
                                "(action='observed_category_offline' AND json_extract(after_json,'$.deleted')=1)) "
                                "ORDER BY created_at DESC LIMIT 10", (guild, category)).fetchall()
-    if len(rows) > 64:
+    if len(rows) > 64 or len(occurrence_voice) > 64:
         raise ValueError('EVENT_BINDING_LIMIT')
     policy = json.loads(policy[0]) if policy else {}
     stored = {key: snowflake(policy.get(key)) for key in ('categoryId', 'voiceCategoryId')}
@@ -532,6 +537,12 @@ def event_resource_bindings(profile):
         channel = snowflake(state.get('channelId'))
         if kind in {'text', 'voice'} and channel:
             bindings.append((channel, kind, state.get('marker')))
+    voice_ids = {channel for channel, kind, _ in bindings if kind == 'voice'}
+    for (raw,) in occurrence_voice:
+        channel = snowflake(raw)
+        if channel and channel not in voice_ids:
+            voice_ids.add(channel)
+            bindings.append((channel, 'voice', None))
     deletions = [{'action': action, 'createdAt': created} for action, created in history if type(created) is int]
     return stored, bindings, deletions
 
@@ -641,9 +652,34 @@ def event_category_recovery_review(read, token, channels, guild, category, bot, 
 
     candidates = [category_read(row['categoryId'], TEXT_CATEGORY_RIGHTS) for row in evidence['categories']
                   if row['matchesEventTestingName'] and row['categoryId'] not in set(configured)]
+    voice_candidates = [category_read(str(row['id']), VOICE_CATEGORY_RIGHTS) for row in channels
+                        if row['type'] == 4 and str(row['id']) not in set(configured)
+                        and re.findall('[a-z0-9]+', str(row.get('name', '')).casefold()) == ['event', 'voice']]
+    temporary_voice = [row for row in evidence['storedChannelBindings'] if row['storedKind'] == 'voice']
+    for ident in sorted({row['channelId'] for row in temporary_voice if not row['presentInBotInventory']}):
+        try:
+            channel = read('/channels/' + ident, token)
+            verified = str(channel['id']) == ident and str(channel['guild_id']) == guild and channel['type'] == 2
+            lookup = {'state': 'VOICE_FOUND' if verified else 'IDENTITY_REJECTED'}
+            if verified:
+                lookup['parentCategoryId'] = snowflake(channel.get('parent_id'))
+        except HTTPError as error:
+            lookup = {'state': 'HTTP_REJECTED', 'httpStatus': error.code}
+        except (OSError, AttributeError, TypeError, KeyError, ValueError):
+            lookup = {'state': 'LOOKUP_UNAVAILABLE'}
+        for row in temporary_voice:
+            if row['channelId'] == ident:
+                row['directLookup'] = lookup
     voice = category_read(EVENT_RECOVERY_VOICE_CATEGORY, VOICE_CATEGORY_RIGHTS)
+    guild_rights = effective_permissions(guild, bot, member, roles, {'permission_overwrites': []})
     return {'state': 'OWNER_REVIEW_REQUIRED' if exact else 'CHANNEL_OWNERSHIP_REJECTED',
             'voiceCategory': voice, 'namedReplacementCandidates': candidates, 'existingTextChannels': tracked,
+            'namedVoiceReplacementCandidates': voice_candidates, 'temporaryVoiceBindings': temporary_voice,
+            'oldVoicePresentInBotInventory': EVENT_RECOVERY_VOICE_CATEGORY in by_id,
+            'voiceChildrenOfOldCategory': [row['channelId'] for row in evidence['childrenOfReportedAreas']
+                                           if row['parentCategoryId'] == EVENT_RECOVERY_VOICE_CATEGORY and row['discordType'] == 2],
+            'guildPermissionsPass': guild_rights & (TEXT_CATEGORY_RIGHTS | VOICE_CATEGORY_RIGHTS)
+                                    == (TEXT_CATEGORY_RIGHTS | VOICE_CATEGORY_RIGHTS),
             'bothTextChannelsUnparented': exact and all(row.get('parentCategoryId') is None for row in tracked)}
 
 
@@ -756,6 +792,70 @@ def installed_discord_preflight(profile, uid, *, recovery_review=False):
             'configuredTextCategoryDeletionObservations': deletions}
 
 
+def event_category_recovery_plan(report, profile):
+    """Prepare a deterministic owner review. The receipt is never an apply credential."""
+    guild, bot = str(profile['stagingGuildId']), str(profile['stagingBotId'])
+    discord = report.get('discord', {})
+    inventory = discord.get('guildInventory', {})
+    review = inventory.get('eventRecoveryReview', {})
+    database = report.get('database', {})
+    container = report.get('container', {})
+    old = {'categoryId': EVENT_RECOVERY_TEXT_CATEGORY, 'voiceCategoryId': EVENT_RECOVERY_VOICE_CATEGORY}
+    backup = any(item and item.get('checksumMatches') is True and item.get('integrityPass') is True
+                 and item.get('restoreProbe') == 'PASS' for item in
+                 (database.get('lastVerifiedHostBackup'), database.get('latestPreRunBackup')))
+    channels = sorted(review.get('existingTextChannels', []), key=lambda row: row['channelId'])
+    voice = review.get('voiceCategory', {})
+    checks = {
+        'stagingScopeVerified': (guild, bot) == ('1567098041641738331', '1567098530525351976')
+                                and report.get('controllerSourceVerified') is True,
+        'baselineHealthy': report.get('recoveryRequired') is False and report.get('operationLock') == 'AVAILABLE'
+                           and container.get('running') is True and container.get('dockerHealthy') is True
+                           and container.get('hostCommit') == BASELINE and container.get('matchesApprovedImage') is True
+                           and container.get('packageVersion') == '0.1.2' and container.get('wheelMatchesReviewedArtifact') is True
+                           and container.get('runtimeDatabaseMatchesProfile') is True
+                           and database.get('integrityPass') is True and database.get('eventManagerAuthority') is True,
+        'verifiedBackup': backup,
+        'oldReferencesMatch': discord.get('profileCategoryIds') == old and discord.get('storedResourcePolicyCategoryIds') == old,
+        'oldTextCategoryUnavailable': discord.get('step') == 'text-category' and discord.get('httpStatus') == 404
+                                      and inventory.get('state') == 'ABSENT_FROM_BOT_INVENTORY'
+                                      and bool(discord.get('configuredTextCategoryDeletionObservations')),
+        'oldVoiceCategoryUnavailable': voice.get('categoryId') == EVENT_RECOVERY_VOICE_CATEGORY
+                                       and voice.get('httpStatus') == 404 and review.get('oldVoicePresentInBotInventory') is False,
+        'noVisibleReplacement': review.get('namedReplacementCandidates') == []
+                                and review.get('namedVoiceReplacementCandidates') == [],
+        'noUnresolvedTemporaryVoice': review.get('temporaryVoiceBindings') == []
+                                      and review.get('voiceChildrenOfOldCategory') == [],
+        'existingTextChannelsVerified': review.get('bothTextChannelsUnparented') is True and len(channels) == 2
+                                        and {row['channelId'] for row in channels} == EVENT_RECOVERY_TEXT_IDS
+                                        and all(row.get('textMarkerUnique') is True and row.get('typeMatches') is True
+                                                and row.get('overwriteCount') == 4 and row.get('everyoneViewChannel') == 'DENY'
+                                                and row.get('botCanManageChannel') is True
+                                                and re.fullmatch('[0-9a-f]{64}', row.get('overwritesSha256', '')) for row in channels),
+        'botHasRequiredGuildPermissions': review.get('guildPermissionsPass') is True,
+    }
+    if not all(checks.values()):
+        return {'state': 'RECOVERY_PLAN_BLOCKED', 'checks': checks}
+    categories = []
+    for key, name, rights in (('categoryId', 'EVENT TESTING', TEXT_CATEGORY_RIGHTS),
+                              ('voiceCategoryId', 'EVENT VOICE', VOICE_CATEGORY_RIGHTS)):
+        # Administrative bits remain inherited from the existing guild roles.
+        bot_allow = rights & ~(MANAGE_CHANNELS | MANAGE_ROLES)
+        categories.append({'reference': key, 'name': name, 'discordType': 4,
+                           'overwrites': [{'id': guild, 'type': 0, 'allow': '0', 'deny': str(VIEW_CHANNEL)},
+                                          {'id': bot, 'type': 1, 'allow': str(bot_allow), 'deny': '0'}],
+                           'requiredEffectiveBotPermissions': str(rights)})
+    plan = {'guildId': guild, 'botId': bot, 'controllerCommit': CONTROLLER, 'baselineHostCommit': BASELINE,
+            'approvedPromotionCommit': TARGET, 'createCategories': categories,
+            'moveExistingTextChannels': [dict(channelId=row['channelId'], expectedParentId=None,
+                                             destinationReference='categoryId', syncPermissions=False,
+                                             expectedOverwritesSha256=row['overwritesSha256']) for row in channels],
+            'replaceCategoryReferences': {'expected': old, 'targets': ['staging-profile', 'event-manager-resource-policy']},
+            'ownerMustConfirmNoHiddenReplacement': True, 'temporaryVoiceMoves': []}
+    digest = hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return {'state': 'RECOVERY_PLAN_READY_FOR_OWNER_REVIEW', 'checks': checks, 'planSha256': digest, 'plan': plan}
+
+
 def collect(*, release=False, localized_preflight=False, recovery_review=False):
     if release and localized_preflight:
         raise ValueError('EXPLICIT_OWNER_RELEASE_REQUIRED')
@@ -839,6 +939,8 @@ def collect(*, release=False, localized_preflight=False, recovery_review=False):
                 report['discord'] = installed_discord_preflight(profile, uid, recovery_review=recovery_review)
             except (OSError, ValueError, KeyError):
                 report['discord'] = {'state': 'LOCAL_CONFIGURATION_REJECTED'}
+            if recovery_review:
+                report['eventCategoryRecoveryPlan'] = event_category_recovery_plan(report, profile)
             return report
         if release:
             return release_hold(report, state_path, state, backup_root, uid, refresh)

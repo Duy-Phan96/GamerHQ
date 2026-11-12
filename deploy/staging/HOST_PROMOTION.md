@@ -18,21 +18,26 @@ The installed Event Manager package is 0.1.2. The persisted guild lifecycle
 record is 0.1.1 and disabled. Preserve that record during this investigation.
 Package and Host health evidence does not establish active Skill operation.
 
-### Review the missing Event Manager text category
+### Review the missing Event Manager categories
 
 Use the owner collector's read-only event category recovery review. It queries
 the configured voice category independently of the text 404, checks text
 channel IDs and unique ownership markers, and records overwrite fingerprints.
-The review never selects a replacement from a name match. An empty bot
-inventory does not exclude categories hidden from that bot.
+It also reads temporary voice IDs from the managed-resource registry and
+occurrence records. The review never selects a replacement from a name match.
+An empty bot inventory does not exclude categories hidden from that bot.
 
-Before asking for approval to apply, confirm the voice category by its exact
-configured ID and full preflight permissions. Confirm whether an existing
-private Event Testing category can be reused. If there is none, review the
-creation of one private category with an explicit `@everyone` View Channel
-deny. Verify the existing Staging bot identity and its effective category
-permissions. Do not add Administrator or a Manage Roles overwrite to get
-around Discord's restrictions.
+For this recovery both configured category lookups return 404. The original
+text category has a recorded deletion. Verify that neither category has a
+hidden replacement with the guild owner's inventory. Require a separate
+voice-channel review if any temporary voice binding or child remains. When
+the other gates pass, `RECOVERY_PLAN_READY_FOR_OWNER_REVIEW` binds the planned
+changes to a `planSha256`. The plan proposes one private EVENT TESTING category
+and one private EVENT VOICE category. Both deny `@everyone` View Channel and
+allow the verified Staging bot to view. The text category additionally allows
+the bot to send and read message history. The voice category allows the bot to
+connect. Verify existing effective Manage Channels and Manage Roles from guild
+roles. The plan grants neither of those permissions nor Administrator.
 
 The owner-approved change record must bind the exact guild, old category ID,
 the two existing channel IDs, their parents and overwrite fingerprints, the
@@ -40,8 +45,9 @@ profile and Skill policy values, and a verified backup and restore probe.
 Recheck this evidence under the existing operation lock before changes. Bind
 the exact approved destination before attempting any moves. For a newly
 created category, record its returned ID and verify the category's permissions
-first. If creation has an uncertain outcome, stop and resolve the identity
-before trying again.
+first. Journal an attempt before sending each category creation request. Retry
+only against recorded, reverified IDs. If creation has an uncertain outcome,
+stop and resolve the identity before trying again.
 
 Use the existing Host channel edit contract with `sync_permissions=False`
 for each approved channel. Compare the resulting parents and overwrite
@@ -52,13 +58,15 @@ change can be rolled back by returning moved channels to their verified
 original unparented placement without syncing overwrites. Leave any new
 category for owner review.
 
-After the moves are verified, replace only the text `categoryId` in the
-protected Staging profile and its existing guild-scoped `skill_resources`
-setting, checking the previously recorded values first. Preserve the voice
-ID, other policy fields, Skill lifecycle, and all resource and message
+After the moves are verified, replace only `categoryId` and `voiceCategoryId`
+in the protected Staging profile and its existing guild-scoped
+`skill_resources` setting, checking the previously recorded values first.
+Preserve other policy fields, Skill lifecycle, and all resource and message
 bindings. A partially applied reference change requires verification and
-review before resuming or reversing. A fresh read-only preflight must pass
-before the separate protected Host promotion.
+review before resuming or reversing. Restore only the two prior field values
+if compensation is approved and the current values still match the recorded
+new values. A fresh read-only preflight must pass before the separate protected
+Host promotion.
 
 ## Reviewing permission and ownership blockers
 
