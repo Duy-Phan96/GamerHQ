@@ -339,6 +339,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('localized_reuse', 'ENROLL STAGING LOCALIZED CHANNEL REUSE', 'ACTIVE_BULK_PERMISSIONS_CONTROLLER',
          enrollment.BULK_PERMISSIONS_HOST, enrollment.BULK_PERMISSIONS_ARCHIVE,
          enrollment.LOCALIZED_REUSE_HOST, enrollment.LOCALIZED_REUSE_ARCHIVE),
+        ('server_templates', 'ENROLL STAGING SERVER TEMPLATES', 'ACTIVE_LOCALIZED_REUSE_CONTROLLER',
+         enrollment.LOCALIZED_REUSE_HOST, enrollment.LOCALIZED_REUSE_ARCHIVE,
+         enrollment.SERVER_TEMPLATES_HOST, enrollment.SERVER_TEMPLATES_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
