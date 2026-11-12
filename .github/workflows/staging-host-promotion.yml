@@ -1,5 +1,5 @@
 name: Reviewed staging Host promotion
-run-name: Staging Host - Bulk Setup Permission Fix
+run-name: Staging Host - Localized Channel Reuse
 on:
   workflow_dispatch:
 permissions:
@@ -26,7 +26,7 @@ jobs:
           GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
           GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
           GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
-          EXPECTED_STAGING_HOST_COMMIT: 71e1fcbb0cf3904365d1ed020a866b50755f58e4
+          EXPECTED_STAGING_HOST_COMMIT: 77b3d36361bf31a66c6fc4bc6898815cd5e96467
         run: |
           set -euo pipefail
           python3 -m tools.staging_automation_client status | python3 -c 'import json, os, sys; s=json.load(sys.stdin); sys.exit(0 if s.get("hostPromotionCommit") == os.environ["EXPECTED_STAGING_HOST_COMMIT"] and not s.get("recoveryRequired") else "Reviewed staging Host pin is unavailable.")'
