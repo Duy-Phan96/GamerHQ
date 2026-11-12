@@ -33,7 +33,8 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         actor = self.owner()
         existing = self.guild.add_channel('Allgemein', self.guild.add_category('Textkanäle'))
         history = self.add_message(existing, 'Existing conversation', author=42, pinned=True)
-        names = {'community', 'general', 'events', 'community-events'}
+        help_channel = self.guild.add_channel('need-support', self.start)
+        names = {'community', 'general', 'events', 'community-events', 'start-here', 'need-support'}
         definitions = ops.definitions
         send = fixtures.FakeChannel.send
 
@@ -42,13 +43,15 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             message.components = [_component_factory(row) for row in message.view.to_components()] if message.view else []
             return message
 
-        template = templates.ServerTemplate('test-community', 'Community', ('community-events',))
+        template = templates.ServerTemplate('test-community', 'Community', ('community-events', 'need-support'))
         with patch.object(templates, 'TEMPLATES', (template,)), patch.object(
             ops, 'definitions', lambda guild: [row for row in definitions(guild) if row['name'] in names]
         ), patch.object(fixtures.FakeChannel, 'send', send_with_components):
             draft = await templates.preview(self.guild, actor, template, self.bot)
             self.assertEqual(draft['choices'], {'managed_channel:1:general': existing.id})
             self.assertEqual(draft['new_boards'], ('community-events',))
+            self.assertEqual([(row['channel'].id, row['status']) for row in draft['boards']['rows']],
+                             [(help_channel.id, 'MISSING')])
             self.assertIsNone(db.get_setting(templates.progress_key(self.guild, template)))
             result, _, remaining = await templates.apply(self.guild, actor, draft, self.bot)
             self.assertEqual(remaining, 0, result)
@@ -58,9 +61,11 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(history.pinned)
             channel = self.guild.get_channel(int(db.get_setting('managed_channel:1:community-events')))
             self.assertEqual(channel.sends, 1)
+            self.assertEqual(help_channel.sends, 1)
             again = await templates.preview(self.guild, actor, template, self.bot)
             await templates.apply(self.guild, actor, again, self.bot)
             self.assertEqual(channel.sends, 1)
+            self.assertEqual(help_channel.sends, 1)
             self.assertEqual(templates.progress(self.guild, template), 'complete')
 
     async def test_template_resume_holds_unknown_create_and_keeps_independent_progress(self):
