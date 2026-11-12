@@ -330,34 +330,46 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
     assert [file.read_bytes() for file in (installation.state, profile)] == before
 
 @pytest.mark.parametrize('baseline', [True, False])
-def test_bulk_permissions_enrollment_requires_the_installed_preview_host(installation, monkeypatch, baseline):
+@pytest.mark.parametrize(
+    ('flag', 'approval', 'controller', 'previous_host', 'previous_archive', 'host', 'archive'),
+    [
+        ('bulk_permissions', 'ENROLL STAGING BULK PERMISSION FIX', 'ACTIVE_BULK_PREVIEW_CONTROLLER',
+         enrollment.BULK_PREVIEW_HOST, enrollment.BULK_PREVIEW_ARCHIVE,
+         enrollment.BULK_PERMISSIONS_HOST, enrollment.BULK_PERMISSIONS_ARCHIVE),
+        ('localized_reuse', 'ENROLL STAGING LOCALIZED CHANNEL REUSE', 'ACTIVE_BULK_PERMISSIONS_CONTROLLER',
+         enrollment.BULK_PERMISSIONS_HOST, enrollment.BULK_PERMISSIONS_ARCHIVE,
+         enrollment.LOCALIZED_REUSE_HOST, enrollment.LOCALIZED_REUSE_ARCHIVE),
+    ],
+)
+def test_bulk_pin_enrollment_requires_the_installed_baseline(
+        installation, monkeypatch, baseline, flag, approval, controller, previous_host, previous_archive, host, archive):
     old, commit = installation.policy['controllerCommit'], installation.commit
-    monkeypatch.setattr(enrollment, 'ACTIVE_BULK_PREVIEW_CONTROLLER', old)
+    monkeypatch.setattr(enrollment, controller, old)
     installation.policy['hostPromotion'].update(
-        commit=enrollment.BULK_PREVIEW_HOST, archiveSha256=enrollment.BULK_PREVIEW_ARCHIVE)
+        commit=previous_host, archiveSha256=previous_archive)
     installation.policy_path.write_text(json.dumps(installation.policy))
     for name in ('policy.py', 'host_promotion.py'):
         path = f'tools/staging_automation/{name}'
         installation.git[f'{commit}:{path}'] = (installation.git[f'{old}:{path}'] if name == 'policy.py'
-                                                 else f'COMMIT = {enrollment.BULK_PERMISSIONS_HOST!r}'.encode())
+                                                 else f'COMMIT = {host!r}'.encode())
     profile = enrollment.CONTROL / 'settings/profile.json'
     profile.parent.mkdir()
     profile.write_text(json.dumps({
         'environment': 'staging',
-        'applicationHostCommit': enrollment.BULK_PREVIEW_HOST if baseline else enrollment.CONFIGURATION_HOST,
+        'applicationHostCommit': previous_host if baseline else enrollment.CONFIGURATION_HOST,
         'baseImage': json.loads(installation.state.read_bytes())['approvedImage'],
     }))
     before = [file.read_bytes() for file in (installation.state, profile)]
     if not baseline:
         with pytest.raises(ValueError, match='INSTALLED_STAGING_BASELINE_REQUIRED'):
-            enrollment.extension(commit, 'ENROLL STAGING BULK PERMISSION FIX', bulk_permissions=True)
+            enrollment.extension(commit, approval, **{flag: True})
         assert not (installation.revisions / commit).exists()
     else:
         for _ in range(2):
-            receipt = enrollment.extension(commit, 'ENROLL STAGING BULK PERMISSION FIX', bulk_permissions=True)
-            assert receipt['previousHostCommit'] == enrollment.BULK_PREVIEW_HOST
-            assert receipt['approvedHostCommit'] == enrollment.BULK_PERMISSIONS_HOST
-            assert receipt['archiveSha256'] == enrollment.BULK_PERMISSIONS_ARCHIVE
+            receipt = enrollment.extension(commit, approval, **{flag: True})
+            assert receipt['previousHostCommit'] == previous_host
+            assert receipt['approvedHostCommit'] == host
+            assert receipt['archiveSha256'] == archive
             assert receipt['catalogPreviewPolicyPreserved'] is True
             assert receipt['hostPromotionRequiresProtectedOwnerReview'] is True
     assert [file.read_bytes() for file in (installation.state, profile)] == before
