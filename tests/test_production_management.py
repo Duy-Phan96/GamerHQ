@@ -109,17 +109,22 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
             followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
 
     async def test_manage_fast_and_authorized_setup_state(self):
-        from cogs.server_management import open_manage, open_setup, SetupWizard, SetupCompleteView, setup_key
+        from cogs.server_management import open_manage, open_setup, ServerTemplatesView, setup_key
+        from services import server_templates as templates
         owner = self.actor()
         interaction = self.interaction(owner)
         with patch('services.server_operations.scan', new_callable=AsyncMock) as scan:
             await open_manage(interaction)
             scan.assert_not_awaited()
         await open_setup(interaction)
-        self.assertIsInstance(interaction.response.send_message.call_args.kwargs['view'], SetupWizard)
+        view = interaction.response.send_message.call_args.kwargs['view']
+        self.assertIsInstance(view, ServerTemplatesView)
+        self.assertEqual([child.label for child in view.children], ['Use Template', 'Advanced Settings'])
         db.set_setting(setup_key(self.guild), '1')
+        db.set_setting(templates.progress_key(self.guild, templates.GAMERHQ), '{"state":"applying"}')
         await open_setup(interaction)
-        self.assertIsInstance(interaction.response.send_message.call_args.kwargs['view'], SetupCompleteView)
+        view = interaction.response.send_message.call_args.kwargs['view']
+        self.assertEqual([child.label for child in view.children], ['Resume Setup', 'Advanced Settings'])
         ordinary = self.interaction(self.actor(43, False))
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)

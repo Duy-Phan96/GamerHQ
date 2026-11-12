@@ -26,6 +26,77 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [actor]
         return actor
 
+    async def test_template_combines_verified_reuse_creation_and_publication(self):
+        from discord.components import _component_factory
+        from services import server_templates as templates
+
+        actor = self.owner()
+        existing = self.guild.add_channel('Allgemein', self.guild.add_category('Textkanäle'))
+        history = self.add_message(existing, 'Existing conversation', author=42, pinned=True)
+        help_channel = self.guild.add_channel('need-support', self.start)
+        names = {'community', 'general', 'events', 'community-events', 'start-here', 'need-support'}
+        definitions = ops.definitions
+        send = fixtures.FakeChannel.send
+
+        async def send_with_components(channel, **kwargs):
+            message = await send(channel, **kwargs)
+            message.components = [_component_factory(row) for row in message.view.to_components()] if message.view else []
+            return message
+
+        template = templates.ServerTemplate('test-community', 'Community', ('community-events', 'need-support'))
+        with patch.object(templates, 'TEMPLATES', (template,)), patch.object(
+            ops, 'definitions', lambda guild: [row for row in definitions(guild) if row['name'] in names]
+        ), patch.object(fixtures.FakeChannel, 'send', send_with_components):
+            draft = await templates.preview(self.guild, actor, template, self.bot)
+            self.assertEqual(draft['choices'], {'managed_channel:1:general': existing.id})
+            self.assertEqual(draft['new_boards'], ('community-events',))
+            self.assertEqual([(row['channel'].id, row['status']) for row in draft['boards']['rows']],
+                             [(help_channel.id, 'MISSING')])
+            self.assertIsNone(db.get_setting(templates.progress_key(self.guild, template)))
+            result, _, remaining = await templates.apply(self.guild, actor, draft, self.bot)
+            self.assertEqual(remaining, 0, result)
+            self.assertEqual(db.get_setting('managed_channel:1:general'), str(existing.id))
+            self.assertEqual(existing.edits, [])
+            self.assertIs(existing.messages[history.id], history)
+            self.assertTrue(history.pinned)
+            channel = self.guild.get_channel(int(db.get_setting('managed_channel:1:community-events')))
+            self.assertEqual(channel.sends, 1)
+            self.assertEqual(help_channel.sends, 1)
+            again = await templates.preview(self.guild, actor, template, self.bot)
+            await templates.apply(self.guild, actor, again, self.bot)
+            self.assertEqual(channel.sends, 1)
+            self.assertEqual(help_channel.sends, 1)
+            self.assertEqual(templates.progress(self.guild, template), 'complete')
+
+    async def test_template_resume_holds_unknown_create_and_keeps_independent_progress(self):
+        from services import server_templates as templates
+
+        actor = self.owner()
+        names = {'events', 'community-events', 'partners-benefits'}
+        definitions = ops.definitions
+        template = templates.ServerTemplate('test-retry', 'Community', ())
+        create = self.guild.create_category
+
+        async def unreliable(name, **kwargs):
+            if ops.alias(name) == 'events':
+                raise TimeoutError()
+            return await create(name, **kwargs)
+
+        with patch.object(templates, 'TEMPLATES', (template,)), patch.object(
+            ops, 'definitions', lambda guild: [row for row in definitions(guild) if row['name'] in names]
+        ), patch.object(self.guild, 'create_category', AsyncMock(side_effect=unreliable)) as request:
+            draft = await templates.preview(self.guild, actor, template, self.bot)
+            result, _, _ = await templates.apply(self.guild, actor, draft, self.bot)
+            self.assertTrue(result['failed'])
+            self.assertIsNotNone(db.get_setting('managed_category:1:partners-benefits'))
+            self.assertEqual(templates.progress(self.guild, template), 'remaining')
+            resumed = await templates.preview(self.guild, actor, template, self.bot)
+            rows = {row['name']: row for row in resumed['structure']['rows']}
+            self.assertIn('Earlier creation was not confirmed', rows['events']['reason'])
+            self.assertTrue(rows['community-events']['bulk_blocked'])
+            await templates.apply(self.guild, actor, resumed, self.bot)
+            self.assertEqual(request.await_count, 2)
+
     async def test_bulk_setup_owner_sees_one_confirmation_and_manual_actions(self):
         from cogs.server import OperationsView
         from cogs.server_management import StructureView
