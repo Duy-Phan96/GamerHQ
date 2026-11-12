@@ -320,6 +320,19 @@ def ledger(path):
         """)
 
 
+def test_fresh_event_recovery_backup_preserves_database_and_verifies_restore(tmp_path):
+    database = tmp_path / 'stage.sqlite'
+    ledger(database)
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.execute('DELETE FROM skill_guild_state WHERE guild_id=34')
+    before = database.read_bytes()
+    proof = diagnostic.event_recovery_backup(database, tmp_path, 12, os.getuid())
+    saved = tmp_path / (proof['id'] + '.sqlite')
+    assert saved.stat().st_mode & 0o777 == 0o600
+    diagnostic.verify_event_recovery_backup(tmp_path, proof['id'], {'backup': {'sha256': proof['sha256']}}, os.getuid(), 12)
+    assert database.read_bytes() == before
+
+
 def record(path, ident, state, time, evidence):
     with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute("INSERT INTO skill_deployments VALUES(?, 'event-manager', ?, ?, ?, ?, ?, 'approved-image', '0.1.2')",

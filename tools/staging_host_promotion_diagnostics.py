@@ -14,6 +14,7 @@ import syslog
 import tempfile
 import uuid
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path('/opt/gamerhq-staging')
@@ -716,7 +717,8 @@ def discord_error_code(error):
     return code if type(code) is int and 0 < code < 1000000 else None
 
 
-def discord_preflight(profile, token, *, read=discord_get, bindings=None, recovery_review=False):
+def discord_preflight(profile, token, *, read=discord_get, bindings=None, recovery_review=False,
+                      require_category_permissions=False):
     guild = str(profile['stagingGuildId'])
     bot = str(profile['stagingBotId'])
     categories = {step: str(profile[key]) for step, key in
@@ -746,6 +748,11 @@ def discord_preflight(profile, token, *, read=discord_get, bindings=None, recove
                 return {**outcome, 'state': 'IDENTITY_REJECTED'}
             if step in {'bot-membership', 'guild-roles'}:
                 membership[step] = response
+            if require_category_permissions and step in categories:
+                required = TEXT_CATEGORY_RIGHTS if step == 'text-category' else VOICE_CATEGORY_RIGHTS
+                permissions = effective_permissions(guild, bot, membership['bot-membership'], membership['guild-roles'], response)
+                if permissions & required != required:
+                    return {**outcome, 'state': 'CATEGORY_PERMISSIONS_REJECTED'}
         except HTTPError as error:
             code = discord_error_code(error)
             if code is not None:
@@ -935,7 +942,7 @@ def discord_event_write(method, path, token, payload, audit_id):
     request = Request('https://discord.com/api/v10' + path, method=method,
                       data=json.dumps(payload, separators=(',', ':')).encode(), headers={
                           'User-Agent': 'DiscordBot (https://github.com/Duy-Phan96/GamerHQ, staging-1)',
-                          'Content-Type': 'application/json', 'X-Audit-Log-Reason': 'Staging event recovery ' + audit_id})
+                          'Content-Type': 'application/json', 'X-Audit-Log-Reason': quote('Staging event recovery ' + audit_id)})
     request.add_unredirected_header('Authorization', 'Bot ' + token)
     with build_opener(NoDiscordRedirect()).open(request, timeout=20) as response:
         body = response.read(65537)
@@ -1052,6 +1059,10 @@ def apply_event_recovery_resources(plan, journal, *, save, read, write, token, b
         verify_channels(rows, parent)
         if rows[ident].get('parent_id') != parent:
             raise ValueError('EVENT_RECOVERY_MOVE_UNVERIFIED')
+    rows = inventory()
+    verify_channels(rows, parent)
+    if any(rows[move['channelId']].get('parent_id') != parent for move in plan['moveExistingTextChannels']):
+        raise ValueError('EVENT_RECOVERY_MOVE_UNVERIFIED')
     return created
 
 
@@ -1142,7 +1153,7 @@ def apply_event_category_recovery(report, profile, state, uid, account, socket):
         if (json.loads(updated_policy) != next_policy or updated_hash != data_hash
                 or config(profile_path, uid, private=True) != next_profile or after != current):
             raise ValueError('EVENT_RECOVERY_POSTCHECK_REJECTED')
-        preflight = discord_preflight(next_profile, token)
+        preflight = discord_preflight(next_profile, token, require_category_permissions=True)
         if preflight.get('state') != 'LOOKUPS_PASS':
             raise ValueError('EVENT_RECOVERY_PREFLIGHT_REJECTED')
         journal['phase'] = 'VERIFIED'
@@ -1157,6 +1168,9 @@ def apply_event_category_recovery(report, profile, state, uid, account, socket):
     except Exception as error:
         reason = str(error)
         public = reason if re.fullmatch('EVENT_RECOVERY_[A-Z_]+', reason) else 'EVENT_RECOVERY_STEP_UNVERIFIED'
+        syslog.openlog('gamerhq-staging', syslog.LOG_PID, syslog.LOG_AUTHPRIV)
+        syslog.syslog(syslog.LOG_NOTICE, json.dumps({'operation': 'event-category-recovery',
+                      'auditId': journal['auditId'], 'phase': journal['phase'], 'state': 'STOPPED', 'reason': public}))
         return {'operation': 'event-category-recovery', 'state': 'EVENT_CATEGORY_RECOVERY_STOPPED',
                 'auditId': journal['auditId'], 'phase': journal['phase'], 'reason': public,
                 'creationInFlight': journal.get('creating'), 'recordedCategoryIds': journal['categories'],
