@@ -503,6 +503,52 @@ def discord_get(path, token):
     return json.loads(body)
 
 
+def inventory_category(read, token, guild, category, bot, member, roles):
+    """Return only the pinned ID's identity and effective visibility from the guild route."""
+    try:
+        channels = read(f'/guilds/{guild}/channels', token)
+        if not isinstance(channels, list):
+            raise ValueError('Unexpected channel inventory')
+        matches = [row for row in channels if str(row['id']) == category]
+        if not matches:
+            return {'state': 'ABSENT_FROM_BOT_INVENTORY'}
+        if len(matches) != 1 or matches[0].get('type') != 4 or str(matches[0].get('guild_id', guild)) != guild:
+            return {'state': 'IDENTITY_REJECTED'}
+
+        # Match Discord's precedence for View Channel without reporting role IDs or overwrites.
+        member_roles = set(map(str, member['roles'])) - {guild}
+        role_ids = member_roles | {guild}
+        permissions = 0
+        for role in roles:
+            if str(role['id']) in role_ids:
+                permissions |= int(role['permissions'])
+        if permissions & (1 << 3):
+            return {'state': 'CATEGORY_FOUND', 'botViewChannel': True}
+        view = 1 << 10
+        overwrites = matches[0]['permission_overwrites']
+        for targets, kind in (({guild}, 0), (member_roles, 0), ({bot}, 1)):
+            allow = deny = 0
+            for row in overwrites:
+                if row['type'] == kind and str(row['id']) in targets:
+                    allow |= int(row['allow'])
+                    deny |= int(row['deny'])
+            permissions = (permissions & ~deny) | allow
+        return {'state': 'CATEGORY_FOUND', 'botViewChannel': bool(permissions & view)}
+    except HTTPError as error:
+        return {'state': 'HTTP_REJECTED', 'httpStatus': error.code}
+    except (OSError, AttributeError, TypeError, KeyError, ValueError):
+        return {'state': 'LOOKUP_UNAVAILABLE'}
+
+
+def discord_error_code(error):
+    try:
+        payload = json.loads(error.read(4097))
+        code = payload.get('code')
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+    return code if type(code) is int and 0 < code < 1000000 else None
+
+
 def discord_preflight(profile, token, *, read=discord_get):
     guild = str(profile['stagingGuildId'])
     bot = str(profile['stagingBotId'])
@@ -522,14 +568,24 @@ def discord_preflight(profile, token, *, read=discord_get):
         checks.append((step, '/channels/' + category,
                        lambda row: str(row['guild_id']) == guild and row['type'] == 4))
     completed = []
+    membership = {}
     for step, path, valid in checks:
         outcome = {'step': step, 'completed': completed}
         if step in categories:
             outcome['categoryId'] = categories[step]
         try:
-            if not valid(read(path, token)):
+            response = read(path, token)
+            if not valid(response):
                 return {**outcome, 'state': 'IDENTITY_REJECTED'}
+            if step in {'bot-membership', 'guild-roles'}:
+                membership[step] = response
         except HTTPError as error:
+            code = discord_error_code(error)
+            if code is not None:
+                outcome['discordCode'] = code
+            if error.code == 404 and step in categories:
+                outcome['guildInventory'] = inventory_category(
+                    read, token, guild, categories[step], bot, membership['bot-membership'], membership['guild-roles'])
             return {**outcome, 'state': 'HTTP_REJECTED', 'httpStatus': error.code}
         except (OSError, AttributeError, TypeError, KeyError, ValueError):
             return {**outcome, 'state': 'LOOKUP_UNAVAILABLE'}

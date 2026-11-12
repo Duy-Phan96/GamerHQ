@@ -1,6 +1,7 @@
 """Offline test of the owner read-only promotion receipt and its output scope."""
 from contextlib import closing
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -31,20 +32,45 @@ def test_discord_preflight_identifies_404_without_exposing_credential(live_looku
     responses = {'/users/@me': {'id': bot}, '/users/@me/guilds?limit=200': [{'id': guild}],
                  '/guilds/' + guild: {'id': guild}, f'/guilds/{guild}/members/{bot}': {'roles': []},
                  f'/guilds/{guild}/roles': [], '/channels/300': {'guild_id': guild, 'type': 4},
-                 '/channels/400': {'guild_id': guild, 'type': 4}}
+                 '/channels/400': {'guild_id': guild, 'type': 4}, f'/guilds/{guild}/channels': []}
     seen = []
 
     def read(path, token):
         seen.append(path)
         assert token == 'private-token'
         if missing in path:
-            raise HTTPError(path, 404, 'private-token', None, None)
+            raise HTTPError(path, 404, 'private-token', None,
+                            io.BytesIO(b'{"code":10003,"message":"private-token"}'))
         return responses[path]
 
     result = diagnostic.discord_preflight(profile, 'private-token', read=read)
     assert (result['state'], result['step'], result['httpStatus']) == ('HTTP_REJECTED', step, 404)
+    assert result['discordCode'] == 10003
     assert result.get('categoryId') == category
-    assert missing in seen[-1] and 'private-token' not in json.dumps(result)
+    if category is not None:
+        assert seen[-2:] == [missing, f'/guilds/{guild}/channels']
+        assert result['guildInventory'] == {'state': 'ABSENT_FROM_BOT_INVENTORY'}
+    else:
+        assert missing in seen[-1] and 'guildInventory' not in result
+    assert 'private-token' not in json.dumps(result)
+
+
+@pytest.mark.parametrize(('member_allow', 'visible'), [(True, True), (False, False)])
+def test_category_inventory_reports_effective_view_without_returning_other_channels(member_allow, visible):
+    guild, category, bot, role = '100', '200', '300', '400'
+    overwrites = [{'id': guild, 'type': 0, 'allow': '0', 'deny': '1024'},
+                  {'id': role, 'type': 0, 'allow': '1024', 'deny': '0'},
+                  {'id': bot, 'type': 1, 'allow': '1024' if member_allow else '0',
+                   'deny': '0' if member_allow else '1024'}]
+
+    def read(path, token):
+        assert path == f'/guilds/{guild}/channels'
+        return [{'id': 'unrelated', 'name': 'unrelated private channel'},
+                {'id': category, 'type': 4, 'permission_overwrites': overwrites}]
+
+    assert diagnostic.inventory_category(read, 'private-token', guild, category, bot, {'roles': [role]},
+                                         [{'id': guild, 'permissions': '0'}]) == {
+        'state': 'CATEGORY_FOUND', 'botViewChannel': visible}
 
 
 def test_discord_preflight_stops_before_guild_lookups_on_wrong_bot(live_lookup_profile):
