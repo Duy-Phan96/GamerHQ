@@ -7,8 +7,8 @@ log = logging.getLogger(__name__)
 
 
 async def report_error(interaction, error, context='operation'):
-    log.error('GamerHQ failed action=%s actor=%s guild=%s', context, getattr(interaction.user,'id',None), getattr(interaction,'guild_id',None), exc_info=(type(error),error,error.__traceback__))
-    text='❌ This action could not finish. Some changes may already have applied. Refresh the panel or run `/server health` before retrying.'
+    log.error('GamerHQ failed action=%s interaction=%s actor=%s guild=%s', context, getattr(interaction,'id',None), getattr(interaction.user,'id',None), getattr(interaction,'guild_id',None), exc_info=(type(error),error,error.__traceback__))
+    text=f'❌ {context} could not finish. Refresh the panel or run `/server health` before retrying.'
     if interaction.response.is_done():
         await interaction.followup.send(text,ephemeral=True)
     else:
@@ -17,7 +17,8 @@ async def report_error(interaction, error, context='operation'):
 
 class SafeView(discord.ui.View):
     async def on_error(self, interaction, error, item):
-        await report_error(interaction,error,type(self).__name__)
+        label = getattr(item, 'label', None) or 'This action'
+        await report_error(interaction, error, label)
 
 
 async def command_error(self, interaction, error):
@@ -33,7 +34,8 @@ async def application_error(interaction, error):
     elif isinstance(error, app_commands.CheckFailure):
         text = 'You do not have access to this command here.'
     else:
-        await report_error(interaction, getattr(error, 'original', error), 'command')
+        name = getattr(getattr(interaction, 'command', None), 'qualified_name', None)
+        await report_error(interaction, getattr(error, 'original', error), f'`/{name}`' if name else 'This command')
         return
     if interaction.response.is_done():
         await interaction.followup.send(text, ephemeral=True)
