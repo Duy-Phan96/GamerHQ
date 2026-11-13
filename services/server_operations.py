@@ -489,7 +489,18 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
     if bulk:
         member = (await read_once(('bulk-setup-member', guild.id), lambda: guild.fetch_member(guild.me.id))
                   if guild.me else None)
-        return bulk_plan(guild, rows, member, template_staff=template_staff)
+        publishers = {}
+        if any(row['name'] in {'gaming-news', 'gaming-deals'} and row['status'] == 'MISSING' for row in rows):
+            from services.instant_gaming_service import configured_bot
+            from services.bot_group_service import member as group_member
+            for publisher in {configured_bot(guild), group_member(guild, 'dealgecko')} - {None}:
+                try:
+                    observed = await read_once(('bulk-setup-member', publisher.id), lambda: guild.fetch_member(publisher.id))
+                except (discord.HTTPException, TimeoutError):
+                    continue
+                if observed.bot and observed.id == publisher.id and observed.guild.id == guild.id:
+                    publishers[publisher.id] = observed
+        return bulk_plan(guild, rows, member, template_staff=template_staff, publishers=publishers)
     warnings = []
     from services.channel_adoption_service import order_plans
     from services.community_structure_service import event_order
@@ -614,12 +625,35 @@ def setup_policy(guild, row, parent=None):
     for overwrite in policy.values():
         if overwrite.manage_messages is True:
             overwrite.manage_messages = None
+    if row['name'] in {'gaming-news', 'gaming-deals'} and not row.get('private'):
+        omit_redundant_feed_denies(guild, policy, row.get('feed_publishers', {}))
     if row.get('private') and (
             policy.get(guild.default_role, discord.PermissionOverwrite()).view_channel is not False
             or guild.me is None
             or policy.get(guild.me, discord.PermissionOverwrite()).view_channel is not True):
         raise ServerMessageError('Private permissions need review')
     return policy
+
+
+def omit_redundant_feed_denies(guild, policy, publishers):
+    """A new feed has its own ACL. Omit only a provably redundant member deny."""
+    if any(value.manage_roles is True for value in policy.values()):
+        return
+    for principal, value in policy.items():
+        if value.manage_roles is not False or not isinstance(principal, discord.Member) or not principal.bot:
+            continue
+        verified = publishers.get(principal.id)
+        if verified is None:
+            continue
+        # Resolve all of the publisher's roles from the current inventory.
+        # Never drop a role-wide deny: its holders can also hold other roles.
+        roles = [guild.get_role(role_id) for role_id in verified._roles]
+        everyone = guild.get_role(guild.id)
+        if (principal.guild.id == guild.id and principal.id != guild.owner_id and everyone is not None
+                and all(role is not None for role in roles)
+                and not any(role.permissions.administrator or role.permissions.manage_roles
+                            for role in [everyone, *roles])):
+            value.manage_roles = None
 
 
 def policy_signature(policy, *, exclude=()):
@@ -655,12 +689,17 @@ def feed_creation_evidence(parent, member, policy, effective):
             target_member = member if member and principal.id == member.id else principal
             target = f'member {principal.id} ({role_position(getattr(target_member, "top_role", None))})'
         allow, deny = overwrite.pair()
-        targets.append(f'{target} allow={allow.value} deny={deny.value}')
+        requested = allow | deny
+        names = ', '.join(name for name, enabled in requested if enabled)
+        targets.append(f'{target} allow={allow.value} deny={deny.value} ({names or "no flags"})')
+    inherited = ('unavailable' if parent is None else
+                 ', '.join(f'{rid} allow={allow} deny={deny}' for rid, allow, deny in policy_signature(parent.overwrites)) or 'none')
     return (f'Destination {destination} ({access}). Host {role_position(getattr(member, "top_role", None))}. '
-            f'requested overwrites: {", ".join(targets) or "none"}')
+            f'requested overwrites: {", ".join(targets) or "none"}. Parent overwrites: {inherited}. '
+            'Discord 50013 does not identify a rejected overwrite. Role positions are inventory evidence.')
 
 
-def bulk_plan(guild, rows, member, *, template_staff=False):
+def bulk_plan(guild, rows, member, *, template_staff=False, publishers=None):
     """Classify the same reconciliation inventory before the owner confirms."""
     order = {'role': 0, 'bot-role': 0, 'staff-role': 0, 'category': 1, 'text': 2, 'voice': 2}
     rows = sorted(rows, key=lambda row: (order[row['kind']], row['key']))
@@ -678,6 +717,8 @@ def bulk_plan(guild, rows, member, *, template_staff=False):
             row['reason'] = 'Outside bulk setup'
             continue
         kind, status = row['kind'], row['status']
+        if row['name'] in {'gaming-news', 'gaming-deals'}:
+            row['feed_publishers'] = publishers or {}
         role = kind in ('role', 'bot-role', 'staff-role')
         candidates = row['candidates']
         match = candidates[0] if len(candidates) == 1 else None
