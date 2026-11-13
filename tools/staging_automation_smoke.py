@@ -102,8 +102,8 @@ def main():
             from tools.extend_staging_host_promotion import (ACTIVE_CONFIGURATION_CONTROLLER,
                 ACTIVE_MANAGED_MESSAGES_CONTROLLER, ACTIVE_STRUCTURE_CONTROLLER,
                 ACTIVE_BULK_STRUCTURE_CONTROLLER, ACTIVE_BULK_RECOVERY_CONTROLLER,
-                ACTIVE_BULK_PREVIEW_CONTROLLER, ACTIVE_BULK_PERMISSIONS_CONTROLLER, ACTIVE_LOCALIZED_REUSE_CONTROLLER, ACTIVE_SERVER_TEMPLATES_CONTROLLER, ACTIVE_TEMPLATE_RECOVERY_CONTROLLER, ACTIVE_TEMPLATE_STAFF_CONTROLLER, ACTIVE_SETUP_REPORTS_CONTROLLER, ACTIVE_REPORT_INTERACTION_CONTROLLER,
-                BULK_PERMISSIONS_HOST, BULK_PREVIEW_HOST, LOCALIZED_REUSE_HOST, SERVER_TEMPLATES_HOST, TEMPLATE_RECOVERY_HOST, TEMPLATE_STAFF_HOST, SETUP_REPORTS_HOST, REPORT_INTERACTION_HOST, FEED_PERMISSIONS_HOST,
+                ACTIVE_BULK_PREVIEW_CONTROLLER, ACTIVE_BULK_PERMISSIONS_CONTROLLER, ACTIVE_LOCALIZED_REUSE_CONTROLLER, ACTIVE_SERVER_TEMPLATES_CONTROLLER, ACTIVE_TEMPLATE_RECOVERY_CONTROLLER, ACTIVE_TEMPLATE_STAFF_CONTROLLER, ACTIVE_SETUP_REPORTS_CONTROLLER, ACTIVE_REPORT_INTERACTION_CONTROLLER, ACTIVE_FEED_PERMISSIONS_CONTROLLER,
+                BULK_PERMISSIONS_HOST, BULK_PREVIEW_HOST, LOCALIZED_REUSE_HOST, SERVER_TEMPLATES_HOST, TEMPLATE_RECOVERY_HOST, TEMPLATE_STAFF_HOST, SETUP_REPORTS_HOST, REPORT_INTERACTION_HOST, FEED_PERMISSIONS_HOST, GAMING_NEWS_HOST,
                 BULK_RECOVERY_HOST, BULK_STRUCTURE_HOST,
                 CATALOG_CONTROLLER, CONFIGURATION_HOST,
                 FAILED_CONFIGURATION_CONTROLLER, HOST, MANAGED_MESSAGES_HOST, OLD, STRUCTURE_HOST, WEB_BASE, extension)
@@ -266,12 +266,19 @@ def main():
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': REPORT_INTERACTION_HOST,
                                                 'baseImage': held['approvedImage']}))
+            feed_pin = install_pin(ACTIVE_FEED_PERMISSIONS_CONTROLLER,
+                '9defb3b4e4111ab03c780eed336a54f789ac66545895691f6c9c0f3e5c7263cc',
+                'ENROLL STAGING FEED PERMISSION REVIEW', '--feed-permissions')
+            assert feed_pin['approvedHostCommit'] == FEED_PERMISSIONS_HOST
+            installed_policy = json.loads(policy_path.read_bytes())
+            profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': FEED_PERMISSIONS_HOST,
+                                                'baseImage': held['approvedImage']}))
             state_path.write_text(json.dumps(held))
-            approval = 'ENROLL STAGING FEED PERMISSION REVIEW'
+            approval = 'ENROLL STAGING GAMING NEWS PERMISSIONS'
             old_entry = (root / 'automation-controller/entry.py').read_bytes()
             held_state = state_path.read_bytes()
             try:
-                extension(args.commit, approval, feed_permissions=True)
+                extension(args.commit, approval, gaming_news=True)
             except ValueError as error:
                 assert str(error) == 'REVIEWED_RECOVERY_REQUIRED'
             else:
@@ -285,14 +292,14 @@ def main():
             staged_profile = profile_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)
-                try: result = extension(args.commit, approval, feed_permissions=True)
+                try: result = extension(args.commit, approval, gaming_news=True)
                 finally: os.umask(previous)
-                assert result['approvedHostCommit'] == FEED_PERMISSIONS_HOST
-                assert result['previousHostCommit'] == REPORT_INTERACTION_HOST
+                assert result['approvedHostCommit'] == GAMING_NEWS_HOST
+                assert result['previousHostCommit'] == FEED_PERMISSIONS_HOST
                 assert result['state'] == 'PIN_INSTALLED' and result['hostPromotionRequiresProtectedOwnerReview']
             assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
             enrolled = json.loads(call('status').stdout)
-            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == FEED_PERMISSIONS_HOST
+            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == GAMING_NEWS_HOST
             assert enrolled['recoveryRequired'] is False
             new_policy = json.loads(policy_path.read_bytes())
             assert new_policy == {**installed_policy, 'controllerCommit': args.commit,
@@ -327,7 +334,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', FEED_PERMISSIONS_HOST)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', GAMING_NEWS_HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']

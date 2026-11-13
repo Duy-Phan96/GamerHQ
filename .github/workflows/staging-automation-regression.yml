@@ -21,11 +21,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate=f4b2c19a22e5f47a8071794659b9b7ff053f6a2a
+          candidate=a653687f0af658d0b01ba4ee57f4b519e7985cb5
           git fetch origin "$candidate"
-          archive="$RUNNER_TEMP/feed-permissions.tar"
+          archive="$RUNNER_TEMP/gaming-news-permissions.tar"
           git archive --format=tar --output="$archive" "$candidate"
-          echo "e609edf6d9630d93aafdc2f5027dea1e4bc3f4d5062645e7658aca07f03b5dc7  $archive" | sha256sum --check --strict
+          echo "8185d1e62ac792cb629c9cd15a5ddc21cbeee0034e4c073d1bed8c6df07c2034  $archive" | sha256sum --check --strict
           sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          baseline=2fdf143c1a9582e8789fa853a36c757dc105e414
+          baseline=f4b2c19a22e5f47a8071794659b9b7ff053f6a2a
           git fetch origin "$baseline"
           mkdir /tmp/gamerhq-host-baseline
           git archive "$baseline" | tar -x -C /tmp/gamerhq-host-baseline
