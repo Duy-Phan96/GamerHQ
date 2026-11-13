@@ -661,6 +661,18 @@ def policy_signature(policy, *, exclude=()):
                   for principal, overwrite in policy.items() if principal.id not in exclude)
 
 
+def feed_inherits_parent(row, parent, policy):
+    # Exact equality proves all member and role combinations retain their
+    # effective access, including posting exceptions and integration denies.
+    if row['name'] != 'gaming-news' or row.get('private') or parent is None:
+        return False
+    from services.instant_gaming_service import POSTING
+    public = policy.get(row['bulk_guild'].default_role)
+    return bool(public and public.view_channel is True and public.read_message_history is True
+                and all(getattr(public, flag) is False for flag in POSTING)
+                and policy_signature(parent.overwrites) == policy_signature(policy))
+
+
 def bulk_destination_permissions(guild, parent, member):
     if parent is not None and member is not None and hasattr(parent, 'permissions_for'):
         return snapshot_permissions(guild, parent, member)
@@ -732,6 +744,12 @@ def bulk_plan(guild, rows, member, *, template_staff=False, publishers=None):
                 row['reason'] = 'Resource is shared by competing mappings'
                 continue
             try:
+                if row['name'] == 'gaming-news' and status != 'EXACT_MATCH':
+                    parent = reviewed.get(row['parent'])
+                    destination = guild.get_channel(parent['bulk_id']) if parent and parent.get('bulk_id') else None
+                    if destination is None or match.category_id != destination.id or (
+                            policy_signature(match.overwrites) != policy_signature(setup_policy(guild, row, destination))):
+                        raise BulkPolicyError('Existing gaming-news needs a verified feed policy before linking.')
                 if kind == 'staff-role' and status != 'EXACT_MATCH' and match.name != staff_access.ROLE_NAME:
                     raise BulkPolicyError('A similarly named role exists. Review it before linking or creating a Staff role.')
                 if kind == 'staff-role' and status != 'EXACT_MATCH':
@@ -816,10 +834,15 @@ def bulk_plan(guild, rows, member, *, template_staff=False, publishers=None):
             if destination_issue:
                 raise BulkPolicyError(destination_issue)
             verify_bulk_private_policy(guild, row, policy)
-            issue = bulk_policy_issue(policy, permissions)
+            inherits = feed_inherits_parent(row, destination, policy)
+            issue = bulk_policy_issue({} if inherits else policy, permissions)
             if issue:
                 raise BulkPolicyError(issue)
             row['create_overwrites'] = policy
+            if row['name'] == 'gaming-news':
+                row['inherit_parent'] = inherits
+                row['reason'] = ('Inherit the verified MARKETPLACE policy; no channel overwrites will be submitted.'
+                                 if inherits else 'MARKETPLACE differs from the reviewed feed policy. Creation requires explicit overwrites.')
         except BulkPolicyError as exc:
             row['reason'] = str(exc)
             continue
@@ -827,6 +850,9 @@ def bulk_plan(guild, rows, member, *, template_staff=False, publishers=None):
             row['reason'] = 'Creation permissions need review'
             continue
         row['signature'].append(('bulk-policy', policy_signature(row['create_overwrites'])))
+        if row['name'] == 'gaming-news':
+            row['signature'].append(('inherit-parent', row['inherit_parent'],
+                                     policy_signature(destination.overwrites) if destination else None))
         row['bulk_action'] = 'create'
     return rows
 
@@ -883,7 +909,7 @@ def bulk_preview_report(draft, choices):
     for number, (row, decision) in enumerate(zip(rows, decisions), 1):
         lines.extend(('', f"{number}. [{BULK_DECISIONS[decision]}] {single_line(row['label'])} ({row['kind']})",
                       f"   Inventory status: {row['status']}"))
-        if row.get('reason') and decision in ('review', 'blocked', 'skip', 'choose'):
+        if row.get('reason') and (decision in ('review', 'blocked', 'skip', 'choose') or row['name'] == 'gaming-news'):
             lines.append(f"   Reason: {single_line(row['reason'])}")
         if decision == 'choose' and choices.get(row['key']) == 0:
             lines.append('   Existing channel left unselected for this preview.')
@@ -932,7 +958,10 @@ def confirmed_setup_policy(row, added_roles, parent=None):
         raise BulkPolicyError(issue)
     policy = setup_policy(guild, row, parent)
     verify_bulk_private_policy(guild, row, policy)
-    issue = bulk_policy_issue(policy, row['bulk_permissions'])
+    inherits = feed_inherits_parent(row, parent, policy)
+    if row.get('inherit_parent', False) and not inherits:
+        raise BulkPolicyError('MARKETPLACE permissions changed. Open a fresh preview before creating gaming-news.')
+    issue = bulk_policy_issue({} if row.get('inherit_parent') else policy, row['bulk_permissions'])
     if issue:
         raise BulkPolicyError(issue)
     if policy_signature(policy, exclude=added_roles) != policy_signature(row['create_overwrites'], exclude=added_roles):
@@ -1306,7 +1335,15 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                             effective = bulk_destination_permissions(row['bulk_guild'], parent, member)
                             row['feed_creation_evidence'] = feed_creation_evidence(parent, member, policy, effective)
                         create = parent.create_voice_channel if kind == 'voice' else parent.create_text_channel
-                        resource = await create_checked(key, create, row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
+                        if bulk and row.get('inherit_parent'):
+                            latest = await guild.fetch_channel(parent.id)
+                            if not isinstance(latest, discord.CategoryChannel) or not feed_inherits_parent(row, latest, policy):
+                                raise BulkPolicyError('MARKETPLACE permissions changed. Open a fresh preview before creating gaming-news.')
+                            resource = await create_checked(key, latest.create_text_channel, row['label'], reason='Confirmed GamerHQ setup')
+                            if resource.category_id != latest.id or policy_signature(resource.overwrites) != policy_signature(policy):
+                                raise BulkPolicyError('Discord returned different feed permissions. Review the created channel before linking or retrying.')
+                        else:
+                            resource = await create_checked(key, create, row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
                     elif kind == 'message':
                         with read_scope(), db.read_only():
                             boards = managed.canonical_boards(row['guild'], bot)
