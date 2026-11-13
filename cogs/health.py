@@ -6,6 +6,7 @@ import discord
 from services.response_service import SafeView
 from services.game_area_cleanup import authorized
 from services import health_service
+from cogs.report_views import ReportErrors
 
 
 GROUPS = (
@@ -174,7 +175,7 @@ class AreaSelect(discord.ui.Select):
         )
 
 
-class HealthView(SafeView):
+class HealthView(ReportErrors, SafeView):
     """Friendly read-only server check; /server health and /server manage share it."""
 
     def __init__(self, guild, actor_id, findings, *, selected=None):
@@ -223,7 +224,7 @@ class HealthView(SafeView):
         close.callback = self.close
         self.add_item(close)
         if self.actor_id == self.guild.owner_id:
-            copy = discord.ui.Button(label='Copy Report', row=2)
+            copy = discord.ui.Button(label='Copy Report', row=2, custom_id='gamerhq:report:copy')
             copy.callback = self.copy_report
             self.add_item(copy)
 

@@ -7,6 +7,7 @@ from database import db
 from services.response_service import SafeView, check_admin
 from services.server_service import ServerMessageError
 from cogs.server import RoleAdminSession
+from cogs.report_views import ReportErrors
 from skill_runtime.contracts.schedule import DailySchedule, IntervalSchedule, WeeklySchedule, schedule_from_dict
 
 TITLE = '# ⚙️ GamerHQ Server Management\nManage the most important GamerHQ settings.'
@@ -2186,7 +2187,7 @@ class ServerTemplatesView(Menu):
                                                  allowed_mentions=discord.AllowedMentions.none())
 
 
-class TemplatePreviewView(Menu):
+class TemplatePreviewView(ReportErrors, Menu):
     def __init__(self, guild, actor_id, draft):
         super().__init__(guild, actor_id)
         self.draft = draft
@@ -2195,13 +2196,13 @@ class TemplatePreviewView(Menu):
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
 
-    @discord.ui.button(label='Copy Report')
+    @discord.ui.button(label='Copy Report', custom_id='gamerhq:report:copy')
     async def copy(self, interaction, button):
         from cogs.report_views import copy_report
         from services.server_templates import report_summary
         await copy_report(interaction, report_summary(self.draft))
 
-    @discord.ui.button(label='Full Report')
+    @discord.ui.button(label='Full Report', custom_id='gamerhq:report:full')
     async def full(self, interaction, button):
         from cogs.report_views import full_report
         from services.server_templates import report_details
@@ -2245,7 +2246,7 @@ class TemplatePreviewView(Menu):
         await interaction.response.edit_message(content=view.text(), view=view, attachments=[])
 
 
-class TemplateResultView(Menu):
+class TemplateResultView(ReportErrors, Menu):
     def __init__(self, guild, actor_id, summary, details):
         super().__init__(guild, actor_id)
         self.summary, self.details = summary, details
@@ -2253,12 +2254,12 @@ class TemplateResultView(Menu):
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
 
-    @discord.ui.button(label='Copy Report')
+    @discord.ui.button(label='Copy Report', custom_id='gamerhq:report:copy')
     async def copy(self, interaction, button):
         from cogs.report_views import copy_report
         await copy_report(interaction, self.summary)
 
-    @discord.ui.button(label='Full Report')
+    @discord.ui.button(label='Full Report', custom_id='gamerhq:report:full')
     async def full(self, interaction, button):
         from cogs.report_views import full_report
         await full_report(interaction, self.details, 'template-results.txt')
