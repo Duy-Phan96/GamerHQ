@@ -116,7 +116,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             result, _, remaining = await templates.apply(self.guild, actor, draft, self.bot)
             self.assertEqual(remaining, 1)
             self.assertIn('HTTP 403, code 50013', result['failed'][0])
-            self.assertTrue(any('gaming-news' in line and 'Eligible for creation' in line for line in result['remaining']))
+            self.assertTrue(any('gaming-news' in line and 'explicit overwrites' in line for line in result['remaining']))
             self.assertEqual(templates.progress_record(self.guild, template)['pending_creates'], [])
             self.assertIsNone(db.get_setting('managed_channel:1:gaming-news'))
 
@@ -667,6 +667,55 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(member_acl.manage_roles)
         self.assertTrue(member_acl.send_messages)
         self.assertIs(role_acl.manage_roles, False)
+
+    async def test_gaming_news_inherits_only_an_identical_read_only_policy(self):
+        actor = self.owner()
+        self.guild.me.guild_permissions.administrator = False
+        marketplace = self.guild.add_category('MARKETPLACE')
+        db.set_setting('managed_category:1:partners-benefits', marketplace.id)
+        names = {'partners-benefits', 'gaming-news'}
+        original = ops.definitions
+        created = []
+
+        async def inherit(name, **kwargs):
+            self.assertNotIn('overwrites', kwargs)
+            channel = self.guild.add_channel(name, marketplace)
+            channel.overwrites = dict(marketplace.overwrites)
+            created.append(channel)
+            return channel
+
+        with (patch.object(ops, 'definitions', lambda guild: [r for r in original(guild)
+                                                            if r['name'] in names and r['kind'] in ('category', 'text')]),
+              patch.object(marketplace, 'create_text_channel', AsyncMock(side_effect=inherit)) as create):
+            first = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            news = next(row for row in first['rows'] if row['name'] == 'gaming-news')
+            self.assertFalse(news['inherit_parent'])
+            marketplace.overwrites = dict(news['create_overwrites'])
+            reviewed = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            news = next(row for row in reviewed['rows'] if row['name'] == 'gaming-news')
+            self.assertTrue(news['inherit_parent'])
+            self.assertIs(news['create_overwrites'][self.guild.default_role].send_messages, False)
+            self.assertIs(news['create_overwrites'][self.guild.me].send_messages, True)
+            marketplace.overwrites[self.guild.custom] = discord.PermissionOverwrite(send_messages=True)
+            result = await ops.apply(self.guild, actor, reviewed, self.bot, confirmed=True)
+            self.assertTrue(result['needs_review'])
+            create.assert_not_awaited()
+            del marketplace.overwrites[self.guild.custom]
+            reviewed = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            await ops.apply(self.guild, actor, reviewed, self.bot, confirmed=True)
+            self.assertEqual(db.get_setting('managed_channel:1:gaming-news'), str(created[0].id))
+            fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
+            create.assert_awaited_once()
+            # Simulate a lost mapping after creation and an unexpected write grant.
+            db.set_setting('managed_channel:1:gaming-news', '')
+            created[0].overwrites[self.guild.custom] = discord.PermissionOverwrite(send_messages=True)
+            fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            news = next(row for row in fresh['rows'] if row['name'] == 'gaming-news')
+            self.assertEqual(news['bulk_action'], 'skip')
+            self.assertIn('verified feed policy', news['reason'])
+            await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
+            create.assert_awaited_once()
 
     async def test_bulk_setup_does_not_create_duplicate_after_mapping_write_failure(self):
         actor = self.owner()
