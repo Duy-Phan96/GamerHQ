@@ -22,9 +22,10 @@ class ServerTemplate:
 
 GAMERHQ = ServerTemplate('gamerhq-gaming-community', 'GamerHQ Gaming Community', (
     'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'looking-for-group',
-    'community-events', 'suggestions', 'need-support',
+    'community-events', 'suggestions', 'need-support', 'gaming-news', 'gaming-deals',
 ), staff_access=True)
 TEMPLATES = (GAMERHQ,)
+AFFILIATE_RESOURCES = frozenset({'affiliate-stats', 'ig-purchases', 'ig-buyer-ranking'})
 log = logging.getLogger(__name__)
 
 
@@ -74,6 +75,9 @@ def entry_message_keys(guild, destinations):
     if 'welcome' in destinations:
         by_mapping[f'onboarding:{guild.id}:welcome'] = 'welcome'
     keys = {key: by_mapping[mapping] for key, (_, mapping, _) in managed.specs(guild).items() if mapping in by_mapping}
+    if 'gaming-deals' in destinations:
+        from services.support_service import message_key
+        keys[message_key(guild, 'instant_gaming')] = 'gaming-deals'
     if 'welcome' in destinations:
         keys[f"server_pinned_message_{destinations['welcome']}"] = 'welcome'
     if 'choose-your-games' in destinations:
@@ -130,14 +134,22 @@ async def preview(guild, owner, template, bot=None):
 
 
 def counts(draft):
-    decisions = [operations.bulk_decision(row, draft['choices']) for row in draft['structure']['rows']]
+    decisions = [template_decision(row, draft['choices']) for row in draft['structure']['rows']]
     board_states = [row['status'] for row in draft['boards']['rows']]
     return {'Already configured': decisions.count('configured') + board_states.count('EXACT_MATCH'),
             'Will reuse': decisions.count('reuse') + board_states.count('SAFE_ADOPTION'),
             'Will create': decisions.count('create') + board_states.count('MISSING'),
             'Needs review': decisions.count('review') + board_states.count('AMBIGUOUS'),
             'Blocked': decisions.count('blocked') + len(draft['deferred']),
-            'Optional/Skipped': decisions.count('skip')}
+            'Optional/Skipped': decisions.count('skip'),
+            'Optional integration review': decisions.count('integration')}
+
+
+def template_decision(row, choices):
+    decision = operations.bulk_decision(row, choices)
+    if row['name'] in AFFILIATE_RESOURCES and decision in ('review', 'blocked'):
+        return 'integration'
+    return decision
 
 
 def report_summary(draft):
@@ -147,7 +159,7 @@ def report_summary(draft):
     lines = [draft['template'].name, *(f'{label}: {count}' for label, count in counts(draft).items()), '']
     for row in structure:
         decision = operations.bulk_decision(row, draft['choices'])
-        if row['kind'] == 'staff-role' or row.get('private') and row['kind'] == 'category' or row['name'] == 'gaming-deals':
+        if row['kind'] == 'staff-role' or row.get('private') and row['kind'] == 'category' or row['name'] in operations.PUBLIC_FEEDS:
             if row['kind'] == 'staff-role' or decision not in ('configured', 'skip'):
                 lines.append(f"{row['label']} — {operations.BULK_DECISIONS[decision]}. {row.get('reason', '')}".rstrip())
     blocked = Counter(row.get('reason') or 'Needs verification' for row in draft['boards']['rows']
@@ -160,7 +172,8 @@ def report_summary(draft):
     elif counts(draft)['Will create'] or counts(draft)['Will reuse']:
         next_action = 'Review the plan, then select Apply Template to perform the listed safe actions.'
     else:
-        next_action = 'Review the remaining findings in Full Report before opening a fresh preview.'
+        next_action = ('Review remaining setup findings in Full Report before reopening the preview.'
+                       if counts(draft)['Needs review'] or counts(draft)['Blocked'] else 'Core setup is complete. Review optional integrations separately.')
     return '\n'.join([*lines, '', 'Next: ' + next_action])
 
 
@@ -195,8 +208,8 @@ def remaining_structure(draft):
     defaults = {'reuse': 'Verified resource can be linked on a fresh preview.',
                 'create': 'Eligible for creation on a fresh preview.'}
     for row in draft['structure']['rows']:
-        decision = operations.bulk_decision(row, draft['choices'])
-        if decision not in ('configured', 'skip'):
+        decision = template_decision(row, draft['choices'])
+        if decision not in ('configured', 'skip', 'integration'):
             reason = row.get('reason') or defaults.get(decision, 'Review the current resource evidence.')
             yield f"{row['label']} · {reason}"
 
