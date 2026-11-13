@@ -357,6 +357,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('feed_permissions', 'ENROLL STAGING FEED PERMISSION REVIEW', 'ACTIVE_REPORT_INTERACTION_CONTROLLER',
          enrollment.REPORT_INTERACTION_HOST, enrollment.REPORT_INTERACTION_ARCHIVE,
          enrollment.FEED_PERMISSIONS_HOST, enrollment.FEED_PERMISSIONS_ARCHIVE),
+        ('gaming_news', 'ENROLL STAGING GAMING NEWS PERMISSIONS', 'ACTIVE_FEED_PERMISSIONS_CONTROLLER',
+         enrollment.FEED_PERMISSIONS_HOST, enrollment.FEED_PERMISSIONS_ARCHIVE,
+         enrollment.GAMING_NEWS_HOST, enrollment.GAMING_NEWS_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
