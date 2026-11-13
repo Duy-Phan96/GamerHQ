@@ -261,8 +261,9 @@ async def _scan(guild, bot=None, *, messages=True):
     except ServerMessageError as exc:
         add('Affiliate/free-games resources', 'MANUAL_REVIEW', str(exc))
     from services import ticket_service as tickets
-    from services.onboarding_service import is_staff
-    add('Ticket Staff access','PASS' if any(is_staff(r) for r in guild.roles) else 'WARN','Uses current moderation roles and server owner; review role policy.')
+    from services.staff_access import creation_roles
+    add('Ticket Staff access', 'PASS' if creation_roles(guild) else 'WARN',
+        'Checks the configured private access role or the legacy Staff policy. Ticket moderation uses separate authorization.')
     try:
         category=tickets.mapped(guild,'support-tickets',True)
         if not category: raise ServerMessageError('Missing private ticket category.')
