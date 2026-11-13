@@ -354,6 +354,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('report_interaction', 'ENROLL STAGING REPORT INTERACTION FIX', 'ACTIVE_SETUP_REPORTS_CONTROLLER',
          enrollment.SETUP_REPORTS_HOST, enrollment.SETUP_REPORTS_ARCHIVE,
          enrollment.REPORT_INTERACTION_HOST, enrollment.REPORT_INTERACTION_ARCHIVE),
+        ('feed_permissions', 'ENROLL STAGING FEED PERMISSION REVIEW', 'ACTIVE_REPORT_INTERACTION_CONTROLLER',
+         enrollment.REPORT_INTERACTION_HOST, enrollment.REPORT_INTERACTION_ARCHIVE,
+         enrollment.FEED_PERMISSIONS_HOST, enrollment.FEED_PERMISSIONS_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
