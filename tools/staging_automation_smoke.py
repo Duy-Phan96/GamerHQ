@@ -245,7 +245,7 @@ def main():
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': TEMPLATE_RECOVERY_HOST,
                                                 'baseImage': held['approvedImage']}))
-            staff_pin = install_pin(ACTIVE_TEMPLATE_STAFF_CONTROLLER, ACTIVE_SETUP_REPORTS_CONTROLLER,
+            staff_pin = install_pin(ACTIVE_TEMPLATE_STAFF_CONTROLLER,
                 '6db473bd459cbe4acb35abebc5e56d33782d2b230aea841ba5f0b1ddc50bf6b5',
                 'ENROLL STAGING TEMPLATE STAFF ACCESS', '--template-staff-access')
             assert staff_pin['approvedHostCommit'] == TEMPLATE_STAFF_HOST
