@@ -867,6 +867,22 @@ class OperationsView(RoleAdminSession):
             return False
         return await super().interaction_check(interaction)
 
+    @discord.ui.button(label='Copy Report', row=3)
+    async def copy_report(self, interaction, button):
+        from cogs.report_views import copy_report
+        from services.server_operations import bulk_preview_report
+        if interaction.user.id != self.guild.owner_id:
+            await interaction.response.send_message('Only the server owner can copy this report.', ephemeral=True)
+            return
+        if self.bulk:
+            report = bulk_preview_report(self.draft, self.choices)
+        else:
+            lines = [f"GamerHQ {self.draft['mode'].title()} Preview", 'Review the listed actions before confirming.']
+            lines.extend(f"{row['label']} — {row['status']}. {row.get('reason') or ''}".rstrip()
+                         for row in self.draft['rows'])
+            report = '\n'.join(lines)
+        await copy_report(interaction, report)
+
     def refresh_choices(self):
         for child in list(self.children):
             if isinstance(child, ResourceChoice): self.remove_item(child)
