@@ -17,12 +17,13 @@ class ServerTemplate:
     key: str
     name: str
     entry_points: tuple[str, ...]
+    staff_access: bool = False
 
 
 GAMERHQ = ServerTemplate('gamerhq-gaming-community', 'GamerHQ Gaming Community', (
     'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'looking-for-group',
     'community-events', 'suggestions', 'need-support',
-))
+), staff_access=True)
 TEMPLATES = (GAMERHQ,)
 log = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ async def preview_entry_points(guild, owner, bot, destinations, pending):
 async def preview(guild, owner, template, bot=None):
     if template not in TEMPLATES:
         raise ServerMessageError('Unknown server template.')
-    structure = await operations.preview(guild, owner, 'setup', bot, scope='bulk')
+    structure = await operations.preview(guild, owner, 'setup', bot, scope='bulk', template_staff=template.staff_access)
     pending = set(progress_record(guild, template).get('pending_creates', ()))
     held = set()
     for row in structure['rows']:
@@ -185,7 +186,7 @@ async def apply(guild, owner, draft, bot=None):
                                             create_checkpoint=checkpoint, on_created=record_created)
 
         with apply_stage(guild, template, 'verifying the server structure'):
-            current = await operations.preview(guild, owner, 'setup', bot, scope='bulk')
+            current = await operations.preview(guild, owner, 'setup', bot, scope='bulk', template_staff=template.staff_access)
         linked = reviewed_destinations(current, template, linked_only=True)
         approved_ids = {channel_id for name, channel_id in reviewed_destinations(structure, template).items()
                         if linked.get(name) == channel_id}

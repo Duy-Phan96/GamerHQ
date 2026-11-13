@@ -5,6 +5,7 @@ import discord
 from database import db
 from services.operation_context import fetch_message
 from services.onboarding_service import alias, is_staff, unique
+from services.staff_access import is_mapped
 from services.server_service import ServerMessageError, upsert_fixed_message
 
 async def tracked_edit(channel, **kwargs):
@@ -142,6 +143,8 @@ def overwrites(guild, name, existing=None, category=None):
                    and any(is_staff(role) for role in target.roles))
     for target in set(result) | allowed | {guild.default_role}:
         value = result.setdefault(target, discord.PermissionOverwrite())
+        if name not in PUBLIC and target in guild.roles and is_mapped(guild, target):
+            continue
         if name == 'gaming-deals' and target not in allowed and target != guild.default_role and str(target.id) != previous_bot:
             continue  # Preserve unrelated channel overrides.
         if target in allowed:

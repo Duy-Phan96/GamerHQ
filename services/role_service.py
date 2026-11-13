@@ -13,9 +13,10 @@ _role_sync_locks = {}
 
 
 def assignable(role, guild):
+    from services.staff_access import key
     return bool(role and not role.is_default() and not role.managed and
                 role.permissions.value == 0 and guild.me and guild.me.guild_permissions.manage_roles
-                and role < guild.me.top_role)
+                and role < guild.me.top_role and db.get_setting(key(guild)) != str(role.id))
 
 
 def game_role(guild, game_id, expected_role_id, *, selectable_only=True):

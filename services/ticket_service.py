@@ -11,6 +11,7 @@ from services.onboarding_service import alias, unique, is_staff, guide_overwrite
 from services.server_service import ServerMessageError, upsert_fixed_message
 from services.community_structure_service import resource_key
 from cogs.suggestions import private_overwrites, STAFF_ALIASES
+from services import staff_access
 
 log = logging.getLogger(__name__)
 ENTRY_NAME = '🆘・need-support'
@@ -110,8 +111,13 @@ def mapped(guild, name, category=False):
     return named
 
 
-def private(guild, channel=None, creator=None, closed=False):
+def private(guild, channel=None, creator=None, closed=False, *, parent=None):
     result = private_overwrites(guild,channel)
+    role = staff_access.mapped_role(guild)
+    if parent is not None and role and parent.overwrites_for(role).view_channel is True:
+        result = {target: overwrite for target, overwrite in result.items() if not (
+            target in guild.roles and is_staff(target))}
+        result[role] = discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=True)
     if guild.me:
         result[guild.me].manage_channels = True
     if creator:
@@ -131,7 +137,8 @@ def check_private(channel, creator_id=None):
     if channel.overwrites_for(guild.default_role).view_channel is not False:
         raise ServerMessageError('Ticket privacy needs repair. Please contact staff.')
     for target, overwrite in channel.overwrites.items():
-        if overwrite.view_channel is True and target != guild.me and target.id != creator_id and not (target in guild.roles and is_staff(target)):
+        if overwrite.view_channel is True and target != guild.me and target.id != creator_id and not (
+                target in guild.roles and (is_staff(target) or staff_access.is_mapped(guild, target))):
             raise ServerMessageError('Ticket privacy needs staff review.')
 
 
@@ -239,7 +246,7 @@ async def open_ticket(guild,member,subject,description,feature='Other', *, ticke
         item=get(ticket_id)
         async with _ticket_locks.setdefault(ticket_id,asyncio.Lock()):
             try:
-                channel=await category.create_text_channel(f'ticket-{ticket_id:04d}',topic=marker(guild.id,ticket_id),overwrites=private(guild,creator=member),reason=f'GamerHQ ticket #{ticket_id:04d}')
+                channel=await category.create_text_channel(f'ticket-{ticket_id:04d}',topic=marker(guild.id,ticket_id),overwrites=private(guild,creator=member,parent=category),reason=f'GamerHQ ticket #{ticket_id:04d}')
                 with db.connect() as conn:
                     conn.execute('UPDATE support_tickets SET channel_id=? WHERE id=?',(channel.id,ticket_id))
                 item=get(ticket_id)
