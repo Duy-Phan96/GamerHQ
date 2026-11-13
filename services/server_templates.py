@@ -175,12 +175,17 @@ def report_details(draft):
         if row['key'] in pending:
             lines.append(f"Unresolved checkpoint: {row['label']} — {row['status']}. Review current inventory before retrying.")
     lines.extend(f"{row['label']} · {row['status']} · {row.get('reason', '')}" for row in draft['boards']['rows'])
-    pin_only = {row['channel'].id: row['channel'].name for row in draft['boards']['rows']
+    pin_only = {row['channel'].id: row['channel'] for row in draft['boards']['rows']
                 if row['status'] == 'AMBIGUOUS' and row.get('reason', '').startswith('Host lacks Pin Messages here.')}
     if pin_only:
         lines.extend(('', 'Permission review — proposed, no changes',
-                      'Review a Host-only Pin Messages allow in these specific channels. Keep existing public access and all other overwrites.'))
-        lines.extend(f'  {name} (ID {channel_id})' for channel_id, name in sorted(pin_only.items()))
+                      'Review a Pin Messages allow for the Host bot member only in these specific channels. '
+                      'Keep public access and all other overwrites. If a channel is synced with its category, '
+                      'a channel-specific edit will stop permission syncing for that channel.'))
+        for channel_id, channel in sorted(pin_only.items()):
+            host = channel.guild.me
+            channel_pin = channel.overwrites_for(host).pin_messages
+            lines.append(f'  {channel.name} (ID {channel_id}) · Host member {host.id} · explicit Pin Messages {channel_pin} → allow')
     lines.extend(f'{name} · Review on a fresh preview once its destination is verified.' for name in draft['deferred'])
     lines.extend(f'{name} · Add missing default entry points after creation and verification.' for name in draft['new_boards'])
     return '\n'.join(lines)
