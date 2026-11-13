@@ -224,7 +224,7 @@ def main():
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': BULK_PERMISSIONS_HOST,
                                                 'baseImage': held['approvedImage']}))
-            localized_pin = install_pin(ACTIVE_LOCALIZED_REUSE_CONTROLLER, ACTIVE_SERVER_TEMPLATES_CONTROLLER,
+            localized_pin = install_pin(ACTIVE_LOCALIZED_REUSE_CONTROLLER,
                 '513741eda5a6e27db2a4e4134487608223a44614a9059c2b33cb561d3e398afb',
                 'ENROLL STAGING LOCALIZED CHANNEL REUSE', '--localized-channel-reuse')
             assert localized_pin['approvedHostCommit'] == LOCALIZED_REUSE_HOST
