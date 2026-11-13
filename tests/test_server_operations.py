@@ -164,6 +164,96 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         apply.assert_not_awaited()
         self.assertIsNone(db.get_setting(templates.progress_key(self.guild, template)))
 
+    async def test_template_staff_create_recovers_after_discord_response_is_lost(self):
+        from cogs.suggestions import staff_member
+        from services import server_templates as templates, staff_access, ticket_service
+        from services.role_service import assignable
+
+        owner = self.owner()
+        self.guild.categories.remove(self.staff)
+        definitions = ops.definitions
+        template = templates.ServerTemplate('test-staff', 'Community', (), staff_access=True)
+        create = self.guild.create_role
+
+        async def lost_response(**kwargs):
+            await create(**kwargs)
+            raise TimeoutError()
+
+        with patch.object(templates, 'TEMPLATES', (template,)), patch.object(
+            ops, 'definitions', lambda guild: [row for row in definitions(guild) if row['name'] in {'staff', 'staff-chat'}]
+        ), patch.object(self.guild, 'create_role', AsyncMock(side_effect=lost_response)) as request:
+            draft = await templates.preview(self.guild, owner, template, self.bot)
+            with self.assertRaises(ServerMessageError):
+                await templates.apply(self.guild, SimpleNamespace(id=43, guild_permissions=discord.Permissions.all()), draft)
+            await templates.apply(self.guild, owner, draft, self.bot)
+            self.assertIsNone(staff_access.mapped_role(self.guild))
+            self.assertIn(staff_access.key(self.guild), templates.progress_record(self.guild, template)['pending_creates'])
+            role = next(role for role in self.guild.roles if role.name == staff_access.ROLE_NAME)
+            member = SimpleNamespace(id=43, guild=self.guild, roles=[role])
+            self.assertFalse(staff_member(member))
+            self.assertFalse(ticket_service.staff(member))
+            recovery = await templates.preview(self.guild, owner, template, self.bot)
+            await templates.apply(self.guild, owner, recovery, self.bot)
+            self.assertIs(staff_access.mapped_role(self.guild), role)
+            self.assertEqual(role.permissions.value, 0)
+            self.assertEqual(role.members, [])
+            self.assertFalse(assignable(role, self.guild))
+            self.assertFalse(staff_member(member))
+            self.assertFalse(ticket_service.staff(member))
+            self.assertFalse(any(ops.alias(category.name) == 'staff' for category in self.guild.categories))
+            private = await templates.preview(self.guild, owner, template, self.bot)
+            await templates.apply(self.guild, owner, private, self.bot)
+            ids = {name: db.get_setting(f'managed_{kind}:1:{name}')
+                   for name, kind in [('staff', 'category'), ('staff-chat', 'channel')]}
+            for channel_id in ids.values():
+                channel = self.guild.get_channel(int(channel_id))
+                self.assertIs(channel.overwrites_for(self.guild.default_role).view_channel, False)
+                self.assertIs(channel.overwrites_for(role).view_channel, True)
+                self.assertIsNone(channel.overwrites_for(self.guild.mod).view_channel)
+                self.assertIsNone(channel.overwrites_for(role).manage_messages)
+            refreshed = await templates.preview(self.guild, owner, template, self.bot)
+            result, _, remaining = await templates.apply(self.guild, owner, refreshed, self.bot)
+            self.assertEqual((result['created'], remaining, request.await_count), ([], 0, 1))
+
+    async def test_template_does_not_link_forged_privileged_duplicate_or_self_assignable_staff(self):
+        from services import server_templates as templates, staff_access
+
+        owner = self.owner()
+        template = templates.ServerTemplate('test-forged-staff', 'Community', (), staff_access=True)
+        role = self.guild.role(7000, manage_roles=True)
+        role.name = staff_access.ROLE_NAME
+        self.guild.roles.append(role)
+        with patch.object(templates, 'TEMPLATES', (template,)), patch.object(ops, 'definitions', return_value=[]):
+            async def action():
+                draft = await templates.preview(self.guild, owner, template, self.bot)
+                self.assertIsNone(staff_access.mapped_role(self.guild))
+                return next(row['bulk_action'] for row in draft['structure']['rows'] if row['kind'] == 'staff-role')
+            self.assertEqual(await action(), 'skip')
+            role.permissions = discord.Permissions.none()
+            self.assertEqual(await action(), 'reuse')
+            db.upsert_managed_role(role_id=role.id, role_kind='base', role_key='english', role_group='Language')
+            self.assertEqual(await action(), 'skip')
+            second = self.guild.role(7001)
+            second.name = staff_access.ROLE_NAME
+            self.guild.roles.append(second)
+            self.assertEqual(await action(), 'skip')
+
+    def test_mapped_staff_is_guild_scoped_and_does_not_add_existing_overwrites(self):
+        from cogs.suggestions import private_overwrites
+        from services import staff_access, ticket_service
+
+        role = self.guild.custom
+        db.set_setting(staff_access.key(self.guild), role.id)
+        self.assertIs(staff_access.mapped_role(self.guild), role)
+        self.assertIsNone(staff_access.mapped_role(SimpleNamespace(id=99, get_role=self.guild.get_role)))
+        self.assertNotIn(role, private_overwrites(self.guild, self.staff))
+        self.assertNotIn(role, ticket_service.private(self.guild, self.staff))
+        self.staff.overwrites[role] = discord.PermissionOverwrite(view_channel=True)
+        self.assertTrue(private_overwrites(self.guild, self.staff)[role].view_channel)
+        role.permissions = discord.Permissions(manage_channels=True)
+        self.assertIsNone(staff_access.mapped_role(self.guild))
+        self.assertEqual(staff_access.creation_roles(self.guild), [])
+
     async def test_bulk_setup_owner_sees_one_confirmation_and_manual_actions(self):
         from cogs.server import OperationsView
         from cogs.server_management import StructureView

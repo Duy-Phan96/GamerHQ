@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 
 from database import db
+from services.staff_access import is_mapped
 from services.onboarding_service import alias, is_staff, unique
 from services.server_service import ServerMessageError, upsert_fixed_message
 
@@ -29,7 +30,8 @@ def private_overwrites(guild, channel=None):
     # every game role (Discord limits the number of channel overwrites).
     for target in set(channel.overwrites if channel else {}) | {r for r in guild.roles if is_staff(r)} | {guild.default_role}:
         overwrite = channel.overwrites_for(target) if channel else discord.PermissionOverwrite()
-        allowed = target in guild.roles and is_staff(target)
+        allowed = target in guild.roles and (is_staff(target) or
+            overwrite.view_channel is True and is_mapped(guild, target))
         overwrite.view_channel = bool(allowed)
         if allowed:
             overwrite.send_messages = overwrite.read_message_history = True
@@ -46,7 +48,8 @@ def inbox(guild):
     if channel.overwrites_for(guild.default_role).view_channel is not False:
         raise ServerMessageError('Staff suggestions privacy needs repair; nothing was sent.')
     for target, overwrite in channel.overwrites.items():
-        if overwrite.view_channel is True and target != guild.me and not (target in guild.roles and is_staff(target)):
+        if overwrite.view_channel is True and target != guild.me and not (
+                target in guild.roles and (is_staff(target) or is_mapped(guild, target))):
             raise ServerMessageError('Staff suggestions has non-staff access; nothing was sent.')
     return channel
 

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import discord
 from database import db
 from services import managed_message_service as managed, message_reconciliation as messages
+from services import staff_access
 from services.server_service import ServerMessageError
 from services.onboarding_service import alias, INTERACTIVE_BOARDS, STATIC_BOARDS
 from services.server_setup_service import SERVER_BLUEPRINT
@@ -22,7 +23,7 @@ from services.operation_context import read_scope, read_once, gather_reads, meas
 log = logging.getLogger(__name__)
 
 SETUP_PHASES = {
-    'bulk': frozenset({'category', 'text', 'voice', 'role', 'bot-role'}),
+    'bulk': frozenset({'category', 'text', 'voice', 'role', 'bot-role', 'staff-role'}),
     'structure': frozenset({'category', 'text', 'voice', 'role', 'bot-role'}),
     'foundations': frozenset({'category', 'role', 'bot-role'}),
     'channels': frozenset({'text', 'voice'}),
@@ -181,6 +182,8 @@ async def public_message_issue(guild, channel, *, publish=False):
 
 
 def eligible(guild, row, resource):
+    if row['kind'] == 'staff-role':
+        return staff_access.valid(resource)
     if row['kind'] in ('role', 'bot-role'):
         from services.role_service import assignable
         return assignable(resource, guild) and (row['kind'] != 'bot-role' or all(m.bot for m in resource.members))
@@ -326,7 +329,8 @@ def message_view(guild, key):
 
 
 @measured('server_scan')
-async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None, verify_placement=False, bulk=False):
+async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None, verify_placement=False,
+               bulk=False, template_staff=False):
     with read_scope():
         channels, roles = list(guild.channels), list(guild.roles)
         structure = affected is None or any(r['kind'] in ('text', 'voice', 'category', 'order', 'message') for r in affected)
@@ -362,23 +366,30 @@ async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None
             roles = await read_once(('roles', guild.id), guild.fetch_roles)
         snapshot = GuildSnapshot(guild, channels, roles)
         with db.read_only():
-            return await _scan(snapshot, bot, message_keys=message_keys, verify_placement=verify_placement, bulk=bulk)
+            return await _scan(snapshot, bot, message_keys=message_keys, verify_placement=verify_placement,
+                               bulk=bulk, template_staff=template_staff)
 
 
-async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placement=False, bulk=False):
+async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placement=False, bulk=False,
+                template_staff=False):
     from services.role_service import normalize_role_name
     from services.structure_adoption_service import channel_mapping
     if protected is None:
         from services.server_configuration_preview import skill_configuration
         protected, _ = skill_configuration(guild)
     rows = definitions(guild)
+    if bulk and template_staff:
+        rows.append(dict(key=staff_access.key(guild), kind='staff-role', name='gamerhq-staff',
+                         label=staff_access.ROLE_NAME, aliases=set(), parent=None))
     for row in rows:
         kind = row['kind']
-        collection = (guild.roles if kind in ('role', 'bot-role') else guild.categories if kind == 'category'
+        collection = (guild.roles if kind in ('role', 'bot-role', 'staff-role') else guild.categories if kind == 'category'
                       else getattr(guild, 'voice_channels', []) if kind == 'voice' else guild.text_channels)
         raw = mapped(row)
         existing = next((r for r in collection if str(r.id) == raw), None)
         candidates = [existing] if existing else [r for r in collection if (normalize_role_name(r.name) if kind == 'role' else alias(r.name)) in row['aliases']]
+        if kind == 'staff-role' and not raw:
+            candidates = [role for role in collection if role.name.strip().casefold() == staff_access.ROLE_NAME.casefold()]
         if kind == 'text' and not existing:
             import config
             fallback_keys = {'welcome': f'onboarding:{guild.id}:welcome', 'newbies': f'onboarding:{guild.id}:newbies',
@@ -478,7 +489,7 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
     if bulk:
         member = (await read_once(('bulk-setup-member', guild.id), lambda: guild.fetch_member(guild.me.id))
                   if guild.me else None)
-        return bulk_plan(guild, rows, member)
+        return bulk_plan(guild, rows, member, template_staff=template_staff)
     warnings = []
     from services.channel_adoption_service import order_plans
     from services.community_structure_service import event_order
@@ -536,12 +547,15 @@ def bulk_policy_issue(policy, permissions):
     return None
 
 
-def verify_bulk_private_policy(guild, row, policy):
+def verify_bulk_private_policy(guild, row, policy, *, existing=False):
     if not row.get('private'):
         return
     from services.onboarding_service import is_staff
     allowed = {principal.id for principal, overwrite in policy.items() if overwrite.view_channel is True}
-    staff = {role.id for role in guild.roles if is_staff(role)}
+    roles = staff_access.creation_roles(guild)
+    if existing:
+        roles += [role for role in guild.roles if is_staff(role)]
+    staff = {role.id for role in roles}
     if not allowed & staff:
         raise BulkPolicyError('No verified Staff role has access under the current policy')
     permitted = staff | {guild.me.id}
@@ -586,6 +600,15 @@ def setup_policy(guild, row, parent=None):
     blank = SimpleNamespace(guild=guild, name=row['label'], id=0, category=parent,
                             overwrites={}, overwrites_for=lambda _: discord.PermissionOverwrite())
     policy = rights(guild, row, blank)
+    if row.get('private') and db.get_setting(staff_access.key(guild)) is not None:
+        from services.onboarding_service import is_staff
+        for principal in tuple(policy):
+            if principal in guild.roles and is_staff(principal):
+                policy.pop(principal)
+        role = staff_access.mapped_role(guild)
+        if role:
+            policy[role] = discord.PermissionOverwrite(view_channel=True, read_message_history=True,
+                send_messages=row['name'] not in {'affiliate-stats', 'ig-purchases', 'ig-buyer-ranking', 'server-log', 'games-log'})
     # Bulk setup creates structure only. Leave message moderation to its
     # existing permission flows and preserve all other policy bits.
     for overwrite in policy.values():
@@ -637,9 +660,9 @@ def feed_creation_evidence(parent, member, policy, effective):
             f'requested overwrites: {", ".join(targets) or "none"}')
 
 
-def bulk_plan(guild, rows, member):
+def bulk_plan(guild, rows, member, *, template_staff=False):
     """Classify the same reconciliation inventory before the owner confirms."""
-    order = {'role': 0, 'bot-role': 0, 'category': 1, 'text': 2, 'voice': 2}
+    order = {'role': 0, 'bot-role': 0, 'staff-role': 0, 'category': 1, 'text': 2, 'voice': 2}
     rows = sorted(rows, key=lambda row: (order[row['kind']], row['key']))
     reviewed = {}
     permissions = discord.Permissions.none()
@@ -655,7 +678,7 @@ def bulk_plan(guild, rows, member):
             row['reason'] = 'Outside bulk setup'
             continue
         kind, status = row['kind'], row['status']
-        role = kind in ('role', 'bot-role')
+        role = kind in ('role', 'bot-role', 'staff-role')
         candidates = row['candidates']
         match = candidates[0] if len(candidates) == 1 else None
         if match and match.id in row['safe']:
@@ -668,7 +691,12 @@ def bulk_plan(guild, rows, member):
                 row['reason'] = 'Resource is shared by competing mappings'
                 continue
             try:
-                if status != 'EXACT_MATCH' and row['name'] not in REUSE_ALIASES:
+                if kind == 'staff-role' and status != 'EXACT_MATCH' and match.name != staff_access.ROLE_NAME:
+                    raise BulkPolicyError('A similarly named role exists. Review it before linking or creating a Staff role.')
+                if kind == 'staff-role' and status != 'EXACT_MATCH':
+                    if messages.runtime_reference_locations(match.id, row['key'], localized_channel_guild=guild.id):
+                        raise BulkPolicyError('This role has another saved use. Review its ownership first.')
+                elif status != 'EXACT_MATCH' and row['name'] not in REUSE_ALIASES:
                     messages.assert_unreferenced(match.id, row['key'])
                 if kind == 'bot-role' and match.permissions.value:
                     raise ServerMessageError('Bot grouping role has existing grants')
@@ -679,12 +707,15 @@ def bulk_plan(guild, rows, member):
                         raise BulkPolicyError('Existing private parent mapping or placement needs review')
                     if match.overwrites_for(guild.default_role).view_channel is not False:
                         raise BulkPolicyError('Existing private resource needs an explicit @everyone view deny')
-                    policy = setup_policy(guild, row, row.get('destination'))
-                    verify_bulk_private_policy(guild, row, policy)
-                    allowed = {principal.id for principal, overwrite in policy.items() if overwrite.view_channel is True}
-                    if any(overwrite.view_channel is True and principal.id not in allowed
-                           for principal, overwrite in match.overwrites.items()):
-                        raise BulkPolicyError('Existing private resource grants access outside the reviewed policy')
+                    if db.get_setting(staff_access.key(guild)) is None:
+                        policy = setup_policy(guild, row, row.get('destination'))
+                        verify_bulk_private_policy(guild, row, policy)
+                        allowed = {principal.id for principal, overwrite in policy.items() if overwrite.view_channel is True}
+                        if any(overwrite.view_channel is True and principal.id not in allowed
+                               for principal, overwrite in match.overwrites.items()):
+                            raise BulkPolicyError('Existing private resource grants access outside the reviewed policy')
+                    else:
+                        verify_bulk_private_policy(guild, row, match.overwrites, existing=True)
             except BulkPolicyError as exc:
                 row['reason'] = str(exc)
                 continue
@@ -699,7 +730,9 @@ def bulk_plan(guild, rows, member):
                 continue
         if status != 'MISSING' or candidates:
             if not row.get('reason'):
-                if status == 'STALE' or row['raw'] and row['resource'] is None:
+                if kind == 'staff-role':
+                    row['reason'] = 'Staff role ID, ownership or zero guild permissions could not be verified.'
+                elif status == 'STALE' or row['raw'] and row['resource'] is None:
                     row['reason'] = 'Saved resource ID could not be verified in the current inventory'
                 elif len(candidates) > 1:
                     row['reason'] = 'Multiple existing candidates need an explicit ownership review'
@@ -728,6 +761,9 @@ def bulk_plan(guild, rows, member):
                               or (row['destination'] and row['destination'].id != parent.get('bulk_id'))):
             row['bulk_blocked'] = True
             row['reason'] = 'Parent category needs review' + (f": {parent['label']}" if parent else '')
+            continue
+        if row.get('private') and template_staff and not staff_access.mapped_role(guild):
+            row['reason'] = 'Confirm the GamerHQ Staff role first, then open a fresh preview for private areas.'
             continue
         destination = guild.get_channel(parent['bulk_id']) if parent and parent.get('bulk_id') else None
         effective = bulk_destination_permissions(guild, destination, member)
@@ -977,20 +1013,21 @@ def needs_repair(guild, row, *, placement=False):
     return False
 
 
-async def preview(guild, actor, mode, bot=None, *, scope=None, message_keys=None):
+async def preview(guild, actor, mode, bot=None, *, scope=None, message_keys=None, template_staff=False):
     managed.require_admin(guild, actor)
     if (mode == 'setup' or scope in ('placement', 'bulk')) and actor.id != guild.owner_id:
         raise ServerMessageError('Only the owner can review these changes.')
     with operation(f'server_{mode}_preview'):
         rows = await scan(guild, bot, fresh=True, message_keys=message_keys if scope in (None, 'messages') else (),
-                          verify_placement=scope == 'placement', bulk=scope == 'bulk')
+                          verify_placement=scope == 'placement', bulk=scope == 'bulk', template_staff=template_staff)
     rows = [r for r in rows if in_phase(r, scope) or r['kind'] == 'warning']
     if mode == 'reconcile' and actor.id != guild.owner_id:
         for row in rows:
             if ((row['kind'] == 'message' or row['name'] in REUSE_ALIASES)
                     and row['status'] == 'AMBIGUOUS' and row['safe']):
                 row.update(safe=[], reason='The owner must review these candidates')
-    return dict(guild_id=guild.id, actor_id=actor.id, mode=mode, scope=scope, created=time.time(), rows=rows)
+    return dict(guild_id=guild.id, actor_id=actor.id, mode=mode, scope=scope, created=time.time(), rows=rows,
+                template_staff=template_staff)
 
 
 def persist(guild, row, resource):
@@ -1109,7 +1146,8 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
         shared = [r for r in planned if mode != 'repair' or r['kind'] != 'message']
         fresh = {r['key']: r for r in await scan(guild, bot, fresh=True, affected=None if bulk else shared,
                  message_keys={r['key'] for r in shared if r['kind'] == 'message'},
-                 verify_placement=scope == 'placement', bulk=bulk)} if shared else {}
+                 verify_placement=scope == 'placement', bulk=bulk,
+                 template_staff=draft.get('template_staff', False))} if shared else {}
         created_resources = {}
         for old in planned:
             row = fresh.get(old['key'])
@@ -1154,7 +1192,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                             raise ServerMessageError('Message changed; reopen reconciliation.')
                         messages.references(selected, key)
                         managed.require_admin(guild, actor)
-                    elif kind in ('role', 'bot-role'):
+                    elif kind in ('role', 'bot-role', 'staff-role'):
                         if any(g.get('role_id') == selected for g in db.get_all_games(active_only=False)):
                             if bulk:
                                 unresolved('needs_review', row, 'belongs to a game')
@@ -1180,6 +1218,9 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                             else:
                                 skipped.append(row['label'] + ': existing channel references changed; scan again')
                             continue
+                    elif kind == 'staff-role':
+                        if messages.runtime_reference_locations(selected, key, localized_channel_guild=guild.id):
+                            raise BulkPolicyError('Staff role references changed. Open a fresh preview.')
                     elif bulk:
                         messages.assert_unreferenced(selected, key)
                     persist(guild, row, resource)
@@ -1188,7 +1229,7 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                     row['raw'] = str(selected)
                 elif mode == 'setup':
                     if not actionable(row): continue
-                    if kind in ('role', 'bot-role'):
+                    if kind in ('role', 'bot-role', 'staff-role'):
                         resource = await create_checked(key, guild.create_role, name=row['label'], permissions=discord.Permissions.none(),
                                                            reason='Confirmed GamerHQ setup',
                                                            **({'hoist': True} if bulk and kind == 'bot-role' else {}))

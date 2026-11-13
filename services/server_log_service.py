@@ -5,6 +5,7 @@ import logging
 import discord
 from database import db
 from services.onboarding_service import is_staff
+from services.staff_access import is_mapped
 
 log = logging.getLogger(__name__)
 
@@ -17,8 +18,9 @@ def overwrites(guild, channel):
     for target in set(result) | {role for role in guild.roles if is_staff(role)}:
         if target == guild.default_role or target == guild.me:
             continue
-        staff = (target in guild.roles and is_staff(target)) or any(is_staff(r) for r in getattr(target, 'roles', []))
         value = result.setdefault(target, discord.PermissionOverwrite())
+        staff = (target in guild.roles and (is_staff(target) or
+                 value.view_channel is True and is_mapped(guild, target))) or any(is_staff(r) for r in getattr(target, 'roles', []))
         value.view_channel = bool(staff)
         value.read_message_history = bool(staff)
         value.send_messages = False
@@ -39,7 +41,8 @@ def channel(guild, *, name='server-log'):
     if value.overwrites_for(guild.default_role).view_channel is not False:
         return None
     for target, rights in value.overwrites.items():
-        staff = target in guild.roles and is_staff(target) or any(is_staff(r) for r in getattr(target, 'roles', []))
+        staff = (target in guild.roles and (is_staff(target) or is_mapped(guild, target))
+                 or any(is_staff(r) for r in getattr(target, 'roles', [])))
         if rights.view_channel is True and target != guild.me and not staff:
             return None
     permissions = value.permissions_for(guild.me)

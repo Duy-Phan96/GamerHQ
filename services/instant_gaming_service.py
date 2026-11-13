@@ -5,6 +5,7 @@ import discord
 from database import db
 from services.operation_context import fetch_message
 from services.onboarding_service import alias, is_staff, unique
+from services.staff_access import is_mapped
 from services.server_service import ServerMessageError, upsert_fixed_message
 
 async def tracked_edit(channel, **kwargs):
@@ -138,6 +139,9 @@ def overwrites(guild, name, existing=None, category=None):
                        and target.bot and str(target.id) != previous_bot
                        and value.view_channel is True and value.send_messages is True)
     allowed.update(role for role in guild.roles if is_staff(role))
+    if name not in PUBLIC:
+        allowed.update(target for target, value in result.items() if target in guild.roles
+                       and value.view_channel is True and is_mapped(guild, target))
     allowed.update(target for target in result if isinstance(target, discord.Member)
                    and any(is_staff(role) for role in target.roles))
     for target in set(result) | allowed | {guild.default_role}:

@@ -10,6 +10,8 @@ Use **Resume Setup** to review live state after an interruption. An unconfirmed 
 
 ## Permanent conventions
 
+The GamerHQ template offers to create or link **GamerHQ Staff** as a server-specific access role with zero guild permissions. Review the role and its current holders before confirming reuse. Once the role is linked, open a fresh template preview to review private areas. The template assigns no members, preserves existing private overwrites, and keeps privileged bot commands under their existing authorization. Affiliate Stats still requires a verified Instant Gaming identity.
+
 [server_setup_service.py](../services/server_setup_service.py) defines SERVER_BLUEPRINT. [server_operations.py](../services/server_operations.py) separates confirmed creation, ID reconciliation and known-resource repair using existing policies and mapping keys. The older combined repair helper remains internal compatibility code; slash commands use the [production operations workflow](PRODUCTION_OPERATIONS.md).
 
 - START HERE: public onboarding, selectors and LFG/guide/support entries.

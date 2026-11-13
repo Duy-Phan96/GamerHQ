@@ -2172,8 +2172,16 @@ class ServerTemplatesView(Menu):
         view.confirm.disabled = not (summary['Will create'] or summary['Will reuse'])
         lines = [f'# {template.name}', 'Preview Setup', ' · '.join(f'{key} {value}' for key, value in summary.items()),
                  'Apply Template confirms the safe actions in this preview. Download the details for every decision.']
-        if any('No verified Staff role' in row.get('reason', '') for row in draft['structure']['rows']):
-            lines.append('Private areas need one owner decision. Identify the intended Staff role or separately approve a dedicated access role.')
+        staff = next((row for row in draft['structure']['rows'] if row['kind'] == 'staff-role'), None)
+        if staff and staff['status'] != 'EXACT_MATCH':
+            if staff['bulk_action'] in ('create', 'reuse'):
+                action = 'create' if staff['bulk_action'] == 'create' else 'link the verified existing role'
+                lines.append(f'Apply Template will {action} **GamerHQ Staff** for private-area access. '
+                             'The template assigns it to nobody. Review private areas in a fresh preview afterward.')
+                if staff['bulk_action'] == 'reuse':
+                    lines.append('Review current role holders before confirming. They can see private areas once those areas grant access.')
+            else:
+                lines.append('GamerHQ Staff needs owner review. Private setup remains blocked. See the download for the reason.')
         if draft['new_boards']:
             lines.append(f"The template will also add default entry points in {len(draft['new_boards'])} new channels after verification.")
         details = [bulk_preview_report(draft['structure'], draft['choices']), 'Managed entry points']
