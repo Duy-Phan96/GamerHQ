@@ -342,6 +342,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('server_templates', 'ENROLL STAGING SERVER TEMPLATES', 'ACTIVE_LOCALIZED_REUSE_CONTROLLER',
          enrollment.LOCALIZED_REUSE_HOST, enrollment.LOCALIZED_REUSE_ARCHIVE,
          enrollment.SERVER_TEMPLATES_HOST, enrollment.SERVER_TEMPLATES_ARCHIVE),
+        ('template_recovery', 'ENROLL STAGING SERVER TEMPLATE RECOVERY', 'ACTIVE_SERVER_TEMPLATES_CONTROLLER',
+         enrollment.SERVER_TEMPLATES_HOST, enrollment.SERVER_TEMPLATES_ARCHIVE,
+         enrollment.TEMPLATE_RECOVERY_HOST, enrollment.TEMPLATE_RECOVERY_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
