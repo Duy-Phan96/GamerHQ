@@ -21,11 +21,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate=bba133625a4edd9bf2d3361ea00316933f6558c1
+          candidate=abdc719f09d097d10b0318a684679947eda61800
           git fetch origin "$candidate"
           archive="$RUNNER_TEMP/server-template-recovery.tar"
           git archive --format=tar --output="$archive" "$candidate"
-          echo "6cb940081bad1393bd3c348deecac7d4a284696960bda87625d390aebd36270b  $archive" | sha256sum --check --strict
+          echo "e8039fe10cc775de18fb802a9624cda2608ecf1c4c4369d582f0557701f7ba5c  $archive" | sha256sum --check --strict
           sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
