@@ -879,7 +879,7 @@ async def inspect_message(guild, key, channel, content, default_content, *, boar
                content=default_content, parent=None, resource=None, safe=[], candidates=[],
                raw=None, status='AMBIGUOUS', signature=[])
     if issue := await public_message_issue(guild, channel):
-        return dict(row, reason=issue)
+        return dict(row, reason=f'Destination or public history access could not be verified. {issue}')
     if content is None or default_content is None:
         return dict(row, reason='Default content unavailable; review the destination configuration')
     try:
