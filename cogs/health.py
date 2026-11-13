@@ -222,6 +222,20 @@ class HealthView(SafeView):
         close = discord.ui.Button(label="Close", row=2)
         close.callback = self.close
         self.add_item(close)
+        if self.actor_id == self.guild.owner_id:
+            copy = discord.ui.Button(label='Copy Report', row=2)
+            copy.callback = self.copy_report
+            self.add_item(copy)
+
+    async def copy_report(self, interaction):
+        if interaction.user.id != self.guild.owner_id or not await self.interaction_check(interaction):
+            return
+        from cogs.report_views import copy_report
+        issues = [f for f in self.findings if f.state not in {'PASS', 'INFO'}]
+        lines = ['GamerHQ Server Health', f'{len(self.findings)} checks · {len(issues)} need attention']
+        lines.extend(f'{f.state}: {f.name} — {f.detail}' for f in issues)
+        lines.append('Next: Open the affected area in Server Check to review available actions.')
+        await copy_report(interaction, '\n'.join(lines))
 
     async def overview(self, interaction):
         if not await self.interaction_check(interaction):
