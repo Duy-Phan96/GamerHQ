@@ -360,6 +360,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('gaming_news', 'ENROLL STAGING GAMING NEWS PERMISSIONS', 'ACTIVE_FEED_PERMISSIONS_CONTROLLER',
          enrollment.FEED_PERMISSIONS_HOST, enrollment.FEED_PERMISSIONS_ARCHIVE,
          enrollment.GAMING_NEWS_HOST, enrollment.GAMING_NEWS_ARCHIVE),
+        ('independent_feeds', 'ENROLL STAGING INDEPENDENT FEEDS', 'ACTIVE_GAMING_NEWS_CONTROLLER',
+         enrollment.GAMING_NEWS_HOST, enrollment.GAMING_NEWS_ARCHIVE,
+         enrollment.INDEPENDENT_FEEDS_HOST, enrollment.INDEPENDENT_FEEDS_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
