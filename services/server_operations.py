@@ -136,20 +136,24 @@ def snapshot_permissions(guild, channel, subject):
     return detached.permissions_for(subject)
 
 
-async def public_message_channel(guild, channel, *, publish=False):
+async def public_message_channel(guild, channel):
+    return await public_message_issue(guild, channel) is None
+
+
+async def public_message_issue(guild, channel, *, publish=False):
     if channel not in guild.text_channels or channel.guild.id != guild.id:
-        return False
+        return 'Destination is not a verified text channel in this server.'
     everyone = guild.get_role(guild.id)
     parent_id = channel.category_id
     parent = guild.get_channel(parent_id) if parent_id is not None else None
     if everyone is None or guild.me is None or getattr(channel, 'nsfw', False):
-        return False
+        return 'The public destination or Host identity could not be verified.'
     if parent_id is not None:
         if not isinstance(parent, discord.CategoryChannel):
-            return False
+            return 'The parent category could not be verified.'
         inherited = parent.overwrites_for(everyone)
         if inherited.view_channel is False or inherited.read_message_history is False:
-            return False
+            return 'The parent category restricts public visibility or message history.'
     overwrite = channel.overwrites_for(everyone)
     access = ('view_channel', 'read_message_history')
     for name in access:
@@ -157,18 +161,23 @@ async def public_message_channel(guild, channel, *, publish=False):
         if public is None:
             public = getattr(everyone.permissions, name)
         if not public:
-            return False
+            return 'The destination restricts public visibility or message history.'
     try:
         bot_member = await read_once(('message-permissions-member', guild.id), lambda: guild.fetch_member(guild.me.id))
     except (discord.HTTPException, TimeoutError):
-        return False
+        return 'Could not verify the Host member in Discord. Refresh the preview later.'
     if bot_member.id != guild.me.id:
-        return False
+        return 'The Host member identity did not match.'
     # Resolve effective permissions against the REST roles and channel overwrites
     # without changing the Discord gateway cache or reimplementing permission rules.
     bot_permissions = snapshot_permissions(guild, channel, bot_member)
-    return all(getattr(bot_permissions, name) for name in access) and (
-        not publish or bot_permissions.send_messages and bot_permissions.pin_messages)
+    required = {'view_channel': 'View Channel', 'read_message_history': 'Read Message History'}
+    if publish:
+        required.update(send_messages='Send Messages', pin_messages='Pin Messages')
+    missing = [label for name, label in required.items() if not getattr(bot_permissions, name)]
+    if missing:
+        return 'Host lacks ' + ' and '.join(missing) + ' here. Review the channel and category permissions.'
+    return None
 
 
 def eligible(guild, row, resource):
@@ -869,8 +878,8 @@ async def inspect_message(guild, key, channel, content, default_content, *, boar
     row = dict(key=key, name=key, label=key, kind='message', channel=channel, guild=guild,
                content=default_content, parent=None, resource=None, safe=[], candidates=[],
                raw=None, status='AMBIGUOUS', signature=[])
-    if not await public_message_channel(guild, channel):
-        return dict(row, reason='Destination or public history access could not be verified')
+    if issue := await public_message_issue(guild, channel):
+        return dict(row, reason=f'Destination or public history access could not be verified. {issue}')
     if content is None or default_content is None:
         return dict(row, reason='Default content unavailable; review the destination configuration')
     try:
@@ -1217,8 +1226,9 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                             defaults = managed.canonical_boards(row['guild'], bot, defaults=True)
                             default_content = defaults.get(key, (None, content))[1]
                             current = await inspect_message(row['guild'], key, destination, content, default_content, boards=boards)
-                            if create_checkpoint and not await public_message_channel(row['guild'], destination, publish=True):
-                                skipped.append(row['label'] + ': Host cannot safely publish and pin in this destination')
+                            issue = await public_message_issue(row['guild'], destination, publish=True) if create_checkpoint else None
+                            if issue:
+                                skipped.append(f"{row['label']}: {issue}")
                                 continue
                         if current['signature'] != row['signature']:
                             skipped.append(row['label'] + ': message evidence changed; scan again')

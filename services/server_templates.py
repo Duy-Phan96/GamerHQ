@@ -1,6 +1,8 @@
 """Customer templates over the existing Host structure and managed-message operations."""
 from dataclasses import dataclass
+from contextlib import contextmanager
 import json
+import logging
 import time
 from types import SimpleNamespace
 
@@ -22,6 +24,22 @@ GAMERHQ = ServerTemplate('gamerhq-gaming-community', 'GamerHQ Gaming Community',
     'community-events', 'suggestions', 'need-support',
 ))
 TEMPLATES = (GAMERHQ,)
+log = logging.getLogger(__name__)
+
+
+class TemplateApplyError(ServerMessageError):
+    pass
+
+
+@contextmanager
+def apply_stage(guild, template, stage):
+    try:
+        yield
+    except Exception as error:
+        reason = operations.bulk_error_reason(error)
+        log.error('Server template guild=%s template=%s stage=%s error=%s reason=%s',
+                  guild.id, template.key, stage, type(error).__name__, reason)
+        raise TemplateApplyError(f'Setup paused while {stage}. {reason}. Open a fresh preview to resume.') from None
 
 
 def progress_key(guild, template):
@@ -80,8 +98,8 @@ async def preview_entry_points(guild, owner, bot, destinations, pending):
             if row['status'] == 'MISSING':
                 if row['key'] in pending:
                     row.update(status='AMBIGUOUS', reason='Earlier publication was not confirmed. Verify the outcome in Advanced Settings.')
-                elif not await operations.public_message_channel(row['guild'], row['channel'], publish=True):
-                    row.update(status='AMBIGUOUS', reason='Host cannot safely publish and pin in this destination.')
+                elif issue := await operations.public_message_issue(row['guild'], row['channel'], publish=True):
+                    row.update(status='AMBIGUOUS', reason=issue)
             if row['status'] == 'EXACT_MATCH' and (not row.get('resource') or row['resource'].id not in row['safe']
                                                    or not row['resource'].pinned):
                 row.update(status='AMBIGUOUS', reason='Existing managed message needs review. Its content and controls are preserved.')
@@ -119,6 +137,16 @@ def counts(draft):
             'Blocked': decisions.count('blocked') + len(draft['deferred'])}
 
 
+def remaining_structure(draft):
+    defaults = {'reuse': 'Verified resource can be linked on a fresh preview.',
+                'create': 'Eligible for creation on a fresh preview.'}
+    for row in draft['structure']['rows']:
+        decision = operations.bulk_decision(row, draft['choices'])
+        if decision not in ('configured', 'skip'):
+            reason = row.get('reason') or defaults.get(decision, 'Review the current resource evidence.')
+            yield f"{row['label']} · {reason}"
+
+
 async def apply(guild, owner, draft, bot=None):
     template = draft['template']
     structure = draft['structure']
@@ -144,17 +172,20 @@ async def apply(guild, owner, draft, bot=None):
                 pending.discard(resource_key)
             save('applying')
 
-        save('applying')
+        with apply_stage(guild, template, 'saving setup progress'):
+            save('applying')
         created = {}
 
         def record_created(row, resource):
             if row['kind'] == 'text' and row['name'] in draft['new_boards']:
                 created[row['name']] = resource.id
 
-        result = await operations.apply(guild, owner, structure, bot, confirmed=True, choices=draft['choices'],
-                                        create_checkpoint=checkpoint, on_created=record_created)
+        with apply_stage(guild, template, 'applying the server structure'):
+            result = await operations.apply(guild, owner, structure, bot, confirmed=True, choices=draft['choices'],
+                                            create_checkpoint=checkpoint, on_created=record_created)
 
-        current = await operations.preview(guild, owner, 'setup', bot, scope='bulk')
+        with apply_stage(guild, template, 'verifying the server structure'):
+            current = await operations.preview(guild, owner, 'setup', bot, scope='bulk')
         linked = reviewed_destinations(current, template, linked_only=True)
         approved_ids = {channel_id for name, channel_id in reviewed_destinations(structure, template).items()
                         if linked.get(name) == channel_id}
@@ -168,20 +199,22 @@ async def apply(guild, owner, draft, bot=None):
                                                        bot, confirmed=True, create_checkpoint=checkpoint)
                 result[bucket].extend(done)
                 result['needs_review'].extend(skipped)
-        await apply_boards(reviewed_boards, 'SAFE_ADOPTION', 'reconcile', 'reused')
-        await apply_boards(reviewed_boards, 'MISSING', 'setup', 'created')
-        created = {name: channel_id for name, channel_id in created.items() if linked.get(name) == channel_id}
-        if created:
-            boards, _ = await preview_entry_points(guild, owner, bot, created, pending)
-            await apply_boards({**boards, 'created': structure['created']}, 'MISSING', 'setup', 'created')
-        refreshed = await preview(guild, owner, template, bot)
-        final = counts(refreshed)
-        remaining = sum(final[key] for key in ('Will reuse', 'Will create', 'Needs review', 'Blocked'))
-        result['remaining'] = [f"{row['label']} · {row['reason']}" for row in refreshed['structure']['rows']
-                               if operations.bulk_decision(row, refreshed['choices']) not in ('configured', 'skip')]
-        result['remaining'].extend(f"{row['label']} · {row['reason']}" for row in refreshed['boards']['rows']
-                                   if row['status'] != 'EXACT_MATCH')
-        result['remaining'].extend(f'{name} · Verify the destination for the managed entry point.'
-                                   for name in refreshed['deferred'])
-        save('remaining' if remaining else 'complete', remaining)
+        with apply_stage(guild, template, 'setting up managed entry points'):
+            await apply_boards(reviewed_boards, 'SAFE_ADOPTION', 'reconcile', 'reused')
+            await apply_boards(reviewed_boards, 'MISSING', 'setup', 'created')
+            created = {name: channel_id for name, channel_id in created.items() if linked.get(name) == channel_id}
+            if created:
+                boards, _ = await preview_entry_points(guild, owner, bot, created, pending)
+                await apply_boards({**boards, 'created': structure['created']}, 'MISSING', 'setup', 'created')
+        with apply_stage(guild, template, 'verifying the result'):
+            refreshed = await preview(guild, owner, template, bot)
+            final = counts(refreshed)
+            remaining = sum(final[key] for key in ('Will reuse', 'Will create', 'Needs review', 'Blocked'))
+            result['remaining'] = list(remaining_structure(refreshed))
+            result['remaining'].extend(f"{row['label']} · {row['reason']}" for row in refreshed['boards']['rows']
+                                       if row['status'] != 'EXACT_MATCH')
+            result['remaining'].extend(f'{name} · Verify the destination for the managed entry point.'
+                                       for name in refreshed['deferred'])
+        with apply_stage(guild, template, 'saving the verified result'):
+            save('remaining' if remaining else 'complete', remaining)
         return result, final, remaining
