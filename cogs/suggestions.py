@@ -30,8 +30,10 @@ def private_overwrites(guild, channel=None):
     # every game role (Discord limits the number of channel overwrites).
     for target in set(channel.overwrites if channel else {}) | {r for r in guild.roles if is_staff(r)} | {guild.default_role}:
         overwrite = channel.overwrites_for(target) if channel else discord.PermissionOverwrite()
-        allowed = target in guild.roles and (is_staff(target) or
-            overwrite.view_channel is True and is_mapped(guild, target))
+        if target in guild.roles and is_mapped(guild, target):
+            result[target] = overwrite
+            continue
+        allowed = target in guild.roles and is_staff(target)
         overwrite.view_channel = bool(allowed)
         if allowed:
             overwrite.send_messages = overwrite.read_message_history = True

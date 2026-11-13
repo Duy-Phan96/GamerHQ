@@ -16,11 +16,10 @@ def overwrites(guild, channel):
               for target, value in channel.overwrites.items()}
     result.setdefault(guild.default_role, discord.PermissionOverwrite()).view_channel = False
     for target in set(result) | {role for role in guild.roles if is_staff(role)}:
-        if target == guild.default_role or target == guild.me:
+        if target == guild.default_role or target == guild.me or target in guild.roles and is_mapped(guild, target):
             continue
         value = result.setdefault(target, discord.PermissionOverwrite())
-        staff = (target in guild.roles and (is_staff(target) or
-                 value.view_channel is True and is_mapped(guild, target))) or any(is_staff(r) for r in getattr(target, 'roles', []))
+        staff = (target in guild.roles and is_staff(target)) or any(is_staff(r) for r in getattr(target, 'roles', []))
         value.view_channel = bool(staff)
         value.read_message_history = bool(staff)
         value.send_messages = False

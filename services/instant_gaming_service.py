@@ -139,13 +139,12 @@ def overwrites(guild, name, existing=None, category=None):
                        and target.bot and str(target.id) != previous_bot
                        and value.view_channel is True and value.send_messages is True)
     allowed.update(role for role in guild.roles if is_staff(role))
-    if name not in PUBLIC:
-        allowed.update(target for target, value in result.items() if target in guild.roles
-                       and value.view_channel is True and is_mapped(guild, target))
     allowed.update(target for target in result if isinstance(target, discord.Member)
                    and any(is_staff(role) for role in target.roles))
     for target in set(result) | allowed | {guild.default_role}:
         value = result.setdefault(target, discord.PermissionOverwrite())
+        if name not in PUBLIC and target in guild.roles and is_mapped(guild, target):
+            continue
         if name == 'gaming-deals' and target not in allowed and target != guild.default_role and str(target.id) != previous_bot:
             continue  # Preserve unrelated channel overrides.
         if target in allowed:
