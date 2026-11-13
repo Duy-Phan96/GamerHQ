@@ -10,6 +10,12 @@ Use **Resume Setup** to review live state after an interruption. An unconfirmed 
 
 ## Permanent conventions
 
+Server Templates create the public Gaming News and Gaming Deals feeds with read-only member access and Host posting. Install or verify publishers separately and use the integration's reviewed connection and repair flow to grant posting. Affiliate Stats is private and retains its verified Instant Gaming prerequisite. Default feed boards use their existing managed-message identities. Review channel-specific Host Pin Messages permissions in the template Full Report.
+
+The same blueprint applies to Production and Staging, with guild-specific mappings and credentials. Event Testing and Event Voice are outside the template. Where a deployment still binds Event Manager to either category, inventory the Skill's resources and review a rebind before considering cleanup.
+
+Future Gaming, Streamer, and Music templates can share the same setup engine and use versioned definitions with separate guild bindings. A future website editor can author those definitions through the same preview and confirmation flow.
+
 The GamerHQ template offers to create or link **GamerHQ Staff** as a server-specific access role with zero guild permissions. Review the role and its current holders before confirming reuse. Once the role is linked, open a fresh template preview to review private areas. The template assigns no members, preserves existing private overwrites, and keeps privileged bot commands under their existing authorization. Affiliate Stats still requires a verified Instant Gaming identity.
 
 [server_setup_service.py](../services/server_setup_service.py) defines SERVER_BLUEPRINT. [server_operations.py](../services/server_operations.py) separates confirmed creation, ID reconciliation and known-resource repair using existing policies and mapping keys. The older combined repair helper remains internal compatibility code; slash commands use the [production operations workflow](PRODUCTION_OPERATIONS.md).

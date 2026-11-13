@@ -116,7 +116,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             result, _, remaining = await templates.apply(self.guild, actor, draft, self.bot)
             self.assertEqual(remaining, 1)
             self.assertIn('HTTP 403, code 50013', result['failed'][0])
-            self.assertTrue(any('gaming-news' in line and 'explicit overwrites' in line for line in result['remaining']))
+            self.assertTrue(any('gaming-news' in line and 'Host posting only' in line for line in result['remaining']))
             self.assertEqual(templates.progress_record(self.guild, template)['pending_creates'], [])
             self.assertIsNone(db.get_setting('managed_channel:1:gaming-news'))
 
@@ -628,13 +628,12 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             category_permissions.view_channel = True
             ready = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             report = ops.bulk_preview_report(ready, {})
-            self.assertIn('Only a Discord administrator can set a Manage Roles overwrite', report)
-            self.assertIn('role 15 at position 15', report)
+            self.assertNotIn('role 15 at position 15', report)
+            self.assertEqual(sum(row['bulk_action'] == 'create' for row in ready['rows']), 2)
             with self.assertLogs(ops.log, level='WARNING') as logs:
                 result = await ops.apply(self.guild, actor, ready, self.bot, confirmed=True)
 
-            create.assert_awaited_once()
-            self.assertEqual(ops.alias(create.await_args.args[0]), 'gaming-news')
+            self.assertEqual({ops.alias(call.args[0]) for call in create.await_args_list}, {'gaming-news', 'gaming-deals'})
             self.assertIn(f'Destination ID {marketplace.id}', result['failed'][0])
             self.assertIn('Host role 20 at position 20', result['failed'][0])
             self.assertIn('HTTP 403, code 50013', result['failed'][0])
@@ -644,29 +643,52 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('requested overwrites', str(logs.output))
             self.assertIsNone(db.get_setting('managed_channel:1:gaming-news'))
 
-    def test_feed_create_only_omits_verified_redundant_manage_roles_member_deny(self):
-        self.owner()
-        publisher = self.guild.me
-        publisher.bot = True
-        publisher.guild = self.guild
-        publisher._roles = [self.guild.custom.id]
-        member_acl = discord.PermissionOverwrite(manage_roles=False, send_messages=True)
-        role_acl = discord.PermissionOverwrite(manage_roles=False)
-        policy = {publisher: member_acl, self.guild.custom: role_acl}
-        ops.omit_redundant_feed_denies(self.guild, policy, {})
-        self.assertIs(member_acl.manage_roles, False)
-        self.guild.custom.permissions.manage_roles = True
-        ops.omit_redundant_feed_denies(self.guild, policy, {publisher.id: publisher})
-        self.assertIs(member_acl.manage_roles, False)
-        self.guild.custom.permissions.manage_roles = False
-        publisher._roles.append(987654)
-        ops.omit_redundant_feed_denies(self.guild, policy, {publisher.id: publisher})
-        self.assertIs(member_acl.manage_roles, False)
-        publisher._roles.pop()
-        ops.omit_redundant_feed_denies(self.guild, policy, {publisher.id: publisher})
-        self.assertIsNone(member_acl.manage_roles)
-        self.assertTrue(member_acl.send_messages)
-        self.assertIs(role_acl.manage_roles, False)
+    async def test_empty_marketplace_and_feeds_ignore_publisher_policy(self):
+        from services import instant_gaming_service as integration
+
+        actor = self.owner()
+        self.guild.me.guild_permissions.administrator = False
+        names = {'partners-benefits', 'gaming-news', 'gaming-deals'}
+        original = ops.definitions
+        with (patch.object(ops, 'definitions', lambda guild: [r for r in original(guild)
+                                                            if r['name'] in names and r['kind'] in ('category', 'text')]),
+              patch.object(integration, 'configured_bot', side_effect=AssertionError('publisher lookup during setup'))):
+            draft = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            self.assertEqual({r['name'] for r in draft['rows'] if r['bulk_action'] == 'create'}, names)
+            for row in draft['rows']:
+                if row['bulk_action'] != 'create':
+                    continue
+                policy = row['create_overwrites']
+                self.assertEqual(set(policy), {self.guild.default_role, self.guild.me})
+                self.assertTrue(policy[self.guild.me].send_messages)
+                self.assertTrue(policy[self.guild.me].read_message_history)
+                self.assertTrue(all(getattr(policy[self.guild.default_role], flag) is False for flag in ops.FEED_POSTING))
+                self.assertTrue(all(value.manage_roles is None and value.manage_channels is None for value in policy.values()))
+            await ops.apply(self.guild, actor, draft, self.bot, confirmed=True)
+            before = {name: db.get_setting(f'managed_channel:1:{name}') for name in ops.PUBLIC_FEEDS}
+            self.assertTrue(all(before.values()))
+            fresh = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            result = await ops.apply(self.guild, actor, fresh, self.bot, confirmed=True)
+            self.assertFalse(result['created'])
+        publisher = self.guild.role(7520)
+        with patch.object(integration, 'configured_bot', return_value=publisher):
+            for name, channel_id in before.items():
+                channel = integration.resolve(self.guild, name, mapped_only=True)
+                self.assertEqual(channel.id, int(channel_id))
+                acl = integration.overwrites(self.guild, name, channel.overwrites, channel.category)
+                self.assertTrue(acl[publisher].send_messages)
+                self.assertNotIn(publisher, channel.overwrites)
+
+    def test_template_uses_existing_feed_board_keys_and_counts_affiliate_separately(self):
+        from services import instant_gaming_service as integration, server_templates as templates
+
+        keys = templates.entry_message_keys(self.guild, {'gaming-news': 4210, 'gaming-deals': 4211})
+        self.assertEqual(keys, {integration.message_key(self.guild, name): name for name in ops.PUBLIC_FEEDS})
+        draft = {'structure': {'rows': [{'name': 'affiliate-stats', 'bulk_action': 'skip'},
+                                       {'name': 'ig-purchases', 'bulk_action': 'skip', 'bulk_blocked': True}]},
+                 'choices': {}, 'boards': {'rows': []}, 'deferred': []}
+        counts = templates.counts(draft)
+        self.assertEqual((counts['Needs review'], counts['Blocked'], counts['Optional integration review']), (0, 0, 2))
 
     async def test_gaming_news_inherits_only_an_identical_read_only_policy(self):
         actor = self.owner()
