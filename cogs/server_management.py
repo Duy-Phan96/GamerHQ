@@ -2202,22 +2202,28 @@ class TemplatePreviewView(Menu):
         if self.finished:
             return await interaction.response.send_message('This preview has already been used.', ephemeral=True)
         self.finished = True
-        await interaction.response.defer(ephemeral=True)
-        await interaction.edit_original_response(content='Applying the reviewed template and checking the result…', view=None, attachments=[])
+        stage = 'opening the setup confirmation'
         try:
+            await interaction.response.defer(ephemeral=True)
+            await interaction.edit_original_response(content='Applying the reviewed template and checking the result…', view=None, attachments=[])
+            stage = 'applying the reviewed template'
             result, final, remaining = await templates.apply(self.guild, interaction.user, self.draft, interaction.client)
-        except (ServerMessageError, discord.HTTPException, TimeoutError, ValueError):
+            stage = 'showing the verified results'
+            view = ServerTemplatesView(self.guild, self.admin_id)
+            title = 'Setup Complete' if not remaining else 'Setup Progress'
+            details = '\n\n'.join(label.replace('_', ' ').title() + '\n' + '\n'.join(items)
+                                  for label, items in result.items() if items)
             return await interaction.edit_original_response(
-                content='Setup paused. Review the latest state to resume.', view=ServerTemplatesView(self.guild, self.admin_id))
-        view = ServerTemplatesView(self.guild, self.admin_id)
-        title = 'Setup Complete' if not remaining else 'Setup Progress'
-        details = '\n\n'.join(label.replace('_', ' ').title() + '\n' + '\n'.join(items)
-                              for label, items in result.items() if items)
-        await interaction.edit_original_response(
-            content=f"# {title}\nReused {len(result['reused'])} · Created {len(result['created'])} · Updated 0 · "
-                    f"Blocked {final['Blocked']} · Remaining {remaining}", view=view,
-            attachments=[discord.File(BytesIO((details or 'No changes needed.').encode()), filename='template-results.txt')],
-            allowed_mentions=discord.AllowedMentions.none())
+                content=f"# {title}\nReused {len(result['reused'])} · Created {len(result['created'])} · Updated 0 · "
+                        f"Blocked {final['Blocked']} · Remaining {remaining}", view=view,
+                attachments=[discord.File(BytesIO((details or 'No changes needed.').encode()), filename='template-results.txt')],
+                allowed_mentions=discord.AllowedMentions.none())
+        except (ServerMessageError, discord.HTTPException, TimeoutError) as error:
+            text = (str(error) if isinstance(error, ServerMessageError)
+                    else f'Setup stopped while {stage}. Open `/server setup` for a fresh preview.')
+            if interaction.response.is_done():
+                return await interaction.followup.send(text, ephemeral=True)
+            return await interaction.response.send_message(text, ephemeral=True)
 
     @discord.ui.button(label='Cancel')
     async def cancel(self, interaction, button):
