@@ -102,8 +102,8 @@ def main():
             from tools.extend_staging_host_promotion import (ACTIVE_CONFIGURATION_CONTROLLER,
                 ACTIVE_MANAGED_MESSAGES_CONTROLLER, ACTIVE_STRUCTURE_CONTROLLER,
                 ACTIVE_BULK_STRUCTURE_CONTROLLER, ACTIVE_BULK_RECOVERY_CONTROLLER,
-                ACTIVE_BULK_PREVIEW_CONTROLLER, ACTIVE_BULK_PERMISSIONS_CONTROLLER, ACTIVE_LOCALIZED_REUSE_CONTROLLER,
-                BULK_PERMISSIONS_HOST, BULK_PREVIEW_HOST, LOCALIZED_REUSE_HOST, SERVER_TEMPLATES_HOST,
+                ACTIVE_BULK_PREVIEW_CONTROLLER, ACTIVE_BULK_PERMISSIONS_CONTROLLER, ACTIVE_LOCALIZED_REUSE_CONTROLLER, ACTIVE_SERVER_TEMPLATES_CONTROLLER,
+                BULK_PERMISSIONS_HOST, BULK_PREVIEW_HOST, LOCALIZED_REUSE_HOST, SERVER_TEMPLATES_HOST, TEMPLATE_RECOVERY_HOST,
                 BULK_RECOVERY_HOST, BULK_STRUCTURE_HOST,
                 CATALOG_CONTROLLER, CONFIGURATION_HOST,
                 FAILED_CONFIGURATION_CONTROLLER, HOST, MANAGED_MESSAGES_HOST, OLD, STRUCTURE_HOST, WEB_BASE, extension)
@@ -224,19 +224,26 @@ def main():
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': BULK_PERMISSIONS_HOST,
                                                 'baseImage': held['approvedImage']}))
-            localized_pin = install_pin(ACTIVE_LOCALIZED_REUSE_CONTROLLER,
+            localized_pin = install_pin(ACTIVE_LOCALIZED_REUSE_CONTROLLER, ACTIVE_SERVER_TEMPLATES_CONTROLLER,
                 '513741eda5a6e27db2a4e4134487608223a44614a9059c2b33cb561d3e398afb',
                 'ENROLL STAGING LOCALIZED CHANNEL REUSE', '--localized-channel-reuse')
             assert localized_pin['approvedHostCommit'] == LOCALIZED_REUSE_HOST
             installed_policy = json.loads(policy_path.read_bytes())
             profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': LOCALIZED_REUSE_HOST,
                                                 'baseImage': held['approvedImage']}))
+            templates_pin = install_pin(ACTIVE_SERVER_TEMPLATES_CONTROLLER,
+                '0017abab21a12c59f35e151fb1c699cc974851cc241edc5b732a97a22b4fbaee',
+                'ENROLL STAGING SERVER TEMPLATES', '--server-templates')
+            assert templates_pin['approvedHostCommit'] == SERVER_TEMPLATES_HOST
+            installed_policy = json.loads(policy_path.read_bytes())
+            profile_path.write_text(json.dumps({**profile, 'applicationHostCommit': SERVER_TEMPLATES_HOST,
+                                                'baseImage': held['approvedImage']}))
             state_path.write_text(json.dumps(held))
-            approval = 'ENROLL STAGING SERVER TEMPLATES'
+            approval = 'ENROLL STAGING SERVER TEMPLATE RECOVERY'
             old_entry = (root / 'automation-controller/entry.py').read_bytes()
             held_state = state_path.read_bytes()
             try:
-                extension(args.commit, approval, server_templates=True)
+                extension(args.commit, approval, template_recovery=True)
             except ValueError as error:
                 assert str(error) == 'REVIEWED_RECOVERY_REQUIRED'
             else:
@@ -250,14 +257,14 @@ def main():
             staged_profile = profile_path.read_bytes()
             for _ in range(2):
                 previous = os.umask(0o077)
-                try: result = extension(args.commit, approval, server_templates=True)
+                try: result = extension(args.commit, approval, template_recovery=True)
                 finally: os.umask(previous)
-                assert result['approvedHostCommit'] == SERVER_TEMPLATES_HOST
-                assert result['previousHostCommit'] == LOCALIZED_REUSE_HOST
+                assert result['approvedHostCommit'] == TEMPLATE_RECOVERY_HOST
+                assert result['previousHostCommit'] == SERVER_TEMPLATES_HOST
                 assert result['state'] == 'PIN_INSTALLED' and result['hostPromotionRequiresProtectedOwnerReview']
             assert profile_path.read_bytes() == staged_profile and state_path.read_bytes() == live_state
             enrolled = json.loads(call('status').stdout)
-            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == SERVER_TEMPLATES_HOST
+            assert enrolled['controllerCommit'] == args.commit and enrolled['hostPromotionCommit'] == TEMPLATE_RECOVERY_HOST
             assert enrolled['recoveryRequired'] is False
             new_policy = json.loads(policy_path.read_bytes())
             assert new_policy == {**installed_policy, 'controllerCommit': args.commit,
@@ -292,7 +299,7 @@ try:
 finally:run(['docker','rm','--force','gamerhq-staging-bot'],False)
 print('NORMALIZED_STAGING_LIMITS_PASS')
 '''
-    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', SERVER_TEMPLATES_HOST)
+    child = child.replace('REVIEWED_EXTENSION', args.commit).replace('REVIEWED_HOST', TEMPLATE_RECOVERY_HOST)
     launch = ['runuser', '-u', account.pw_name, '--', 'env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME='+account.pw_dir,
         'XDG_RUNTIME_DIR=/run/user/'+str(account.pw_uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(account.pw_uid)+'/bus',
         'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet', str(root/'deployment-worker/.venv/bin/python'), '-I', '-B', '-']
