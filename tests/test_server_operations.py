@@ -97,6 +97,73 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             await templates.apply(self.guild, actor, resumed, self.bot)
             self.assertEqual(request.await_count, 2)
 
+    async def test_template_reports_unapplied_safe_create_without_a_reason_field(self):
+        from services import server_templates as templates
+
+        actor = self.owner()
+        template = templates.ServerTemplate('test-feed', 'Community', ())
+        definitions = ops.definitions
+        marketplace = self.guild.add_category('MARKETPLACE')
+        db.set_setting('managed_category:1:partners-benefits', marketplace.id)
+        with patch.object(templates, 'TEMPLATES', (template,)), patch.object(
+            ops, 'definitions', lambda guild: [row for row in definitions(guild)
+                                               if row['name'] in {'partners-benefits', 'gaming-news'}]
+        ), patch.object(marketplace, 'create_text_channel', AsyncMock(
+            side_effect=discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), {'code': 50013}))):
+            draft = await templates.preview(self.guild, actor, template, self.bot)
+            news = next(row for row in draft['structure']['rows'] if row['name'] == 'gaming-news')
+            self.assertEqual(news['bulk_action'], 'create')
+            result, _, remaining = await templates.apply(self.guild, actor, draft, self.bot)
+            self.assertEqual(remaining, 1)
+            self.assertIn('HTTP 403, code 50013', result['failed'][0])
+            self.assertTrue(any('gaming-news' in line and 'Eligible for creation' in line for line in result['remaining']))
+            self.assertEqual(templates.progress_record(self.guild, template)['pending_creates'], [])
+            self.assertIsNone(db.get_setting('managed_channel:1:gaming-news'))
+
+    async def test_template_reports_post_apply_verification_failure_and_can_resume(self):
+        from services import server_templates as templates
+
+        actor = self.owner()
+        template = templates.ServerTemplate('test-resume', 'Community', ())
+        definitions = ops.definitions
+        with patch.object(templates, 'TEMPLATES', (template,)), patch.object(
+            ops, 'definitions', lambda guild: [row for row in definitions(guild) if row['name'] == 'events']
+        ):
+            draft = await templates.preview(self.guild, actor, template, self.bot)
+            with patch.object(templates, 'preview', AsyncMock(side_effect=TimeoutError('private exception detail'))):
+                with self.assertLogs(templates.log, level='ERROR') as logs:
+                    with self.assertRaisesRegex(templates.TemplateApplyError, 'verifying the result'):
+                        await templates.apply(self.guild, actor, draft, self.bot)
+            self.assertNotIn('private exception detail', '\n'.join(logs.output))
+            saved = db.get_setting('managed_category:1:events')
+            self.assertIsNotNone(saved)
+            self.assertEqual(templates.progress(self.guild, template), 'applying')
+            refreshed = await templates.preview(self.guild, actor, template, self.bot)
+            result, _, remaining = await templates.apply(self.guild, actor, refreshed, self.bot)
+            self.assertEqual((result['created'], remaining), ([], 0))
+            self.assertEqual(db.get_setting('managed_category:1:events'), saved)
+
+    async def test_template_publish_reports_the_effective_missing_channel_permissions(self):
+        self.owner()
+        permissions = discord.Permissions.all()
+        permissions.administrator = permissions.send_messages = permissions.pin_messages = False
+        with patch.object(ops, 'snapshot_permissions', return_value=permissions):
+            self.assertTrue(await ops.public_message_channel(self.guild, self.old))
+            reason = await ops.public_message_issue(self.guild, self.old, publish=True)
+        self.assertIn('Send Messages and Pin Messages', reason)
+
+    async def test_expired_template_does_not_open_a_checkpoint_or_apply(self):
+        from services import server_templates as templates
+
+        actor = self.owner()
+        template = templates.GAMERHQ
+        draft = {'template': template, 'structure': {'actor_id': actor.id, 'guild_id': self.guild.id, 'created': 0}}
+        with patch.object(ops, 'apply', AsyncMock()) as apply:
+            with self.assertRaisesRegex(ServerMessageError, 'fresh template preview'):
+                await templates.apply(self.guild, actor, draft, self.bot)
+        apply.assert_not_awaited()
+        self.assertIsNone(db.get_setting(templates.progress_key(self.guild, template)))
+
     async def test_bulk_setup_owner_sees_one_confirmation_and_manual_actions(self):
         from cogs.server import OperationsView
         from cogs.server_management import StructureView
