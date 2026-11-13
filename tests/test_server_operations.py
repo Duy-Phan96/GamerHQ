@@ -638,9 +638,35 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'Destination ID {marketplace.id}', result['failed'][0])
             self.assertIn('Host role 20 at position 20', result['failed'][0])
             self.assertIn('HTTP 403, code 50013', result['failed'][0])
+            self.assertIn('Parent overwrites:', result['failed'][0])
+            self.assertIn('does not identify a rejected overwrite', result['failed'][0])
             self.assertNotIn('private API detail', str(result) + str(logs.output))
             self.assertNotIn('requested overwrites', str(logs.output))
             self.assertIsNone(db.get_setting('managed_channel:1:gaming-news'))
+
+    def test_feed_create_only_omits_verified_redundant_manage_roles_member_deny(self):
+        self.owner()
+        publisher = self.guild.me
+        publisher.bot = True
+        publisher.guild = self.guild
+        publisher._roles = [self.guild.custom.id]
+        member_acl = discord.PermissionOverwrite(manage_roles=False, send_messages=True)
+        role_acl = discord.PermissionOverwrite(manage_roles=False)
+        policy = {publisher: member_acl, self.guild.custom: role_acl}
+        ops.omit_redundant_feed_denies(self.guild, policy, {})
+        self.assertIs(member_acl.manage_roles, False)
+        self.guild.custom.permissions.manage_roles = True
+        ops.omit_redundant_feed_denies(self.guild, policy, {publisher.id: publisher})
+        self.assertIs(member_acl.manage_roles, False)
+        self.guild.custom.permissions.manage_roles = False
+        publisher._roles.append(987654)
+        ops.omit_redundant_feed_denies(self.guild, policy, {publisher.id: publisher})
+        self.assertIs(member_acl.manage_roles, False)
+        publisher._roles.pop()
+        ops.omit_redundant_feed_denies(self.guild, policy, {publisher.id: publisher})
+        self.assertIsNone(member_acl.manage_roles)
+        self.assertTrue(member_acl.send_messages)
+        self.assertIs(role_acl.manage_roles, False)
 
     async def test_bulk_setup_does_not_create_duplicate_after_mapping_write_failure(self):
         actor = self.owner()
