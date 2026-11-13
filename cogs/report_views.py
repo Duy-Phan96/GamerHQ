@@ -1,7 +1,39 @@
 """Copyable, private Discord reports with an optional full text export."""
 from io import BytesIO
+import logging
 
 import discord
+
+log = logging.getLogger(__name__)
+REPORT_ACTIONS = {'gamerhq:report:copy': 'Copy Report', 'gamerhq:report:full': 'Full Report',
+                  'gamerhq:report:previous': 'Previous Report Page', 'gamerhq:report:next': 'Next Report Page'}
+
+
+async def report_error(interaction, error, action):
+    code = error.code if isinstance(error, discord.HTTPException) else None
+    acknowledged = interaction.response.is_done()
+    log.warning('Discord report action=%s interaction=%s guild=%s acknowledged=%s error=%s code=%s',
+                action, getattr(interaction, 'id', None), getattr(interaction, 'guild_id', None),
+                acknowledged, type(error).__name__, code)
+    if acknowledged or code in (10062, 40060) or isinstance(error, (discord.InteractionResponded, TimeoutError, OSError)):
+        return
+    try:
+        await interaction.response.send_message(
+            f'{action} could not finish. Reopen the panel and try again. This report action is read-only.',
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+    except (discord.HTTPException, discord.InteractionResponded, TimeoutError, OSError):
+        return
+
+
+class ReportErrors:
+    """Handle report callbacks separately from the parent's setup actions."""
+
+    async def on_error(self, interaction, error, item):
+        action = REPORT_ACTIONS.get(getattr(item, 'custom_id', None))
+        if action:
+            await report_error(interaction, error, action)
+        else:
+            await super().on_error(interaction, error, item)
 
 
 def pages(text, limit=1850):
@@ -27,7 +59,7 @@ async def full_report(interaction, text, filename):
                                             file=discord.File(BytesIO(text.encode('utf-8')), filename=filename))
 
 
-class ReportPages(discord.ui.View):
+class ReportPages(ReportErrors, discord.ui.View):
     def __init__(self, interaction, chunks):
         super().__init__(timeout=240)
         self.guild_id = interaction.guild.id
@@ -44,16 +76,23 @@ class ReportPages(discord.ui.View):
         return allowed
 
     async def turn(self, interaction, offset):
-        self.index = max(0, min(self.index + offset, len(self.chunks) - 1))
+        previous = self.index
+        self.index = max(0, min(previous + offset, len(self.chunks) - 1))
         self.previous.disabled = self.index == 0
         self.next.disabled = self.index == len(self.chunks) - 1
-        await interaction.response.edit_message(content=f'```text\n{self.chunks[self.index]}\n```', view=self,
-                                                allowed_mentions=discord.AllowedMentions.none())
+        try:
+            await interaction.response.edit_message(content=f'```text\n{self.chunks[self.index]}\n```', view=self,
+                                                    allowed_mentions=discord.AllowedMentions.none())
+        except Exception:
+            self.index = previous
+            self.previous.disabled = previous == 0
+            self.next.disabled = previous == len(self.chunks) - 1
+            raise
 
-    @discord.ui.button(label='Previous Page')
+    @discord.ui.button(label='Previous Page', custom_id='gamerhq:report:previous')
     async def previous(self, interaction, button):
         await self.turn(interaction, -1)
 
-    @discord.ui.button(label='Next Page')
+    @discord.ui.button(label='Next Page', custom_id='gamerhq:report:next')
     async def next(self, interaction, button):
         await self.turn(interaction, 1)
