@@ -129,6 +129,30 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)
 
+    async def test_copy_report_is_private_and_paginated_without_losing_text(self):
+        from cogs.report_views import copy_report, pages
+
+        owner = self.actor()
+        interaction = self.interaction(owner)
+        interaction.guild_id = self.guild.id
+        report = 'Header\n' + '😀' * 2100 + '\nNext: review the setup.'
+        chunks = list(pages(report))
+        self.assertEqual(''.join(chunks), report)
+        self.assertTrue(all(len(chunk.encode('utf-16-le')) // 2 <= 1850 for chunk in chunks))
+        self.assertNotIn('```', ''.join(pages('Role ``` @everyone')))
+        await copy_report(interaction, report)
+        payload = interaction.response.send_message.call_args.kwargs
+        self.assertTrue(payload['ephemeral'])
+        self.assertFalse(payload['allowed_mentions'].everyone)
+        view = payload['view']
+        self.assertTrue(await view.interaction_check(interaction))
+        await view.turn(interaction, len(chunks))
+        self.assertIn('Next: review the setup.', interaction.response.edit_message.call_args.kwargs['content'])
+        stranger = self.interaction(self.actor(43, True))
+        stranger.guild_id = self.guild.id
+        self.assertFalse(await view.interaction_check(stranger))
+        self.assertEqual(stranger.response.send_message.call_args.args, ('This report is private.',))
+
     def test_member_onboarding_is_in_main_admin_flow_and_explains_current_limits(self):
         from cogs.server_management import (
             ManagementView,

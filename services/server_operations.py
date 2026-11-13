@@ -830,10 +830,10 @@ def bulk_preview_report(draft, choices):
         ' · '.join(f'{label}: {decisions.count(key)}' for key, label in BULK_DECISIONS.items()),
     ]
     if rows and any(row.get('private') for row in rows):
-        from services.onboarding_service import is_staff
+        from services.staff_access import creation_roles
         guild = rows[0]['bulk_guild']
         roles = [role for role in guild.roles if not role.is_default() and not role.managed]
-        staff = [role for role in roles if is_staff(role)]
+        staff = creation_roles(guild)
         lines.append('Staff roles verified by the current policy: ' + (', '.join(
             f'{single_line(role.name)} (ID {role.id})' for role in sorted(staff, key=lambda role: role.id)) or 'none'))
         for role in sorted(roles, key=lambda role: role.id):
@@ -851,6 +851,12 @@ def bulk_preview_report(draft, choices):
             lines.append(f"   Saved ID: {mapped_id if mapped_id.isdecimal() else 'invalid saved value'}")
         if row.get('bulk_id') and decision in ('reuse', 'configured'):
             lines.append(f"   Verified resource ID: {row['bulk_id']}")
+        if row['kind'] == 'staff-role' and row.get('bulk_id') and decision in ('reuse', 'configured'):
+            role = guild.get_role(row['bulk_id']) if (guild := row.get('bulk_guild')) else None
+            if role is not None:
+                lines.append(f'   Guild-wide permissions: {role.permissions.value}')
+                lines.append('   Role holders: ' + (str(len(role.members)) if getattr(guild, 'chunked', False)
+                                                    else 'not verified by the cached member inventory'))
         if row.get('parent'):
             parent = by_key.get(row['parent'])
             if parent:

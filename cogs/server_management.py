@@ -2159,9 +2159,7 @@ class ServerTemplatesView(Menu):
         await interaction.response.edit_message(content='# Advanced Server Structure', view=StructureView(self.guild, self.admin_id))
 
     async def preview(self, interaction, template):
-        from io import BytesIO
         from services import server_templates as templates
-        from services.server_operations import bulk_preview_report
         await interaction.response.defer(ephemeral=True)
         try:
             draft = await templates.preview(self.guild, interaction.user, template, interaction.client)
@@ -2171,7 +2169,7 @@ class ServerTemplatesView(Menu):
         summary = templates.counts(draft)
         view.confirm.disabled = not (summary['Will create'] or summary['Will reuse'])
         lines = [f'# {template.name}', 'Preview Setup', ' · '.join(f'{key} {value}' for key, value in summary.items()),
-                 'Apply Template confirms the safe actions in this preview. Download the details for every decision.']
+                 'Apply Template confirms the safe actions in this preview. Full Report lists every decision.']
         staff = next((row for row in draft['structure']['rows'] if row['kind'] == 'staff-role'), None)
         if staff and staff['status'] != 'EXACT_MATCH':
             if staff['bulk_action'] in ('create', 'reuse'):
@@ -2181,17 +2179,11 @@ class ServerTemplatesView(Menu):
                 if staff['bulk_action'] == 'reuse':
                     lines.append('Review current role holders before confirming. They can see private areas once those areas grant access.')
             else:
-                lines.append('GamerHQ Staff needs owner review. Private setup remains blocked. See the download for the reason.')
+                lines.append('GamerHQ Staff needs owner review. Private setup remains blocked. See Full Report for the reason.')
         if draft['new_boards']:
             lines.append(f"The template will also add default entry points in {len(draft['new_boards'])} new channels after verification.")
-        details = [bulk_preview_report(draft['structure'], draft['choices']), 'Managed entry points']
-        details.extend(f"{row['label']} · {row['status']} · {row.get('reason', '')}" for row in draft['boards']['rows'])
-        details.extend(f'{name} · Review on a fresh preview once its destination is verified.' for name in draft['deferred'])
-        details.extend(f'{name} · Add missing default entry points after this application creates and verifies the channel.'
-                       for name in draft['new_boards'])
-        await interaction.edit_original_response(content='\n'.join(lines), view=view,
-            attachments=[discord.File(BytesIO('\n'.join(details).encode()), filename='template-preview.txt')],
-            allowed_mentions=discord.AllowedMentions.none())
+        await interaction.edit_original_response(content='\n'.join(lines), view=view, attachments=[],
+                                                 allowed_mentions=discord.AllowedMentions.none())
 
 
 class TemplatePreviewView(Menu):
@@ -2203,9 +2195,20 @@ class TemplatePreviewView(Menu):
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
 
+    @discord.ui.button(label='Copy Report')
+    async def copy(self, interaction, button):
+        from cogs.report_views import copy_report
+        from services.server_templates import report_summary
+        await copy_report(interaction, report_summary(self.draft))
+
+    @discord.ui.button(label='Full Report')
+    async def full(self, interaction, button):
+        from cogs.report_views import full_report
+        from services.server_templates import report_details
+        await full_report(interaction, report_details(self.draft), 'template-preview.txt')
+
     @discord.ui.button(label='Apply Template', style=discord.ButtonStyle.success)
     async def confirm(self, interaction, button):
-        from io import BytesIO
         from services import server_templates as templates
         if self.finished:
             return await interaction.response.send_message('This preview has already been used.', ephemeral=True)
@@ -2217,14 +2220,16 @@ class TemplatePreviewView(Menu):
             stage = 'applying the reviewed template'
             result, final, remaining = await templates.apply(self.guild, interaction.user, self.draft, interaction.client)
             stage = 'showing the verified results'
-            view = ServerTemplatesView(self.guild, self.admin_id)
             title = 'Setup Complete' if not remaining else 'Setup Progress'
             details = '\n\n'.join(label.replace('_', ' ').title() + '\n' + '\n'.join(items)
                                   for label, items in result.items() if items)
+            summary = (f"{title}\nReused {len(result['reused'])} · Created {len(result['created'])} · "
+                       f"Failed {len(result['failed'])} · Blocked {final['Blocked']} · Remaining {remaining}")
+            next_action = ('\nOpen a fresh preview to verify remaining actions before retrying.' if remaining else '')
+            compact = '\n'.join([summary, *result['failed'], next_action]).strip()
+            view = TemplateResultView(self.guild, self.admin_id, compact, details or summary)
             return await interaction.edit_original_response(
-                content=f"# {title}\nReused {len(result['reused'])} · Created {len(result['created'])} · Updated 0 · "
-                        f"Blocked {final['Blocked']} · Remaining {remaining}", view=view,
-                attachments=[discord.File(BytesIO((details or 'No changes needed.').encode()), filename='template-results.txt')],
+                content=f"# {summary}{next_action}", view=view, attachments=[],
                 allowed_mentions=discord.AllowedMentions.none())
         except (ServerMessageError, discord.HTTPException, TimeoutError) as error:
             text = (str(error) if isinstance(error, ServerMessageError)
@@ -2238,6 +2243,30 @@ class TemplatePreviewView(Menu):
         self.finished = True
         view = ServerTemplatesView(self.guild, self.admin_id)
         await interaction.response.edit_message(content=view.text(), view=view, attachments=[])
+
+
+class TemplateResultView(Menu):
+    def __init__(self, guild, actor_id, summary, details):
+        super().__init__(guild, actor_id)
+        self.summary, self.details = summary, details
+
+    async def interaction_check(self, interaction):
+        return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
+
+    @discord.ui.button(label='Copy Report')
+    async def copy(self, interaction, button):
+        from cogs.report_views import copy_report
+        await copy_report(interaction, self.summary)
+
+    @discord.ui.button(label='Full Report')
+    async def full(self, interaction, button):
+        from cogs.report_views import full_report
+        await full_report(interaction, self.details, 'template-results.txt')
+
+    @discord.ui.button(label='Back to Templates')
+    async def back(self, interaction, button):
+        view = ServerTemplatesView(self.guild, self.admin_id)
+        await interaction.response.edit_message(content=view.text(), view=view)
 
 
 class StructureView(Menu):
