@@ -348,6 +348,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('template_staff', 'ENROLL STAGING TEMPLATE STAFF ACCESS', 'ACTIVE_TEMPLATE_RECOVERY_CONTROLLER',
          enrollment.TEMPLATE_RECOVERY_HOST, enrollment.TEMPLATE_RECOVERY_ARCHIVE,
          enrollment.TEMPLATE_STAFF_HOST, enrollment.TEMPLATE_STAFF_ARCHIVE),
+        ('setup_reports', 'ENROLL STAGING COPYABLE SETUP REPORTS', 'ACTIVE_TEMPLATE_STAFF_CONTROLLER',
+         enrollment.TEMPLATE_STAFF_HOST, enrollment.TEMPLATE_STAFF_ARCHIVE,
+         enrollment.SETUP_REPORTS_HOST, enrollment.SETUP_REPORTS_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
