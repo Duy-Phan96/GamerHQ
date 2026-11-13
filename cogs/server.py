@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import INTRODUCTIONS_CHANNEL_ID
+from cogs.report_views import ReportErrors
 from services.server_service import ServerMessageError, upsert_fixed_message
 
 
@@ -829,7 +830,7 @@ class MappingChoiceView(RoleAdminSession):
         self.stop()
 
 
-class OperationsView(RoleAdminSession):
+class OperationsView(ReportErrors, RoleAdminSession):
     def __init__(self, guild, draft, bot, *, friendly=False):
         super().__init__(timeout=240)
         self.guild, self.admin_id, self.draft, self.bot = guild, draft['actor_id'], draft, bot
@@ -867,7 +868,7 @@ class OperationsView(RoleAdminSession):
             return False
         return await super().interaction_check(interaction)
 
-    @discord.ui.button(label='Copy Report', row=3)
+    @discord.ui.button(label='Copy Report', row=3, custom_id='gamerhq:report:copy')
     async def copy_report(self, interaction, button):
         from cogs.report_views import copy_report
         from services.server_operations import bulk_preview_report

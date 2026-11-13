@@ -153,6 +153,60 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await view.interaction_check(stranger))
         self.assertEqual(stranger.response.send_message.call_args.args, ('This report is private.',))
 
+    async def test_report_buttons_use_one_private_response_and_do_not_write_setup_state(self):
+        from cogs.server_management import TemplatePreviewView, TemplateResultView
+        from services import server_templates as templates
+
+        owner = self.actor()
+        preview = TemplatePreviewView(self.guild, owner.id, {})
+        result = TemplateResultView(self.guild, owner.id, 'Summary', 'Details')
+        for view in (preview, result):
+            for button, is_file in ((view.copy, False), (view.full, True)):
+                interaction = self.interaction(owner)
+                with patch.object(templates, 'report_summary', return_value='Summary'), patch.object(
+                    templates, 'report_details', return_value='Details'
+                ), patch.object(db, 'set_setting') as save:
+                    self.assertTrue(await view.interaction_check(interaction))
+                    await button.callback(interaction)
+                    save.assert_not_called()
+                interaction.response.send_message.assert_awaited_once()
+                interaction.followup.send.assert_not_awaited()
+                payload = interaction.response.send_message.call_args.kwargs
+                self.assertTrue(payload['ephemeral'])
+                if is_file:
+                    self.assertEqual(payload['file'].fp.getvalue(), b'Details')
+                    payload['file'].close()
+                else:
+                    self.assertIn('Summary', payload['content'])
+        self.assertFalse(preview.finished)
+        non_owner = self.interaction(self.actor(43))
+        self.assertFalse(await TemplatePreviewView(self.guild, 43, {}).interaction_check(non_owner))
+
+    async def test_report_errors_do_not_send_followups_after_acknowledgement_or_expiry(self):
+        from cogs.server_management import TemplatePreviewView
+
+        owner = self.actor()
+        view = TemplatePreviewView(self.guild, owner.id, {})
+        for code in (10062, 40060):
+            interaction = self.interaction(owner)
+            error = discord.HTTPException(SimpleNamespace(status=404, reason='Discord error'), {'code': code})
+            await view.on_error(interaction, error, view.copy)
+            interaction.response.send_message.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
+        interaction = self.interaction(owner)
+        interaction.response.is_done = lambda: True
+        with self.assertLogs('cogs.report_views', level='WARNING') as captured:
+            await view.on_error(interaction, RuntimeError('private failure'), view.full)
+        self.assertIn('Full Report', captured.output[0])
+        self.assertNotIn('private failure', captured.output[0])
+        interaction.response.send_message.assert_not_awaited()
+        interaction.followup.send.assert_not_awaited()
+        interaction = self.interaction(owner)
+        await view.on_error(interaction, ValueError('private payload'), view.full)
+        interaction.response.send_message.assert_awaited_once()
+        self.assertIn('Full Report could not finish', interaction.response.send_message.call_args.args[0])
+        self.assertNotIn('private payload', interaction.response.send_message.call_args.args[0])
+
     def test_member_onboarding_is_in_main_admin_flow_and_explains_current_limits(self):
         from cogs.server_management import (
             ManagementView,
