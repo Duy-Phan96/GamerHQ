@@ -1,15 +1,314 @@
 """Offline test of the owner read-only promotion receipt and its output scope."""
 from contextlib import closing
 import hashlib
+import io
 import json
 import os
+from pathlib import Path
 import sqlite3
 import socket
+import subprocess
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pytest
 
 from tools import staging_host_promotion_diagnostics as diagnostic
+
+
+@pytest.fixture
+def live_lookup_profile():
+    return {'stagingGuildId': '1567098041641738331', 'stagingBotId': '1567098530525351976',
+            'productionGuildId': '100', 'productionBotId': '200', 'categoryId': '300', 'voiceCategoryId': '400'}
+
+
+@pytest.mark.parametrize(('missing', 'category', 'step'), [
+    ('/members/', None, 'bot-membership'), ('/channels/300', '300', 'text-category'),
+    ('/channels/400', '400', 'voice-category'),
+])
+def test_discord_preflight_identifies_404_without_exposing_credential(live_lookup_profile, missing, category, step):
+    profile = live_lookup_profile
+    guild, bot = profile['stagingGuildId'], profile['stagingBotId']
+    responses = {'/users/@me': {'id': bot}, '/users/@me/guilds?limit=200': [{'id': guild}],
+                 '/guilds/' + guild: {'id': guild}, f'/guilds/{guild}/members/{bot}': {'roles': []},
+                 f'/guilds/{guild}/roles': [], '/channels/300': {'guild_id': guild, 'type': 4},
+                 '/channels/400': {'guild_id': guild, 'type': 4}, f'/guilds/{guild}/channels': []}
+    seen = []
+
+    def read(path, token):
+        seen.append(path)
+        assert token == 'private-token'
+        if missing in path:
+            raise HTTPError(path, 404, 'private-token', None,
+                            io.BytesIO(b'{"code":10003,"message":"private-token"}'))
+        return responses[path]
+
+    result = diagnostic.discord_preflight(profile, 'private-token', read=read)
+    assert (result['state'], result['step'], result['httpStatus']) == ('HTTP_REJECTED', step, 404)
+    assert result['discordCode'] == 10003
+    assert result.get('categoryId') == category
+    if category is not None:
+        assert seen[-2:] == [missing, f'/guilds/{guild}/channels']
+        assert result['guildInventory'] == {'state': 'ABSENT_FROM_BOT_INVENTORY'}
+    else:
+        assert missing in seen[-1] and 'guildInventory' not in result
+    assert 'private-token' not in json.dumps(result)
+
+
+@pytest.mark.parametrize(('member_allow', 'visible'), [(True, True), (False, False)])
+def test_category_inventory_reports_effective_view_without_returning_other_channels(member_allow, visible):
+    guild, category, bot, role = '100', '200', '300', '400'
+    overwrites = [{'id': guild, 'type': 0, 'allow': '0', 'deny': '1024'},
+                  {'id': role, 'type': 0, 'allow': '1024', 'deny': '0'},
+                  {'id': bot, 'type': 1, 'allow': '1024' if member_allow else '0',
+                   'deny': '0' if member_allow else '1024'}]
+
+    def read(path, token):
+        assert path == f'/guilds/{guild}/channels'
+        return [{'id': 'unrelated', 'name': 'unrelated private channel'},
+                {'id': category, 'type': 4, 'permission_overwrites': overwrites}]
+
+    assert diagnostic.inventory_category(read, 'private-token', guild, category, bot, {'roles': [role]},
+                                         [{'id': guild, 'permissions': '0'}]) == {
+        'state': 'CATEGORY_FOUND', 'botViewChannel': visible}
+
+
+def test_discord_preflight_stops_before_guild_lookups_on_wrong_bot(live_lookup_profile):
+    def read(path, _token):
+        assert path == '/users/@me'
+        return {'id': live_lookup_profile['productionBotId']}
+
+    assert diagnostic.discord_preflight(live_lookup_profile, 'private-token', read=read) == {
+        'step': 'bot-identity', 'completed': [], 'state': 'IDENTITY_REJECTED'}
+
+
+def test_event_inventory_distinguishes_live_parent_and_stored_channel_ownership(tmp_path):
+    database = tmp_path / 'staging.sqlite'
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.executescript('''
+            CREATE TABLE settings (key, value);
+            CREATE TABLE skill_managed_resources (guild_id, skill_id, resource_key, kind, state_json);
+            CREATE TABLE skill_storage (guild_id, skill_id, storage_key, value_json);
+            CREATE TABLE structure_change_log (guild_id, resource_id, resource_type, action, after_json, created_at);
+            INSERT INTO settings VALUES ('skill_resources:1:event-manager','{"categoryId":10,"voiceCategoryId":20}');
+            INSERT INTO skill_managed_resources VALUES
+                (1,'event-manager','event:a','text','{"channelId":30,"marker":"private-marker"}'),
+                (1,'event-manager','event:b','voice','{"channelId":40}'),
+                (1,'other','event:c','text','{"channelId":70}'),
+                (2,'event-manager','event:d','text','{"channelId":80}');
+            INSERT INTO skill_storage VALUES
+                (1,'event-manager','occurrence.v2:a','{"voice":{"channelId":"40"}}'),
+                (1,'event-manager','occurrence.v2:b','{"voice":{"channelId":"41"}}'),
+                (2,'event-manager','occurrence.v2:c','{"voice":{"channelId":"42"}}');
+            INSERT INTO structure_change_log VALUES
+                (1,10,'category','observed_category_offline','{"deleted":true}',123),
+                (1,20,'category','observed_category_delete','{}',124),
+                (2,10,'category','observed_category_delete','{}',125);
+        ''')
+    before = database.read_bytes()
+    stored, bindings, deletions = diagnostic.event_resource_bindings(
+        {'database': str(database), 'stagingGuildId': '1', 'categoryId': '10'})
+    assert stored == {'categoryId': '10', 'voiceCategoryId': '20'}
+    assert deletions == [{'action': 'observed_category_offline', 'createdAt': 123}]
+    result = diagnostic.event_inventory([
+        {'id': '20', 'type': 4, 'name': 'VOICE TESTING'},
+        {'id': '50', 'type': 4, 'name': '🧪 EVENT TESTING'},
+        {'id': '60', 'type': 4, 'name': 'unrelated'},
+        {'id': '30', 'type': 0, 'parent_id': '50', 'topic': 'private-marker'},
+        {'id': '70', 'type': 0, 'parent_id': '60'},
+    ], '1', ('10', '20'), bindings)
+    assert result['categories'] == [
+        {'categoryId': '20', 'matchesEventTestingName': False, 'parentOfStoredBinding': False},
+        {'categoryId': '50', 'matchesEventTestingName': True, 'parentOfStoredBinding': True},
+    ]
+    assert result['storedChannelBindings'] == [
+        {'channelId': '30', 'storedKind': 'text', 'presentInBotInventory': True,
+         'parentCategoryId': '50', 'typeMatches': True, 'textMarkerMatches': True},
+        {'channelId': '40', 'storedKind': 'voice', 'presentInBotInventory': False},
+        {'channelId': '41', 'storedKind': 'voice', 'presentInBotInventory': False},
+    ]
+    assert result['childrenOfReportedAreas'] == [{'channelId': '30', 'parentCategoryId': '50', 'discordType': 0}]
+    assert 'private-marker' not in json.dumps(result) and database.read_bytes() == before
+
+
+@pytest.mark.parametrize(('voice_exists', 'duplicate_marker'), [(True, False), (False, False), (True, True)])
+def test_recovery_review_checks_voice_independently_and_preserves_exact_text_ownership(voice_exists, duplicate_marker):
+    guild, bot = '100', '200'
+    text = diagnostic.EVENT_RECOVERY_TEXT_CATEGORY
+    voice = diagnostic.EVENT_RECOVERY_VOICE_CATEGORY
+    bindings = [(channel, 'text', f'private-marker-{i}')
+                for i, channel in enumerate(sorted(diagnostic.EVENT_RECOVERY_TEXT_IDS))]
+    overwrites = [{'id': guild, 'type': 0, 'allow': '0', 'deny': str(diagnostic.VIEW_CHANNEL)},
+                  {'id': bot, 'type': 1, 'allow': str(diagnostic.VIEW_CHANNEL), 'deny': '0'}]
+    channels = [{'id': channel, 'type': 0, 'parent_id': None, 'topic': marker, 'permission_overwrites': overwrites}
+                for channel, _, marker in bindings]
+    if duplicate_marker:
+        channels.append({**channels[0], 'id': '600'})
+    calls = []
+
+    def read(path, _token):
+        calls.append(path)
+        assert path == f'/channels/{voice}'
+        if not voice_exists:
+            raise HTTPError(path, 404, 'missing', None, None)
+        return {'id': voice, 'guild_id': guild, 'type': 4, 'permission_overwrites': overwrites}
+
+    roles = [{'id': guild, 'permissions': str(diagnostic.VOICE_CATEGORY_RIGHTS)}]
+    args = (read, 'private-token', channels, guild, text, bot, {'roles': []}, roles, bindings, (text, voice))
+    before = json.dumps(channels)
+    result = diagnostic.event_category_recovery_review(*args)
+    assert diagnostic.event_category_recovery_review(*args) == result
+    assert calls == [f'/channels/{voice}'] * 2 and json.dumps(channels) == before
+    assert result['state'] == ('CHANNEL_OWNERSHIP_REJECTED' if duplicate_marker else 'OWNER_REVIEW_REQUIRED')
+    assert result['voiceCategory']['state'] == ('CATEGORY_FOUND' if voice_exists else 'HTTP_REJECTED')
+    if voice_exists:
+        assert result['voiceCategory']['botPermissionsPass'] is True
+    assert result['namedReplacementCandidates'] == []
+    assert {row['channelId'] for row in result['existingTextChannels']} == diagnostic.EVENT_RECOVERY_TEXT_IDS
+    assert all(row['everyoneViewChannel'] == 'DENY' and row['botCanManageChannel'] for row in result['existingTextChannels'])
+    assert 'private-marker' not in json.dumps(result)
+
+
+def test_event_recovery_plan_binds_two_private_categories_and_fails_closed_on_voice_or_drift():
+    profile = {'stagingGuildId': '1567098041641738331', 'stagingBotId': '1567098530525351976'}
+    old = {'categoryId': diagnostic.EVENT_RECOVERY_TEXT_CATEGORY, 'voiceCategoryId': diagnostic.EVENT_RECOVERY_VOICE_CATEGORY}
+    channels = [dict(channelId=channel, textMarkerUnique=True, typeMatches=True, overwriteCount=4,
+                     everyoneViewChannel='DENY', botCanManageChannel=True, overwritesSha256=str(i) * 64)
+                for i, channel in enumerate(sorted(diagnostic.EVENT_RECOVERY_TEXT_IDS))]
+    review = {'voiceCategory': {'categoryId': old['voiceCategoryId'], 'httpStatus': 404},
+              'namedReplacementCandidates': [], 'namedVoiceReplacementCandidates': [],
+              'temporaryVoiceBindings': [], 'voiceChildrenOfOldCategory': [], 'oldVoicePresentInBotInventory': False,
+              'bothTextChannelsUnparented': True,
+              'existingTextChannels': channels, 'guildPermissionsPass': True}
+    report = {'controllerSourceVerified': True, 'recoveryRequired': False, 'operationLock': 'AVAILABLE',
+              'container': {'running': True, 'dockerHealthy': True, 'hostCommit': diagnostic.BASELINE,
+                            'matchesApprovedImage': True, 'packageVersion': '0.1.2', 'wheelMatchesReviewedArtifact': True,
+                            'runtimeDatabaseMatchesProfile': True},
+              'database': {'integrityPass': True, 'eventManagerAuthority': True,
+                           'latestPreRunBackup': {'checksumMatches': True, 'integrityPass': True, 'restoreProbe': 'PASS'}},
+              'discord': {'profileCategoryIds': old, 'storedResourcePolicyCategoryIds': old,
+                          'step': 'text-category', 'httpStatus': 404, 'configuredTextCategoryDeletionObservations': [{}],
+                          'guildInventory': {'state': 'ABSENT_FROM_BOT_INVENTORY', 'eventRecoveryReview': review}}}
+    preview = diagnostic.event_category_recovery_plan(report, profile)
+    assert diagnostic.event_category_recovery_plan(report, profile) == preview
+    assert preview['state'] == 'RECOVERY_PLAN_READY_FOR_OWNER_REVIEW'
+    plan = preview['plan']
+    assert [category['name'] for category in plan['createCategories']] == ['EVENT TESTING', 'EVENT VOICE']
+    for category in plan['createCategories']:
+        everyone, host = category['overwrites']
+        assert everyone == {'id': profile['stagingGuildId'], 'type': 0, 'allow': '0', 'deny': '1024'}
+        assert host['id'] == profile['stagingBotId'] and host['type'] == 1
+        assert not int(host['allow']) & (diagnostic.MANAGE_CHANNELS | diagnostic.MANAGE_ROLES | 8)
+    assert {row['channelId'] for row in plan['moveExistingTextChannels']} == diagnostic.EVENT_RECOVERY_TEXT_IDS
+    assert all(row['syncPermissions'] is False for row in plan['moveExistingTextChannels'])
+    assert plan['replaceCategoryReferences']['expected'] == old and plan['temporaryVoiceMoves'] == []
+
+    review['temporaryVoiceBindings'] = [{'channelId': '800', 'presentInBotInventory': True}]
+    blocked = diagnostic.event_category_recovery_plan(report, profile)
+    assert blocked['state'] == 'RECOVERY_PLAN_BLOCKED' and not blocked['checks']['noUnresolvedTemporaryVoice']
+    review['temporaryVoiceBindings'] = []
+    review['namedVoiceReplacementCandidates'] = [{'categoryId': '801'}]
+    assert not diagnostic.event_category_recovery_plan(report, profile)['checks']['noVisibleReplacement']
+    review['namedVoiceReplacementCandidates'] = []
+    channels[0]['overwriteCount'] = 3
+    assert not diagnostic.event_category_recovery_plan(report, profile)['checks']['existingTextChannelsVerified']
+
+
+@pytest.fixture
+def recovery_discord():
+    guild, bot = '100', '200'
+    old = {'categoryId': diagnostic.EVENT_RECOVERY_TEXT_CATEGORY, 'voiceCategoryId': diagnostic.EVENT_RECOVERY_VOICE_CATEGORY}
+    rights = diagnostic.TEXT_CATEGORY_RIGHTS | diagnostic.VOICE_CATEGORY_RIGHTS
+    overwrites = [{'id': guild, 'type': 0, 'allow': '0', 'deny': '1024'},
+                  {'id': bot, 'type': 1, 'allow': '1024', 'deny': '0'}]
+    bindings = [(ident, 'text', f'marker-{i}') for i, ident in enumerate(sorted(diagnostic.EVENT_RECOVERY_TEXT_IDS))]
+    channels = {ident: {'id': ident, 'guild_id': guild, 'type': 0, 'topic': marker, 'parent_id': None,
+                        'permission_overwrites': overwrites} for ident, _, marker in bindings}
+    route = f'/guilds/{guild}/channels'
+    plan = {'guildId': guild, 'botId': bot, 'replaceCategoryReferences': {'expected': old},
+            'createCategories': [dict(reference=key, name=name, overwrites=overwrites, requiredEffectiveBotPermissions='1024')
+                                 for key, name in zip(old, ('EVENT TESTING', 'EVENT VOICE'))],
+            'moveExistingTextChannels': [dict(channelId=ident, expectedOverwritesSha256=diagnostic.overwrite_review(row, guild)['overwritesSha256'])
+                                         for ident, row in channels.items()]}
+    journal = {'categories': {}, 'auditId': '0' * 32}
+    writes, saves = [], []
+
+    def read(path, _token):
+        identity = {'/users/@me': {'id': bot}, '/users/@me/guilds?limit=200': [{'id': guild}],
+                    '/guilds/' + guild: {'id': guild}, f'/guilds/{guild}/members/{bot}': {'roles': []},
+                    f'/guilds/{guild}/roles': [{'id': guild, 'permissions': str(rights)}]}
+        if path == route:
+            return list(channels.values())
+        if path.startswith('/channels/'):
+            ident = path.split('/')[-1]
+            if ident not in channels:
+                raise HTTPError(path, 404, 'missing', None, None)
+            return channels[ident]
+        return identity[path]
+
+    def write(method, path, _token, body, _audit):
+        assert path == route
+        writes.append((method, body))
+        if method == 'POST':
+            ident = str(300 + len(writes))
+            channels[ident] = {**body, 'id': ident, 'guild_id': guild}
+            return channels[ident]
+        (move,) = body
+        assert method == 'PATCH' and move['lock_permissions'] is False
+        assert set(move) == {'id', 'parent_id', 'lock_permissions'}
+        channels[move['id']]['parent_id'] = move['parent_id']
+
+    return SimpleNamespace(plan=plan, journal=journal, channels=channels, writes=writes,
+                           args=dict(save=lambda value: saves.append(json.loads(json.dumps(value))),
+                                     read=read, write=write, token='private-token', bindings=bindings), saves=saves)
+
+
+def test_apply_event_recovery_retries_verified_moves_without_recreating_categories(recovery_discord):
+    case = recovery_discord
+    write = case.args['write']
+
+    def lose_first_move_response(method, *args):
+        result = write(method, *args)
+        if method == 'PATCH':
+            raise TimeoutError('simulated response loss')
+        return result
+
+    with pytest.raises(TimeoutError):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **{**case.args, 'write': lose_first_move_response})
+    categories = diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args)
+    assert diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args) == categories
+    assert [method for method, _ in case.writes] == ['POST', 'POST', 'PATCH', 'PATCH']
+    assert all(case.channels[ident]['parent_id'] == categories['categoryId'] for ident in diagnostic.EVENT_RECOVERY_TEXT_IDS)
+    assert case.saves[0]['creating'] == 'categoryId' and case.saves[2]['creating'] == 'voiceCategoryId'
+    case.channels[next(iter(diagnostic.EVENT_RECOVERY_TEXT_IDS))]['parent_id'] = None
+    with pytest.raises(ValueError, match='MOVE_UNVERIFIED'):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args, verify_only=True)
+    assert len(case.writes) == 4
+
+
+def test_apply_event_recovery_stops_before_duplicate_create_on_unknown_post(recovery_discord):
+    case = recovery_discord
+
+    def lose_create_response(*args):
+        case.args['write'](*args)
+        raise TimeoutError('simulated response loss')
+
+    with pytest.raises(TimeoutError):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **{**case.args, 'write': lose_create_response})
+    with pytest.raises(ValueError, match='CREATION_UNCERTAIN'):
+        diagnostic.apply_event_recovery_resources(case.plan, case.journal, **case.args)
+    assert len(case.writes) == 1 and case.journal['creating'] == 'categoryId'
+
+
+def test_category_reference_update_preserves_non_category_settings_and_rejects_drift():
+    old = {'categoryId': '10', 'voiceCategoryId': '20'}
+    new = {'categoryId': '30', 'voiceCategoryId': '40'}
+    value = {'categoryId': 10, 'voiceCategoryId': 20, 'allowPublic': False, 'maxResources': 30}
+    updated = diagnostic.category_reference_update(value, old, new)
+    assert updated == {'categoryId': 30, 'voiceCategoryId': 40, 'allowPublic': False, 'maxResources': 30}
+    assert diagnostic.category_reference_update(updated, old, new) is updated
+    with pytest.raises(ValueError, match='REFERENCE_DRIFT'):
+        diagnostic.category_reference_update({**value, 'categoryId': 60}, old, new)
 
 
 def ledger(path):
@@ -23,6 +322,80 @@ def ledger(path):
             INSERT INTO skill_guild_state VALUES(12, 'event-manager', 1, 1, 1, '0.1.2', 123);
             INSERT INTO skill_guild_state VALUES(34, 'event-manager', 1, 1, 1, '9.9.9', 123);
         """)
+
+
+def test_fresh_event_recovery_backup_preserves_database_and_verifies_restore(tmp_path):
+    database = tmp_path / 'stage.sqlite'
+    ledger(database)
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.execute('DELETE FROM skill_guild_state WHERE guild_id=34')
+    before = database.read_bytes()
+    proof = diagnostic.event_recovery_backup(database, tmp_path, 12, os.getuid())
+    saved = tmp_path / (proof['id'] + '.sqlite')
+    assert saved.stat().st_mode & 0o777 == 0o600
+    diagnostic.verify_event_recovery_backup(tmp_path, proof['id'], {'backup': {'sha256': proof['sha256']}}, os.getuid(), 12)
+    assert database.read_bytes() == before
+
+
+def test_event_recovery_resumes_after_policy_commit_without_replaying_discord_writes(tmp_path, monkeypatch, recovery_discord):
+    case = recovery_discord
+    old = case.plan['replaceCategoryReferences']['expected']
+    database = tmp_path / 'stage.sqlite'
+    ledger(database)
+    with closing(sqlite3.connect(database)) as conn, conn:
+        conn.executescript('''
+            UPDATE skill_domain_authority SET guild_id=100;
+            UPDATE skill_guild_state SET guild_id=100 WHERE guild_id=12;
+            CREATE TABLE settings (key PRIMARY KEY, value);
+            CREATE TABLE skill_storage (guild_id, skill_id, storage_key, value_json);
+            CREATE TABLE skill_managed_resources (guild_id, skill_id, resource_key, kind, state_json);
+            CREATE TABLE structure_change_log (guild_id, resource_id, resource_type, action, after_json, created_at);
+            INSERT INTO skill_storage VALUES (100,'event-manager','event.v2:fixture','{"attendance":[123]}');
+        ''')
+        conn.execute('INSERT INTO settings VALUES (?,?)', ('skill_resources:100:event-manager', json.dumps({**old, 'allowPublic': False})))
+        conn.executemany('INSERT INTO skill_managed_resources VALUES (100,\'event-manager\',?,?,?)',
+                         [(f'event:{i}', kind, json.dumps({'channelId': ident, 'marker': marker}))
+                          for i, (ident, kind, marker) in enumerate(case.args['bindings'])])
+    profile = {**old, 'stagingGuildId': '100', 'database': str(database), 'workRoot': str(tmp_path), 'backupRoot': str(tmp_path)}
+    profile_path = tmp_path / 'settings/profile.json'
+    profile_path.parent.mkdir()
+    diagnostic.save_private_json(profile_path, profile)
+    before = diagnostic.event_recovery_snapshot(database, 100)[1]
+    container = {'hostCommit': diagnostic.BASELINE, 'running': True, 'dockerHealthy': True,
+                 'matchesApprovedImage': True, 'runtimeDatabaseMatchesProfile': True,
+                 'packageVersion': '0.1.2', 'wheelMatchesReviewedArtifact': True}
+    report = {'container': container, 'database': {'integrityPass': True, 'eventManagerAuthority': True, 'pendingDeploymentCount': 0}}
+    plan_sha = diagnostic.event_plan_digest(case.plan)
+    monkeypatch.setattr(diagnostic, 'CONTROL', tmp_path)
+    monkeypatch.setattr(diagnostic, 'APPROVED_EVENT_PLAN', plan_sha)
+    monkeypatch.setattr(diagnostic, 'staging_discord_token', lambda *_: 'private-token')
+    monkeypatch.setattr(diagnostic, 'installed_discord_preflight', lambda *_, **__: {})
+    monkeypatch.setattr(diagnostic, 'event_category_recovery_plan', lambda *_: {'planSha256': plan_sha, 'plan': case.plan})
+    monkeypatch.setattr(diagnostic, 'discord_get', case.args['read'])
+    monkeypatch.setattr(diagnostic, 'discord_event_write', case.args['write'])
+    monkeypatch.setattr(diagnostic, 'container_status', lambda *_: container)
+    monkeypatch.setattr(diagnostic, 'discord_preflight', lambda *_, require_category_permissions: {'state': 'LOOKUPS_PASS'})
+    real_save = diagnostic.save_private_json
+    stopped = False
+
+    def interrupt(path, value):
+        nonlocal stopped
+        if path == profile_path and not stopped:
+            stopped = True
+            raise OSError('simulated profile write failure')
+        real_save(path, value)
+
+    monkeypatch.setattr(diagnostic, 'save_private_json', interrupt)
+    args = (report, profile, {'enabled': True, 'recoveryRequired': False}, os.getuid(), None, None)
+    first = diagnostic.apply_event_category_recovery(*args)
+    assert first['state'] == 'EVENT_CATEGORY_RECOVERY_STOPPED' and first['phase'] == 'REFERENCES'
+    assert diagnostic.config(profile_path, os.getuid(), private=True) == profile
+    assert {key: json.loads(diagnostic.event_recovery_snapshot(database, 100)[0])[key] for key in old} == first['recordedCategoryIds']
+    second = diagnostic.apply_event_category_recovery(*args)
+    assert second['state'] == 'EVENT_CATEGORY_RECOVERY_VERIFIED'
+    assert [method for method, _ in case.writes] == ['POST', 'POST', 'PATCH', 'PATCH']
+    policy, after = diagnostic.event_recovery_snapshot(database, 100)
+    assert json.loads(policy) == {**second['newCategoryIds'], 'allowPublic': False} and before == after
 
 
 def record(path, ident, state, time, evidence):
@@ -159,8 +532,54 @@ def test_controller_verification_rejects_tampered_installed_source(tmp_path, mon
               'catalogPreviewWorkflowSha256': diagnostic.CATALOG_WORKFLOW}
     diagnostic.verify_controller(policy)
     module.write_bytes(b'changed code')
-    with pytest.raises(ValueError, match='CONTROLLER_SOURCE_MISMATCH'):
+    with pytest.raises(diagnostic.ControllerSourceMismatch, match='CONTROLLER_SOURCE_MISMATCH') as error:
         diagnostic.verify_controller(policy)
+    assert error.value.evidence == {
+        'component': module.name, 'reason': 'CHECKSUM_MISMATCH',
+        'expectedSha256': hashlib.sha256(b'reviewed code').hexdigest(),
+        'actualSha256': hashlib.sha256(b'changed code').hexdigest(),
+    }
+
+
+def test_localized_controller_manifest_matches_the_enrollment_bundle(tmp_path, monkeypatch):
+    profile = diagnostic.LOCALIZED_PREFLIGHT
+    for name, value in profile.items():
+        monkeypatch.setattr(diagnostic, name, value)
+    commit = profile['CONTROLLER']
+    repo = Path(__file__).resolve().parents[1]
+    ref = subprocess.run(['git', 'cat-file', '-e', commit + '^{commit}'], cwd=repo, capture_output=True)
+    if ref.returncode and not os.environ.get('GITHUB_ACTIONS'):
+        pytest.skip('Reviewed controller revision unavailable in this local checkout')
+    ref.check_returncode()
+
+    def blob(path):
+        return subprocess.check_output(['git', 'show', f'{commit}:{path}'], cwd=repo)
+
+    monkeypatch.setattr(diagnostic, 'ROOT', tmp_path)
+    controller = tmp_path / 'automation-controller'
+    revision = controller / 'revisions' / commit
+    package = revision / 'staging_automation'
+    package.mkdir(parents=True)
+    (controller / 'entry.py').write_text("import sys\nsys.path[:0]=[" + repr(str(revision))
+        + ",'/opt/gamerhq-staging/deployment-worker']\nfrom staging_automation.bridge import entry\nentry()\n")
+    installed_sources = {'deployment.py': 'hosts/gamerhq/skill_update_controller.py',
+                         'catalog_import.py': 'tools/game_catalog_import.py',
+                         'catalog_manifest.json': 'data/game_catalog_expansion.json'}
+    for name in profile['CONTROLLER_FILES']:
+        (package / name).write_bytes(blob(installed_sources.get(name, 'tools/staging_automation/' + name)))
+    fixed_file = diagnostic.fixed_file
+    monkeypatch.setattr(diagnostic, 'fixed_file', lambda path, *, uid, limit: fixed_file(path, limit=limit))
+    policy = {'controllerCommit': commit,
+              'hostPromotion': {'commit': profile['TARGET'], 'archiveSha256': profile['ARCHIVE'],
+                                'workflowSha256': profile['PROMOTION_WORKFLOW']},
+              'catalogPreviewWorkflowSha256': profile['CATALOG_WORKFLOW']}
+    diagnostic.verify_controller(policy)
+
+    # The checkout shim is valid source for development, but invalid on the VPS.
+    (package / 'deployment.py').write_bytes(blob('tools/staging_automation/deployment.py'))
+    with pytest.raises(diagnostic.ControllerSourceMismatch) as error:
+        diagnostic.verify_controller(policy)
+    assert error.value.evidence['component'] == 'deployment.py'
 
 
 def test_verification_receipt_keeps_unsafe_backup_out_of_read_scope(tmp_path, monkeypatch):
