@@ -625,7 +625,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(f'Destination ID {marketplace.id} (View Channel=False, Manage Channels=True)', report)
             create.assert_not_awaited()
 
-            category_permissions.view_channel = True
+            category_permissions = discord.Permissions(self.guild.me.guild_permissions.value)
             ready = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             report = ops.bulk_preview_report(ready, {})
             self.assertNotIn('role 15 at position 15', report)
@@ -689,6 +689,78 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
                  'choices': {}, 'boards': {'rows': []}, 'deferred': []}
         counts = templates.counts(draft)
         self.assertEqual((counts['Needs review'], counts['Blocked'], counts['Optional integration review']), (0, 0, 2))
+
+    async def test_both_public_feeds_inherit_verified_read_only_parent_without_overwrites(self):
+        actor = self.owner()
+        guild = self.guild
+        guild.default_role.permissions.use_application_commands = True
+        guild.me.guild_permissions.administrator = False
+        marketplace = guild.add_category('MARKETPLACE')
+        db.set_setting('managed_category:1:partners-benefits', marketplace.id)
+        marketplace.overwrites = {
+            guild.default_role: discord.PermissionOverwrite.from_pair(
+                discord.Permissions(66560), discord.Permissions(377957124160)),
+            guild.me: discord.PermissionOverwrite.from_pair(discord.Permissions(68608), discord.Permissions.none()),
+            guild.custom: discord.PermissionOverwrite.from_pair(discord.Permissions(66560), discord.Permissions(2048)),
+        }
+        effective = discord.Permissions(guild.me.guild_permissions.value)
+        for flag in ops.FEED_POSTING[1:]:
+            setattr(effective, flag, False)
+        effective.add_reactions = False
+        marketplace.permissions_for = lambda _: effective
+        definitions = ops.definitions
+        created = {}
+
+        async def create(name, **kwargs):
+            if 'overwrites' in kwargs:
+                for overwrite in kwargs['overwrites'].values():
+                    allow, deny = overwrite.pair()
+                    if (allow.value | deny.value) & ~effective.value:
+                        raise discord.Forbidden(SimpleNamespace(status=403, reason='Forbidden'), {'code': 50013})
+                self.fail('The create request submitted explicit overwrites')
+            channel = guild.add_channel(name, marketplace)
+            channel.overwrites = dict(marketplace.overwrites)
+            created[ops.alias(name)] = channel
+            return channel
+
+        with (patch.object(ops, 'definitions', lambda g: [r for r in definitions(g)
+                                                            if r['kind'] in ('category', 'text')
+                                                            and r['name'] in ops.PUBLIC_FEEDS | {'partners-benefits'}]),
+              patch.object(marketplace, 'create_text_channel', AsyncMock(side_effect=create)) as request):
+            draft = await ops.preview(guild, actor, 'setup', self.bot, scope='bulk')
+            feeds = [row for row in draft['rows'] if row['name'] in ops.PUBLIC_FEEDS]
+            self.assertEqual(len(feeds), 2)
+            for row in feeds:
+                with self.assertRaises(discord.Forbidden) as rejected:
+                    await create(row['label'], overwrites=row['create_overwrites'])
+                self.assertEqual(rejected.exception.code, 50013)
+                self.assertTrue(row['inherit_parent'])
+            result = await ops.apply(guild, actor, draft, self.bot, confirmed=True)
+            self.assertFalse(result['failed'] or result['needs_review'])
+            self.assertEqual(set(created), ops.PUBLIC_FEEDS)
+            self.assertEqual(request.await_count, 2)
+            for name, channel in created.items():
+                self.assertEqual(channel.overwrites, marketplace.overwrites)
+                self.assertEqual(db.get_setting(f'managed_channel:1:{name}'), str(channel.id))
+            # Missing mappings can safely recover the verified inherited channels.
+            for name in created:
+                db.set_setting(f'managed_channel:1:{name}', '')
+            repeat = await ops.preview(guild, actor, 'setup', self.bot, scope='bulk')
+            result = await ops.apply(guild, actor, repeat, self.bot, confirmed=True)
+            self.assertEqual(len(result['reused']), 2)
+            self.assertEqual(request.await_count, 2)
+            # An added role must never defeat the read-only parent policy.
+            for channel in created.values():
+                guild.text_channels.remove(channel)
+            for name in created:
+                db.set_setting(f'managed_channel:1:{name}', '')
+            marketplace.overwrites[guild.custom] = discord.PermissionOverwrite(send_messages=True)
+            unsafe = await ops.preview(guild, actor, 'setup', self.bot, scope='bulk')
+            feeds = [row for row in unsafe['rows'] if row['name'] in ops.PUBLIC_FEEDS]
+            self.assertTrue(all(row['bulk_action'] == 'skip' for row in feeds))
+            self.assertTrue(all('Create Public Threads' in row['reason'] for row in feeds))
+            await ops.apply(guild, actor, unsafe, self.bot, confirmed=True)
+            self.assertEqual(request.await_count, 2)
 
     async def test_gaming_news_inherits_only_an_identical_read_only_policy(self):
         actor = self.owner()
