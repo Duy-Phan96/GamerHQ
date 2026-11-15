@@ -77,6 +77,9 @@ GAMING_NEWS_ARCHIVE = '8185d1e62ac792cb629c9cd15a5ddc21cbeee0034e4c073d1bed8c6df
 ACTIVE_GAMING_NEWS_CONTROLLER = '8e056a7e9dd0f457511a5989df465b95172fd83a'
 INDEPENDENT_FEEDS_HOST = 'd2a31992a4e1d79a0ce4a4ce7ca11fdca405c92e'
 INDEPENDENT_FEEDS_ARCHIVE = '3ac9802fc3cd45b532ca93aa89e05ec627eba680c89038309083b0b055a063e4'
+ACTIVE_INDEPENDENT_FEEDS_CONTROLLER = 'e16a09b88cf35762f7155b9492fd50bf64eb4d90'
+VERIFIED_INHERITANCE_HOST = '72e11530e25e0b71933fdc8c6380e2b0d5274b4e'
+VERIFIED_INHERITANCE_ARCHIVE = '9f7e34cb2c0a53ff782a39f35febb48d966d584eae5cec4e4f786a3317809569'
 CATALOG_SOURCES = {
     'catalog_preview.py': 'tools/staging_automation/catalog_preview.py',
     'catalog_import.py': 'tools/game_catalog_import.py',
@@ -85,11 +88,14 @@ CATALOG_SOURCES = {
 
 
 def configuration_pin(policy, *, commit, previous_workflow, workflow, catalog_workflow,
-                      managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False, localized_reuse=False, server_templates=False, template_recovery=False, template_staff=False, setup_reports=False, report_interaction=False, feed_permissions=False, gaming_news=False, independent_feeds=False):
+                      managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False, localized_reuse=False, server_templates=False, template_recovery=False, template_staff=False, setup_reports=False, report_interaction=False, feed_permissions=False, gaming_news=False, independent_feeds=False, verified_inheritance=False):
     catalog_digest = hashlib.sha256(catalog_workflow).hexdigest()
     if 'webDeployment' in policy or policy.get('catalogPreviewWorkflowSha256') != catalog_digest:
         raise ValueError('EXISTING_CATALOG_POLICY_CHANGED')
-    if independent_feeds:
+    if verified_inheritance:
+        previous_host, previous_archive = INDEPENDENT_FEEDS_HOST, INDEPENDENT_FEEDS_ARCHIVE
+        target_host, target_archive = VERIFIED_INHERITANCE_HOST, VERIFIED_INHERITANCE_ARCHIVE
+    elif independent_feeds:
         previous_host, previous_archive = GAMING_NEWS_HOST, GAMING_NEWS_ARCHIVE
         target_host, target_archive = INDEPENDENT_FEEDS_HOST, INDEPENDENT_FEEDS_ARCHIVE
     elif gaming_news:
@@ -209,13 +215,14 @@ def skill_update_backup_mode():
 
 def extension(commit, approval, *, web_hostname=None, previous_web_controller=None,
               catalog_preview=False, configuration_preview=False, configuration_recovery=False,
-              managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False, localized_reuse=False, server_templates=False, template_recovery=False, template_staff=False, setup_reports=False, report_interaction=False, feed_permissions=False, gaming_news=False, independent_feeds=False):
+              managed_messages=False, structure=False, bulk_structure=False, bulk_recovery=False, bulk_preview=False, bulk_permissions=False, localized_reuse=False, server_templates=False, template_recovery=False, template_staff=False, setup_reports=False, report_interaction=False, feed_permissions=False, gaming_news=False, independent_feeds=False, verified_inheritance=False):
     import pwd
     web = web_hostname is not None
-    if sum((web, catalog_preview, configuration_preview, configuration_recovery, managed_messages, structure, bulk_structure, bulk_recovery, bulk_preview, bulk_permissions, localized_reuse, server_templates, template_recovery, template_staff, setup_reports, report_interaction, feed_permissions, gaming_news, independent_feeds)) > 1:
+    if sum((web, catalog_preview, configuration_preview, configuration_recovery, managed_messages, structure, bulk_structure, bulk_recovery, bulk_preview, bulk_permissions, localized_reuse, server_templates, template_recovery, template_staff, setup_reports, report_interaction, feed_permissions, gaming_news, independent_feeds, verified_inheritance)) > 1:
         raise ValueError('SELECT_ONE_EXTENSION')
-    configuration_preview = configuration_preview or configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds
-    expected_approval = ('ENROLL STAGING INDEPENDENT FEEDS' if independent_feeds else
+    configuration_preview = configuration_preview or configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds or verified_inheritance
+    expected_approval = ('ENROLL STAGING VERIFIED FEED INHERITANCE' if verified_inheritance else
+                         'ENROLL STAGING INDEPENDENT FEEDS' if independent_feeds else
                          'ENROLL STAGING GAMING NEWS PERMISSIONS' if gaming_news else
                          'ENROLL STAGING FEED PERMISSION REVIEW' if feed_permissions else
                          'ENROLL STAGING REPORT INTERACTION FIX' if report_interaction else
@@ -241,7 +248,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         raise ValueError('VERIFIED_WEB_HOSTNAME_REQUIRED')
     if previous_web_controller is not None and not web:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
-    previous_commit = (ACTIVE_GAMING_NEWS_CONTROLLER if independent_feeds else
+    previous_commit = (ACTIVE_INDEPENDENT_FEEDS_CONTROLLER if verified_inheritance else
+                       ACTIVE_GAMING_NEWS_CONTROLLER if independent_feeds else
                        ACTIVE_FEED_PERMISSIONS_CONTROLLER if gaming_news else
                        ACTIVE_REPORT_INTERACTION_CONTROLLER if feed_permissions else
                        ACTIVE_SETUP_REPORTS_CONTROLLER if report_interaction else
@@ -259,7 +267,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
                        FAILED_CONFIGURATION_CONTROLLER if configuration_recovery else
                        CATALOG_CONTROLLER if configuration_preview else
                        (previous_web_controller or WEB_BASE) if web or catalog_preview else OLD)
-    previous_host = (GAMING_NEWS_HOST if independent_feeds else
+    previous_host = (INDEPENDENT_FEEDS_HOST if verified_inheritance else
+                     GAMING_NEWS_HOST if independent_feeds else
                      FEED_PERMISSIONS_HOST if gaming_news else
                      REPORT_INTERACTION_HOST if feed_permissions else
                      SETUP_REPORTS_HOST if report_interaction else
@@ -319,7 +328,8 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if git('show', commit + ':tools/extend_staging_host_promotion.py') != Path(__file__).read_bytes():
             raise ValueError('VERIFIED_INSTALLER_SOURCE_MISMATCH')
         blobs = {name: git('show', commit + ':tools/staging_automation/' + name) for name in MODULES}
-        target_host = (INDEPENDENT_FEEDS_HOST if independent_feeds else
+        target_host = (VERIFIED_INHERITANCE_HOST if verified_inheritance else
+                       INDEPENDENT_FEEDS_HOST if independent_feeds else
                        GAMING_NEWS_HOST if gaming_news else
                        FEED_PERMISSIONS_HOST if feed_permissions else
                        REPORT_INTERACTION_HOST if report_interaction else
@@ -355,7 +365,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if (web or catalog_preview) and policy.get('hostPromotion') != {'commit': HOST, 'archiveSha256': ARCHIVE, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}:
             raise ValueError('EXISTING_HOST_POLICY_CHANGED')
         previous_modules = (*MODULES, 'web.py') if web and previous_commit != WEB_BASE else MODULES
-        changed_modules = {'host_promotion.py'} if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds else (
+        changed_modules = {'host_promotion.py'} if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds or verified_inheritance else (
             {'host_promotion.py', 'backend.py'} if configuration_recovery else {'host_promotion.py', 'policy.py'})
         for name in previous_modules:
             installed = trusted(previous / 'staging_automation' / name)
@@ -380,7 +390,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
                                     workflow=workflow, catalog_workflow=catalog_workflow,
                                     managed_messages=managed_messages, structure=structure,
                                     bulk_structure=bulk_structure, bulk_recovery=bulk_recovery, bulk_preview=bulk_preview, bulk_permissions=bulk_permissions,
-                                    localized_reuse=localized_reuse, server_templates=server_templates, template_recovery=template_recovery, template_staff=template_staff, setup_reports=setup_reports, report_interaction=report_interaction, feed_permissions=feed_permissions, gaming_news=gaming_news, independent_feeds=independent_feeds)
+                                    localized_reuse=localized_reuse, server_templates=server_templates, template_recovery=template_recovery, template_staff=template_staff, setup_reports=setup_reports, report_interaction=report_interaction, feed_permissions=feed_permissions, gaming_news=gaming_news, independent_feeds=independent_feeds, verified_inheritance=verified_inheritance)
             for name, path in CATALOG_SOURCES.items():
                 installed = trusted(previous / 'staging_automation' / name)
                 if installed != git('show', previous_commit + ':' + path):
@@ -424,7 +434,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
         if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_gid != gid or info.st_nlink != 1:
             raise ValueError('EXISTING_OPERATION_LOCK_REQUIRED')
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds:
+        if configuration_recovery or managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds or verified_inheritance:
             if stat.S_IMODE(info.st_mode) != 0o600:
                 raise ValueError('PRIVATE_OPERATION_LOCK_REQUIRED')
         else:
@@ -440,7 +450,7 @@ def extension(commit, approval, *, web_hostname=None, previous_web_controller=No
             raise ValueError('REVIEWED_RECOVERY_REQUIRED')
         if not state.get('enabled') or not state.get('bootstrapVerified') or not re.fullmatch('sha256:[0-9a-f]{64}', state.get('approvedImage', '')):
             raise ValueError('ACTIVE_STAGING_REQUIRED')
-        if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds:
+        if managed_messages or structure or bulk_structure or bulk_recovery or bulk_preview or bulk_permissions or localized_reuse or server_templates or template_recovery or template_staff or setup_reports or report_interaction or feed_permissions or gaming_news or independent_feeds or verified_inheritance:
             profile = json.loads(trusted(CONTROL / 'settings/profile.json', uid, private=True))
             if (profile.get('environment') != 'staging' or profile.get('applicationHostCommit') != previous_host
                     or profile.get('baseImage') != state['approvedImage']):
@@ -530,6 +540,7 @@ if __name__ == '__main__':
     parser.add_argument('--feed-permissions', action='store_true')
     parser.add_argument('--gaming-news-permissions', action='store_true')
     parser.add_argument('--independent-feeds', action='store_true')
+    parser.add_argument('--verified-feed-inheritance', action='store_true')
     args = parser.parse_args()
     try:
         print(json.dumps(extension(args.commit, args.approval, web_hostname=args.web_hostname,
@@ -541,7 +552,7 @@ if __name__ == '__main__':
                                    bulk_recovery=args.bulk_setup_recovery, bulk_preview=args.bulk_preview_report,
                                    bulk_permissions=args.bulk_permission_fix,
                                    localized_reuse=args.localized_channel_reuse, server_templates=args.server_templates,
-                                   template_recovery=args.server_template_recovery, template_staff=args.template_staff_access, setup_reports=args.copy_setup_reports, report_interaction=args.report_interaction_fix, feed_permissions=args.feed_permissions, gaming_news=args.gaming_news_permissions, independent_feeds=args.independent_feeds), indent=2))
+                                   template_recovery=args.server_template_recovery, template_staff=args.template_staff_access, setup_reports=args.copy_setup_reports, report_interaction=args.report_interaction_fix, feed_permissions=args.feed_permissions, gaming_news=args.gaming_news_permissions, independent_feeds=args.independent_feeds, verified_inheritance=args.verified_feed_inheritance), indent=2))
     except Exception as error:
         code = str(error) if re.fullmatch('[A-Z_]{1,80}', str(error)) else 'HOST_EXTENSION_REJECTED'
         raise SystemExit(json.dumps({'extensionError': code, 'productionChanged': False})) from None
