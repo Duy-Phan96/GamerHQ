@@ -531,7 +531,7 @@ class BulkPolicyError(ServerMessageError):
     """An owner-safe, locally generated permission diagnostic."""
 
 
-def bulk_policy_issue(policy, permissions):
+def bulk_policy_issue(policy, permissions, *, destination=None):
     # Discord requires every explicit allow AND deny in a create request to
     # be within the bot's guild permissions. Never strip bits and create anyway.
     if permissions.administrator:
@@ -547,6 +547,11 @@ def bulk_policy_issue(policy, permissions):
     if missing:
         names = [name.replace('_', ' ').title() for name, enabled in discord.Permissions(missing) if enabled]
         return 'Host lacks guild permissions required by the overwrite: ' + ', '.join(names or ['unknown permission'])
+    if destination is not None and (missing := requested & ~destination.value):
+        names = [name.replace('_', ' ').title() for name, enabled in discord.Permissions(missing) if enabled]
+        return ('Destination does not grant Host the requested overwrite flags: '
+                + ', '.join(names or ['unknown permission'])
+                + '. Review category access or use a parent that already provides the required read-only policy.')
     return None
 
 
@@ -648,15 +653,39 @@ def policy_signature(policy, *, exclude=()):
                   for principal, overwrite in policy.items() if principal.id not in exclude)
 
 
-def feed_inherits_parent(row, parent, policy):
-    # Exact equality proves all member and role combinations retain their
-    # effective access, including posting exceptions and integration denies.
-    if row['name'] not in PUBLIC_FEEDS or row.get('private') or parent is None:
+def inherits_read_only_policy(guild, inherited, desired):
+    """Accept extra restrictions and redundant public grants without widening access."""
+    everyone, host = guild.default_role, guild.me
+    if host is None or set(desired) != {everyone, host}:
         return False
-    public = policy.get(row['bulk_guild'].default_role)
-    return bool(public and public.view_channel is True and public.read_message_history is True
-                and all(getattr(public, flag) is False for flag in FEED_POSTING)
-                and policy_signature(parent.overwrites) == policy_signature(policy))
+    public_allow, public_deny = (p.value for p in desired[everyone].pair())
+    parent_allow, parent_deny = (
+        p.value for p in inherited.get(everyone, discord.PermissionOverwrite()).pair())
+    if (parent_allow & ~public_allow or public_deny & ~parent_deny or public_allow & parent_deny
+            or public_allow & ~(parent_allow | everyone.permissions.value)
+            or inherited.get(host) != desired[host]):
+        return False
+    # A role allow wins over other role denies. Limit added role grants to bits
+    # the parent already explicitly grants everyone, and reject member exceptions.
+    for target, overwrite in inherited.items():
+        if target == everyone or target == host:
+            continue
+        allow, deny = (p.value for p in overwrite.pair())
+        if target not in guild.roles or allow & ~parent_allow or deny & public_allow:
+            return False
+    return True
+
+
+def feed_inherits_parent(row, parent, policy):
+    return bool(row['name'] in PUBLIC_FEEDS and not row.get('private') and parent is not None
+                and inherits_read_only_policy(row['bulk_guild'], parent.overwrites, policy))
+
+
+def verified_feed_policy(guild, row, channel, parent):
+    desired = setup_policy(guild, row, parent)
+    return (policy_signature(channel.overwrites) == policy_signature(desired)
+            or (policy_signature(channel.overwrites) == policy_signature(parent.overwrites)
+                and inherits_read_only_policy(guild, channel.overwrites, desired)))
 
 
 def bulk_destination_permissions(guild, parent, member):
@@ -732,7 +761,7 @@ def bulk_plan(guild, rows, member, *, template_staff=False):
                     parent = reviewed.get(row['parent'])
                     destination = guild.get_channel(parent['bulk_id']) if parent and parent.get('bulk_id') else None
                     if destination is None or match.category_id != destination.id or (
-                            policy_signature(match.overwrites) != policy_signature(setup_policy(guild, row, destination))):
+                            not verified_feed_policy(guild, row, match, destination)):
                         raise BulkPolicyError('Existing feed needs a verified feed policy before linking.')
                 if kind == 'staff-role' and status != 'EXACT_MATCH' and match.name != staff_access.ROLE_NAME:
                     raise BulkPolicyError('A similarly named role exists. Review it before linking or creating a Staff role.')
@@ -819,13 +848,14 @@ def bulk_plan(guild, rows, member, *, template_staff=False):
                 raise BulkPolicyError(destination_issue)
             verify_bulk_private_policy(guild, row, policy)
             inherits = feed_inherits_parent(row, destination, policy)
-            issue = bulk_policy_issue({} if inherits else policy, permissions)
+            issue = bulk_policy_issue({} if inherits else policy, permissions,
+                                      destination=effective if row['name'] in PUBLIC_FEEDS else None)
             if issue:
                 raise BulkPolicyError(issue)
             row['create_overwrites'] = policy
             if row['name'] in PUBLIC_FEEDS:
                 row['inherit_parent'] = inherits
-                row['reason'] = ('Inherit the verified MARKETPLACE policy; no channel overwrites will be submitted.'
+                row['reason'] = ('Inherit the verified parent category policy; no channel overwrites will be submitted.'
                                  if inherits else 'Create with read-only member access and Host posting only. Publisher access is configured separately.')
         except BulkPolicyError as exc:
             row['reason'] = str(exc)
@@ -937,15 +967,14 @@ def bulk_preview_report(draft, choices):
 
 def confirmed_setup_policy(row, added_roles, parent=None):
     guild = row['bulk_guild']
-    issue = bulk_destination_issue(bulk_destination_permissions(guild, parent, row['bulk_member']))
+    effective = bulk_destination_permissions(guild, parent, row['bulk_member'])
+    issue = bulk_destination_issue(effective)
     if issue:
         raise BulkPolicyError(issue)
     policy = setup_policy(guild, row, parent)
     verify_bulk_private_policy(guild, row, policy)
-    inherits = feed_inherits_parent(row, parent, policy)
-    if row.get('inherit_parent', False) and not inherits:
-        raise BulkPolicyError('MARKETPLACE permissions changed. Open a fresh preview before creating the feed.')
-    issue = bulk_policy_issue({} if row.get('inherit_parent') else policy, row['bulk_permissions'])
+    issue = bulk_policy_issue({} if row.get('inherit_parent') else policy, row['bulk_permissions'],
+                              destination=effective if row['name'] in PUBLIC_FEEDS else None)
     if issue:
         raise BulkPolicyError(issue)
     if policy_signature(policy, exclude=added_roles) != policy_signature(row['create_overwrites'], exclude=added_roles):
@@ -1319,14 +1348,20 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                         if bulk and row['name'] in {'gaming-deals', 'gaming-news'}:
                             member = row['bulk_member']
                             effective = bulk_destination_permissions(row['bulk_guild'], parent, member)
-                            row['feed_creation_evidence'] = feed_creation_evidence(parent, member, policy, effective)
+                            row['feed_creation_evidence'] = feed_creation_evidence(
+                                parent, member, {} if row.get('inherit_parent') else policy, effective)
                         create = parent.create_voice_channel if kind == 'voice' else parent.create_text_channel
                         if bulk and row.get('inherit_parent'):
                             latest = await guild.fetch_channel(parent.id)
-                            if not isinstance(latest, discord.CategoryChannel) or not feed_inherits_parent(row, latest, policy):
-                                raise BulkPolicyError('MARKETPLACE permissions changed. Open a fresh preview before creating the feed.')
+                            if (not isinstance(latest, discord.CategoryChannel)
+                                    or policy_signature(latest.overwrites) != policy_signature(parent.overwrites)
+                                    or not feed_inherits_parent(row, latest, policy)):
+                                raise BulkPolicyError('Parent permissions changed. Open a fresh preview before creating the feed.')
+                            issue = bulk_destination_issue(bulk_destination_permissions(row['bulk_guild'], latest, member))
+                            if issue:
+                                raise BulkPolicyError(issue)
                             resource = await create_checked(key, latest.create_text_channel, row['label'], reason='Confirmed GamerHQ setup')
-                            if resource.category_id != latest.id or policy_signature(resource.overwrites) != policy_signature(policy):
+                            if resource.category_id != latest.id or policy_signature(resource.overwrites) != policy_signature(latest.overwrites):
                                 raise BulkPolicyError('Discord returned different feed permissions. Review the created channel before linking or retrying.')
                         else:
                             resource = await create_checked(key, create, row['label'], overwrites=policy, reason='Confirmed GamerHQ setup')
