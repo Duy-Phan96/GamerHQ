@@ -155,6 +155,33 @@ Production acceptance and optional-feature acceptance are separate.
 - [ ] Copy the concise report and the paginated Full Report. Check owner-only access and verify no setup writes.
 - [ ] After the first reviewed apply, reopen the preview and verify no duplicate create or reuse actions are proposed. A second authorized apply, if applicable, must preserve IDs and report zero new resources and messages.
 
+#### First installation in a disposable guild
+
+Status **offline rehearsal passed, live setup pending**. The owner reported
+installing the existing Staging application in the disposable guild using the
+generated invite. The active Staging Host syncs commands only to its configured
+guild. Its protected verification also requires the Staging bot to be a member of
+that guild only. The disposable installation requires a dedicated application,
+token, fresh database and configuration. See [Discord setup](../DISCORD_SETUP.md).
+
+The offline rehearsal used a fresh seeded SQLite database and a synthetic guild
+with zero pre-existing channels and the Core grant mask. The first preview
+showed 41 safe structure creates, two private categories waiting for a verified
+Staff role, and eight dependent channels. The first confirmed apply reached 52
+configured, including 11 managed entry points. After reviewing the now-mapped
+Staff role, a second confirmed apply brought the fixture to 62 configured.
+Repeating it created or linked zero resources and preserved resource and pinned
+message IDs. The fixture kept 15 optional decisions out of Core apply and had
+zero Skill-owned resources. A real guild can start with default Discord
+channels and its board count can vary with its game catalog or installed
+features. Record the actual live inventory rather than targeting 55.
+
+- [ ] Verify the disposable bot application, exact guild membership and exclusive process before connecting its Gateway.
+- [ ] Verify Pin Messages, Manage Channels, Manage Roles, effective category and channel permissions, and role hierarchy without Administrator.
+- [ ] Obtain an owner-confirmed apply for each reviewed preview. Reopen after the Staff-role decision before approving private areas.
+- [ ] Record live Core structures, managed entry points, explicit reuse, skips and ownership boundaries. Verify private visibility with an ordinary member.
+- [ ] Repeat the preview and compare resource IDs, message IDs and pins. Record any remaining actions and distinguish unresolved live evidence from offline results.
+
 Record:
 
 - [ ] Host version;
