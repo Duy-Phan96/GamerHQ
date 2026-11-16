@@ -294,7 +294,10 @@ async def apply(guild, owner, draft, bot=None):
                 created[row['name']] = resource.id
 
         with apply_stage(guild, template, 'applying the server structure'):
-            result = await operations.apply(guild, owner, structure, bot, confirmed=True, choices=draft['choices'],
+            core_rows = [row for row in structure['rows']
+                         if template_decision(row, draft['choices']) not in ('optional', 'delegated')]
+            result = await operations.apply(guild, owner, {**structure, 'rows': core_rows}, bot,
+                                            confirmed=True, choices=draft['choices'],
                                             create_checkpoint=checkpoint, on_created=record_created)
 
         with apply_stage(guild, template, 'verifying the server structure'):

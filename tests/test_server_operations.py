@@ -40,6 +40,84 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(resource=row['name']):
                 self.assertIsNone(ops.bulk_policy_issue(ops.setup_policy(self.guild, row), permissions))
 
+    async def test_full_core_template_on_fresh_guild_converges_without_duplicates(self):
+        from discord.components import _component_factory
+        from services import discord_permissions as access, server_templates as templates
+
+        self.guild = fixtures.FakeGuild()
+        owner = self.owner()
+        install = discord.Permissions(**dict.fromkeys(access.CORE_INSTALL, True))
+        self.guild.me.guild_permissions = install
+        self.guild.voice_channels = []
+        db.seed_catalog()
+        published = fixtures.FakeChannel.send
+
+        async def send(channel, **kwargs):
+            message = await published(channel, **kwargs)
+            message.components = [_component_factory(row) for row in message.view.to_components()] if message.view else []
+            return message
+
+        async def create_voice(parent, name, **kwargs):
+            guild = parent.guild
+            guild.sequence += 1
+            channel = DefaultVoice(guild, name, parent, guild.sequence)
+            channel.overwrites = kwargs.get('overwrites', {})
+            guild.voice_channels.append(channel)
+            return channel
+
+        def effective(channel, member):
+            access = discord.Permissions(install.value)
+            for principal in (self.guild.default_role, member):
+                allow, deny = channel.overwrites_for(principal).pair()
+                access.handle_overwrite(allow.value, deny.value)
+            return access
+
+        with (patch.object(fixtures.FakeChannel, 'send', send),
+              patch.object(fixtures.FakeChannel, 'permissions_for', effective),
+              patch.object(fixtures.FakeCategory, 'permissions_for', effective, create=True),
+              patch.object(fixtures.FakeCategory, 'create_voice_channel', create_voice, create=True),
+              patch.object(fixtures.FakeGuild, 'channels', property(lambda guild: [
+                  *guild.categories, *guild.text_channels, *guild.voice_channels]))):
+            install.pin_messages = False
+            denied = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
+            self.assertIn('Pin Messages', denied['install_permissions'])
+            install.pin_messages = True
+            first = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
+            self.assertEqual(templates.counts(first), {
+                'Already configured': 0, 'Will reuse': 0, 'Will create': 41, 'Needs review': 2,
+                'Blocked': 8, 'Optional/Skipped': 1, 'Optional modules': 15, 'Skill-owned': 0,
+            })
+            self.assertFalse(self.guild.channels)
+            self.assertIsNone(db.get_setting(templates.progress_key(self.guild, templates.GAMERHQ)))
+            optional = [row for row in first['structure']['rows']
+                        if templates.template_decision(row, first['choices']) == 'optional']
+            result, counts, remaining = await templates.apply(self.guild, owner, first, self.bot)
+            self.assertEqual((counts['Already configured'], remaining), (52, 10))
+            self.assertFalse(result['failed'])
+            resumed = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
+            result, counts, remaining = await templates.apply(self.guild, owner, resumed, self.bot)
+            self.assertEqual(remaining, 0, result)
+            self.assertEqual(counts['Already configured'], 62)
+            self.assertEqual(len(result['created']), 10)
+            self.assertEqual(result['blocked'] + result['needs_review'] + result['failed'], [])
+            self.assertTrue(all(ops.mapped(row) is None for row in optional))
+            for name in ('staff', 'support-tickets'):
+                channel = self.guild.get_channel(int(db.get_setting(f'managed_category:1:{name}')))
+                self.assertIs(channel.overwrites_for(self.guild.default_role).view_channel, False)
+                self.assertIs(channel.overwrites_for(self.guild.me).view_channel, True)
+            before = ({resource.id for resource in self.guild.channels + self.guild.roles},
+                      {message.id for channel in self.guild.text_channels for message in channel.messages.values()})
+            repeat = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
+            self.assertEqual(len(repeat['boards']['rows']), 11)
+            self.assertTrue(all(row['status'] == 'EXACT_MATCH' and row['resource'].pinned
+                                for row in repeat['boards']['rows']))
+            result, again, remaining = await templates.apply(self.guild, owner, repeat, self.bot)
+            self.assertEqual(remaining, 0)
+            self.assertEqual(again, counts)
+            self.assertEqual((result['created'], result['reused'], result['failed']), ([], [], []))
+            self.assertEqual(before, ({resource.id for resource in self.guild.channels + self.guild.roles},
+                                      {message.id for channel in self.guild.text_channels for message in channel.messages.values()}))
+
     async def test_template_pin_repair_deduplicates_all_findings_and_resumes_after_uncertain_write(self):
         from services import server_template_pins as pins, server_templates as templates
 
