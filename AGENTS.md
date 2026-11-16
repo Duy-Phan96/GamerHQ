@@ -30,6 +30,9 @@ Apply this policy to Host, Skills, Web and future platform components. See
 [development guidance](docs/development/PROGRESSIVE_ENHANCEMENT.md).
 
 ## Development lifecycle
+
+- Start with the acceptance outcome and the evidence that will prove it. Check repository and read-only live evidence before asking for information.
+- Batch related changes around a complete, reviewable outcome. Run focused regressions first, then the required matrix on the candidate. Consolidate genuine owner decisions and approvals into one handoff.
 - Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.
 - Follow [Repository Ownership and Handoffs](docs/development/REPOSITORY_OWNERSHIP_AND_HANDOFFS.md). Cross-repository work is allowed only when the owner explicitly authorizes it; use a dedicated branch/PR in every target repository, preserve that repository's architecture/release rules, and document the source request, target change and resulting commit/PR.
 - AI-assisted work follows [SOP-008](docs/sop/SOP-008-ai-assisted-development.md): inspect → restate → architecture check → plan → smallest coherent change → test → diff self-review → human summary → PR.

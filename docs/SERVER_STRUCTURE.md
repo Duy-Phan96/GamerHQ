@@ -4,6 +4,10 @@ Read with [permissions](PERMISSIONS.md) for structural changes. The [README layo
 
 ## Server templates
 
+**Gaming Community V1** includes onboarding, profile and game discovery, LFG, community entry points, Host-managed Events and voice destinations, moderation, and support. The Core preview lists protected Skill bindings and optional resources separately from Core blockers. Event Manager and other Skills retain control of their own resources and permissions.
+
+Use **Optional Modules** in Server Templates to preview Marketplace or private Affiliate Stats independently. Publisher assignments and posting permissions stay in Integrations. Streamer features retain their existing management controls. Personal and creator sections such as KAMEX remain customer-managed. Existing reference channels, mappings, messages, and permissions are preserved.
+
 Server owners can open `/server setup`, choose **GamerHQ Gaming Community**, and review one plan before selecting **Apply Template**. The downloadable preview lists safe creations, verified reuse, protected exceptions, and managed entry points. A verified existing resource is linked in place, preserving its identity and permissions. Existing managed messages are preserved.
 
 Use **Resume Setup** to review live state after an interruption. An unconfirmed creation with no verified result is held for review in **Advanced Settings**, which also contains the individual setup and repair tools. Private areas require verified Staff access and trusted integration identities. Optional gaming-chat, game catalog imports, and Skill installations have their own setup controls.

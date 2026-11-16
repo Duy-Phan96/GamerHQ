@@ -688,7 +688,37 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
                                        {'name': 'ig-purchases', 'bulk_action': 'skip', 'bulk_blocked': True}]},
                  'choices': {}, 'boards': {'rows': []}, 'deferred': []}
         counts = templates.counts(draft)
-        self.assertEqual((counts['Needs review'], counts['Blocked'], counts['Optional integration review']), (0, 0, 2))
+        self.assertEqual((counts['Needs review'], counts['Blocked'], counts['Optional modules']), (0, 0, 2))
+
+    async def test_core_template_preserves_optional_feeds_and_skill_destinations_on_repeat(self):
+        from services import server_templates as templates
+
+        actor = self.owner()
+        events = self.guild.add_category('EVENTS')
+        board = self.guild.add_channel('community-events', events)
+        board.topic = 'skill-resource:event-manager'
+        db.set_setting('managed_category:1:events', events.id)
+        db.set_setting('managed_channel:1:community-events', board.id)
+        names = {'events', 'community-events', 'partners-benefits', 'gaming-news', 'affiliate-stats', 'ig-purchases'}
+        definitions = ops.definitions
+        with patch.object(ops, 'definitions', lambda guild: [row for row in definitions(guild)
+                                                            if row['name'] in names and row['kind'] in ('category', 'text')]):
+            before = {channel.id for channel in self.guild.channels}
+            for expected in (['GamerHQ Staff'], []):
+                draft = await templates.preview(self.guild, actor, templates.GAMERHQ, self.bot)
+                self.assertEqual(templates.counts(draft)['Skill-owned'], 1)
+                self.assertEqual(templates.counts(draft)['Optional modules'], 4)
+                self.assertNotIn('community-events', draft['deferred'])
+                result, _, _ = await templates.apply(self.guild, actor, draft, self.bot)
+                self.assertEqual(result['created'], expected)
+                self.assertFalse(result['reused'])
+            self.assertEqual({channel.id for channel in self.guild.channels}, before)
+            self.assertEqual(db.get_setting('managed_channel:1:community-events'), str(board.id))
+            self.assertEqual(board.sends, 0)
+            optional = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
+            marketplace = templates.optional_section_rows(optional, 'Marketplace')
+            self.assertEqual({row['name'] for row in marketplace}, {'partners-benefits', 'gaming-news'})
+            self.assertTrue(all(row['bulk_action'] == 'create' for row in marketplace))
 
     async def test_both_public_feeds_inherit_verified_read_only_parent_without_overwrites(self):
         actor = self.owner()
