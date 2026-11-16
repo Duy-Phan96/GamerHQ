@@ -169,7 +169,7 @@ async def public_message_issue(guild, channel, *, publish=False):
     bot_permissions = snapshot_permissions(guild, channel, bot_member)
     missing = access.missing(bot_permissions, access.BOARD_PUBLISH if publish else access.BOARD_READ)
     if missing:
-        detail = access.channel_remediation(guild, channel, bot_member, missing)
+        detail = access.channel_remediation(guild, channel, bot_member, missing) if publish else ''
         return ('Host lacks ' + ' and '.join(access.LABELS[flag] for flag in missing)
                 + ' here. Review the Host bot role and its channel permissions.' + (' ' + detail if detail else ''))
     return None
