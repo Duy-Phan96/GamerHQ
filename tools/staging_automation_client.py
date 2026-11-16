@@ -12,7 +12,7 @@ from urllib.request import Request, build_opener
 from urllib.error import HTTPError
 
 from tools.staging_ssh_client import invoke, StagingAccessError, failure_code
-from tools.staging_automation.policy import request, PREFIX, Denied
+from tools.staging_automation.policy import request, PREFIX, Denied, require_expected_host
 from tools.staging_automation.oidc import NoRedirects
 
 from tools.staging_automation.policy import ERROR_CODES
@@ -82,11 +82,12 @@ def token(audience):
     return value
 
 
-def perform(operation, release=None, *, call=exchange, get_token=token, artifact=None):
+def perform(operation, release=None, *, call=exchange, get_token=token, artifact=None, expected_host=None):
     challenge = call('challenge', {'operation': operation})
     payload = {'challenge': challenge['challenge'], 'token': get_token(challenge['audience'])}
     if release is not None: payload['release'] = release
     if artifact is not None: payload['artifactUrl'] = artifact()
+    if expected_host is not None: payload['expectedHostCommit'] = expected_host
     return call(operation, payload)
 
 
@@ -153,7 +154,11 @@ def main():
         status = exchange('status')
         if status.get('state') != 'ACTIVE' or status.get('hostPromotionSupported') is not True or status.get('bootstrapVerified') is not True:
             raise Denied('HOST_PROMOTION_NOT_INSTALLED')
-        result = perform('host-promote')
+        if status.get('recoveryRequired') is not False:
+            raise Denied('RECOVERY_REQUIRES_OWNER')
+        expected = os.environ.get('EXPECTED_STAGING_HOST_COMMIT')
+        require_expected_host(expected, status.get('hostPromotionCommit'))
+        result = perform('host-promote', expected_host=expected)
     elif args.operation == 'reconcile':
         status = exchange('status')
         if status.get('state') != 'ACTIVE': result = status

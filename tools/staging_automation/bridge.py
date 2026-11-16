@@ -6,7 +6,7 @@ import sys
 import time
 import uuid
 
-from .policy import Denied, request, validate_policy, charge, admit, PUBLIC, WEB
+from .policy import Denied, request, validate_policy, charge, admit, require_expected_host, PUBLIC, WEB
 from .oidc import verify
 
 
@@ -32,7 +32,8 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         nonce = uuid.uuid4().hex
         state['challenge'] = {'nonce': nonce, 'operation': payload['operation'], 'expires': now + 300}; save(state)
         return {'challenge': nonce, 'audience': 'gamerhq-staging-automation:' + policy['repositoryId'] + ':' + nonce}
-    extra = {'release'} if operation == 'prepare' else {'artifactUrl'} if operation == 'web-deploy' else set()
+    extra = {'release'} if operation == 'prepare' else {'artifactUrl'} if operation == 'web-deploy' else (
+        {'expectedHostCommit'} if operation == 'host-promote' else set())
     if not isinstance(payload, dict) or set(payload) - ({'token', 'challenge'} | extra) or not {'token', 'challenge'} <= set(payload):
         raise Denied('PAYLOAD_REJECTED')
     challenge = state.get('challenge', {})
@@ -48,6 +49,9 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     if operation == 'deactivate':
         state['enabled'] = False; save(state); return {'state': 'DEACTIVATED'}
     admit(operation, state)
+    if operation == 'host-promote':
+        # main() holds the operation lock also used by owner pin replacement.
+        require_expected_host(payload.get('expectedHostCommit'), policy.get('hostPromotion', {}).get('commit'))
     if state.get('enabled'): backend.policy_integrity()
     try:
         if operation == 'catalog-preview':
