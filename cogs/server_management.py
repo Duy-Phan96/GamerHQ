@@ -2218,6 +2218,7 @@ class TemplatePreviewView(ReportErrors, Menu):
         super().__init__(guild, actor_id)
         self.draft = draft
         self.finished = False
+        self.review_pins.disabled = not draft.get('pin_grants')
 
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
@@ -2233,6 +2234,18 @@ class TemplatePreviewView(ReportErrors, Menu):
         from cogs.report_views import full_report
         from services.server_templates import report_details
         await full_report(interaction, report_details(self.draft), 'template-preview.txt')
+
+    @discord.ui.button(label='Review Pin Permissions')
+    async def review_pins(self, interaction, button):
+        view = TemplatePinRepairView(self)
+        automatic = sum(grant.automatic for grant in self.draft['pin_grants'].values())
+        total = len(self.draft['pin_grants'])
+        await interaction.response.send_message(
+            f'# Core Pin Messages repair\n{automatic} of {total} channels can be repaired through this preview. '
+            'Review the exact destinations in Full Report. Confirmation adds only Pin Messages for the Host member. '
+            'A synced channel becomes unsynced if changed. Channels requiring an owner grant in Discord are skipped. '
+            'This action changes no messages or pins.',
+            view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @discord.ui.button(label='Apply Template', style=discord.ButtonStyle.success)
     async def confirm(self, interaction, button):
@@ -2270,6 +2283,42 @@ class TemplatePreviewView(ReportErrors, Menu):
         self.finished = True
         view = ServerTemplatesView(self.guild, self.admin_id)
         await interaction.response.edit_message(content=view.text(), view=view, attachments=[])
+
+
+class TemplatePinRepairView(ReportErrors, Menu):
+    def __init__(self, parent):
+        super().__init__(parent.guild, parent.admin_id)
+        self.draft = parent.draft
+        self.confirm.disabled = not any(grant.automatic for grant in self.draft['pin_grants'].values())
+
+    async def interaction_check(self, interaction):
+        return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
+
+    @discord.ui.button(label='Full Report', custom_id='gamerhq:report:full')
+    async def report(self, interaction, button):
+        from cogs.report_views import full_report
+        from services.server_templates import report_details
+        await full_report(interaction, report_details(self.draft), 'template-pin-preview.txt')
+
+    @discord.ui.button(label='Confirm Pin Permissions', style=discord.ButtonStyle.success)
+    async def confirm(self, interaction, button):
+        from services import server_template_pins, server_templates
+
+        if button.disabled:
+            return await interaction.response.send_message('Open a fresh preview to review the remaining permissions.', ephemeral=True)
+        button.disabled = True
+        await interaction.response.defer(ephemeral=True)
+        try:
+            outcomes, refreshed = await server_template_pins.apply(self.guild, interaction.user, self.draft, interaction.client)
+        except (ServerMessageError, discord.HTTPException, TimeoutError):
+            return await interaction.followup.send(
+                'Pin permission repair could not be verified. Reopen /server setup before retrying.', ephemeral=True)
+        verification = (server_templates.report_details(refreshed) if refreshed else
+                        'Board verification did not finish. Reopen /server setup before retrying.')
+        details = '\n'.join([*(f'{name} — {outcome}' for name, outcome in outcomes), '', verification])
+        summary = 'Pin permission review complete. Open a fresh Core preview to verify and apply managed entry points.'
+        await interaction.followup.send(summary, ephemeral=True,
+                                         view=TemplateResultView(self.guild, self.admin_id, summary, details))
 
 
 class TemplateResultView(ReportErrors, Menu):

@@ -141,6 +141,7 @@ be followed by a rerun of every affected acceptance section.
 - [ ] Verify Marketplace and Affiliate Stats are independently previewable. Verify Affiliate Stats still requires an approved Instant Gaming identity.
 - [ ] Compare existing channel and role IDs, message IDs, and permission overwrites before and after the owner-approved Core Apply. Preserve existing Event Manager bindings, attendance, and history.
 - [ ] Compare each required pin destination with its Full Report permission proposal. Review any Host-only Pin Messages allow in that channel before applying it. Preserve unrelated overwrites.
+- [ ] Use Review Pin Permissions to verify the deduplicated channel list, including any sync changes and owner-only grants in Discord. Confirm once, then reopen the Core preview. Verify the repair leaves existing messages, mappings, category permissions and pins intact. Confirm the ordinary template apply only after the refreshed report recognizes existing boards and lists the missing boards. Reopen again and confirm there are no duplicate boards.
 - [ ] Copy the concise report and the paginated Full Report. Check owner-only access and verify no setup writes.
 - [ ] After the first reviewed apply, reopen the preview and verify no duplicate create or reuse actions are proposed. A second authorized apply, if applicable, must preserve IDs and report zero new resources and messages.
 
