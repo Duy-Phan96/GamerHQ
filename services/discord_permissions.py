@@ -10,13 +10,19 @@ from services.operation_context import read_once
 
 BOARD_READ = ('view_channel', 'read_message_history')
 BOARD_PUBLISH = (*BOARD_READ, 'send_messages', 'pin_messages')
-CORE_INSTALL = (*BOARD_PUBLISH, 'embed_links', 'attach_files', 'manage_channels', 'manage_roles')
+CORE_BOARD_OVERWRITES = ('add_reactions', 'use_application_commands', 'send_messages_in_threads',
+                         'create_public_threads', 'create_private_threads')
+CORE_INSTALL = (*BOARD_PUBLISH, *CORE_BOARD_OVERWRITES, 'embed_links', 'attach_files',
+                'manage_channels', 'manage_roles')
 
 LABELS = {
     'view_channel': 'View Channel', 'read_message_history': 'Read Message History',
     'send_messages': 'Send Messages', 'pin_messages': 'Pin Messages',
     'embed_links': 'Embed Links', 'attach_files': 'Attach Files', 'manage_channels': 'Manage Channels',
     'manage_roles': 'Manage Roles (Manage Permissions in channels)',
+    'add_reactions': 'Add Reactions', 'use_application_commands': 'Use Application Commands',
+    'send_messages_in_threads': 'Send Messages in Threads', 'create_public_threads': 'Create Public Threads',
+    'create_private_threads': 'Create Private Threads',
     'create_events': 'Create Events', 'manage_events': 'Manage Events',
     'connect': 'Connect', 'speak': 'Speak', 'move_members': 'Move Members',
 }
