@@ -366,6 +366,9 @@ def test_bulk_preview_enrollment_requires_the_installed_recovery_host(installati
         ('verified_inheritance', 'ENROLL STAGING VERIFIED FEED INHERITANCE', 'ACTIVE_INDEPENDENT_FEEDS_CONTROLLER',
          enrollment.INDEPENDENT_FEEDS_HOST, enrollment.INDEPENDENT_FEEDS_ARCHIVE,
          enrollment.VERIFIED_INHERITANCE_HOST, enrollment.VERIFIED_INHERITANCE_ARCHIVE),
+        ('template_v1', 'ENROLL STAGING SERVER TEMPLATE V1', 'ACTIVE_VERIFIED_INHERITANCE_CONTROLLER',
+         enrollment.VERIFIED_INHERITANCE_HOST, enrollment.VERIFIED_INHERITANCE_ARCHIVE,
+         enrollment.TEMPLATE_V1_HOST, enrollment.TEMPLATE_V1_ARCHIVE),
     ],
 )
 def test_bulk_pin_enrollment_requires_the_installed_baseline(
