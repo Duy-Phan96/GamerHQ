@@ -21,11 +21,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          candidate=eb3526e4f451b4468417c6ef88c6f9f8a17e4ae8
+          candidate=40c88fada10f7990ef3d2cddb81f30b6381fe73e
           git fetch origin "$candidate"
-          archive="$RUNNER_TEMP/server-template-v1.tar"
+          archive="$RUNNER_TEMP/template-v1-pins.tar"
           git archive --format=tar --output="$archive" "$candidate"
-          echo "a013890788085b05264f02bdec185374d60bdd5442ca2f3ad467c1e79ae291b7  $archive" | sha256sum --check --strict
+          echo "8ea016e3e81d6f9418e228836cebd34411beca1dba534ce180193759e741eacf  $archive" | sha256sum --check --strict
           sha256sum "$archive"
       - name: Provision the current installed worker on this disposable runner
         working-directory: installed-worker-source
@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          baseline=72e11530e25e0b71933fdc8c6380e2b0d5274b4e
+          baseline=eb3526e4f451b4468417c6ef88c6f9f8a17e4ae8
           git fetch origin "$baseline"
           mkdir /tmp/gamerhq-host-baseline
           git archive "$baseline" | tar -x -C /tmp/gamerhq-host-baseline
