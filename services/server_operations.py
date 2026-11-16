@@ -894,7 +894,7 @@ def bulk_decision(row, choices):
     return action
 
 
-def bulk_preview_report(draft, choices):
+def bulk_preview_report(draft, choices, *, classify=bulk_decision, labels=None):
     """Serialize the existing owner-only preview without making another Discord request."""
     if draft.get('scope') != 'bulk' or draft['mode'] != 'setup':
         raise ValueError('Bulk setup preview required')
@@ -904,12 +904,14 @@ def bulk_preview_report(draft, choices):
 
     rows = draft['rows']
     by_key = {row['key']: row for row in rows}
-    decisions = [bulk_decision(row, choices) for row in rows]
+    decisions = [classify(row, choices) for row in rows]
+    labels = labels or BULK_DECISIONS
     lines = [
-        'GamerHQ Setup All Missing — read-only preview',
+        ('GamerHQ Setup All Missing — read-only preview' if classify is bulk_decision
+         else 'Structure decisions only — managed entry points are listed separately'),
         f"Guild ID {draft['guild_id']} · {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(draft['created']))}",
         f'{len(rows)} resource decisions. Confirmation requires a fresh preview and revalidation.',
-        ' · '.join(f'{label}: {decisions.count(key)}' for key, label in BULK_DECISIONS.items()),
+        ' · '.join(f'{label}: {decisions.count(key)}' for key, label in labels.items() if key in decisions),
     ]
     if rows and any(row.get('private') for row in rows):
         from services.staff_access import creation_roles
@@ -922,9 +924,9 @@ def bulk_preview_report(draft, choices):
             if role not in staff and set(alias(role.name).split('-')) & {'staff', 'moderator', 'mod', 'admin', 'administrator'}:
                 lines.append(f'Staff-named role without verified authority: {single_line(role.name)} (ID {role.id})')
     for number, (row, decision) in enumerate(zip(rows, decisions), 1):
-        lines.extend(('', f"{number}. [{BULK_DECISIONS[decision]}] {single_line(row['label'])} ({row['kind']})",
+        lines.extend(('', f"{number}. [{labels[decision]}] {single_line(row['label'])} ({row['kind']})",
                       f"   Inventory status: {row['status']}"))
-        if row.get('reason') and (decision in ('review', 'blocked', 'skip', 'choose') or row['name'] in PUBLIC_FEEDS):
+        if row.get('reason') and (decision not in ('create', 'configured', 'reuse') or row['name'] in PUBLIC_FEEDS):
             lines.append(f"   Reason: {single_line(row['reason'])}")
         if decision == 'choose' and choices.get(row['key']) == 0:
             lines.append('   Existing channel left unselected for this preview.')
@@ -942,8 +944,8 @@ def bulk_preview_report(draft, choices):
         if row.get('parent'):
             parent = by_key.get(row['parent'])
             if parent:
-                parent_decision = bulk_decision(parent, choices)
-                lines.append(f"   Parent: {single_line(parent['label'])} [{BULK_DECISIONS[parent_decision]}]")
+                parent_decision = classify(parent, choices)
+                lines.append(f"   Parent: {single_line(parent['label'])} [{labels[parent_decision]}]")
                 if parent.get('bulk_id'):
                     lines.append(f"   Verified parent ID: {parent['bulk_id']}")
                 if decision == 'blocked' and parent.get('reason'):
