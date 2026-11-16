@@ -6,7 +6,7 @@ import logging
 import time
 from types import SimpleNamespace
 
-from database import db
+from database import db, tenants
 from services import managed_message_service as managed, server_operations as operations
 from services import discord_permissions, server_template_pins
 from services.operation_context import read_scope
@@ -75,6 +75,7 @@ def progress_key(guild, template):
 
 
 def progress_record(guild, template):
+    tenants.require_guild(guild.id)
     try:
         record = json.loads(db.get_setting(progress_key(guild, template)) or '{}')
         return record if isinstance(record, dict) else {}
@@ -138,6 +139,7 @@ async def preview_entry_points(guild, owner, bot, destinations, pending):
 
 
 async def preview(guild, owner, template, bot=None):
+    tenants.require_guild(guild.id)
     if template not in TEMPLATES:
         raise ServerMessageError('Unknown server template.')
     structure = await operations.preview(guild, owner, 'setup', bot, scope='bulk', template_staff=template.staff_access)
@@ -261,6 +263,7 @@ def remaining_structure(draft):
 
 
 async def apply(guild, owner, draft, bot=None):
+    tenants.require_guild(guild.id)
     template = draft['template']
     structure = draft['structure']
     managed.require_admin(guild, owner)

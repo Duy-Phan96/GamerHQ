@@ -6,7 +6,7 @@ import time
 import uuid
 from types import MappingProxyType
 
-from database import db
+from database import db, tenants
 from skill_runtime.contracts.schedule import schedule_from_dict, schedule_to_dict
 from skill_runtime.runtime.scheduler import ScheduledJob, StaleSchedulerClaimError
 from .skill_host import _valid_identity
@@ -128,19 +128,22 @@ class GamerHQSchedulerStore:
             raise ValueError("lease_seconds and limit must be positive.")
         claimed = []
         lease_until = int(now) + int(lease_seconds)
+        tenant = tenants.current()
+        guild_id = tenant.guild_id if tenant else None
         with db.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 """
                 SELECT * FROM skill_jobs
                 WHERE enabled=1
+                  AND (? IS NULL OR guild_id=?)
                   AND next_run_at IS NOT NULL
                   AND next_run_at<=?
                   AND lease_until<=?
                 ORDER BY next_run_at,guild_id,skill_id,job_key
                 LIMIT ?
                 """,
-                (int(now), int(now), int(limit)),
+                (guild_id, guild_id, int(now), int(now), int(limit)),
             ).fetchall()
             for row in rows:
                 token = uuid.uuid4().hex
@@ -192,6 +195,7 @@ class GamerHQSchedulerStore:
         return tuple(claimed)
 
     def _owned_where(self, job: ScheduledJob) -> tuple:
+        tenants.require_guild(job.guild_id)
         if not job.claim_token:
             raise ValueError("Claimed scheduler job requires a claim token.")
         return (
@@ -263,6 +267,7 @@ class GamerHQSchedulerStore:
                 raise StaleSchedulerClaimError("Scheduler claim is stale; defer was not applied.")
 
     async def list_jobs(self, *, guild_id: int, skill_id: str | None = None) -> tuple[ScheduledJob, ...]:
+        tenants.require_guild(guild_id)
         if guild_id <= 0:
             raise ValueError("guild_id must be positive.")
         with db.connect() as conn:

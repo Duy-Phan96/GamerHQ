@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet, InvalidToken
 import re
 import time
 
-from database import db
+from database import db, tenants
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.errors import CapabilityUnavailableError
 from skill_runtime.contracts.manifest import SKILL_ID
@@ -42,6 +42,7 @@ class GamerHQSkillSecrets:
         self.permissions = permissions
 
     def _key(self, key: str) -> str:
+        tenants.require_guild(self.guild_id)
         value = str(key)
         if not _SECRET_KEY.fullmatch(value):
             raise ValueError("Skill secret key must be 1-128 safe characters.")

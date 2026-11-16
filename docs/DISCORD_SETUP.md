@@ -10,15 +10,14 @@
 8. Verify that each support-gamerhq bullet opens its MARKETPLACE channel. If a destination is missing, inspect health and run reconciliation and confirmed repair; do not manually paste raw IDs.
 9. Verify role assignment, public/private LFG, voice ownership, suggestions and two-user ticket isolation using the [release checklist](../RELEASE_CHECKLIST.md). Check that ordinary users cannot see other tickets or Staff logs.
 
-Use a dedicated Discord application for each isolated acceptance Host. The
-current Host syncs slash commands only to its configured `GUILD_ID` and owns a
-single database. Protected Staging verification requires exclusive bot membership
-in its configured guild. Installing its application in a second guild can
-block a subsequent promotion preflight. For a fresh installation, use the
-dedicated test application's ID when generating the invite and use its own
-token, fresh private database, and configuration. The template discovers and
-persists its game selector on a fresh guild, so leave `CHOOSE_GAMES_CHANNEL_ID`
-unset until there is an existing channel to reference.
+The shared GamerHQ application is the customer installation target. The
+current Host still syncs slash commands only to its configured `GUILD_ID` and
+owns a single database. Protected Staging verification requires exclusive
+membership until the [multi-guild pilot](architecture/decisions/ADR-001-guild-tenancy.md)
+is approved. An extra membership can block a subsequent promotion preflight.
+A separate app, token and database are an option for a temporary isolated
+rehearsal of the old Host. The template discovers and persists its game selector
+on a fresh guild. Leave `CHOOSE_GAMES_CHANNEL_ID` unset for that setup.
 
 Slash-command permissions restrict who can operate maintenance commands; they are separate from the bot's own Discord permissions. Missing hierarchy/permissions should be corrected explicitly instead of granting everyone broad access.
 

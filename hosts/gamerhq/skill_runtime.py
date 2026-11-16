@@ -31,7 +31,7 @@ from .skill_scheduler import GamerHQSchedulerStore
 from .skill_http import GamerHQExternalHttp
 from .skill_secrets import GamerHQSkillSecrets
 from .skill_resources import GamerHQManagedResources
-from database import db
+from database import db, tenants
 from services.discord_permissions import DiscordPermissionPreflightError, installation_issues
 import json
 
@@ -176,6 +176,7 @@ class GamerHQSkillRuntime:
         )
 
     def _guild(self, guild_id: int):
+        tenants.require_guild(guild_id)
         guild = self.bot.get_guild(int(guild_id))
         if guild is None:
             raise ResourceNotFoundError("Guild is not available to the GamerHQ host.")
@@ -277,6 +278,7 @@ class GamerHQSkillRuntime:
         payload,
         actor_id=None,
     ):
+        tenants.require_guild(guild_id)
         if skill_id == "event-manager" and contract_id not in ("event-manager.migrate-plan.v1", "event-manager.list.v1", "event-manager.get.v1", "event-manager.history.v1"):
             self._require_event_authority(guild_id)
         if actor_id is not None and (type(actor_id) is not int or not 0 < actor_id < 2**64):
@@ -309,6 +311,7 @@ class GamerHQSkillRuntime:
         return changed
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        tenants.require_guild(guild_id)
         issue = await self.discord_permission_issue(guild_id, self.registry.get(skill_id).manifest)
         if issue:
             raise DiscordPermissionPreflightError(issue)
@@ -397,6 +400,7 @@ class GamerHQSkillRuntime:
                 self.log.exception("Skill shutdown failed guild=%s", guild.id)
 
     async def status(self, *, guild_id: int, skill_id: str) -> GuildSkillStatus:
+        tenants.require_guild(guild_id)
         if not self.registry.contains(skill_id) and skill_id in self._unavailable_external:
             return self._unavailable_status(skill_id)
         skill = self.registry.get(skill_id)

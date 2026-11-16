@@ -119,12 +119,17 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_setup(interaction)
         view = interaction.response.send_message.call_args.kwargs['view']
         self.assertIsInstance(view, ServerTemplatesView)
-        self.assertEqual([child.label for child in view.children], ['Use Template', 'Advanced Settings', 'Optional Modules'])
+        self.assertEqual([child.label for child in view.children],
+                         ['Use Template', 'Advanced Settings', 'Optional Modules', 'Manage Skills'])
+        with patch('cogs.server_management.open_skills', new_callable=AsyncMock) as skills:
+            await view.children[-1].callback(interaction)
+            skills.assert_awaited_once_with(interaction, self.guild, owner.id)
         db.set_setting(setup_key(self.guild), '1')
         db.set_setting(templates.progress_key(self.guild, templates.GAMERHQ), '{"state":"applying"}')
         await open_setup(interaction)
         view = interaction.response.send_message.call_args.kwargs['view']
-        self.assertEqual([child.label for child in view.children], ['Resume Setup', 'Advanced Settings', 'Optional Modules'])
+        self.assertEqual([child.label for child in view.children],
+                         ['Resume Setup', 'Advanced Settings', 'Optional Modules', 'Manage Skills'])
         ordinary = self.interaction(self.actor(43, False))
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)

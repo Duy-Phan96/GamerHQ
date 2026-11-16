@@ -12,7 +12,7 @@ import time
 import uuid
 from typing import Any, Iterable, Mapping
 
-from database import db
+from database import db, tenants
 from skill_runtime.contracts.capabilities import KNOWN_CAPABILITIES, SkillCapability
 from skill_runtime.contracts.errors import CapabilityUnavailableError
 from skill_runtime.contracts.manifest import SKILL_ID
@@ -22,6 +22,7 @@ _MAX_STORAGE_JSON_BYTES = 64 * 1024
 
 
 def _valid_identity(guild_id: int, skill_id: str) -> None:
+    tenants.require_guild(guild_id)
     if guild_id <= 0:
         raise ValueError("guild_id must be positive.")
     if not SKILL_ID.fullmatch(skill_id):
@@ -67,6 +68,7 @@ class GamerHQSkillStateStore:
         return True
 
     async def installed_skill_ids(self, *, guild_id: int) -> tuple[str, ...]:
+        tenants.require_guild(guild_id)
         if guild_id <= 0:
             raise ValueError("guild_id must be positive.")
         with db.connect() as conn:
@@ -149,6 +151,7 @@ class GamerHQSkillStateStore:
             )
 
     async def enabled_skill_ids(self, *, guild_id: int) -> tuple[str, ...]:
+        tenants.require_guild(guild_id)
         if guild_id <= 0:
             raise ValueError("guild_id must be positive.")
         with db.connect() as conn:
@@ -209,6 +212,7 @@ class GamerHQSkillStorage:
         self.permissions = permissions
 
     def _key(self, key: str) -> str:
+        tenants.require_guild(self.guild_id)
         if not _STORAGE_KEY.fullmatch(str(key)):
             raise ValueError("Skill storage key must be 1-128 safe characters.")
         return str(key)
@@ -300,6 +304,7 @@ class GamerHQSkillStorage:
         return tuple(row["storage_key"] for row in rows)
 
     async def transact(self, *, checks, writes) -> bool:
+        tenants.require_guild(self.guild_id)
         self.permissions.require(SkillCapability.STORAGE_SKILL.value)
         self.permissions.require(SkillCapability.STORAGE_ATOMIC.value)
         if not isinstance(checks, Mapping) or not isinstance(writes, Mapping) or len(set(checks) | set(writes)) > 10000:
@@ -357,6 +362,7 @@ class GamerHQSkillAudit:
         target: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        tenants.require_guild(self.guild.id)
         self.permissions.require(SkillCapability.AUDIT_WRITE.value)
         if not action or len(action) > 100:
             raise ValueError("Skill audit action must be 1-100 characters.")
