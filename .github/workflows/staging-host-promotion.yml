@@ -1,7 +1,12 @@
 name: Reviewed staging Host promotion
-run-name: Staging Host - Server Template V1 Acceptance
+run-name: Staging Host - ${{ inputs.candidate }}
 on:
   workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact owner-enrolled Staging Host commit (40 lowercase hexadecimal characters)
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -26,8 +31,7 @@ jobs:
           GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
           GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
           GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
-          EXPECTED_STAGING_HOST_COMMIT: eb3526e4f451b4468417c6ef88c6f9f8a17e4ae8
+          EXPECTED_STAGING_HOST_COMMIT: ${{ inputs.candidate }}
         run: |
           set -euo pipefail
-          python3 -m tools.staging_automation_client status | python3 -c 'import json, os, sys; s=json.load(sys.stdin); sys.exit(0 if s.get("hostPromotionCommit") == os.environ["EXPECTED_STAGING_HOST_COMMIT"] and not s.get("recoveryRequired") else "Reviewed staging Host pin is unavailable.")'
           python3 -m tools.staging_automation_client host-promote

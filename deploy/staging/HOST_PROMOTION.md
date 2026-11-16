@@ -1,5 +1,13 @@
 # Reviewed staging Host promotion
 
+## Proposed stable promotion workflow
+
+This proposal needs a separate protected controller and workflow rollout after the V1 acceptance release. The workflow would keep fixed bytes across releases and take one required full commit SHA as a dispatch input. GitHub displays it in the run label before approval. The client compares it with the VPS pin before requesting an OIDC challenge. The controller repeats the comparison under the operation lock before invoking promotion, so a pending run cannot apply a replacement pin.
+
+The dispatch input is an assertion. The owner-enrolled controller and policy still determine the source commit, archive digest, baseline, exact change list and candidate CI evidence. The existing signed OIDC checks still verify the workflow digest, main branch, protected environment and the owner's approval on the run. Backup, restore probe and rollback checks stay in the existing promotion path.
+
+The initial rollout requires a reviewed one-time enrollment that coordinates the new controller protocol and workflow digest while preserving the installed pin and recovery state. Old and new protocol versions fail closed when paired incorrectly. Rehearse the migration and the rollback before registration. Subsequent owner-enrolled candidate pins can reuse the same workflow digest. Each deployment still requires owner approval in GitHub.
+
 ## Bulk setup permission candidate
 
 [Candidate PR #260](https://github.com/Duy-Phan96/GamerHQ/pull/260) overlays
