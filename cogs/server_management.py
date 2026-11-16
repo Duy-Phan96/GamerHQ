@@ -2147,6 +2147,12 @@ class ServerTemplatesView(Menu):
                      else 'Use Template') if len(TEMPLATES) == 1 else template.name
             self.action(label, use, style=discord.ButtonStyle.primary)
         self.action('Advanced Settings', self.advanced)
+        self.action('Optional Modules', self.optional_modules)
+
+    async def optional_modules(self, interaction):
+        await interaction.response.edit_message(
+            content='# Optional Modules\nPreview Marketplace or Affiliate Stats separately. Use Integrations for publisher connections and Skills for Skill-owned features.',
+            view=TemplateModulesView(self.guild, self.admin_id))
 
     async def interaction_check(self, interaction):
         return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
@@ -2185,6 +2191,26 @@ class ServerTemplatesView(Menu):
             lines.append(f"The template will also add default entry points in {len(draft['new_boards'])} new channels after verification.")
         await interaction.edit_original_response(content='\n'.join(lines), view=view, attachments=[],
                                                  allowed_mentions=discord.AllowedMentions.none())
+
+
+class TemplateModulesView(Menu):
+    def __init__(self, guild, actor_id):
+        super().__init__(guild, actor_id)
+        from services.server_templates import OPTIONAL_SECTIONS
+        for section in OPTIONAL_SECTIONS:
+            async def review(interaction, selected=section):
+                from cogs.server import OperationsView
+                from services.server_operations import preview
+                from services.server_templates import optional_section_rows
+                await interaction.response.defer(ephemeral=True)
+                draft = await preview(self.guild, interaction.user, 'setup', interaction.client, scope='bulk')
+                draft['rows'] = optional_section_rows(draft, selected)
+                view = OperationsView(self.guild, draft, interaction.client, friendly=True)
+                await interaction.edit_original_response(**view.preview_message(include_report=True))
+            self.action('Preview ' + section, review)
+
+    async def interaction_check(self, interaction):
+        return await super().interaction_check(interaction) and interaction.user.id == self.guild.owner_id
 
 
 class TemplatePreviewView(ReportErrors, Menu):

@@ -429,6 +429,7 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
                 or any(r.id in protected or getattr(r, 'category_id', None) in protected
                        or (getattr(r, 'topic', None) or '').startswith('skill-resource:') for r in candidates)):
             placement_error = True
+            row['skill_protected'] = True
             row['reason'] = 'Skill-owned resource or destination'
         if existing and review_aliases and alias(existing.name) != row['name'] and any(
                 r.id != existing.id and alias(r.name) == row['name'] for r in collection):

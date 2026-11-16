@@ -56,7 +56,31 @@ async def copy_report(interaction, text):
 
 async def full_report(interaction, text, filename):
     await interaction.response.send_message(ephemeral=True, allowed_mentions=discord.AllowedMentions.none(),
-                                            file=discord.File(BytesIO(text.encode('utf-8')), filename=filename))
+                                            file=discord.File(BytesIO(text.encode('utf-8')), filename=filename),
+                                            view=CopyFullReport(interaction, text))
+
+
+class CopyFullReport(ReportErrors, discord.ui.View):
+    def __init__(self, interaction, text):
+        super().__init__(timeout=240)
+        self.guild_id = interaction.guild.id
+        self.actor_id = interaction.user.id
+        self.text = text
+
+    async def interaction_check(self, interaction):
+        return await report_owner_check(interaction, self.guild_id, self.actor_id)
+
+    @discord.ui.button(label='Copy Report', custom_id='gamerhq:report:copy')
+    async def copy(self, interaction, button):
+        await copy_report(interaction, self.text)
+
+
+async def report_owner_check(interaction, guild_id, actor_id):
+    allowed = (interaction.guild_id == guild_id and interaction.user.id == actor_id
+               and actor_id == interaction.guild.owner_id)
+    if not allowed:
+        await interaction.response.send_message('This report is private.', ephemeral=True)
+    return allowed
 
 
 class ReportPages(ReportErrors, discord.ui.View):
@@ -69,11 +93,7 @@ class ReportPages(ReportErrors, discord.ui.View):
         self.previous.disabled = True
 
     async def interaction_check(self, interaction):
-        allowed = (interaction.guild_id == self.guild_id and interaction.user.id == self.actor_id
-                   and self.actor_id == interaction.guild.owner_id)
-        if not allowed:
-            await interaction.response.send_message('This report is private.', ephemeral=True)
-        return allowed
+        return await report_owner_check(interaction, self.guild_id, self.actor_id)
 
     async def turn(self, interaction, offset):
         previous = self.index
