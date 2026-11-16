@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from database import db
 from services import managed_message_service as managed, server_operations as operations
+from services import server_template_pins
 from services.operation_context import read_scope
 from services.server_service import ServerMessageError
 
@@ -36,7 +37,7 @@ def scope_structure(structure, template):
         return
     for row in structure['rows']:
         parent = (row.get('parent') or '').rsplit(':', 1)[-1]
-        optional = (row['kind'] == 'bot-role' or row.get('existing_only') or row.get('optional')
+        optional = (row['kind'] == 'bot-role' or row.get('existing_only')
                     or row['kind'] == 'category' and row['name'] in OPTIONAL_CATEGORIES
                     or row['kind'] == 'text' and row['name'] in {'support-gamerhq', 'tournaments', 'giveaways'}
                     or parent in OPTIONAL_CATEGORIES)
@@ -155,6 +156,7 @@ async def preview(guild, owner, template, bot=None):
     new_boards = tuple(row['name'] for row in structure['rows'] if row['kind'] == 'text' and not row.get('private')
                        and row['name'] in template.entry_points and row['bulk_action'] == 'create')
     return dict(template=template, structure=structure, choices=choices, boards=boards, progress=record,
+                pin_grants=await server_template_pins.plan(boards['rows']),
                 new_boards=new_boards,
                 deferred=[name for name in template.entry_points if name not in inspected and name not in new_boards
                           and not any(row['name'] == name and row.get('skill_protected') for row in structure['rows'])])
@@ -169,7 +171,7 @@ def counts(draft):
             'Needs review': decisions.count('review') + board_states.count('AMBIGUOUS'),
             'Blocked': decisions.count('blocked') + len(draft['deferred']),
             'Optional/Skipped': decisions.count('skip'),
-            'Optional modules': decisions.count('optional') + decisions.count('integration'),
+            'Optional modules': decisions.count('optional'),
             'Skill-owned': decisions.count('delegated')}
 
 
@@ -180,7 +182,7 @@ def template_decision(row, choices):
         return 'optional'
     decision = operations.bulk_decision(row, choices)
     if row['name'] in AFFILIATE_RESOURCES and decision in ('review', 'blocked'):
-        return 'integration'
+        return 'optional'
     return decision
 
 
@@ -188,7 +190,8 @@ def report_summary(draft):
     from collections import Counter
 
     structure = draft['structure']['rows']
-    lines = [draft['template'].name, *(f'{label}: {count}' for label, count in counts(draft).items()), '']
+    lines = [draft['template'].name, 'Core structure and managed entry points, with optional and Skill totals shown separately.',
+             *(f'{label}: {count}' for label, count in counts(draft).items()), '']
     for row in structure:
         decision = operations.bulk_decision(row, draft['choices'])
         if row['kind'] == 'staff-role' or row.get('private') and row['kind'] == 'category' or row['name'] in operations.PUBLIC_FEEDS:
@@ -197,10 +200,17 @@ def report_summary(draft):
     blocked = Counter(row.get('reason') or 'Needs verification' for row in draft['boards']['rows']
                       if row['status'] == 'AMBIGUOUS')
     lines.extend(f'{count} managed entry points — {reason}' for reason, count in blocked.items())
+    grants = draft.get('pin_grants', {})
+    if grants:
+        automatic = sum(grant.automatic for grant in grants.values())
+        lines.append(f'Pin repair destinations: {len(grants)} channels · {automatic} eligible · {len(grants) - automatic} owner-only in Discord.')
     staff = next((row for row in structure if row['kind'] == 'staff-role'), None)
     if staff and staff['status'] != 'EXACT_MATCH':
         next_action = ('Confirm the reviewed Staff role, then reopen setup for the private areas.'
                        if staff['bulk_action'] in ('create', 'reuse') else 'Review the Staff role finding before creating private areas.')
+    elif grants:
+        next_action = ('Review Pin Permissions before granting access.' if automatic
+                       else 'Review the Host-member overwrite instructions in Full Report, then reopen the preview.')
     elif counts(draft)['Will create'] or counts(draft)['Will reuse']:
         next_action = 'Review the plan, then select Apply Template to perform the listed safe actions.'
     else:
@@ -215,24 +225,20 @@ def report_details(draft):
     lines = [report_summary(draft), '', 'Setup journal',
              'State: ' + (record['state'] if record.get('state') in ('applying', 'remaining', 'complete') else 'No recorded apply'),
              f'Unresolved creation checkpoints: {len(pending)}',
-             operations.bulk_preview_report(draft['structure'], draft['choices']), 'Managed entry points']
+             operations.bulk_preview_report(draft['structure'], draft['choices'], classify=template_decision,
+                 labels={**operations.BULK_DECISIONS, 'optional': 'Optional module',
+                         'delegated': 'Skill-owned'}), 'Managed entry points']
     for row in draft['structure']['rows'] + draft['boards']['rows']:
         if row['key'] in pending:
             lines.append(f"Unresolved checkpoint: {row['label']} — {row['status']}. Review current inventory before retrying.")
     lines.extend(f"{row['label']} · {row['status']} · {row.get('reason', '')}" for row in draft['boards']['rows'])
-    lines.extend(f"{row['label']} · {row['template_boundary']} · {row['status']} · preserved by Core setup"
-                 for row in draft['structure']['rows'] if row.get('template_boundary'))
-    pin_only = {row['channel'].id: row['channel'] for row in draft['boards']['rows']
-                if row['status'] == 'AMBIGUOUS' and row.get('reason', '').startswith('Host lacks Pin Messages here.')}
-    if pin_only:
+    grants = draft.get('pin_grants', {})
+    if grants:
         lines.extend(('', 'Permission review — proposed, no changes',
                       'Review a Pin Messages allow for the Host bot member only in these specific channels. '
                       'Keep public access and all other overwrites. If a channel is synced with its category, '
                       'a channel-specific edit will stop permission syncing for that channel.'))
-        for channel_id, channel in sorted(pin_only.items()):
-            host = channel.guild.me
-            channel_pin = channel.overwrites_for(host).pin_messages
-            lines.append(f'  {channel.name} (ID {channel_id}) · Host member {host.id} · explicit Pin Messages {channel_pin} → allow')
+        lines.extend(grant.description() for grant in grants.values())
     lines.extend(f'{name} · Review on a fresh preview once its destination is verified.' for name in draft['deferred'])
     lines.extend(f'{name} · Add missing default entry points after creation and verification.' for name in draft['new_boards'])
     return '\n'.join(lines)
@@ -243,7 +249,7 @@ def remaining_structure(draft):
                 'create': 'Eligible for creation on a fresh preview.'}
     for row in draft['structure']['rows']:
         decision = template_decision(row, draft['choices'])
-        if decision not in ('configured', 'skip', 'integration', 'optional', 'delegated'):
+        if decision not in ('configured', 'skip', 'optional', 'delegated'):
             reason = row.get('reason') or defaults.get(decision, 'Review the current resource evidence.')
             yield f"{row['label']} · {reason}"
 
