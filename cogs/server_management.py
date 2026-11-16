@@ -1019,6 +1019,7 @@ class SkillToggleConfirmView(Menu):
             )
 
         await interaction.response.defer(ephemeral=True)
+        from services.discord_permissions import DiscordPermissionPreflightError
         try:
             if current.enabled:
                 changed = await runtime.disable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
@@ -1026,6 +1027,8 @@ class SkillToggleConfirmView(Menu):
             else:
                 changed = await runtime.enable_skill(guild_id=self.guild.id, skill_id=self.skill_id)
                 notice = '✅ Skill enabled.' if changed else 'ℹ️ Skill was already enabled.'
+        except DiscordPermissionPreflightError as error:
+            notice = str(error)
         except (PermissionError, ValueError, KeyError):
             notice = '❌ This Skill cannot be activated with the current host capabilities.'
         except Exception:
@@ -2177,6 +2180,9 @@ class ServerTemplatesView(Menu):
         view.confirm.disabled = not (summary['Will create'] or summary['Will reuse'])
         lines = [f'# {template.name}', 'Preview Setup', ' · '.join(f'{key} {value}' for key, value in summary.items()),
                  'Apply Template confirms the safe actions in this preview. Full Report lists every decision.']
+        if draft.get('install_permissions'):
+            lines.append('**Core install baseline** · ' + draft['install_permissions']
+                         + ' Existing channels are also checked for effective access.')
         staff = next((row for row in draft['structure']['rows'] if row['kind'] == 'staff-role'), None)
         if staff and staff['status'] != 'EXACT_MATCH':
             if staff['bulk_action'] in ('create', 'reuse'):

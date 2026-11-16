@@ -1,5 +1,5 @@
 from .schedule import DailySchedule, IntervalSchedule, OnceSchedule, ScheduleSpec, WeeklySchedule, next_run_at, schedule_from_dict, schedule_to_dict
-from .capabilities import SkillCapability
+from .capabilities import DiscordGuildPermission, SkillCapability
 from .context import DiscordChannelInfo, DiscordMemberInfo, ExternalHttpResponse, SchedulerJobStatus, SkillContext, SkillRegistrationContext
 from .errors import CapabilityUnavailableError, HostCapabilityError, HostPermissionDeniedError, InvalidHostOperationError, ResourceNotFoundError, TransientHostError
 from .events import EventContract, EventDeliveryReport, EventEnvelope
@@ -20,6 +20,7 @@ __all__ = [
     "schedule_to_dict",
     "CapabilityUnavailableError",
     "DiscordChannelInfo",
+    "DiscordGuildPermission",
     "DiscordMemberInfo",
     "ExternalHttpResponse",
     "HostCapabilityError",

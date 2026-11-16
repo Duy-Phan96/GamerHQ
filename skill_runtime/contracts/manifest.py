@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 import re
 
-from .capabilities import KNOWN_CAPABILITIES
+from .capabilities import KNOWN_CAPABILITIES, KNOWN_DISCORD_GUILD_PERMISSIONS
 from .events import EventContract
 from .management import ManagementApiContract
 from .management_ui import ManagementUiSchema
@@ -45,6 +45,7 @@ class SkillManifest:
     public_apis: SkillPublicApis = field(default_factory=SkillPublicApis)
     management_apis: SkillManagementApis = field(default_factory=SkillManagementApis)
     management_ui: ManagementUiSchema | None = None
+    discord_guild_permissions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         validate_manifest(self)
@@ -75,6 +76,11 @@ def validate_manifest(manifest: SkillManifest, *, supported_api_versions: frozen
     duplicate_caps = _duplicates(manifest.permissions)
     if duplicate_caps:
         raise ValueError("Duplicate Skill capabilities are not allowed: " + ", ".join(sorted(duplicate_caps)))
+    discord_permissions = getattr(manifest, "discord_guild_permissions", ())
+    if (not isinstance(discord_permissions, tuple) or
+            any(not isinstance(flag, str) or flag not in KNOWN_DISCORD_GUILD_PERMISSIONS
+                for flag in discord_permissions) or _duplicates(discord_permissions)):
+        raise ValueError("Invalid or duplicate Discord guild permission declaration.")
 
     emitted = tuple(contract.id for contract in manifest.events.emits)
     consumed = tuple(contract.id for contract in manifest.events.consumes)

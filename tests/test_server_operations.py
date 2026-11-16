@@ -686,7 +686,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
               patch.object(marketplace, 'create_text_channel', AsyncMock(side_effect=rejected)) as create):
             blocked = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             report = ops.bulk_preview_report(blocked, {})
-            self.assertIn('Host needs effective View Channel and Manage Channels', report)
+            self.assertIn('Host needs effective View Channel on the destination category', report)
             self.assertIn(f'Destination ID {marketplace.id} (View Channel=False, Manage Channels=True)', report)
             create.assert_not_awaited()
 

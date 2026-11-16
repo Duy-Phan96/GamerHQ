@@ -137,6 +137,16 @@ be followed by a rerun of every affected acceptance section.
 
 ### Gaming Community Server Template V1
 
+**Core accepted in Staging.** The owner verified Host
+`40c88fada10f7990ef3d2cddb81f30b6381fe73e` after allowing **Pin Messages**
+on the Staging Host bot role. All ten managed entry points were created. A
+repeated read-only preview reported 55 configured, zero to reuse or create,
+zero reviews, zero blocked, one optional/skip, 13 optional modules and eight
+Skill-owned resources. This verifies the Core preview is idempotent after
+apply. The checklist below remains applicable to future candidates.
+Production acceptance and optional-feature acceptance are separate.
+[Protected Staging promotion](https://github.com/Duy-Phan96/GamerHQ/actions/runs/43872996432)
+
 - [ ] Open the Core preview for the reviewed Staging candidate. Record Core counts separately from optional modules and Skill-owned resources.
 - [ ] Verify Marketplace and Affiliate Stats are independently previewable. Verify Affiliate Stats still requires an approved Instant Gaming identity.
 - [ ] Compare existing channel and role IDs, message IDs, and permission overwrites before and after the owner-approved Core Apply. Preserve existing Event Manager bindings, attendance, and history.

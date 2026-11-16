@@ -2,7 +2,21 @@
 
 **Staff/private channels must never become visible to normal members through repair, sync, migration or fallback logic.**
 
-There is no single permission engine. Reuse the helper belonging to the feature; do not replace every overwrite with a shared template.
+Use `services.discord_permissions` for capability checks and the Core install request. Each feature retains its own overwrite and ownership policy.
+
+## Discord install and capability matrix
+
+| Scope | Discord permissions and checks |
+| --- | --- |
+| Core install and managed entry points | View Channel, Read Message History, Send Messages, Embed Links, Attach Files and **Pin Messages**. Setup checks the destination's effective view/history/send/pin permissions before publishing. Reports and feature previews remain read-only. |
+| Core structure, onboarding and role selection | Manage Channels for structure, Manage Roles for role assignment and channel overwrites. Managed roles must be editable and below the Host's top role. Staff access roles carry zero guild-wide permission bits. Validate the actual parent category and private overwrite policy before creation. |
+| Tickets, Suggestions, Staff logs and Owner Change Log | Feature-owned private access, read/history, posting and embeds in approved destinations. Channel/overwrite changes require Manage Channels/Manage Roles as applicable. Manage Messages is specific to existing moderation or overwrite policies. It is excluded from Core install and does not replace Pin Messages. |
+| LFG and voice | Core publishes the LFG entry point. Private invite links require Create Instant Invite in their destination. Legacy temporary voice and Skill voice handling can require View Channel, Connect, Speak, Move Members and scoped channel/overwrite management. Voice permission changes belong to the responsible feature. |
+| Event Manager and external Skills | Existing Skill capabilities authorize Host adapter calls. Host-managed event destinations require scoped channel creation/overwrites and approved view/history/send/embed access. Discord-native scheduled-event creation or management, if implemented, needs Create Events or Manage Events for the specific operation. Permission checks do not grant Skills access to arbitrary channels. |
+| Marketplace, Affiliate, KAMEX, Streamer and specialist integrations | Preview each separately. Feed publishers get view/history/send/embeds/attachments only at approved destinations. Affiliate Stats also requires an explicitly verified Instant Gaming identity. Streamer follow roles require scoped assignment and hierarchy checks. Existing reference-only sections carry no install requirements. |
+| Advanced repair and moderation | View Audit Log supports observer/adoption evidence where configured. Manage Messages, timeout, kick, ban, webhook management and mass mentions are outside the baseline. Review individually if a feature needs them. Administrator is excluded from the install request. |
+
+For roles, use **Server Settings → Roles → Host bot role** to review the missing permission or hierarchy. For channel findings, check effective Host member and role overwrites. A category change propagates to all synced children, while a channel-specific overwrite can end sync. Preserve private visibility and review affected children before any category change.
 
 | Area | Existing implementation and policy |
 | --- | --- |
