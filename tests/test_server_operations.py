@@ -26,6 +26,71 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [actor]
         return actor
 
+    async def test_template_pin_repair_deduplicates_all_findings_and_resumes_after_uncertain_write(self):
+        from services import server_template_pins as pins, server_templates as templates
+
+        owner = self.owner()
+        self.start.overwrites[self.guild.default_role] = discord.PermissionOverwrite(view_channel=True)
+        self.start.overwrites[self.guild.me] = discord.PermissionOverwrite(send_messages=True)
+        channels = [self.guild.add_channel(f'board-{index}', self.start) for index in range(5)]
+        for channel in channels:
+            channel.overwrites = dict(self.start.overwrites)
+        message = self.add_message(channels[0], 'Existing message', pinned=True)
+        rows = [dict(status='AMBIGUOUS', reason=pins.PIN_MISSING, channel=channel, guild=self.guild,
+                     label=f'{channel.name}-{index}', key=f'{channel.id}:{index}')
+                for channel in channels for index in range(2)]
+        grants = await pins.plan(rows)
+        self.assertEqual(len(grants), 5)
+        self.assertEqual(sum(len(grant.boards) for grant in grants.values()), 10)
+        self.assertTrue(all(grant.automatic and grant.synced for grant in grants.values()))
+        draft = {'template': templates.GAMERHQ, 'pin_grants': grants,
+                 'structure': {'guild_id': self.guild.id, 'actor_id': owner.id, 'created': ops.time.time()}}
+        original = channels[0].set_permissions
+
+        async def lost_response(*args, **kwargs):
+            await original(*args, **kwargs)
+            raise TimeoutError()
+
+        with patch.object(templates, 'preview', AsyncMock(side_effect=[draft, {**draft, 'pin_grants': {}},
+                                                                       {**draft, 'pin_grants': {}}, {**draft, 'pin_grants': {}}])):
+            with patch.object(channels[0], 'set_permissions', AsyncMock(side_effect=lost_response)) as write:
+                outcomes, _ = await pins.apply(self.guild, owner, draft, self.bot)
+                self.assertIn('timed out', outcomes[0][1])
+                self.assertTrue(all('verified' in outcome for _, outcome in outcomes[1:]))
+                await pins.apply(self.guild, owner, draft, self.bot)
+                write.assert_awaited_once()
+        self.assertTrue(message.pinned)
+        self.assertEqual(channels[0].sends, 0)
+        self.assertIsNone(self.start.overwrites_for(self.guild.me).pin_messages)
+        for channel in channels:
+            self.assertTrue(channel.overwrites_for(self.guild.me).pin_messages)
+            self.assertTrue(channel.overwrites_for(self.guild.me).send_messages)
+            self.assertEqual(channel.overwrites_for(self.guild.default_role), self.start.overwrites_for(self.guild.default_role))
+
+    async def test_template_pin_repair_refuses_unreviewed_scope_permissions_and_stale_acl(self):
+        from services import server_template_pins as pins, server_templates as templates
+
+        owner = self.owner()
+        row = dict(status='AMBIGUOUS', reason=pins.PIN_MISSING, channel=self.old, guild=self.guild,
+                   label='Welcome', key='welcome')
+        permissions = discord.Permissions(view_channel=True, read_message_history=True, send_messages=True)
+        self.guild.me.guild_permissions = permissions
+        with patch.object(ops, 'snapshot_permissions', return_value=permissions):
+            plan = await pins.plan([row, {**row, 'reason': 'Unverified message ownership'}])
+        self.assertFalse(plan[self.old.id].automatic)
+        self.assertEqual(plan[self.old.id].boards, (('welcome', 'Welcome'),))
+        self.guild.me.guild_permissions = discord.Permissions.all()
+        draft = {'template': templates.GAMERHQ, 'pin_grants': await pins.plan([row]),
+                 'structure': {'guild_id': self.guild.id, 'actor_id': owner.id, 'created': ops.time.time()}}
+        with self.assertRaises(ServerMessageError):
+            await pins.apply(self.guild, SimpleNamespace(id=43), draft, self.bot)
+        self.old.overwrites[self.guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+        with patch.object(templates, 'preview', AsyncMock(return_value=draft)), patch.object(
+                self.old, 'set_permissions', AsyncMock()) as write:
+            outcomes, _ = await pins.apply(self.guild, owner, draft, self.bot)
+            self.assertIn('policy changed', outcomes[0][1])
+            write.assert_not_awaited()
+
     async def test_template_combines_verified_reuse_creation_and_publication(self):
         from discord.components import _component_factory
         from services import server_templates as templates
