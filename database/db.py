@@ -6,10 +6,20 @@ from contextlib import contextmanager
 from collections.abc import Iterable
 
 from config import DB_PATH, SEED_PATH
+from database import tenants
 
 SCHEMA_VERSION = 1  # 0 is the historical additive-migration schema.
 _read_only = ContextVar('database_read_only', default=False)
 _read_session = ContextVar('database_read_session', default=None)
+
+
+def in_read_only_scope():
+    return _read_only.get()
+
+
+def current_path():
+    tenant = tenants.current()
+    return tenant.database if tenant else DB_PATH
 
 
 @contextmanager
@@ -415,19 +425,22 @@ CREATE TABLE IF NOT EXISTS streamer_channels (
 @contextmanager
 def connect():
     from services.operation_context import count
+    path = current_path()
     if _read_only.get():
         session = _read_session.get()
         if session['connection'] is None:
-            conn = sqlite3.connect(DB_PATH.resolve().as_uri() + '?mode=ro', uri=True)
+            conn = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
             conn.execute('PRAGMA query_only=ON')
             conn.row_factory = sqlite3.Row
             conn.set_trace_callback(lambda _: count('db_queries'))
             session['connection'] = conn
         yield session['connection']
         return
+    if tenants.current() is not None:
+        conn = sqlite3.connect(path.as_uri() + '?mode=rw', uri=True)
     else:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(DB_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path)
     conn.set_trace_callback(lambda _: count('db_queries'))
     conn.row_factory = sqlite3.Row
     try:

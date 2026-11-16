@@ -5,6 +5,7 @@ import time
 
 import discord
 
+from database import tenants
 from services import managed_message_service as managed, server_operations as ops
 from services.operation_context import read_once, read_scope
 from services.server_service import ServerMessageError
@@ -88,6 +89,7 @@ async def plan(boards):
 
 
 async def apply(guild, owner, draft, bot=None):
+    tenants.require_guild(guild.id)
     from services import server_templates as templates
     from services.channel_change_service import expect, permissions
 

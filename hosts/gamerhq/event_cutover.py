@@ -14,7 +14,7 @@ import sqlite3
 import time
 import discord
 
-from database import db
+from database import db, tenants
 from tools.event_manager_export import TABLES
 
 
@@ -23,6 +23,7 @@ def digest(value):
 
 
 def snapshot_for_guild(conn, guild_id):
+    tenants.require_guild(guild_id)
     result = {"schemaVersion": "event-manager-v1-export.1"}
     for key, table in TABLES.items():
         if key in ("series", "events"):
@@ -49,6 +50,7 @@ def install_barriers(conn):
 
 
 def owns_events(guild_id):
+    tenants.require_guild(guild_id)
     with db.connect() as conn:
         return conn.execute("SELECT 1 FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild_id,)).fetchone() is not None
 
@@ -73,6 +75,7 @@ def claim_empty_tenant(guild_id):
     Existing legacy tenants remain installable but disabled pending verified cutover.
     The lock serializes this decision with legacy writes and installs their barrier.
     """
+    tenants.require_guild(guild_id)
     with db.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         installed = conn.execute("SELECT installed,configured FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild_id,)).fetchone()
@@ -142,10 +145,11 @@ async def verify_legacy_resources(guild, plan):
 
 def apply(plan, *, backup_path: Path, backup_sha256: str, verified_resources=None):
     guild_id = int(plan["guildId"])
+    tenants.require_guild(guild_id)
     if guild_id <= 0 or plan.get("skillId") != "event-manager" or plan.get("schemaVersion") != "event-manager-import.1" or plan.get("deleteChannels"):
         raise ValueError("Invalid Event Manager import contract.")
     backup_path = backup_path.resolve(strict=True)
-    if backup_path == db.DB_PATH.resolve() or hashlib.sha256(backup_path.read_bytes()).hexdigest() != backup_sha256:
+    if backup_path == db.current_path().resolve() or hashlib.sha256(backup_path.read_bytes()).hexdigest() != backup_sha256:
         raise ValueError("A distinct verified matching database backup is required.")
     backup = sqlite3.connect(backup_path.as_uri() + "?mode=ro", uri=True)
     backup.row_factory = sqlite3.Row
@@ -211,6 +215,7 @@ def apply(plan, *, backup_path: Path, backup_sha256: str, verified_resources=Non
 
 
 def rollback_unmodified(*, guild_id, resources_verified=False):
+    tenants.require_guild(guild_id)
     """Reverse only a frozen, unmodified initial import. Never discard V2 writes."""
     with db.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")

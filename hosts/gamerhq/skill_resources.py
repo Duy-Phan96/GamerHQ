@@ -14,7 +14,7 @@ import time
 
 import discord
 
-from database import db
+from database import db, tenants
 from skill_runtime.contracts.errors import CapabilityUnavailableError, InvalidHostOperationError, TransientHostError
 from .skill_host import _valid_identity
 
@@ -65,6 +65,7 @@ class GamerHQManagedResources:
         self.user_lookup = user_lookup
 
     def _policy(self, *, voice=False):
+        tenants.require_guild(self.guild.id)
         self.permissions.require("discord.resources.manage")
         parent = self.guild.get_channel(int((self.policy.get("voiceCategoryId") if voice else None) or self.policy.get("categoryId") or 0))
         if not isinstance(parent, discord.CategoryChannel) or parent.guild.id != self.guild.id:

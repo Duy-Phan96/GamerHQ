@@ -77,6 +77,8 @@ See [Repository Ownership and Handoffs](development/REPOSITORY_OWNERSHIP_AND_HAN
 
 The supported deployment is one bot instance per guild/database. Per-key/event
 asyncio locks are process-local; they are not a distributed coordination system.
+The [guild tenancy ADR](architecture/decisions/ADR-001-guild-tenancy.md)
+records the shared-application migration and its activation gates.
 
 ## Feature map
 

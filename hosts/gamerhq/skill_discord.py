@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import discord
 
+from database import tenants
 from skill_runtime.contracts.capabilities import SkillCapability
 from skill_runtime.contracts.context import DiscordChannelInfo, DiscordMemberInfo
 from skill_runtime.contracts.errors import (
@@ -77,6 +78,7 @@ class GamerHQDiscordAdapter:
         self.permissions = permissions
 
     async def get_member(self, *, member_id: int) -> DiscordMemberInfo:
+        tenants.require_guild(self.guild_id)
         self.permissions.require(SkillCapability.DISCORD_MEMBERS_READ.value)
         if int(member_id) <= 0:
             raise InvalidHostOperationError("member_id must be positive.")
@@ -101,6 +103,7 @@ class GamerHQDiscordAdapter:
         )
 
     def _reward_role(self, role_id: int):
+        tenants.require_guild(self.guild_id)
         self.permissions.require(SkillCapability.DISCORD_ROLES_MANAGE.value)
         if int(role_id) <= 0:
             raise InvalidHostOperationError("role_id must be positive.")
@@ -151,6 +154,7 @@ class GamerHQDiscordAdapter:
         return True
 
     def _channel(self, channel_id: int):
+        tenants.require_guild(self.guild_id)
         if int(channel_id) <= 0:
             raise InvalidHostOperationError("channel_id must be positive.")
         resolver = getattr(self.guild, "get_channel_or_thread", None)

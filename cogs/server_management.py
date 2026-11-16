@@ -2151,6 +2151,10 @@ class ServerTemplatesView(Menu):
             self.action(label, use, style=discord.ButtonStyle.primary)
         self.action('Advanced Settings', self.advanced)
         self.action('Optional Modules', self.optional_modules)
+        self.action('Manage Skills', self.skills)
+
+    async def skills(self, interaction):
+        await open_skills(interaction, self.guild, self.admin_id)
 
     async def optional_modules(self, interaction):
         await interaction.response.edit_message(
@@ -2163,7 +2167,7 @@ class ServerTemplatesView(Menu):
     def text(self):
         return ('# Server Templates\n' + '\n'.join(f'**{template.name}**' for template in self.templates)
                 + '\nReview categories, channels, roles and the existing onboarding, profile, game selection, LFG and Events entry points. '
-                  'Skills and optional integrations are managed separately.')
+                  'Templates are optional. You can manage Skills directly.')
 
     async def advanced(self, interaction):
         await interaction.response.edit_message(content='# Advanced Server Structure', view=StructureView(self.guild, self.admin_id))

@@ -12,7 +12,7 @@ from copy import copy
 from types import SimpleNamespace
 
 import discord
-from database import db
+from database import db, tenants
 from services import managed_message_service as managed, message_reconciliation as messages
 from services import discord_permissions as access, staff_access
 from services.discord_permissions import snapshot_permissions
@@ -325,6 +325,7 @@ def message_view(guild, key):
 @measured('server_scan')
 async def scan(guild, bot=None, *, fresh=False, message_keys=None, affected=None, verify_placement=False,
                bulk=False, template_staff=False):
+    tenants.require_guild(guild.id)
     with read_scope():
         channels, roles = list(guild.channels), list(guild.roles)
         structure = affected is None or any(r['kind'] in ('text', 'voice', 'category', 'order', 'message') for r in affected)
@@ -1101,6 +1102,7 @@ def needs_repair(guild, row, *, placement=False):
 
 
 async def preview(guild, actor, mode, bot=None, *, scope=None, message_keys=None, template_staff=False):
+    tenants.require_guild(guild.id)
     managed.require_admin(guild, actor)
     if (mode == 'setup' or scope in ('placement', 'bulk')) and actor.id != guild.owner_id:
         raise ServerMessageError('Only the owner can review these changes.')
@@ -1152,6 +1154,7 @@ def persist(guild, row, resource):
 
 @measured('server_apply')
 async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None, create_checkpoint=None, on_created=None):
+    tenants.require_guild(guild.id)
     managed.require_admin(guild, actor)
     if (not confirmed or draft['actor_id'] != actor.id or draft['guild_id'] != guild.id
             or time.time() - draft['created'] > 240):
