@@ -8,8 +8,11 @@ import unittest
 from unittest.mock import patch
 
 import discord
+import pytest
 
 from database import db, tenants
+from hosts.gamerhq.event_cutover import owns_events
+from hosts.gamerhq.skill_packages import load_external_skill_packages
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
 from services import discord_permissions, server_operations, server_templates
 from skill_runtime.contracts import OnceSchedule
@@ -176,3 +179,32 @@ class GuildTenantTests(unittest.IsolatedAsyncioTestCase):
                     result, _, _ = await server_templates.apply(guild, owner, repeat)
                     self.assertEqual((result['created'], result['reused'], result['failed']), ([], [], []))
                     self.assertEqual({channel.id for channel in guild.channels}, expected)
+
+    async def test_reviewed_event_manager_wheel_cannot_cross_tenant_storage(self):
+        pytest.importorskip("gamerhq_skill_event_manager")
+        self.store.provision(2)
+        guilds = {guild_id: SimpleNamespace(id=guild_id) for guild_id in (1, 2)}
+        runtime = GamerHQSkillRuntime(SimpleNamespace(get_guild=guilds.get))
+        report = load_external_skill_packages(runtime, ("event-manager",))
+        self.assertEqual(report.loaded, ("event-manager",))
+        await runtime.register_all()
+
+        async def manage(guild_id, name, payload):
+            return await runtime.call_management(guild_id=guild_id, skill_id="event-manager",
+                                                 contract_id=f"event-manager.{name}.v1", payload=payload)
+
+        with self.store.scope(1):
+            self.assertTrue(await runtime.install_skill(guild_id=1, skill_id="event-manager"))
+            event = await manage(1, "create", {"name": "Tenant one", "kind": "recurring",
+                "startDate": "2030-01-01", "localTime": "19:00", "timezone": "Europe/Berlin",
+                "weekdays": [0, 2], "visibility": "private", "requestId": "tenant-one"})
+            self.assertEqual(event["event"]["config"]["visibility"], "private")
+        with self.store.scope(2):
+            self.assertFalse(owns_events(2))
+            self.assertTrue(await runtime.install_skill(guild_id=2, skill_id="event-manager"))
+            self.assertEqual((await manage(2, "list", {}))["events"], [])
+            with self.assertRaises(PermissionError):
+                await manage(1, "list", {})
+        with self.store.scope(1):
+            self.assertTrue(owns_events(1))
+            self.assertEqual(len((await manage(1, "list", {}))["events"]), 1)

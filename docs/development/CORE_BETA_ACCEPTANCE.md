@@ -161,8 +161,9 @@ Status **offline rehearsal passed, live setup pending**. The owner reported
 installing the existing Staging application in the disposable guild using the
 generated invite. The active Staging Host syncs commands only to its configured
 guild. Its protected verification also requires the Staging bot to be a member of
-that guild only. The disposable installation requires a dedicated application,
-token, fresh database and configuration. See [Discord setup](../DISCORD_SETUP.md).
+that guild only. Live admission of Servertest is held pending the reviewed
+[shared-application pilot](../architecture/decisions/ADR-001-guild-tenancy.md).
+A separate test application is an optional temporary legacy rehearsal path.
 
 The offline rehearsal used a fresh seeded SQLite database and a synthetic guild
 with zero pre-existing channels and the Core grant mask. The first preview
@@ -176,7 +177,7 @@ zero Skill-owned resources. A real guild can start with default Discord
 channels and its board count can vary with its game catalog or installed
 features. Record the actual live inventory rather than targeting 55.
 
-- [ ] Verify the disposable bot application, exact guild membership and exclusive process before connecting its Gateway.
+- [ ] Verify the Staging application, exact approved membership set and single process before the pilot Gateway handles the two guilds.
 - [ ] Verify Pin Messages, Manage Channels, Manage Roles, effective category and channel permissions, and role hierarchy without Administrator.
 - [ ] Obtain an owner-confirmed apply for each reviewed preview. Reopen after the Staff-role decision before approving private areas.
 - [ ] Record live Core structures, managed entry points, explicit reuse, skips and ownership boundaries. Verify private visibility with an ordinary member.
