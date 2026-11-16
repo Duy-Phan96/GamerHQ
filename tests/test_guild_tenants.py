@@ -1,8 +1,10 @@
 """Two-guild rehearsals over the production Host APIs and disposable SQLite."""
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import shutil
 import tempfile
+from threading import Barrier
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -82,6 +84,60 @@ class GuildTenantTests(unittest.IsolatedAsyncioTestCase):
             self.store.provision(3)
         self.assertEqual(db.current_path(), self.primary)
         self.assertEqual(self.primary.read_bytes(), legacy_bytes)
+
+    def test_provision_interrupted_during_seed_keeps_final_path_unpublished(self):
+        with patch.object(db, 'seed_catalog', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.store.provision(2)
+        self.assertFalse((self.tenant_dir / '2.sqlite').exists())
+        # A hard process kill can leave the private scratch directory behind.
+        orphan = self.tenant_dir / '.provision-2-interrupted'
+        orphan.mkdir()
+        (orphan / '2.sqlite').write_bytes(b'incomplete prior attempt')
+        self.assertTrue(self.store.provision(2))
+        with self.store.scope(2):
+            self.assertTrue(db.get_all_games())
+        self.assertEqual((orphan / '2.sqlite').read_bytes(), b'incomplete prior attempt')
+
+    def test_provision_interrupted_after_publication_recovers_without_reseeding(self):
+        with patch.object(tenants, '_sync_directory', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.store.provision(2)
+        with self.store.scope(2):
+            db.set_setting('test', 'retained')
+        with patch.object(db, 'init_db', side_effect=AssertionError('existing tenant was reset')):
+            self.assertFalse(self.store.provision(2))
+        with self.store.scope(2):
+            self.assertEqual(db.get_setting('test'), 'retained')
+
+    def test_publication_race_never_replaces_unknown_database(self):
+        publish = tenants._publish_noreplace
+
+        def competing_file(candidate, target):
+            target.touch(mode=0o600, exist_ok=False)
+            target.write_bytes(b'unknown tenant data')
+            publish(candidate, target)
+
+        with patch.object(tenants, '_publish_noreplace', side_effect=competing_file):
+            with self.assertRaisesRegex(PermissionError, 'ownership'):
+                self.store.provision(2)
+        with self.assertRaisesRegex(PermissionError, 'ownership'):
+            self.store.provision(2)
+        self.assertEqual((self.tenant_dir / '2.sqlite').read_bytes(), b'unknown tenant data')
+
+    def test_two_valid_provisioners_share_the_verified_winner(self):
+        publish = tenants._publish_noreplace
+        barrier = Barrier(2, timeout=15)
+
+        def race(candidate, target):
+            barrier.wait()
+            publish(candidate, target)
+
+        with (patch.object(tenants, '_publish_noreplace', side_effect=race),
+              ThreadPoolExecutor(max_workers=2) as workers):
+            self.assertEqual(sorted(workers.map(self.store.provision, (2, 2))), [False, True])
+        with self.store.scope(2):
+            self.assertTrue(db.get_all_games())
 
     async def test_concurrent_template_and_skill_only_operations_use_disjoint_stores(self):
         self.store.provision(2)

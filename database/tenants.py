@@ -2,10 +2,14 @@
 from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+import ctypes
+import errno
 import os
 from pathlib import Path
 import sqlite3
 import stat
+import sys
+import tempfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +71,33 @@ def _guild_id(value):
     return value
 
 
+def _publish_noreplace(source, target):
+    """Publish in one filesystem operation, including when another provisioner wins."""
+    if os.name == "nt":
+        os.rename(source, target)  # Windows rejects an occupied target.
+        return
+    if sys.platform == "linux":
+        rename = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+        if rename is not None:
+            rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+            rename.restype = ctypes.c_int
+            at_fdcwd, rename_noreplace = -100, 1
+            if rename(at_fdcwd, os.fsencode(source), at_fdcwd, os.fsencode(target), rename_noreplace) == 0:
+                return
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code), os.fspath(target))
+    raise OSError(errno.ENOTSUP, "Atomic no-replace tenant publication is unavailable.")
+
+
+def _sync_directory(path):
+    if os.name == "posix":
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
 class GuildTenantStore:
     """Routes an explicit cohort to disjoint files. Membership is checked by callers."""
 
@@ -119,19 +150,30 @@ class GuildTenantStore:
         if self.primary_guild == guild_id:
             self._verify(tenant, primary=True)
             return False
-        self.tenant_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            handle = os.open(tenant.database, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
+        if os.path.lexists(tenant.database):
             self._verify(tenant, primary=False)
             return False
-        os.close(handle)
-        with _bind(tenant):
-            db.init_db()
-            db.seed_catalog()
-            with db.connect() as conn:
-                conn.execute("CREATE TABLE gamerhq_tenant_identity (guild_id INTEGER PRIMARY KEY, ready INTEGER NOT NULL)")
-                conn.execute("INSERT INTO gamerhq_tenant_identity VALUES (?, 1)", (guild_id,))
+        self.tenant_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f".provision-{guild_id}-", dir=self.tenant_directory) as scratch:
+            candidate = GuildTenant(guild_id, Path(scratch) / tenant.database.name)
+            candidate.database.touch(mode=0o600, exist_ok=False)
+            with _bind(candidate):
+                db.init_db()
+                db.seed_catalog()
+                with db.connect() as conn:
+                    if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise ValueError("New guild database failed its integrity check.")
+                    conn.execute("CREATE TABLE gamerhq_tenant_identity (guild_id INTEGER PRIMARY KEY, ready INTEGER NOT NULL)")
+                    conn.execute("INSERT INTO gamerhq_tenant_identity VALUES (?, 1)", (guild_id,))
+            self._verify(candidate, primary=False)
+            with candidate.database.open("r+b") as stream:
+                os.fsync(stream.fileno())
+            try:
+                _publish_noreplace(candidate.database, tenant.database)
+            except FileExistsError:
+                self._verify(tenant, primary=False)
+                return False
+            _sync_directory(self.tenant_directory)
         return True
 
     @contextmanager

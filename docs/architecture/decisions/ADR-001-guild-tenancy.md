@@ -76,6 +76,15 @@ live pilot. Rollback restores the prior Host and primary guild binding,
 quarantines additional tenant files, and keeps their contents and ownership
 metadata available for a reviewed recovery.
 
+Provisioning initializes, seeds, and integrity-checks a private scratch SQLite
+file on the same filesystem. The initialized file is published using an
+atomic rename that refuses an occupied destination. A retry can ignore
+abandoned scratch files and reuse a published database only after verifying its
+guild ownership marker. An unknown file at the final path stays in place for
+read-only investigation and owner-reviewed recovery. Filesystems without a
+supported no-replace rename reject new provisioning. The legacy path is
+separate from this operation.
+
 ## Protected Staging sequence
 
 1. Record the installed Host, exact application identity and primary guild,
