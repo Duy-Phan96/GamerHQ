@@ -135,6 +135,15 @@ be followed by a rerun of every affected acceptance section.
 
 ## 1. Candidate and baseline
 
+### Gaming Community Server Template V1
+
+- [ ] Open the Core preview for the reviewed Staging candidate. Record Core counts separately from optional modules and Skill-owned resources.
+- [ ] Verify Marketplace and Affiliate Stats are independently previewable. Verify Affiliate Stats still requires an approved Instant Gaming identity.
+- [ ] Compare existing channel and role IDs, message IDs, and permission overwrites before and after the owner-approved Core Apply. Preserve existing Event Manager bindings, attendance, and history.
+- [ ] Compare each required pin destination with its Full Report permission proposal. Review any Host-only Pin Messages allow in that channel before applying it. Preserve unrelated overwrites.
+- [ ] Copy the concise report and the paginated Full Report. Check owner-only access and verify no setup writes.
+- [ ] After the first reviewed apply, reopen the preview and verify no duplicate create or reuse actions are proposed. A second authorized apply, if applicable, must preserve IDs and report zero new resources and messages.
+
 Record:
 
 - [ ] Host version;

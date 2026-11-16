@@ -22,11 +22,36 @@ class ServerTemplate:
 
 GAMERHQ = ServerTemplate('gamerhq-gaming-community', 'GamerHQ Gaming Community', (
     'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'looking-for-group',
-    'community-events', 'suggestions', 'need-support', 'gaming-news', 'gaming-deals',
+    'community-events', 'suggestions', 'need-support',
 ), staff_access=True)
 TEMPLATES = (GAMERHQ,)
 AFFILIATE_RESOURCES = frozenset({'affiliate-stats', 'ig-purchases', 'ig-buyer-ranking'})
+OPTIONAL_CATEGORIES = frozenset({'partners-benefits', 'affiliate-stats'})
+OPTIONAL_SECTIONS = {'Marketplace': 'partners-benefits', 'Affiliate Stats': 'affiliate-stats'}
 log = logging.getLogger(__name__)
+
+
+def scope_structure(structure, template):
+    if template != GAMERHQ:
+        return
+    for row in structure['rows']:
+        parent = (row.get('parent') or '').rsplit(':', 1)[-1]
+        optional = (row['kind'] == 'bot-role' or row.get('existing_only') or row.get('optional')
+                    or row['kind'] == 'category' and row['name'] in OPTIONAL_CATEGORIES
+                    or row['kind'] == 'text' and row['name'] in {'support-gamerhq', 'tournaments', 'giveaways'}
+                    or parent in OPTIONAL_CATEGORIES)
+        if row.get('skill_protected'):
+            row.update(bulk_action='skip', template_boundary='Skill-owned', reason='Skill-owned resource or destination; preserved by Core setup.')
+        elif optional:
+            row.update(bulk_action='skip', template_boundary='Optional module',
+                       reason='Optional module; preserved by Core setup. ' + (row.get('reason') or ''))
+
+
+def optional_section_rows(structure, section):
+    category = OPTIONAL_SECTIONS[section]
+    return [row for row in structure['rows']
+            if row['kind'] == 'category' and row['name'] == category
+            or (row.get('parent') or '').endswith(':' + category)]
 
 
 class TemplateApplyError(ServerMessageError):
@@ -115,6 +140,7 @@ async def preview(guild, owner, template, bot=None):
     if template not in TEMPLATES:
         raise ServerMessageError('Unknown server template.')
     structure = await operations.preview(guild, owner, 'setup', bot, scope='bulk', template_staff=template.staff_access)
+    scope_structure(structure, template)
     record = progress_record(guild, template)
     pending = set(record.get('pending_creates', ()))
     held = set()
@@ -130,7 +156,8 @@ async def preview(guild, owner, template, bot=None):
                        and row['name'] in template.entry_points and row['bulk_action'] == 'create')
     return dict(template=template, structure=structure, choices=choices, boards=boards, progress=record,
                 new_boards=new_boards,
-                deferred=[name for name in template.entry_points if name not in inspected and name not in new_boards])
+                deferred=[name for name in template.entry_points if name not in inspected and name not in new_boards
+                          and not any(row['name'] == name and row.get('skill_protected') for row in structure['rows'])])
 
 
 def counts(draft):
@@ -142,10 +169,15 @@ def counts(draft):
             'Needs review': decisions.count('review') + board_states.count('AMBIGUOUS'),
             'Blocked': decisions.count('blocked') + len(draft['deferred']),
             'Optional/Skipped': decisions.count('skip'),
-            'Optional integration review': decisions.count('integration')}
+            'Optional modules': decisions.count('optional') + decisions.count('integration'),
+            'Skill-owned': decisions.count('delegated')}
 
 
 def template_decision(row, choices):
+    if row.get('template_boundary') == 'Skill-owned':
+        return 'delegated'
+    if row.get('template_boundary') == 'Optional module':
+        return 'optional'
     decision = operations.bulk_decision(row, choices)
     if row['name'] in AFFILIATE_RESOURCES and decision in ('review', 'blocked'):
         return 'integration'
@@ -188,6 +220,8 @@ def report_details(draft):
         if row['key'] in pending:
             lines.append(f"Unresolved checkpoint: {row['label']} — {row['status']}. Review current inventory before retrying.")
     lines.extend(f"{row['label']} · {row['status']} · {row.get('reason', '')}" for row in draft['boards']['rows'])
+    lines.extend(f"{row['label']} · {row['template_boundary']} · {row['status']} · preserved by Core setup"
+                 for row in draft['structure']['rows'] if row.get('template_boundary'))
     pin_only = {row['channel'].id: row['channel'] for row in draft['boards']['rows']
                 if row['status'] == 'AMBIGUOUS' and row.get('reason', '').startswith('Host lacks Pin Messages here.')}
     if pin_only:
@@ -209,7 +243,7 @@ def remaining_structure(draft):
                 'create': 'Eligible for creation on a fresh preview.'}
     for row in draft['structure']['rows']:
         decision = template_decision(row, draft['choices'])
-        if decision not in ('configured', 'skip', 'integration'):
+        if decision not in ('configured', 'skip', 'integration', 'optional', 'delegated'):
             reason = row.get('reason') or defaults.get(decision, 'Review the current resource evidence.')
             yield f"{row['label']} · {reason}"
 
@@ -253,6 +287,7 @@ async def apply(guild, owner, draft, bot=None):
 
         with apply_stage(guild, template, 'verifying the server structure'):
             current = await operations.preview(guild, owner, 'setup', bot, scope='bulk', template_staff=template.staff_access)
+            scope_structure(current, template)
         linked = reviewed_destinations(current, template, linked_only=True)
         approved_ids = {channel_id for name, channel_id in reviewed_destinations(structure, template).items()
                         if linked.get(name) == channel_id}
