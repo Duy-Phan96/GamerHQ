@@ -175,8 +175,14 @@ class GamerHQSkillRuntime:
             logger=logging.getLogger(f"gamerhq.skill.{skill_id}"),
         )
 
-    def _guild(self, guild_id: int):
+    def _require_scope(self, guild_id: int):
         tenants.require_guild(guild_id)
+        routes = getattr(self.bot, "guild_routes", None)
+        if routes is not None:
+            routes.require_runtime_scope(guild_id)
+
+    def _guild(self, guild_id: int):
+        self._require_scope(guild_id)
         guild = self.bot.get_guild(int(guild_id))
         if guild is None:
             raise ResourceNotFoundError("Guild is not available to the GamerHQ host.")
@@ -278,7 +284,7 @@ class GamerHQSkillRuntime:
         payload,
         actor_id=None,
     ):
-        tenants.require_guild(guild_id)
+        self._require_scope(guild_id)
         if skill_id == "event-manager" and contract_id not in ("event-manager.migrate-plan.v1", "event-manager.list.v1", "event-manager.get.v1", "event-manager.history.v1"):
             self._require_event_authority(guild_id)
         if actor_id is not None and (type(actor_id) is not int or not 0 < actor_id < 2**64):
@@ -299,6 +305,7 @@ class GamerHQSkillRuntime:
         return result
 
     async def install_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        self._require_scope(guild_id)
         skill = self.registry.get(skill_id)
         changed = await self.state.install(
             guild_id=guild_id,
@@ -311,7 +318,7 @@ class GamerHQSkillRuntime:
         return changed
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
-        tenants.require_guild(guild_id)
+        self._require_scope(guild_id)
         issue = await self.discord_permission_issue(guild_id, self.registry.get(skill_id).manifest)
         if issue:
             raise DiscordPermissionPreflightError(issue)
@@ -339,11 +346,13 @@ class GamerHQSkillRuntime:
             raise ValueError("Legacy Event Manager data requires verified migration and authority cutover first.")
 
     async def disable_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        self._require_scope(guild_id)
         changed = await self.manager.disable(guild_id=guild_id, skill_id=skill_id)
         await self.events.unsubscribe_skill(guild_id=guild_id, skill_id=skill_id)
         return changed
 
     async def restore_guild(self, *, guild_id: int) -> tuple[str, ...]:
+        self._require_scope(guild_id)
         started: list[str] = []
         for skill_id in await self.state.enabled_skill_ids(guild_id=guild_id):
             if not self.registry.contains(skill_id):
@@ -370,6 +379,8 @@ class GamerHQSkillRuntime:
         return tuple(started)
 
     async def start_scheduler(self, *, poll_seconds: float = 15.0) -> bool:
+        if getattr(self.bot, "guild_routes", None) is not None:
+            raise RuntimeError("Tenant scheduler must run through scoped guild routes.")
         await self.register_all()
         if self._scheduler_task and not self._scheduler_task.done():
             return False
@@ -400,7 +411,7 @@ class GamerHQSkillRuntime:
                 self.log.exception("Skill shutdown failed guild=%s", guild.id)
 
     async def status(self, *, guild_id: int, skill_id: str) -> GuildSkillStatus:
-        tenants.require_guild(guild_id)
+        self._require_scope(guild_id)
         if not self.registry.contains(skill_id) and skill_id in self._unavailable_external:
             return self._unavailable_status(skill_id)
         skill = self.registry.get(skill_id)

@@ -9,6 +9,7 @@ try:
 except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from None
 from database import db
+from services.tenant_routing import GuildCommandTree
 
 
 class GamerHQBot(commands.Bot):
@@ -18,7 +19,7 @@ class GamerHQBot(commands.Bot):
         from config import GOCDKEYS_ENABLED, GOCDKEYS_AUTOMATIC_SUPPORTED
         intents.message_content = GOCDKEYS_ENABLED and GOCDKEYS_AUTOMATIC_SUPPORTED
         intents.voice_states = True
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=GuildCommandTree)
         from services.operation_context import install_http_metrics
         install_http_metrics(self.http)
         from services.response_service import tree_error

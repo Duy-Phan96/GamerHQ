@@ -1,5 +1,40 @@
 # Reviewed staging Host promotion
 
+## Two-guild pilot preparation
+
+The current enrolled Staging controller still verifies exclusive membership in
+the original guild. The pilot routing and backup rehearsal do not register
+commands in Servertest or change that profile. Follow the
+[guild tenancy decision](../../docs/architecture/decisions/ADR-001-guild-tenancy.md)
+before preparing an immutable promotion candidate.
+
+1. Verify the original Staging baseline and owner-approved guild IDs. Pin the
+   exact Discord application and the complete two-guild set in the protected
+   profile. Reject incomplete, duplicate, and extra memberships before any
+   provisioning or registration. Treat a membership change as invalidating the
+   proof until a fresh authenticated Discord read.
+2. Verify admission at the Gateway before any guild reaches legacy listeners,
+   persistent views, modals, or periodic workers. The command tree and
+   `SafeView` adapters are only part of this coverage. Enable a command surface
+   only after all callbacks it can reach are scoped. Keep the shared application
+   on one process. Restore Skills and run the scheduler through a verified
+   scope per guild instead of the legacy global poller.
+3. Quiesce writes under the existing promotion lock. For both databases,
+   preserve the immutable backup digest, ownership binding, integrity result,
+   and restore probe before approval. The offline
+   `tools.staging_tenant_rehearsal.rehearse` uses the existing backup helper
+   and compares restored logical contents in disposable directories.
+   Live backup retention and unlock remain the controller's responsibility.
+4. Preserve the installed Host, primary database and Event Manager authority
+   through rollback. Revoke additional admission before rollback, stop scoped
+   workers, and retain the secondary database and its verified backup for
+   reviewed recovery. Verify old Host health, the original primary data and
+   deployment gates before considering a retry.
+5. Only after the candidate and control policy pass review, use the existing
+   `deployment-security` owner gate. Live Servertest setup still needs a
+   separate owner confirmation against its actual inventory and permission
+   preview.
+
 ## Reviewing permission and ownership blockers
 
 Bulk structure creation omits explicit Manage Messages grants. Existing

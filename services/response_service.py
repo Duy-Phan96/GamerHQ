@@ -2,6 +2,7 @@
 import logging
 import discord
 from discord import app_commands
+from services.tenant_routing import route_interaction
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +17,9 @@ async def report_error(interaction, error, context='operation'):
 
 
 class SafeView(discord.ui.View):
+    async def _scheduled_task(self, item, interaction):
+        return await route_interaction(interaction, super()._scheduled_task, item, interaction)
+
     async def on_error(self, interaction, error, item):
         label = getattr(item, 'label', None) or 'This action'
         await report_error(interaction, error, label)
