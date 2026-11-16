@@ -1,5 +1,5 @@
 name: Reviewed staging Host promotion
-run-name: Staging Host - Verified Feed Inheritance
+run-name: Staging Host - Server Template V1 Acceptance
 on:
   workflow_dispatch:
 permissions:
@@ -26,7 +26,7 @@ jobs:
           GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
           GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
           GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
-          EXPECTED_STAGING_HOST_COMMIT: 72e11530e25e0b71933fdc8c6380e2b0d5274b4e
+          EXPECTED_STAGING_HOST_COMMIT: eb3526e4f451b4468417c6ef88c6f9f8a17e4ae8
         run: |
           set -euo pipefail
           python3 -m tools.staging_automation_client status | python3 -c 'import json, os, sys; s=json.load(sys.stdin); sys.exit(0 if s.get("hostPromotionCommit") == os.environ["EXPECTED_STAGING_HOST_COMMIT"] and not s.get("recoveryRequired") else "Reviewed staging Host pin is unavailable.")'
