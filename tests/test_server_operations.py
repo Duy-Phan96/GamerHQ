@@ -26,6 +26,20 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.members = [actor]
         return actor
 
+    def test_core_install_mask_covers_fresh_template_overwrites(self):
+        from services import discord_permissions as access, server_templates as templates
+
+        self.owner()
+        rows = ops.definitions(self.guild)
+        templates.scope_structure({'rows': rows}, templates.GAMERHQ)
+        permissions = discord.Permissions(**dict.fromkeys(access.CORE_INSTALL, True))
+        boards = [row for row in rows if row['kind'] in ('category', 'text', 'voice')
+                  and not row.get('template_boundary') and not row.get('optional')]
+        self.assertTrue(boards)
+        for row in boards:
+            with self.subTest(resource=row['name']):
+                self.assertIsNone(ops.bulk_policy_issue(ops.setup_policy(self.guild, row), permissions))
+
     async def test_template_pin_repair_deduplicates_all_findings_and_resumes_after_uncertain_write(self):
         from services import server_template_pins as pins, server_templates as templates
 
@@ -686,7 +700,7 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
               patch.object(marketplace, 'create_text_channel', AsyncMock(side_effect=rejected)) as create):
             blocked = await ops.preview(self.guild, actor, 'setup', self.bot, scope='bulk')
             report = ops.bulk_preview_report(blocked, {})
-            self.assertIn('Host needs effective View Channel and Manage Channels', report)
+            self.assertIn('Host needs effective View Channel on the destination category', report)
             self.assertIn(f'Destination ID {marketplace.id} (View Channel=False, Manage Channels=True)', report)
             create.assert_not_awaited()
 

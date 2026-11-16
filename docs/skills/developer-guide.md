@@ -118,6 +118,17 @@ A capability must be:
 
 All three conditions are required.
 
+Skills that depend on a specific Discord server-role grant may declare
+`discord_guild_permissions=(DiscordGuildPermission.MANAGE_ROLES,)` in the
+manifest. Import `DiscordGuildPermission` from `skill_runtime.contracts`.
+Use this only for a prerequisite that needs server-role scope. Existing
+manifests omit the field and retain their activation behavior. The GamerHQ
+Host checks declared grants with read-only Discord inventory before enable
+and startup restore. The declaration grants no Discord permission, changes no
+Core invite, and gives a Skill no additional adapter access. Check destination
+permissions and configured resource ownership through the relevant Host
+adapter. Declare a new requirement only with a Host/SDK version that supports it.
+
 Never import Discord.py, GamerHQ database helpers, host services or the bot object to bypass a capability boundary.
 
 ## 6. Lifecycle

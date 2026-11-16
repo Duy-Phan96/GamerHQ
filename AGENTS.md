@@ -10,6 +10,7 @@
 - Persisted SQLite/config is authoritative for managed resources where implemented. Prefer stored Discord IDs; names are fallback discovery, not proof of ownership.
 - Setup/sync/repair must be retryable and idempotent: no duplicate channels, roles, messages, overrides or records. Treat ambiguity as manual review.
 - Preserve private/Staff visibility and least privilege. Never make private state public through repair, migration or fallback.
+- When a feature needs a Discord permission, update the permission matrix and reuse the read-only capability checks. Keep optional privileges out of the Core install mask and test missing grants and overrides before adding writes.
 - Preserve unrelated channels, messages, pins, custom overrides and user content. Destructive operations retain existing confirmation/dependency checks.
 - Keep secrets, runtime DBs, logs, backups, transcripts and private user data out of source/output. Use existing environment/config for deployment-specific IDs and settings for managed runtime IDs.
 - Keep health/inspection read-only. A real bot start changes Discord state; it is not a test.

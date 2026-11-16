@@ -25,13 +25,15 @@ class PinGrant:
     channel_acl: tuple
     parent_acl: tuple
     boards: tuple
+    restrictions: tuple
 
     def description(self):
         method = 'eligible for repair' if self.automatic else 'owner must grant in Discord'
         sync = ' · this channel will stop syncing with its category' if self.synced else ''
         return (f'{self.channel_name} ({self.channel_id}) · Host member {self.host_id} · '
                 f'Pin Messages {self.before} → allow · {method}{sync}\n  '
-                + ', '.join(label for _, label in self.boards))
+                + ', '.join(label for _, label in self.boards)
+                + ('\n  ' + ' '.join(self.restrictions) if self.restrictions else ''))
 
 
 def acl(channel):
@@ -67,15 +69,21 @@ async def plan(boards):
                 available = available | parent_permissions
             # Discord requires permission to manage overwrites and limits bits
             # to those held in the guild or parent. Leave privileged ACLs alone.
-            automatic = (ops.snapshot_permissions(guild, channel, host).manage_roles
-                         and not (allow.value | deny.value) & ~available.value
-                         and proposed.manage_roles is None)
+            restrictions = []
+            if not ops.snapshot_permissions(guild, channel, host).manage_roles:
+                restrictions.append('The Host lacks effective Manage Permissions in this channel.')
+            if not available.pin_messages:
+                restrictions.append('The Host lacks Pin Messages at both server and parent-category scope.')
+            elif (allow.value | deny.value) & ~available.value:
+                restrictions.append('The existing member overwrite contains another permission the Host cannot set.')
+            if proposed.manage_roles is not None:
+                restrictions.append('Setup does not edit member overwrites that set Manage Permissions.')
             parent_acl = acl(parent)
             channel_acl = acl(channel)
             grants[channel_id] = PinGrant(channel_id, channel.name, host.id, channel.category_id,
                                          before.pin_messages, parent is not None and channel_acl == parent_acl,
-                                         automatic, channel_acl, parent_acl,
-                                         tuple(sorted((row['key'], row['label']) for row in rows)))
+                                         not restrictions, channel_acl, parent_acl,
+                                         tuple(sorted((row['key'], row['label']) for row in rows)), tuple(restrictions))
     return grants
 
 

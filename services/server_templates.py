@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from database import db
 from services import managed_message_service as managed, server_operations as operations
-from services import server_template_pins
+from services import discord_permissions, server_template_pins
 from services.operation_context import read_scope
 from services.server_service import ServerMessageError
 
@@ -155,8 +155,11 @@ async def preview(guild, owner, template, bot=None):
     boards, inspected = await preview_entry_points(guild, owner, bot, reviewed_destinations(structure, template), pending)
     new_boards = tuple(row['name'] for row in structure['rows'] if row['kind'] == 'text' and not row.get('private')
                        and row['name'] in template.entry_points and row['bulk_action'] == 'create')
+    identity = next((row for row in structure['rows'] if row.get('bulk_member')), None)
+    absent = discord_permissions.missing(identity['bulk_permissions'], discord_permissions.CORE_INSTALL) if identity else ()
     return dict(template=template, structure=structure, choices=choices, boards=boards, progress=record,
                 pin_grants=await server_template_pins.plan(boards['rows']),
+                install_permissions=discord_permissions.install_remediation(absent) if absent else '',
                 new_boards=new_boards,
                 deferred=[name for name in template.entry_points if name not in inspected and name not in new_boards
                           and not any(row['name'] == name and row.get('skill_protected') for row in structure['rows'])])
@@ -192,6 +195,9 @@ def report_summary(draft):
     structure = draft['structure']['rows']
     lines = [draft['template'].name, 'Core structure and managed entry points, with optional and Skill totals shown separately.',
              *(f'{label}: {count}' for label, count in counts(draft).items()), '']
+    if draft.get('install_permissions'):
+        lines.append('Core install baseline · ' + draft['install_permissions']
+                     + ' Existing channels are also checked for effective access.')
     for row in structure:
         decision = operations.bulk_decision(row, draft['choices'])
         if row['kind'] == 'staff-role' or row.get('private') and row['kind'] == 'category' or row['name'] in operations.PUBLIC_FEEDS:

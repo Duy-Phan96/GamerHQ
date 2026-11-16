@@ -14,7 +14,8 @@ from types import SimpleNamespace
 import discord
 from database import db
 from services import managed_message_service as managed, message_reconciliation as messages
-from services import staff_access
+from services import discord_permissions as access, staff_access
+from services.discord_permissions import snapshot_permissions
 from services.server_service import ServerMessageError
 from services.onboarding_service import alias, INTERACTIVE_BOARDS, STATIC_BOARDS
 from services.server_setup_service import SERVER_BLUEPRINT
@@ -132,13 +133,6 @@ def private(resource):
             (getattr(resource, 'category', None) and resource.category.overwrites_for(everyone).view_channel is False))
 
 
-def snapshot_permissions(guild, channel, subject):
-    detached = copy(channel)
-    detached.guild = SimpleNamespace(id=guild.id, owner_id=getattr(guild, 'owner_id', None),
-                                     default_role=guild.get_role(guild.id), get_role=guild.get_role)
-    return detached.permissions_for(subject)
-
-
 async def public_message_channel(guild, channel):
     return await public_message_issue(guild, channel) is None
 
@@ -158,8 +152,7 @@ async def public_message_issue(guild, channel, *, publish=False):
         if inherited.view_channel is False or inherited.read_message_history is False:
             return 'The parent category restricts public visibility or message history.'
     overwrite = channel.overwrites_for(everyone)
-    access = ('view_channel', 'read_message_history')
-    for name in access:
+    for name in access.BOARD_READ:
         public = getattr(overwrite, name)
         if public is None:
             public = getattr(everyone.permissions, name)
@@ -174,12 +167,11 @@ async def public_message_issue(guild, channel, *, publish=False):
     # Resolve effective permissions against the REST roles and channel overwrites
     # without changing the Discord gateway cache or reimplementing permission rules.
     bot_permissions = snapshot_permissions(guild, channel, bot_member)
-    required = {'view_channel': 'View Channel', 'read_message_history': 'Read Message History'}
-    if publish:
-        required.update(send_messages='Send Messages', pin_messages='Pin Messages')
-    missing = [label for name, label in required.items() if not getattr(bot_permissions, name)]
+    missing = access.missing(bot_permissions, access.BOARD_PUBLISH if publish else access.BOARD_READ)
     if missing:
-        return 'Host lacks ' + ' and '.join(missing) + ' here. Review the channel and category permissions.'
+        detail = access.channel_remediation(guild, channel, bot_member, missing) if publish else ''
+        return ('Host lacks ' + ' and '.join(access.LABELS[flag] for flag in missing)
+                + ' here. Review the Host bot role and its channel permissions.' + (' ' + detail if detail else ''))
     return None
 
 
@@ -696,8 +688,10 @@ def bulk_destination_permissions(guild, parent, member):
 
 
 def bulk_destination_issue(permissions):
-    if permissions is not None and not (permissions.view_channel and permissions.manage_channels):
-        return 'Host needs effective View Channel and Manage Channels on the destination category'
+    if permissions is not None:
+        absent = access.missing(permissions, ('view_channel', 'manage_channels'))
+        if absent:
+            return 'Host needs effective ' + access.permission_names(absent) + ' on the destination category'
     return None
 
 
@@ -749,8 +743,9 @@ def bulk_plan(guild, rows, member, *, template_staff=False):
         candidates = row['candidates']
         match = candidates[0] if len(candidates) == 1 else None
         if match and match.id in row['safe']:
-            if role and (not permissions.manage_roles or not match < member.top_role):
-                row['reason'] = 'GamerHQ cannot manage the existing role'
+            if role and (not permissions.manage_roles or not access.role_below_host(match, member)):
+                row['reason'] = ('Host lacks Manage Roles' if not permissions.manage_roles else
+                                 'The mapped role must be editable and below the Host bot role in Server Settings → Roles')
                 continue
             if any(other['key'] != row['key'] and
                    (str(match.id) == other['raw'] or any(item.id == match.id for item in other['candidates']))

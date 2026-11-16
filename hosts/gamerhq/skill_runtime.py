@@ -32,6 +32,7 @@ from .skill_http import GamerHQExternalHttp
 from .skill_secrets import GamerHQSkillSecrets
 from .skill_resources import GamerHQManagedResources
 from database import db
+from services.discord_permissions import DiscordPermissionPreflightError, installation_issues
 import json
 
 
@@ -308,6 +309,9 @@ class GamerHQSkillRuntime:
         return changed
 
     async def enable_skill(self, *, guild_id: int, skill_id: str) -> bool:
+        issue = await self.discord_permission_issue(guild_id, self.registry.get(skill_id).manifest)
+        if issue:
+            raise DiscordPermissionPreflightError(issue)
         if skill_id == "event-manager":
             self._require_event_authority(guild_id)
         # Context creation validates every required capability before lifecycle
@@ -321,6 +325,10 @@ class GamerHQSkillRuntime:
                 await self.manager.disable(guild_id=guild_id, skill_id=skill_id)
             raise
         return changed
+
+    async def discord_permission_issue(self, guild_id, manifest):
+        required = getattr(manifest, "discord_guild_permissions", ())
+        return await installation_issues(self._guild(guild_id), required) if required else ""
 
     def _require_event_authority(self, guild_id):
         from .event_cutover import claim_empty_tenant
@@ -343,6 +351,11 @@ class GamerHQSkillRuntime:
                 )
                 continue
             try:
+                issue = await self.discord_permission_issue(guild_id, self.registry.get(skill_id).manifest)
+                if issue:
+                    self.log.warning("Skill restore blocked by Discord permission preflight guild=%s skill=%s: %s",
+                                     guild_id, skill_id, issue)
+                    continue
                 if await self.manager.start(guild_id=guild_id, skill_id=skill_id):
                     started.append(skill_id)
             except Exception:
@@ -393,6 +406,7 @@ class GamerHQSkillRuntime:
         configured = await self.state.is_configured(guild_id=guild_id, skill_id=skill_id)
         enabled = await self.state.is_enabled(guild_id=guild_id, skill_id=skill_id)
         running = self.manager.is_running(guild_id=guild_id, skill_id=skill_id)
+        discord_issue = await self.discord_permission_issue(guild_id, skill.manifest) if installed else ""
 
         if not installed:
             health = "NOT_INSTALLED"
@@ -400,6 +414,9 @@ class GamerHQSkillRuntime:
         elif missing:
             health = "UNAVAILABLE"
             detail = "Required host capabilities are unavailable."
+        elif discord_issue:
+            health = "UNAVAILABLE"
+            detail = discord_issue
         elif not enabled:
             health = "DISABLED"
             detail = "Skill is disabled for this guild."

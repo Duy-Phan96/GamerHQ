@@ -31,3 +31,16 @@ class SkillCapability(StrEnum):
 
 
 KNOWN_CAPABILITIES = frozenset(item.value for item in SkillCapability)
+
+
+class DiscordGuildPermission(StrEnum):
+    """Opt-in Discord server-role prerequisites for a Skill lifecycle."""
+
+    MANAGE_CHANNELS = "manage_channels"
+    MANAGE_ROLES = "manage_roles"
+    CREATE_EVENTS = "create_events"
+    PIN_MESSAGES = "pin_messages"
+    MOVE_MEMBERS = "move_members"
+
+
+KNOWN_DISCORD_GUILD_PERMISSIONS = frozenset(item.value for item in DiscordGuildPermission)
