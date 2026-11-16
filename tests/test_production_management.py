@@ -119,12 +119,12 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         await open_setup(interaction)
         view = interaction.response.send_message.call_args.kwargs['view']
         self.assertIsInstance(view, ServerTemplatesView)
-        self.assertEqual([child.label for child in view.children], ['Use Template', 'Advanced Settings'])
+        self.assertEqual([child.label for child in view.children], ['Use Template', 'Advanced Settings', 'Optional Modules'])
         db.set_setting(setup_key(self.guild), '1')
         db.set_setting(templates.progress_key(self.guild, templates.GAMERHQ), '{"state":"applying"}')
         await open_setup(interaction)
         view = interaction.response.send_message.call_args.kwargs['view']
-        self.assertEqual([child.label for child in view.children], ['Resume Setup', 'Advanced Settings'])
+        self.assertEqual([child.label for child in view.children], ['Resume Setup', 'Advanced Settings', 'Optional Modules'])
         ordinary = self.interaction(self.actor(43, False))
         await open_manage(ordinary)
         self.assertNotIn('view', ordinary.response.send_message.call_args.kwargs)
@@ -176,6 +176,12 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
                 if is_file:
                     self.assertEqual(payload['file'].fp.getvalue(), b'Details')
                     payload['file'].close()
+                    copy_view = payload['view']
+                    interaction.guild_id = self.guild.id
+                    self.assertTrue(await copy_view.interaction_check(interaction))
+                    interaction.response.send_message.reset_mock()
+                    await copy_view.copy.callback(interaction)
+                    self.assertIn('Details', interaction.response.send_message.call_args.kwargs['content'])
                 else:
                     self.assertIn('Summary', payload['content'])
         self.assertFalse(preview.finished)
