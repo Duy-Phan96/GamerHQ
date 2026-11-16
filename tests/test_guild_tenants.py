@@ -138,6 +138,22 @@ class GuildTenantTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([job.guild_id for job in claimed], [guild_id])
         self.assertTrue(await restored.scheduler_store.list_jobs(guild_id=88))
 
+    async def test_background_task_cannot_use_an_expired_scope_or_fall_back_to_primary(self):
+        self.store.provision(2)
+        release = asyncio.Event()
+
+        async def delayed_read():
+            await release.wait()
+            return db.get_setting('legacy_obs')
+
+        with self.store.scope(2), db.read_only():
+            self.assertIsNone(db.get_setting('legacy_obs'))
+            task = asyncio.create_task(delayed_read())
+        release.set()
+        with self.assertRaisesRegex(PermissionError, 'expired'):
+            await task
+        self.assertEqual(db.get_setting('legacy_obs'), 'preserved')
+
     async def test_same_template_uses_independent_resources_permissions_and_previews(self):
         self.store.provision(2)
         first, first_owner = self.guild(1)

@@ -68,7 +68,9 @@ owner authorization and verified backup. No implicit resource cleanup.
 
 The first storage implementation can rehearse provisioning, scope, removal
 from the offline cohort and rebinding on rejoin. It has no live Gateway
-admission or per-tenant job dispatcher. The legacy database needs no data
+admission or per-tenant job dispatcher. A task that inherits a completed scope
+cannot reuse its binding or fall back to the primary file. Long-lived workers
+must bind an admitted guild for each operation. The legacy database needs no data
 copy or schema change for this milestone. Keep a verified backup before a
 live pilot. Rollback restores the prior Host and primary guild binding,
 quarantines additional tenant files, and keeps their contents and ownership

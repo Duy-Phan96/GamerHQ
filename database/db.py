@@ -769,6 +769,7 @@ def set_setting(key, value):
 
 
 def get_setting(key):
+    tenants.current()
     session = _read_session.get()
     if session is not None and key in session['settings']: return session['settings'][key]
     with connect() as conn:
@@ -784,6 +785,7 @@ def get_settings(keys: Iterable[str]) -> dict[str, str]:
     Values are reused only inside the current read-only scope. Chunk parameters for SQLite
     builds with the historical 999-variable limit.
     """
+    tenants.current()
     keys = tuple(dict.fromkeys(keys))
     session = _read_session.get()
     cached = session['settings'] if session is not None else {}

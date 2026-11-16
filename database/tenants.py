@@ -14,11 +14,22 @@ class GuildTenant:
     database: Path
 
 
+@dataclass(slots=True)
+class _Binding:
+    tenant: GuildTenant
+    active: bool = True
+
+
 _current = ContextVar("gamerhq_guild_tenant", default=None)
 
 
 def current():
-    return _current.get()
+    binding = _current.get()
+    if binding is None:
+        return None
+    if not binding.active:
+        raise PermissionError("Guild operation has expired.")
+    return binding.tenant
 
 
 def require_guild(guild_id):
@@ -40,11 +51,13 @@ def _bind(tenant):
     if previous == tenant:
         yield tenant
         return
-    token = _current.set(tenant)
+    binding = _Binding(tenant)
+    token = _current.set(binding)
     try:
         with read_scope():
             yield tenant
     finally:
+        binding.active = False
         _current.reset(token)
 
 

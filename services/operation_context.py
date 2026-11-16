@@ -7,6 +7,8 @@ import logging
 import inspect
 import time
 
+from database import tenants
+
 log = logging.getLogger('discord.gamerhq.performance')
 _metrics = ContextVar('operation_metrics', default=None)
 _reads = ContextVar('operation_reads', default=None)
@@ -82,6 +84,7 @@ def read_scope(*, reuse=False):
 
 
 async def read_once(key, read):
+    tenants.current()
     context = _reads.get()
     if context is not None: return await context.once(key, read)
     count('api_reads')
