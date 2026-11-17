@@ -1,5 +1,89 @@
 # Reviewed staging Host promotion
 
+## Localized channel reuse preflight
+
+Run 43218555241 stopped on HTTP 404 while reading the configured Event Manager
+text category. The owner diagnostic verified the existing controller, clear
+recovery latch, healthy baseline Host, database integrity and backup restore
+probe. For a category 404, the diagnostic also compares the bot's guild
+inventory by exact ID. The focused Event Manager report distinguishes the
+profile's preflight IDs, the Skill's persisted resource policy, and live
+parents of recorded Skill channels. A matching category name is a candidate
+for review. Use exact IDs and the stored text ownership marker to identify
+existing managed resources. An absent inventory entry does not establish
+deletion. A diagnostic receipt does not authorize promotion or replace the
+live identity and permission checks.
+
+The installed Event Manager package is 0.1.2. The persisted guild lifecycle
+record is 0.1.1 and disabled. Preserve that record during this investigation.
+Package and Host health evidence does not establish active Skill operation.
+
+### Review the missing Event Manager categories
+
+Use the owner collector's read-only event category recovery review. It queries
+the configured voice category independently of the text 404, checks text
+channel IDs and unique ownership markers, and records overwrite fingerprints.
+It also reads temporary voice IDs from the managed-resource registry and
+occurrence records. The review never selects a replacement from a name match.
+An empty bot inventory does not exclude categories hidden from that bot.
+
+For this recovery both configured category lookups return 404. The original
+text category has a recorded deletion. Verify that neither category has a
+hidden replacement with the guild owner's inventory. Require a separate
+voice-channel review if any temporary voice binding or child remains. When
+the other gates pass, `RECOVERY_PLAN_READY_FOR_OWNER_REVIEW` binds the planned
+changes to a `planSha256`. The plan proposes one private EVENT TESTING category
+and one private EVENT VOICE category. Both deny `@everyone` View Channel and
+allow the verified Staging bot to view. The text category additionally allows
+the bot to send and read message history. The voice category allows the bot to
+connect. Verify existing effective Manage Channels and Manage Roles from guild
+roles. The plan grants neither of those permissions nor Administrator.
+
+The owner-approved change record must bind the exact guild, old category ID,
+the two existing channel IDs, their parents and overwrite fingerprints, the
+profile and Skill policy values, and a verified backup and restore probe.
+Recheck this evidence under the existing operation lock before changes. Bind
+the exact approved destination before attempting any moves. For a newly
+created category, record its returned ID and verify the category's permissions
+first. Journal an attempt before sending each category creation request. Retry
+only against recorded, reverified IDs. If creation has an uncertain outcome,
+stop and resolve the identity before trying again.
+
+Use the existing Host channel edit contract with `sync_permissions=False`
+for each approved channel. Compare the resulting parents and overwrite
+fingerprints after each move. On retry, a channel already in the approved
+category with identical overwrites is complete. A different parent, ownership
+marker or overwrite fingerprint requires a fresh review. An interrupted
+change can be rolled back by returning moved channels to their verified
+original unparented placement without syncing overwrites. Leave any new
+category for owner review.
+
+After the moves are verified, replace only `categoryId` and `voiceCategoryId`
+in the protected Staging profile and its existing guild-scoped
+`skill_resources` setting, checking the previously recorded values first.
+Preserve other policy fields, Skill lifecycle, and all resource and message
+bindings. A partially applied reference change requires verification and
+review before resuming or reversing. Restore only the two prior field values
+if compensation is approved and the current values still match the recorded
+new values. A fresh read-only preflight must pass before the separate protected
+Host promotion.
+
+The one-time owner apply mode accepts the exact approved plan SHA256 and a
+separate confirmation that the owner checked for hidden replacement categories.
+It uses the existing Staging worker identity and operation lock, creates and
+verifies a fresh private SQLite backup, and records progress in the private
+worker journal. It writes only the two category creates, the two single-channel
+placement changes, and the category reference fields. `EVENT_CATEGORY_RECOVERY_STOPPED`
+means stop and review the reported phase. A journaled create without a returned
+ID must be reconciled against Discord before any further create. For a recorded
+ID or an interrupted move, the same owner operation can resume only if the
+approved source, data, IDs and overwrite fingerprints still match.
+
+`EVENT_CATEGORY_RECOVERY_VERIFIED` confirms both category permissions, both
+parents and unchanged overwrite hashes, matching profile and Skill policy,
+unchanged Event Manager data, healthy baseline container and the live Discord
+lookup preflight. It does not dispatch a Host promotion.
+
 ## Reviewing permission and ownership blockers
 
 Bulk structure creation omits explicit Manage Messages grants. Existing
