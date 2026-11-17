@@ -22,13 +22,16 @@ def run(args, **kwargs):
 def rehearsal_tenant_snapshot():
     """Exercise the private database handoff with different rootless UIDs."""
     from .staging_tenant_rehearsal import capture_container_tenant
-    from .recover_staging_pilot_secondary import WORKER_PROBE
+    from .recover_staging_pilot_secondary import INSPECT_FORMAT, WORKER_PROBE
 
     root = Path('/opt/gamerhq-staging/data')
     container = run(['docker', 'run', '--detach', '--rm', '--network', 'none', '--user', '10001:10001',
                      '--volume', f'{root}:/app/runtime/data', 'python:3.12-slim', 'sleep', '120'],
                     check=True).stdout.strip()
     try:
+        facts = json.loads(run(['docker', 'inspect', '--format', INSPECT_FORMAT, container], check=True).stdout)
+        assert facts['Id'] == container and facts['Config']['User'] == '10001:10001'
+        assert facts['State']['Health']['Status'] == 'missing' and 'Env' not in facts['Config']
         seed = """
 import os, pathlib, sqlite3
 directory = pathlib.Path('/app/runtime/data/tenants')

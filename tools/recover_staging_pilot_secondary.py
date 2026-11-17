@@ -20,6 +20,15 @@ HOST = '40c88fada10f7990ef3d2cddb81f30b6381fe73e'
 WORKFLOW_HASH = '7c932e34572fee9cb691301902de4a2533128ca4444ec514754e72da15ec9e1d'
 BINDING = {'applicationId': '1567098530525351976', 'guildIds': ['1567098041641738331', '1571908030532948129']}
 APPROVAL = 'RECOVER MISSING SERVERTEST DATABASE'
+INSPECT_FORMAT = (
+    '{"Name":{{json .Name}},"Id":{{json .Id}},"Image":{{json .Image}},'
+    '"Config":{"User":{{json .Config.User}},"Labels":{{json .Config.Labels}}},'
+    '"HostConfig":{"Privileged":{{json .HostConfig.Privileged}},"CapAdd":{{json .HostConfig.CapAdd}},'
+    '"CapDrop":{{json .HostConfig.CapDrop}},"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}}},'
+    '"State":{"Running":{{json .State.Running}},"Health":{"Status":'
+    '{{if .State.Health}}{{json .State.Health.Status}}{{else}}"missing"{{end}}}},'
+    '"Mounts":{{json .Mounts}},"NetworkSettings":{"Networks":{{json .NetworkSettings.Networks}}}}'
+)
 
 
 def read_protected(path, uid, mode_private=False):
@@ -94,6 +103,7 @@ CONTAINER_PROBE = """
 import io, json, os, sys, tempfile, zipfile
 if (os.geteuid(), os.getegid()) != (10001, 10001):
     raise PermissionError('STAGING_APPLICATION_IDENTITY_REQUIRED')
+os.environ.clear()
 with tempfile.TemporaryDirectory(prefix='gamerhq-pilot-recovery-') as source:
     with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read(20 * 1024**2))) as archive:
         archive.extractall(source)
@@ -196,7 +206,7 @@ def execute(source, approval):
         profile = json.loads(read_protected(CONTROL / 'settings/profile.json', uid, True))
         state = json.loads(read_protected(parent / 'automation-state.json', uid, True))
         image = verified_baseline(policy, profile, state)
-        container, = run('docker', 'inspect', 'gamerhq-staging-bot')
+        container = run('docker', 'inspect', '--format', INSPECT_FORMAT, 'gamerhq-staging-bot')
         ident = verify_container(container, image)
         pin = json.dumps({**BINDING, 'productionBotId': profile['productionBotId'], 'productionGuildId': profile['productionGuildId']})
         receipt = run('docker', 'exec', '-i', '--user', '10001:10001', ident, 'python', '-I', '-B', '-c', CONTAINER_PROBE,
@@ -211,7 +221,7 @@ def execute(source, approval):
                 proof = {'state': 'DUAL_BACKUP_REHEARSAL_REJECTED'}
             receipt['backupRehearsal'] = proof
             if proof['state'] == 'DUAL_BACKUP_REHEARSAL_PASS':
-                current, = run('docker', 'inspect', 'gamerhq-staging-bot')
+                current = run('docker', 'inspect', '--format', INSPECT_FORMAT, 'gamerhq-staging-bot')
                 if verify_container(current, image) != ident:
                     raise ValueError('STAGING_CONTAINER_CHANGED')
                 receipt['state'] = 'PILOT_SECONDARY_RECOVERY_VERIFIED'
