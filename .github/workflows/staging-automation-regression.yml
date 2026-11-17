@@ -15,6 +15,12 @@ jobs:
           fetch-depth: 0
       - uses: actions/checkout@v4
         with:
+          # This enrollment permits only the historical managed-message pin change.
+          ref: ff519f698f973b056eeae0b9d026a71dbf8fbaae
+          fetch-depth: 0
+          path: reviewed-controller-enrollment
+      - uses: actions/checkout@v4
+        with:
           ref: 92db47042d58055cb0debdfd83f11f8508e19809
           path: installed-worker-source
       - name: Verify the exact candidate archive independently on Linux
@@ -37,9 +43,8 @@ jobs:
           ssh-keygen -q -t ed25519 -N '' -f /tmp/staging-legacy-ci-key
           sudo python3 -m tools.prepare_staging_access --commit 92db47042d58055cb0debdfd83f11f8508e19809 --public-key-file /tmp/staging-legacy-ci-key.pub --apply --install-prerequisites --approval 'PREPARE ISOLATED STAGING'
       - name: Verify enrollment, unchanged legacy state and actual forced-command SSH
-        env:
-          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_automation_smoke --commit "$REVIEWED_COMMIT"
+        working-directory: reviewed-controller-enrollment
+        run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_automation_smoke --commit ff519f698f973b056eeae0b9d026a71dbf8fbaae
       - name: Build the exact baseline and rehearse the approved Host overlay offline
         shell: bash
         run: |
