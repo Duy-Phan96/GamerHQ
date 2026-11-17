@@ -29,7 +29,9 @@ def rehearsal_tenant_snapshot():
                      '--volume', f'{root}:/app/runtime/data', 'python:3.12-slim', 'sleep', '120'],
                     check=True).stdout.strip()
     try:
-        facts = json.loads(run(['docker', 'inspect', '--format', INSPECT_FORMAT, container], check=True).stdout)
+        inspected = run(['docker', 'inspect', '--format', INSPECT_FORMAT, container])
+        assert inspected.returncode == 0, inspected.stderr  # Synthetic container with no credentials.
+        facts = json.loads(inspected.stdout)
         assert facts['Id'] == container and facts['Config']['User'] == '10001:10001'
         assert facts['State']['Health']['Status'] == 'missing' and 'Env' not in facts['Config']
         seed = """

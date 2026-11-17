@@ -23,10 +23,10 @@ APPROVAL = 'RECOVER MISSING SERVERTEST DATABASE'
 INSPECT_FORMAT = (
     '{"Name":{{json .Name}},"Id":{{json .Id}},"Image":{{json .Image}},'
     '"Config":{"User":{{json .Config.User}},"Labels":{{json .Config.Labels}}},'
-    '"HostConfig":{"Privileged":{{json .HostConfig.Privileged}},"CapAdd":{{json .HostConfig.CapAdd}},'
-    '"CapDrop":{{json .HostConfig.CapDrop}},"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}}},'
+    '"HostConfig":{"Privileged":{{json .HostConfig.Privileged}},"CapAdd":{{json (index .HostConfig "CapAdd")}},'
+    '"CapDrop":{{json (index .HostConfig "CapDrop")}},"ReadonlyRootfs":{{json .HostConfig.ReadonlyRootfs}}},'
     '"State":{"Running":{{json .State.Running}},"Health":{"Status":'
-    '{{if .State.Health}}{{json .State.Health.Status}}{{else}}"missing"{{end}}}},'
+    '{{with index .State "Health"}}{{json .Status}}{{else}}"missing"{{end}}}},'
     '"Mounts":{{json .Mounts}},"NetworkSettings":{"Networks":{{json .NetworkSettings.Networks}}}}'
 )
 
