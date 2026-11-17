@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands, tasks
 
 from database import db
+from services.tenant_routing import tenant_cycle
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ class ProgressionActivity(commands.Cog):
         await dispatch_member_progression_signals(self.bot, before, after)
 
     @tasks.loop(minutes=1)
+    @tenant_cycle
     async def voice_sampler(self):
         for guild in tuple(self.bot.guilds):
             config = await self._enabled_config(guild)

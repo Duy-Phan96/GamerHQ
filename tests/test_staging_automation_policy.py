@@ -129,21 +129,25 @@ def test_web_workflow_cannot_deploy_with_routine_identity_or_without_owner_revie
         verify(token(), policy, 'web-rollback', 'd' * 32, read=read, now=1001)
 
 
-def test_catalog_preview_requires_protected_owner_review_and_its_exact_workflow(trust):
+@pytest.mark.parametrize(('operation', 'digest_key'), [
+    ('catalog-preview', 'catalogPreviewWorkflowSha256'),
+    ('tenant-pilot-preview', 'tenantPilotWorkflowSha256'),
+])
+def test_staging_previews_require_protected_owner_review_and_exact_workflow(trust, operation, digest_key):
     policy, claims, token, read, reviews, _ = trust
-    policy['catalogPreviewWorkflowSha256'] = policy['routineWorkflowSha256']
-    workflow = 'Duy-Phan96/GamerHQ/.github/workflows/staging-catalog-preview.yml@refs/heads/main'
+    policy[digest_key] = policy['routineWorkflowSha256']
+    workflow = f'Duy-Phan96/GamerHQ/.github/workflows/staging-{operation}.yml@refs/heads/main'
     claims['workflow_ref'] = workflow
     with pytest.raises(Denied):
-        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+        verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
     security_claims(claims)
     with pytest.raises(Denied):
-        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+        verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
     claims['workflow_ref'] = workflow
-    assert verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+    assert verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
     reviews.clear()
     with pytest.raises(Denied):
-        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+        verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
 
 
 @pytest.mark.parametrize('operation', ['bootstrap', 'initial', 'credentials', 'release', 'revoke', 'shell', 'docker', 'apply', 'production'])

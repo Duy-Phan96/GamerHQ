@@ -27,6 +27,8 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         request({'version': 1, 'phase': 'automation', 'operation': payload['operation']})
         if payload['operation'] == 'catalog-preview' and 'catalogPreviewWorkflowSha256' not in policy:
             raise Denied('CATALOG_PREVIEW_NOT_ENROLLED')
+        if payload['operation'] == 'tenant-pilot-preview' and 'tenantPilot' not in policy:
+            raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] in WEB and 'webDeployment' not in policy:
             raise Denied('WEB_NOT_ENROLLED')
         nonce = uuid.uuid4().hex
@@ -53,6 +55,10 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         if operation == 'catalog-preview':
             from .catalog_preview import preview
             return preview(backend.profile)
+        if operation == 'tenant-pilot-preview':
+            if 'tenantPilot' not in policy:
+                raise Denied('OPERATION_NOT_ALLOWED')
+            return backend.verify_tenant_pilot()
         if operation in WEB:
             from .web import WebDeployment
             web = WebDeployment(backend, policy['webDeployment'], state, save)

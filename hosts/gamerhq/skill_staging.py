@@ -235,8 +235,10 @@ def category_permissions(guild_id, bot_id, member, roles, category):
     return permissions
 
 
-def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
+def verify_remote(profile, *, read=discord_read, fetch=fetch_release, approved_pilot=None):
     validate_profile(profile)
+    if "tenantPilot" in profile and approved_pilot is None:
+        raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
     if platform.system() != "Linux":
         raise ValueError("Verify on the approved isolated Linux staging Host.")
     verify_docker(profile)
@@ -270,11 +272,35 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
             raise VerificationFailure('DISCORD_NETWORK_REJECTED', step) from None
         except Exception:
             raise VerificationFailure('DISCORD_RESPONSE_REJECTED', step) from None
-    if read_step("/users/@me", 'bot-identity').get("id") != ids["stagingBotId"]:
+    identity = read_step("/users/@me", 'bot-identity')
+    if identity.get("id") != ids["stagingBotId"]:
         raise VerificationFailure('STAGING_BOT_IDENTITY_REJECTED', 'bot-identity')
     guilds = read_step("/users/@me/guilds?limit=200", 'guild-membership')
-    if not isinstance(guilds, list) or {str(row["id"]) for row in guilds} != {ids["stagingGuildId"]}:
-        raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
+    if approved_pilot is None:
+        if not isinstance(guilds, list) or len(guilds) != 1 or {str(row["id"]) for row in guilds} != {ids["stagingGuildId"]}:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
+    else:
+        from services.tenant_routing import GuildAdmissionError, verify_membership
+        expected = frozenset(approved_pilot)
+        if len(expected) != 2 or int(ids["stagingGuildId"]) not in expected or int(ids["productionGuildId"]) in expected:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
+        try:
+            verify_membership(int(ids["stagingBotId"]), expected, identity, guilds)
+        except GuildAdmissionError:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership') from None
+        from services.discord_permissions import CORE_INSTALL
+        secondary = str(next(iter(expected - {int(ids["stagingGuildId"])})))
+        info = read_step('/guilds/' + secondary, 'guild-identity')
+        member = read_step(f'/guilds/{secondary}/members/{ids["stagingBotId"]}', 'bot-membership')
+        roles = read_step(f'/guilds/{secondary}/roles', 'guild-roles')
+        if info.get("id") != secondary or member.get("user", {}).get("id") != ids["stagingBotId"]:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-identity')
+        direct_roles = {secondary, *member.get("roles", [])}
+        if any(row["id"] in direct_roles and discord.Permissions(int(row["permissions"])).administrator for row in roles):
+            raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', 'guild-roles')
+        required = discord.Permissions(**dict.fromkeys(CORE_INSTALL, True)).value
+        if category_permissions(secondary, ids["stagingBotId"], member, roles, {}) & required != required:
+            raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', 'guild-roles')
     guild_id = ids["stagingGuildId"]
     guild = read_step("/guilds/" + guild_id, 'guild-identity')
     if str(guild.get("id")) != guild_id:

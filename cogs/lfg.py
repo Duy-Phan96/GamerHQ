@@ -13,6 +13,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from database import db
+from services.tenant_routing import tenant_cycle
 from services import lobby_service as lobby_rules
 from services.lobby_dashboard import event_lock, sync_card, cleanup_ended
 import logging
@@ -1451,6 +1452,7 @@ class LFG(commands.Cog):
         self.voice_scheduler.cancel()
 
     @tasks.loop(seconds=30)
+    @tenant_cycle
     async def voice_scheduler(self):
         now = int(datetime.now(SERVER_TZ).timestamp())
         for guild in self.bot.guilds:

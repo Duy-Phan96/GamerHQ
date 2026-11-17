@@ -68,6 +68,9 @@ def verify(token, policy, operation, challenge, *, read=read_url, now=None):
         if operation == 'catalog-preview':
             filename = 'staging-catalog-preview.yml'
             digest = policy['catalogPreviewWorkflowSha256']
+        elif operation == 'tenant-pilot-preview':
+            filename = 'staging-tenant-pilot-preview.yml'
+            digest = policy['tenantPilotWorkflowSha256']
         elif operation in WEB:
             filename = 'staging-web.yml'
             digest = policy['webDeployment']['workflowSha256']

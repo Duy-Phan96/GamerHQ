@@ -55,8 +55,28 @@ class HostBackend:
     def fresh_verify(self):
         from hosts.gamerhq.skill_staging import verify_remote
         from tools.skill_staging import write_record
+        if 'tenantPilot' in self.profile or 'tenantPilot' in self.policy:
+            # Routine deployment paths still snapshot only the primary database.
+            raise Denied('OPERATION_NOT_ALLOWED')
         proof = verify_remote(self.profile)
         write_record(self.profile['verificationFile'], proof)
+
+    def verify_tenant_pilot(self):
+        """Check Discord without a Gateway and retain verified private snapshots."""
+        from database.tenants import GuildTenantStore
+        from hosts.gamerhq.skill_staging import verify_remote
+        from tools.staging_tenant_rehearsal import approved_binding, retain
+        approved = approved_binding(self.profile, self.policy)
+        if approved is None:
+            raise Denied('OPERATION_NOT_ALLOWED')
+        self.storage_budget()
+        proof = verify_remote(self.profile, approved_pilot=approved)
+        primary = int(self.profile['stagingGuildId'])
+        source = Path(self.profile['database'])
+        store = GuildTenantStore(primary_guild=primary, primary_database=source,
+                                 tenant_directory=source.parent / 'tenants',
+                                 additional_guilds=tuple(guild for guild in approved if guild != primary))
+        return {**proof, **retain(store, self.profile['backupRoot'], self.profile['workRoot'])}
 
     def storage_budget(self):
         if shutil.disk_usage(self.profile['workRoot']).free < 1073741824: raise Denied('DISK_BUDGET_REQUIRES_OWNER')

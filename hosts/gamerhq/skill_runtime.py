@@ -379,14 +379,15 @@ class GamerHQSkillRuntime:
         return tuple(started)
 
     async def start_scheduler(self, *, poll_seconds: float = 15.0) -> bool:
-        if getattr(self.bot, "guild_routes", None) is not None:
-            raise RuntimeError("Tenant scheduler must run through scoped guild routes.")
         await self.register_all()
         if self._scheduler_task and not self._scheduler_task.done():
             return False
         self._scheduler_stop = asyncio.Event()
+        routes = getattr(self.bot, "guild_routes", None)
+        work = (routes.serve_scheduler(self, self._scheduler_stop, poll_seconds) if routes is not None else
+                self.scheduler.serve(self._scheduler_stop, poll_seconds=poll_seconds))
         self._scheduler_task = asyncio.create_task(
-            self.scheduler.serve(self._scheduler_stop, poll_seconds=poll_seconds),
+            work,
             name="gamerhq-skill-scheduler",
         )
         return True
@@ -404,11 +405,18 @@ class GamerHQSkillRuntime:
 
     async def close(self) -> None:
         await self.stop_scheduler()
-        for guild in tuple(getattr(self.bot, "guilds", ())):
+        routes = getattr(self.bot, "guild_routes", None)
+        guild_ids = (sorted(routes.allowed) if routes is not None else
+                     [guild.id for guild in getattr(self.bot, "guilds", ())])
+        for guild_id in guild_ids:
             try:
-                await self.manager.stop_guild(guild_id=guild.id)
+                if routes is None:
+                    await self.manager.stop_guild(guild_id=guild_id)
+                else:
+                    with routes.scope(guild_id):
+                        await self.manager.stop_guild(guild_id=guild_id)
             except Exception:
-                self.log.exception("Skill shutdown failed guild=%s", guild.id)
+                self.log.exception("Skill shutdown failed guild=%s", guild_id)
 
     async def status(self, *, guild_id: int, skill_id: str) -> GuildSkillStatus:
         self._require_scope(guild_id)

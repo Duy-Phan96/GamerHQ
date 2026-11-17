@@ -445,6 +445,7 @@ def connect():
     conn.row_factory = sqlite3.Row
     try:
         yield conn
+        tenants.current()
         conn.commit()
     finally:
         conn.close()

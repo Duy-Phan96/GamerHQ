@@ -1,14 +1,16 @@
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock
 
+import discord
 import pytest
 
 from database import db, tenants
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
-from services.response_service import SafeView
-from services.tenant_routing import GuildAdmissionError, GuildCommandTree, GuildRoutes, route_interaction
-from tools.staging_tenant_rehearsal import rehearse
+from services.authorization_service import authorized
+from services.tenant_routing import GuildAdmissionError, GuildCommandTree, GuildRoutes, GuildViewStore, event_guild, route_interaction, tenant_cycle
+from tools.staging_tenant_rehearsal import approved_binding, rehearse, retain
 
 
 @pytest.fixture
@@ -34,8 +36,10 @@ def proof(routes):
 
 
 def interaction(routes, guild):
+    member = MagicMock(spec=discord.Member)
+    member.guild, member.id = guild, 21
     return SimpleNamespace(client=SimpleNamespace(guild_routes=routes), guild_id=guild.id,
-                           application_id=90, guild=guild, user=SimpleNamespace(id=21),
+                           application_id=90, guild=guild, user=member,
                            response=SimpleNamespace(is_done=lambda: False, send_message=AsyncMock()))
 
 
@@ -76,7 +80,11 @@ def test_routes_scope_commands_views_and_revoke_delayed_operations(pilot):
             command_tree = object.__new__(GuildCommandTree)
             assert await command_tree._call(first) == "1"
         with patch("discord.ui.View._scheduled_task", side_effect=on_view):
-            assert await SafeView()._scheduled_task(None, second) == "2"
+            view = discord.ui.View()
+            with routes.scope(2):
+                GuildViewStore(SimpleNamespace()).add_view(view)
+            assert await view._scheduled_task(None, second) == "2"
+            assert await view._scheduled_task(None, first) is None
         await route_interaction(spoof, blocked)
         spoof.response.send_message.assert_awaited_once()
         blocked.assert_not_awaited()
@@ -109,8 +117,8 @@ def test_restore_and_scheduler_scope_each_guild_and_keep_legacy_dispatch_unbound
         scoped_runtime = GamerHQSkillRuntime(SimpleNamespace(guild_routes=routes, get_guild=guilds.get))
         with pytest.raises(GuildAdmissionError, match="require a verified tenant scope"):
             await scoped_runtime.restore_guild(guild_id=2)
-        with pytest.raises(RuntimeError, match="scoped guild routes"):
-            await scoped_runtime.start_scheduler()
+        with pytest.raises(GuildAdmissionError, match="require a verified tenant scope"):
+            await scoped_runtime.restore_guild(guild_id=1)
 
     asyncio.run(scenario())
 
@@ -139,3 +147,198 @@ def test_backup_rehearsal_rejects_incomplete_cohort(pilot, tmp_path):
     with pytest.raises(PermissionError, match="not been provisioned"):
         rehearse(store, tmp_path)
     assert store.primary_database.read_bytes() == primary
+    with pytest.raises(PermissionError):
+        retain(store, tmp_path, tmp_path)
+    assert not list(tmp_path.glob("tenant-pilot-*/verified.json"))
+
+
+def test_backup_retention_keeps_only_completed_receipts_eligible(pilot, tmp_path):
+    store, _, _ = pilot
+    evidence = retain(store, tmp_path, tmp_path)
+    root = tmp_path / evidence["backupBatch"]
+    assert sorted(path.name for path in root.iterdir()) == ["1.sqlite", "2.sqlite", "verified.json"]
+    assert all(record["restore"] == "PASS" for record in evidence["tenantRestores"])
+
+
+def test_uncached_owner_envelope_and_modal_use_same_verified_guild(pilot):
+    _, guilds, routes = pilot
+    guild = guilds[2]
+    guild.owner_id = 21
+    guild.get_member = lambda _: None
+    event = interaction(routes, guild)
+
+    async def submit(interaction, components, resolved):
+        assert authorized(guild, interaction.user)
+        return db.get_setting("customer")
+
+    async def scenario():
+        proof(routes)
+        assert not authorized(guild, event.user)
+        with patch("discord.ui.Modal._scheduled_task", side_effect=submit):
+            modal = discord.ui.Modal(title="Owner setup")
+            with routes.scope(2):
+                GuildViewStore(SimpleNamespace()).add_view(modal)
+            assert await modal._scheduled_task(event, [], {}) == "2"
+            event.user.guild = guilds[1]
+            assert await modal._scheduled_task(event, [], {}) is None
+            event.response.send_message.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_gateway_modal_constructs_a_real_uncached_owner_member(pilot):
+    store, _, _ = pilot
+    from bot import GamerHQBot
+
+    def user(user_id, *, bot=False):
+        return {"id": str(user_id), "username": "fixture", "discriminator": "0",
+                "avatar": None, "bot": bot}
+
+    async def scenario():
+        bot = GamerHQBot()
+        state = bot._connection
+        state.user = discord.ClientUser(state=state, data=user(90, bot=True))
+        guild = discord.Guild(state=state, data={"id": "2", "name": "Fixture", "owner_id": "21",
+                                                 "roles": [], "members": []})
+        guild._add_member(discord.Member(state=state, guild=guild, data={
+            "user": user(90, bot=True), "roles": [], "flags": 0,
+        }))
+        state._add_guild(guild)
+        routes = GuildRoutes(application_id=90, store=store, get_guild=bot.get_guild)
+        bot.guild_routes = routes
+        proof(routes)
+        done = asyncio.get_running_loop().create_future()
+
+        class OwnerModal(discord.ui.Modal, title="Tenant owner"):
+            async def on_submit(self, interaction):
+                done.set_result((authorized(guild, interaction.user), db.get_setting("customer")))
+
+        modal = OwnerModal()
+        with routes.scope(2):
+            state.store_view(modal)
+        assert guild.get_member(21) is None
+        data = {"id": "100", "type": 5, "token": "fixture", "version": 1, "application_id": "90",
+                "guild_id": "2", "attachment_size_limit": 1024,
+                "member": {"user": user(21), "roles": [], "flags": 0, "permissions": "0"},
+                "data": {"custom_id": modal.custom_id, "components": []}}
+        with patch.object(state, 'dispatch'):
+            state.parse_interaction_create(data)
+            assert await asyncio.wait_for(done, 1) == (True, "2")
+            state.parse_interaction_create({**data, "guild_id": "3"})
+            assert state._get_guild(3) is None
+        assert guild.get_member(21) is None
+
+    asyncio.run(scenario())
+
+
+def test_revoke_cancels_in_flight_work_and_rolls_back_uncommitted_sql(pilot):
+    store, guilds, routes = pilot
+
+    async def scenario():
+        proof(routes)
+        entered = asyncio.Event()
+        event = interaction(routes, guilds[2])
+
+        async def write():
+            with db.connect() as conn:
+                conn.execute("UPDATE settings SET value='unsafe' WHERE key='customer'")
+                entered.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    pass   # Even a callback that handles cancellation cannot commit.
+
+        task = asyncio.create_task(route_interaction(event, write))
+        await entered.wait()
+        routes.invalidate()
+        with pytest.raises(GuildAdmissionError, match="expired"):
+            await task
+        with store.scope(2):
+            assert db.get_setting("customer") == "2"
+
+    asyncio.run(scenario())
+
+
+def test_authenticated_refresh_and_scoped_command_registration(pilot):
+    _, guilds, routes = pilot
+    http = SimpleNamespace(request=AsyncMock(side_effect=[{"id": "90", "bot": True}, [{"id": "1"}, {"id": "2"}]]))
+    tree = SimpleNamespace(copy_global_to=MagicMock(), sync=AsyncMock())
+
+    async def scenario():
+        await routes.refresh(http)
+        await routes.sync_commands(tree)
+        assert [call.kwargs["guild"].id for call in tree.sync.await_args_list] == [1, 2]
+        assert [call.args[0].path for call in http.request.await_args_list] == ["/users/@me", "/users/@me/guilds"]
+
+    asyncio.run(scenario())
+    assert event_guild("on_member_update", [SimpleNamespace(guild=guilds[1]), SimpleNamespace(guild=guilds[2])]) is None
+    assert event_guild("on_raw_message_delete", [SimpleNamespace(guild_id=2)]) == 2
+    assert event_guild("on_ready", []) is None
+
+
+def test_membership_refresh_cannot_republish_proof_after_invalidation(pilot):
+    _, _, routes = pilot
+
+    async def scenario():
+        pending = asyncio.Event()
+        release = asyncio.Event()
+
+        async def request(route, **kwargs):
+            if route.path == "/users/@me":
+                return {"id": "90", "bot": True}
+            pending.set()
+            await release.wait()
+            return [{"id": "1"}, {"id": "2"}]
+
+        check = asyncio.create_task(routes.refresh(SimpleNamespace(request=request)))
+        await pending.wait()
+        routes.invalidate()
+        release.set()
+        with pytest.raises(GuildAdmissionError, match="changed during verification"):
+            await check
+        with pytest.raises(GuildAdmissionError):
+            with routes.scope(1):
+                pytest.fail("An expired REST response cannot admit either guild")
+
+    asyncio.run(scenario())
+
+
+def test_existing_cog_cycles_and_retries_use_fresh_scopes(pilot):
+    _, _, routes = pilot
+    seen = []
+    cog = SimpleNamespace(bot=SimpleNamespace(guild_routes=routes))
+
+    @tenant_cycle
+    async def tick(_):
+        seen.append(db.get_setting("customer"))
+
+    async def retry():
+        seen.append(db.get_setting("customer"))
+
+    async def scenario():
+        proof(routes)
+        await tick(cog)
+        assert sorted(seen) == ["1", "2"]
+        with routes.scope(2):
+            delayed = routes.create_retry(2, retry)
+        await delayed
+        assert seen[-1] == "2"
+        with routes.scope(1):
+            delayed = routes.create_retry(1, retry)
+        routes.invalidate()
+        await delayed
+        assert len(seen) == 3
+
+    asyncio.run(scenario())
+
+
+def test_controller_binding_requires_exact_protected_non_production_pair():
+    pin = {"applicationId": "90", "guildIds": ["1", "2"]}
+    profile = {"environment": "staging", "stagingBotId": "90", "stagingGuildId": "1",
+               "productionBotId": "99", "productionGuildId": "3", "tenantPilot": pin}
+    assert approved_binding(profile, {"tenantPilot": pin}) == (1, 2)
+    with pytest.raises(PermissionError):
+        approved_binding(profile, {})
+    wrong = {**pin, "guildIds": ["1", "3"]}
+    with pytest.raises(PermissionError):
+        approved_binding({**profile, "tenantPilot": wrong}, {"tenantPilot": wrong})

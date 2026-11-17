@@ -220,7 +220,7 @@ def desired_token(guild, name):
                 mapping=db.get_setting(f'managed_channel:{guild.id}:{name}'))
 
 
-async def detect(before, after, notify, *, deleted=False):
+async def detect(before, after, notify, *, deleted=False, routes=None):
     channel = before if deleted else after
     guild = channel.guild
     name = identify(guild, channel.id)
@@ -256,7 +256,7 @@ async def detect(before, after, notify, *, deleted=False):
             if _timers.get(key) is asyncio.current_task():
                 _timers.pop(key, None)
                 _dirty.pop(key, None)
-    _timers[key] = asyncio.create_task(later())
+    _timers[key] = routes.create_retry(guild.id, later) if routes else asyncio.create_task(later())
 
 
 async def process(guild, channel, name, notify, *, deleted=False, security=False, changed_fields=()):

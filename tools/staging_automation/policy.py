@@ -4,7 +4,7 @@ import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
 WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview'})
 PUBLIC = frozenset({'status', 'challenge'})
 OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
 MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback'})
@@ -55,6 +55,10 @@ def validate_policy(value):
         raise Denied('RESOURCE_POLICY_REJECTED')
     if 'catalogPreviewWorkflowSha256' in value and not re.fullmatch('[0-9a-f]{64}', value['catalogPreviewWorkflowSha256']):
         raise Denied('POLICY_REJECTED')
+    if 'tenantPilot' in value:
+        digest = value.get('tenantPilotWorkflowSha256')
+        if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
+            raise Denied('POLICY_REJECTED')
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
@@ -85,6 +89,11 @@ def admit(operation, state):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if (operation in WEB or operation == 'catalog-preview') and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
+    if operation == 'tenant-pilot-preview':
+        if state.get('recoveryRequired'):
+            raise Denied('RECOVERY_REQUIRES_OWNER')
+        if not state.get('enabled') or not state.get('bootstrapVerified'):
+            raise Denied('AUTOMATION_NOT_ACTIVATED')
     if operation in ROUTINE - {'health'} and not state.get('enabled'):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if operation in {'install', 'update', 'restart', 'recover', 'smoke', 'history'} and not state.get('bootstrapVerified'):

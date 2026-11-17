@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from contextlib import suppress
+import aiohttp
 import discord
 from discord.ext import commands
 
@@ -8,18 +9,76 @@ try:
     from config import TOKEN, GUILD_ID, validate_startup, ConfigurationError
 except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from None
-from database import db
-from services.tenant_routing import GuildCommandTree
+from database import db, tenants
+from services.tenant_routing import GuildAdmissionError, GuildCommandTree, GuildConnectionState, MEMBERSHIP_EVENTS, event_guild
 
 
 class GamerHQBot(commands.Bot):
+    @property
+    def guilds(self):
+        if getattr(self, 'guild_routes', None) is None:
+            return super().guilds
+        tenant = tenants.current()
+        guild = self.get_guild(tenant.guild_id) if tenant else None
+        return [guild] if guild else []
+
+    def _get_state(self, **options):
+        return GuildConnectionState(dispatch=self.dispatch, handlers=self._handlers, hooks=self._hooks,
+                                    http=self.http, **options)
+
+    def dispatch(self, event, /, *args, **kwargs):
+        routes = getattr(self, 'guild_routes', None)
+        if routes is not None and event in MEMBERSHIP_EVENTS:
+            routes.invalidate()
+        if routes is not None and event in {'ready', 'resumed', 'guild_join', 'guild_remove'}:
+            previous = getattr(self, '_pilot_ready_task', None)
+            if previous is not None and not previous.done():
+                previous.cancel()
+            self._pilot_ready_task = self.loop.create_task(self._prepare_pilot_guilds())
+        return super().dispatch(event, *args, **kwargs)
+
+    async def _prepare_pilot_guilds(self):
+        routes = self.guild_routes
+        try:
+            await routes.refresh(self.http)
+            await routes.sync_commands(self.tree)
+            for guild_id in sorted(routes.allowed):
+                await routes.restore(self.skill_runtime, guild_id)
+            await self.skill_runtime.start_scheduler()
+        except GuildAdmissionError:
+            logging.getLogger(__name__).warning("Guild pilot paused pending exact membership and storage verification.")
+        except Exception:
+            routes.invalidate()
+            logging.getLogger(__name__).exception("Guild pilot startup failed.")
+
+    async def _run_event(self, coro, event_name, *args, **kwargs):
+        routes = getattr(self, 'guild_routes', None)
+        if routes is None:
+            return await super()._run_event(coro, event_name, *args, **kwargs)
+        guild_id = event_guild(event_name, args)
+        if guild_id is None:
+            return  # Process-wide or ambiguous listeners are held by the pilot.
+        try:
+            scope = routes.interaction(args[0]) if event_name == 'on_interaction' else routes.scope(guild_id)
+            with scope:
+                return await super()._run_event(coro, event_name, *args, **kwargs)
+        except GuildAdmissionError:
+            return
+
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
         from config import GOCDKEYS_ENABLED, GOCDKEYS_AUTOMATIC_SUPPORTED
         intents.message_content = GOCDKEYS_ENABLED and GOCDKEYS_AUTOMATIC_SUPPORTED
         intents.voice_states = True
-        super().__init__(command_prefix="!", intents=intents, tree_cls=GuildCommandTree)
+        trace = aiohttp.TraceConfig()
+
+        async def verify_active_scope(*_):
+            # aiohttp starts each Discord HTTP attempt, including transport retries.
+            tenants.current()
+
+        trace.on_request_start.append(verify_active_scope)
+        super().__init__(command_prefix="!", intents=intents, tree_cls=GuildCommandTree, http_trace=trace)
         from services.operation_context import install_http_metrics
         install_http_metrics(self.http)
         from services.response_service import tree_error
@@ -30,6 +89,14 @@ class GamerHQBot(commands.Bot):
         self.web_api_server = None
 
     async def setup_hook(self):
+        routes = getattr(self, "guild_routes", None)
+        if routes is None:
+            return await self._prepare_application()
+        # Local primary schema and extension setup precede Discord membership proof.
+        with routes.store.scope(routes.store.primary_guild):
+            await self._prepare_application()
+
+    async def _prepare_application(self):
         # Container-only, ephemeral heartbeat. Local development needs no /tmp.
         from pathlib import Path
         if Path('/.dockerenv').exists():
@@ -97,6 +164,8 @@ class GamerHQBot(commands.Bot):
             await self.load_extension("cogs.lobby_admin")
         await self.load_extension("cogs.streamer")
 
+        if getattr(self, "guild_routes", None) is not None:
+            return  # Guild-specific command writes wait for fresh membership proof.
         guild = discord.Object(id=GUILD_ID)
 
         # Aktuelle Commands sofort auf GamerHQ registrieren
@@ -116,6 +185,11 @@ class GamerHQBot(commands.Bot):
         # Each owned resource must close even if an earlier cleanup fails.
         try:
             try:
+                pilot_task = getattr(self, '_pilot_ready_task', None)
+                if pilot_task is not None:
+                    pilot_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await pilot_task
                 if self.health_task:
                     self.health_task.cancel()
                     with suppress(asyncio.CancelledError):

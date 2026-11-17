@@ -3,8 +3,7 @@
 ## Two-guild pilot preparation
 
 The current enrolled Staging controller still verifies exclusive membership in
-the original guild. The pilot routing and backup rehearsal do not register
-commands in Servertest or change that profile. Follow the
+the original guild. Follow the
 [guild tenancy decision](../../docs/architecture/decisions/ADR-001-guild-tenancy.md)
 before preparing an immutable promotion candidate.
 
@@ -13,18 +12,18 @@ before preparing an immutable promotion candidate.
    profile. Reject incomplete, duplicate, and extra memberships before any
    provisioning or registration. Treat a membership change as invalidating the
    proof until a fresh authenticated Discord read.
-2. Verify admission at the Gateway before any guild reaches legacy listeners,
-   persistent views, modals, or periodic workers. The command tree and
-   `SafeView` adapters are only part of this coverage. Enable a command surface
-   only after all callbacks it can reach are scoped. Keep the shared application
-   on one process. Restore Skills and run the scheduler through a verified
-   scope per guild instead of the legacy global poller.
+2. Review the pinned discord.py ingress inventory below. Enable a command
+   surface only after the global startup, Web, resource and feature-specific
+   permissions it depends on are scoped. Keep the shared application on one
+   process. Bind registration, Skill restore and scheduler to the verified
+   cohort. Keep the primary-only startup path when pilot routing is absent.
 3. Quiesce writes under the existing promotion lock. For both databases,
    preserve the immutable backup digest, ownership binding, integrity result,
    and restore probe before approval. The offline
-   `tools.staging_tenant_rehearsal.rehearse` uses the existing backup helper
-   and compares restored logical contents in disposable directories.
-   Live backup retention and unlock remain the controller's responsibility.
+   rehearsal uses the existing backup helper and compares restored logical
+   contents in disposable directories. The prepared protected preview retains
+   the two private backups and publishes a verified batch receipt only after
+   both restores pass. Incomplete batches are ineligible for recovery.
 4. Preserve the installed Host, primary database and Event Manager authority
    through rollback. Revoke additional admission before rollback, stop scoped
    workers, and retain the secondary database and its verified backup for
@@ -34,6 +33,22 @@ before preparing an immutable promotion candidate.
    `deployment-security` owner gate. Live Servertest setup still needs a
    separate owner confirmation against its actual inventory and permission
    preview.
+
+| Entry point | Pilot routing boundary |
+| --- | --- |
+| Slash commands and autocomplete | The command tree binds the authenticated interaction before invoking command checks. A verified cohort registers guild commands only. |
+| Buttons, persistent views, modals and dynamic items | The Discord view store scopes the scheduled callback. Widgets registered in a guild are bound to that guild. Legacy unbound views remain primary-only. |
+| Gateway listeners | The dispatch allowlist covers member, voice, role, channel, message and raw message events with unique guild provenance. Guild-less and ambiguous callbacks are held. Membership changes invalidate the proof. |
+| Skill lifecycle and scheduling | Pilot Runtime calls require scope for both guilds. Each guild has its own scheduler pass. The legacy unbound compatibility path exists only when pilot routing is absent. |
+| Polls and retries | The reviewed cog loops run per verified scope. Channel change debounce reopens the same guild under the same proof. Proof invalidation cancels tracked work and blocks uncommitted SQLite writes. |
+
+Before activation, wire the scoped startup into the protected configuration
+loader, gate remaining global/external watchers and
+direct Discord writes, and rehearse controller-level rollback. A Discord
+request accepted by Discord before revocation cannot be undone by cancelling
+its local task. Capture and verify both database backups while writes are
+quiesced for the deployment checkpoint. The preview and its backup receipt
+do not authorize deployment.
 
 ## Reviewing permission and ownership blockers
 

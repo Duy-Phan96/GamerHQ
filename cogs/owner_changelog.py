@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands, tasks
 
 from database import db
+from services.tenant_routing import tenant_cycle
 from services.onboarding_service import alias
 from services.response_service import SafeView
 from services.server_service import ServerMessageError
@@ -512,6 +513,7 @@ class OwnerChangeLog(commands.Cog):
         self.feed_updates.cancel()
 
     @tasks.loop(seconds=60)
+    @tenant_cycle
     async def feed_updates(self):
         for guild in self.bot.guilds:
             try:
