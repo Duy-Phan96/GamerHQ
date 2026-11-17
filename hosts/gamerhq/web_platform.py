@@ -45,7 +45,8 @@ class GamerHQWebPlatformService:
 
     def _require_guild(self, guild_id: int, authorized_guild_ids: Iterable[int]):
         guild_id = int(guild_id)
-        if guild_id not in self._authorized_set(authorized_guild_ids):
+        primary = getattr(self.bot, "legacy_guild_id", None)
+        if guild_id not in self._authorized_set(authorized_guild_ids) or (primary is not None and guild_id != primary):
             raise WebPlatformAuthorizationError("Guild is not authorized for this web session.")
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -77,7 +78,20 @@ class GamerHQWebPlatformService:
     async def list_servers(self, *, authorized_guild_ids: Iterable[int]) -> list[dict[str, Any]]:
         allowed = self._authorized_set(authorized_guild_ids)
         result = []
-        for guild in tuple(getattr(self.bot, "guilds", ())):
+        routes = getattr(self.bot, "guild_routes", None)
+        if routes is None:
+            guilds = tuple(getattr(self.bot, "guilds", ()))
+        else:
+            from services.tenant_routing import GuildAdmissionError
+            guilds = []
+            if routes.accepting:
+                for guild_id in allowed.intersection(routes.allowed):
+                    try:
+                        with routes.scope(guild_id):
+                            guilds.append(self.bot.get_guild(guild_id))
+                    except GuildAdmissionError:
+                        continue
+        for guild in guilds:
             if int(guild.id) not in allowed:
                 continue
             result.append({

@@ -10,7 +10,9 @@ HEARTBEAT = Path('/tmp/gamerhq-health.json')
 
 async def heartbeat(bot):
     while True:
-        payload = {'pid': os.getpid(), 'time': time.time(), 'ready': bot.is_ready() and not bot.is_closed()}
+        routes = getattr(bot, 'guild_routes', None)
+        ready = bot.is_ready() and not bot.is_closed() and (routes is None or routes.accepting)
+        payload = {'pid': os.getpid(), 'time': time.time(), 'ready': ready}
         temporary = HEARTBEAT.with_suffix('.tmp')
         temporary.write_text(json.dumps(payload), encoding='utf-8')
         temporary.replace(HEARTBEAT)

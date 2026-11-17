@@ -1,4 +1,5 @@
 from services.response_service import SafeView, command_error, check_admin
+from services.tenant_routing import add_shared_entry_view
 import re
 
 import discord
@@ -1189,7 +1190,7 @@ class DuplicateMessageView(RoleAdminSession):
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerAdmin(bot))
     from cogs.server_management import OpenManagementView
-    bot.add_view(OpenManagementView())
+    add_shared_entry_view(bot, OpenManagementView())
 
 
 def future_community_copies():

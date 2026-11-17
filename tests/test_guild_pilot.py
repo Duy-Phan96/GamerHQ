@@ -9,8 +9,12 @@ import pytest
 from database import db, tenants
 from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
 from services.authorization_service import authorized
-from services.tenant_routing import GuildAdmissionError, GuildCommandTree, GuildRoutes, GuildViewStore, event_guild, route_interaction, tenant_cycle
-from tools.staging_tenant_rehearsal import approved_binding, rehearse, retain
+from services.discord_permissions import CORE_INSTALL
+from services.tenant_routing import (
+    GuildAdmissionError, GuildCommandTree, GuildRoutes, GuildViewStore, PILOT_ENV,
+    add_shared_entry_view, event_guild, pilot_routes, route_interaction, tenant_cycle,
+)
+from tools.staging_tenant_rehearsal import approved_binding, rehearse, retain, startup_override
 
 
 @pytest.fixture
@@ -403,3 +407,174 @@ def test_controller_binding_requires_exact_protected_non_production_pair():
     wrong = {**pin, "guildIds": ["1", "3"]}
     with pytest.raises(PermissionError):
         approved_binding({**profile, "tenantPilot": wrong}, {"tenantPilot": wrong})
+
+
+def test_protected_startup_checks_every_guild_before_touching_application(pilot):
+    from bot import GamerHQBot
+
+    store, guilds, _ = pilot
+    pin = {"applicationId": "90", "guildIds": ["1", "2"]}
+    profile = {"environment": "staging", "stagingBotId": "90", "stagingGuildId": "1", "productionBotId": "99",
+               "productionGuildId": "3", "tenantPilot": pin, "service": "gamerhq-staging", "database": store.primary_database}
+    value = startup_override(profile, {"tenantPilot": pin}, "sha256:" + "a" * 64)["services"]["gamerhq-staging"]["environment"][PILOT_ENV]
+    bot = GamerHQBot()
+    bot.guild_routes = pilot_routes(value, primary=1, database=store.primary_database, get_guild=guilds.get)
+    core = discord.Permissions(**dict.fromkeys(CORE_INSTALL, True))
+
+    async def read(route, **_):
+        guild = str(route.guild_id)
+        if route.path == "/users/@me":
+            return {"id": "90", "bot": True}
+        if route.path == "/users/@me/guilds":
+            return [{"id": "1"}, {"id": "2"}]
+        if route.path.endswith("/roles"):
+            return [{"id": guild, "permissions": str(core.value)}]
+        if "/members/" in route.path:
+            return {"roles": [], "user": {"id": "90"}}
+        assert route.path == "/guilds/{guild_id}"
+        return {"id": guild, "owner_id": "21"}
+
+    async def prepare():
+        assert db.get_setting("customer") == "1"
+
+    async def verify():
+        with patch.object(bot.http, "request", side_effect=read), patch.object(bot, "_prepare_application", side_effect=prepare) as app:
+            core.pin_messages = False
+            with pytest.raises(GuildAdmissionError, match="Pin Messages"):
+                await bot.setup_hook()
+            app.assert_not_awaited()
+            core.pin_messages = True
+            await bot.setup_hook()
+            app.assert_awaited_once()
+            assert bot.guild_routes.accepting is False
+
+    asyncio.run(verify())
+
+
+def test_discord_client_rejects_unbound_cross_guild_and_revoked_resource_writes(pilot):
+    from discord.http import Route
+
+    _, guilds, routes = pilot
+    request = AsyncMock(return_value={"id": "200", "guild_id": "2"})
+    write = Route("PATCH", "/channels/{channel_id}", channel_id=200)
+    cached = SimpleNamespace(guild=guilds[2])
+
+    async def verify():
+        proof(routes)
+        with pytest.raises(GuildAdmissionError):
+            await routes.discord_request(request, write, lambda _: cached)
+        with routes.scope(1), pytest.raises(GuildAdmissionError, match="another guild"):
+            await routes.discord_request(request, write, lambda _: cached)
+        request.assert_not_awaited()
+        with routes.scope(2):
+            await routes.discord_request(request, write, lambda _: None)
+            assert [call.args[0].method for call in request.await_args_list] == ["GET", "PATCH"]
+            routes.invalidate()
+            with pytest.raises(GuildAdmissionError):
+                await routes.discord_request(request, write, lambda _: cached)
+        assert request.await_count == 2
+
+    asyncio.run(verify())
+
+
+def test_pilot_blocks_unbound_database_fallback_and_routes_shared_entry(pilot, monkeypatch):
+    _, guilds, routes = pilot
+    monkeypatch.setattr(db, "tenant_scope_required", True)
+    with pytest.raises(PermissionError, match="verified guild scope"):
+        db.get_setting("customer")
+
+    async def read(_, __):
+        return db.get_setting("customer")
+
+    async def verify():
+        proof(routes)
+        store = GuildViewStore(SimpleNamespace())
+        bot = SimpleNamespace(guild_routes=routes, add_view=store.add_view)
+        with patch("discord.ui.View._scheduled_task", side_effect=read):
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(custom_id="fixture"))
+            with routes.scope(1):
+                add_shared_entry_view(bot, view)
+            assert await view._scheduled_task(None, interaction(routes, guilds[1])) == "1"
+            assert await view._scheduled_task(None, interaction(routes, guilds[2])) == "2"
+
+    asyncio.run(verify())
+
+
+def test_protected_controller_seals_both_live_snapshot_probes_only_on_success(pilot, tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from tools.staging_automation.backend import HostBackend
+    from tools.staging_automation.bridge import execute
+    from tools.staging_automation.policy import Denied
+    from hosts.gamerhq import skill_staging
+
+    store, _, _ = pilot
+    pin = {"applicationId": "90", "guildIds": ["1", "2"]}
+    policy = {"tenantPilot": pin}
+    profile = {"environment": "staging", "stagingBotId": "90", "stagingGuildId": "1", "productionBotId": "99",
+               "productionGuildId": "3", "tenantPilot": pin, "service": "gamerhq-staging", "database": store.primary_database,
+               "backupRoot": tmp_path, "workRoot": tmp_path}
+    image = "sha256:" + "a" * 64
+    state = {"enabled": True, "bootstrapVerified": True, "approvedImage": image}
+    backend = HostBackend(profile, policy)
+    monkeypatch.setattr(backend, "policy_integrity", lambda: None)
+    monkeypatch.setattr(backend, "health", lambda: {"state": "HOST_READY"})
+    monkeypatch.setattr(backend, "inspect", lambda: {"Image": image, "Config": {"Labels": {"org.opencontainers.image.revision": "1" * 40}}})
+    verify = MagicMock(return_value={"verified": True, "gatewayStarted": False})
+    monkeypatch.setattr(skill_staging, "verify_remote", verify)
+
+    def preview(now):
+        nonce = f"nonce-{now}"
+        state["challenge"] = {"nonce": nonce, "operation": "tenant-pilot-preview", "expires": now + 60}
+        return execute("tenant-pilot-preview", {"token": "fixture", "challenge": nonce}, policy, state, backend,
+                       lambda _: None, verifier=lambda *args, **kwargs: {"jti": nonce, "exp": now + 60, "run_id": str(now)}, now=now)
+
+    primary_bytes = store.primary_database.read_bytes()
+    secondary_path = store.tenant_directory / "2.sqlite"
+    secondary_bytes = secondary_path.read_bytes()
+    evidence = preview(1000)
+    assert evidence["state"] == "PILOT_PREVIEW_VERIFIED"
+    assert evidence["rollbackRehearsal"] == "PRIMARY_ONLY_PASS"
+    assert verify.call_args.kwargs["approved_pilot"] == (1, 2)
+    receipt = tmp_path / evidence["backupBatch"] / "verified.json"
+    assert hashlib.sha256(receipt.read_bytes()).hexdigest() == state["tenantPilotPreview"]["backupReceiptSha256"]
+    assert [row["guildId"] for row in json.loads(receipt.read_text())["tenants"]] == [1, 2]
+    assert store.primary_database.read_bytes() == primary_bytes
+    assert secondary_path.read_bytes() == secondary_bytes
+
+    secondary_path.unlink()
+    with pytest.raises(Denied, match="AUTOMATION_OPERATION_FAILED"):
+        preview(1001)
+    assert "tenantPilotPreview" not in state
+    assert list(tmp_path.glob("tenant-pilot-*/verified.json")) == [receipt]
+    assert store.primary_database.read_bytes() == primary_bytes
+
+
+def test_internal_web_api_binds_the_authorized_guild_before_skill_access(pilot):
+    from aiohttp.test_utils import TestClient, TestServer
+    from hosts.gamerhq.web_api import create_web_api_app
+
+    _, _, routes = pilot
+
+    async def skill(**kwargs):
+        assert kwargs["guild_id"] == tenants.current().guild_id
+        return {"customer": db.get_setting("customer")}
+
+    service = SimpleNamespace(bot=SimpleNamespace(guild_routes=routes), get_skill=AsyncMock(side_effect=skill))
+    headers = {"Authorization": "Bearer fixture", "X-GamerHQ-Authorized-Guild-Ids": "2,3"}
+
+    async def verify():
+        proof(routes)
+        app = create_web_api_app(platform_service=service, shared_secret="fixture")
+        async with TestClient(TestServer(app)) as client:
+            assert (await client.get("/api/v1/servers/2/skills/demo")).status == 401
+            for guild_id in (1, 3):
+                assert (await client.get(f"/api/v1/servers/{guild_id}/skills/demo", headers=headers)).status == 403
+            response = await client.get("/api/v1/servers/2/skills/demo", headers=headers)
+            assert await response.json() == {"customer": "2"}
+            routes.invalidate()
+            assert (await client.get("/api/v1/servers/2/skills/demo", headers=headers)).status == 403
+            service.get_skill.assert_awaited_once()
+
+    asyncio.run(verify())

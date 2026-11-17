@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import os
 from contextlib import suppress
 import aiohttp
 import discord
@@ -10,14 +11,18 @@ try:
 except ValueError as error:
     raise SystemExit(f"Configuration error: {error}") from None
 from database import db, tenants
-from services.tenant_routing import GuildAdmissionError, GuildCommandTree, GuildConnectionState, MEMBERSHIP_EVENTS, event_guild
+from services.tenant_routing import (
+    GuildAdmissionError, GuildCommandTree, GuildConnectionState, MEMBERSHIP_EVENTS,
+    PILOT_ENV, event_guild, event_guild_ids, pilot_routes,
+)
 
 
 class GamerHQBot(commands.Bot):
     @property
     def guilds(self):
         if getattr(self, 'guild_routes', None) is None:
-            return super().guilds
+            primary = getattr(self, 'legacy_guild_id', None)
+            return [guild for guild in super().guilds if primary is None or guild.id == primary]
         tenant = tenants.current()
         guild = self.get_guild(tenant.guild_id) if tenant else None
         return [guild] if guild else []
@@ -50,8 +55,10 @@ class GamerHQBot(commands.Bot):
     def dispatch(self, event, /, *args, **kwargs):
         routes = getattr(self, 'guild_routes', None)
         if routes is not None and event in MEMBERSHIP_EVENTS:
+            routes.accepting = False
             routes.invalidate()
         if routes is not None and event in {'ready', 'resumed', 'guild_join', 'guild_remove'}:
+            routes.accepting = False
             previous = getattr(self, '_pilot_ready_task', None)
             if previous is not None and not previous.done():
                 previous.cancel()
@@ -61,12 +68,20 @@ class GamerHQBot(commands.Bot):
     async def _prepare_pilot_guilds(self):
         routes = self.guild_routes
         try:
-            await routes.refresh(self.http)
+            await routes.refresh(self.http, require_permissions=True)
+            for guild_id in sorted(routes.allowed):
+                with routes.scope(guild_id):
+                    for name in ('Games', 'ServerChanges'):
+                        cog = self.get_cog(name)
+                        if cog is not None:
+                            cog.restore_tenant_views(guild_id)
             await routes.sync_commands(self.tree)
             for guild_id in sorted(routes.allowed):
                 await routes.restore(self.skill_runtime, guild_id)
             await self.skill_runtime.start_scheduler()
+            routes.accepting = True
         except GuildAdmissionError:
+            routes.invalidate()
             logging.getLogger(__name__).warning("Guild pilot paused pending exact membership and storage verification.")
         except Exception:
             routes.invalidate()
@@ -75,9 +90,12 @@ class GamerHQBot(commands.Bot):
     async def _run_event(self, coro, event_name, *args, **kwargs):
         routes = getattr(self, 'guild_routes', None)
         if routes is None:
+            primary = getattr(self, 'legacy_guild_id', None)
+            if primary is not None and event_guild_ids(args) - {primary}:
+                return
             return await super()._run_event(coro, event_name, *args, **kwargs)
         guild_id = event_guild(event_name, args)
-        if guild_id is None:
+        if guild_id is None or not routes.accepting:
             return  # Process-wide or ambiguous listeners are held by the pilot.
         try:
             scope = routes.interaction(args[0]) if event_name == 'on_interaction' else routes.scope(guild_id)
@@ -100,6 +118,15 @@ class GamerHQBot(commands.Bot):
 
         trace.on_request_start.append(verify_active_scope)
         super().__init__(command_prefix="!", intents=intents, tree_cls=GuildCommandTree, http_trace=trace)
+        request = self.http.request
+
+        async def scoped_request(route, **kwargs):
+            routes = getattr(self, "guild_routes", None)
+            if routes is None:
+                return await request(route, **kwargs)
+            return await routes.discord_request(request, route, super(GamerHQBot, self).get_channel, **kwargs)
+
+        self.http.request = scoped_request
         from services.operation_context import install_http_metrics
         install_http_metrics(self.http)
         from services.response_service import tree_error
@@ -113,8 +140,12 @@ class GamerHQBot(commands.Bot):
         routes = getattr(self, "guild_routes", None)
         if routes is None:
             return await self._prepare_application()
-        # Local primary schema and extension setup precede Discord membership proof.
-        with routes.store.scope(routes.store.primary_guild):
+        routes.accepting = False
+        await routes.refresh(self.http, require_permissions=True)
+        for guild_id in routes.store.additional_guilds:
+            with routes.store.scope(guild_id):
+                pass  # A protected controller must provision and verify this database first.
+        with routes.bootstrap_scope():
             await self._prepare_application()
 
     async def _prepare_application(self):
@@ -183,7 +214,8 @@ class GamerHQBot(commands.Bot):
         else:
             await self.load_extension("cogs.lfg")
             await self.load_extension("cogs.lobby_admin")
-        await self.load_extension("cogs.streamer")
+        if getattr(self, "guild_routes", None) is None:
+            await self.load_extension("cogs.streamer")
 
         if getattr(self, "guild_routes", None) is not None:
             return  # Guild-specific command writes wait for fresh membership proof.
@@ -211,6 +243,9 @@ class GamerHQBot(commands.Bot):
                     pilot_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await pilot_task
+                routes = getattr(self, 'guild_routes', None)
+                if routes is not None:
+                    routes.accepting = False
                 if self.health_task:
                     self.health_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -285,7 +320,11 @@ if __name__ == "__main__":
     from tools.instance_lock import instance_lock
     from config import DB_PATH
     try:
+        bot.guild_routes = pilot_routes(os.environ.get(PILOT_ENV), primary=GUILD_ID,
+                                         database=DB_PATH, get_guild=bot.get_guild)
+        bot.legacy_guild_id = GUILD_ID if bot.guild_routes is None else None
+        db.tenant_scope_required = bot.guild_routes is not None
         with instance_lock(DB_PATH):
             bot.run(TOKEN)
-    except RuntimeError as error:
+    except (RuntimeError, GuildAdmissionError) as error:
         raise SystemExit(str(error)) from None

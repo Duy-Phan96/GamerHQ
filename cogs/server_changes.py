@@ -109,10 +109,14 @@ class ServerChanges(commands.Cog):
         self._notification_locks = {}
 
     async def cog_load(self):
-        for record in changes.records():
+        if getattr(self.bot, 'guild_routes', None) is None:
+            self.restore_tenant_views(None)
+        self.maintenance.start()
+
+    def restore_tenant_views(self, guild_id):
+        for record in changes.records(guild_id):
             if record['status'] == 'pending' and record.get('message_id'):
                 self.bot.add_view(ChangeView(record, self.notify), message_id=record['message_id'])
-        self.maintenance.start()
 
     @commands.Cog.listener()
     async def on_ready(self):

@@ -40,8 +40,9 @@ async def scan(guild, bot=None, *, messages=True):
 async def _scan(guild, bot=None, *, messages=True):
     findings = []
     def add(name, state, detail): findings.append(Finding(name,state,detail))
-    if not db.DB_PATH.is_file():
-        add('Database', 'CRITICAL', f'Runtime database missing: {db.DB_PATH}. No file created; restore the intended runtime store.')
+    database_path = db.current_path()
+    if not database_path.is_file():
+        add('Database', 'CRITICAL', f'Runtime database missing: {database_path}. No file created; restore the intended runtime store.')
         return findings
     try:
         with db.connect() as conn:
@@ -53,7 +54,7 @@ async def _scan(guild, bot=None, *, messages=True):
             suggestions = [dict(r) for r in conn.execute('SELECT * FROM suggestions WHERE guild_id=?',(guild.id,))]
         games = db.get_all_games()
         add('Database','PASS','Required tables readable.')
-        add('Runtime database', 'PASS', f'Active SQLite path: {db.DB_PATH}. One active GamerHQ process per live guild; local and VPS stores are separate.')
+        add('Runtime database', 'PASS', f'Active SQLite path: {database_path}. Local and VPS stores are separate.')
     except sqlite3.Error:
         add('Database','CRITICAL','Storage unavailable or schema incomplete; check runtime logs before repair.')
         return findings

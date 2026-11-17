@@ -13,6 +13,7 @@ from discord.ext import commands
 
 from config import DISPLAY_GROUP_ORDER
 from database import db, tenants
+from services.tenant_routing import add_shared_entry_view
 from services.game_service import (
     GameStructureError,
     choose_games_channel_id,
@@ -1334,7 +1335,9 @@ async def resolve_or_adopt_game_role(guild: discord.Guild, game: dict, *, create
 class Games(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(ChooseGamesButtons(self))
+        add_shared_entry_view(self.bot, ChooseGamesButtons(self))
+        if getattr(bot, 'guild_routes', None) is not None:
+            return  # Pilot candidates are restored by their tenant and saved message ID.
         from cogs.game_channels import CandidateView
         with db.connect() as conn:
             candidates = conn.execute("SELECT DISTINCT game_id FROM game_channel_candidates WHERE status='PENDING'").fetchall()
@@ -1345,6 +1348,20 @@ class Games(commands.Cog):
         legacy_games = db.get_selectable_games()
         for offset in range(0, len(legacy_games), 25):
             self.bot.add_view(GameCategoryView(legacy_games[offset:offset+25]))
+
+    def restore_tenant_views(self, guild_id):
+        from cogs.game_channels import CandidateView
+
+        tenants.require_guild(guild_id)
+        with db.connect() as conn:
+            candidates = conn.execute("SELECT game_id, log_message_id FROM game_channel_candidates "
+                                      "WHERE guild_id=? AND status='PENDING' AND log_message_id IS NOT NULL", (guild_id,)).fetchall()
+        for row in candidates:
+            self.bot.add_view(CandidateView(row['game_id']), message_id=row['log_message_id'])
+        if guild_id == self.bot.guild_routes.store.primary_guild:
+            legacy_games = db.get_selectable_games()
+            for offset in range(0, len(legacy_games), 25):
+                self.bot.add_view(GameCategoryView(legacy_games[offset:offset+25]))
 
     game = app_commands.Group(
         name="game",

@@ -58,7 +58,16 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         if operation == 'tenant-pilot-preview':
             if 'tenantPilot' not in policy:
                 raise Denied('OPERATION_NOT_ALLOWED')
-            return backend.verify_tenant_pilot()
+            state.pop('tenantPilotPreview', None)
+            save(state)
+            result = backend.verify_tenant_pilot(expected_image=state['approvedImage'])
+            state['tenantPilotPreview'] = {
+                key: result[key] for key in ('backupBatch', 'backupReceiptSha256', 'baselineHostCommit',
+                                             'baselineImage', 'startupOverrideSha256')
+            }
+            state['tenantPilotPreview']['runId'] = claims['run_id']
+            save(state)
+            return result
         if operation in WEB:
             from .web import WebDeployment
             web = WebDeployment(backend, policy['webDeployment'], state, save)

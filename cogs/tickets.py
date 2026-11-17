@@ -6,6 +6,7 @@ from discord.ext import commands
 from database import db
 from services import ticket_service as tickets
 from services.response_service import SafeView, report_error
+from services.tenant_routing import add_shared_entry_view
 
 log = logging.getLogger(__name__)
 
@@ -347,9 +348,9 @@ class Tickets(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
     async def cog_load(self):
-        self.bot.add_view(TicketEntry())
-        self.bot.add_view(TicketActions())
-        self.bot.add_view(SupportOffers())
+        add_shared_entry_view(self.bot, TicketEntry())
+        add_shared_entry_view(self.bot, TicketActions())
+        add_shared_entry_view(self.bot, SupportOffers())
 
     async def reconcile(self,guild,member_id=None):
         try:

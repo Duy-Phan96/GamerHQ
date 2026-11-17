@@ -61,16 +61,22 @@ class HostBackend:
         proof = verify_remote(self.profile)
         write_record(self.profile['verificationFile'], proof)
 
-    def verify_tenant_pilot(self):
+    def verify_tenant_pilot(self, *, expected_image):
         """Check Discord without a Gateway and retain verified private snapshots."""
         from database.tenants import GuildTenantStore
         from hosts.gamerhq.skill_staging import verify_remote
-        from tools.staging_tenant_rehearsal import approved_binding, retain
+        from tools.staging_tenant_rehearsal import approved_binding, rehearsal_binding, retain
         approved = approved_binding(self.profile, self.policy)
         if approved is None:
             raise Denied('OPERATION_NOT_ALLOWED')
         self.storage_budget()
         proof = verify_remote(self.profile, approved_pilot=approved)
+        if self.health()['state'] != 'HOST_READY':
+            raise Denied('HOST_NOT_READY')
+        container = self.inspect()
+        if container['Image'] != expected_image:
+            raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
+        binding = rehearsal_binding(self.profile, self.policy, container)
         primary = int(self.profile['stagingGuildId'])
         source = Path(self.profile['database']).resolve(strict=True)
         tenant_directory = source.parent / 'tenants'
@@ -79,7 +85,10 @@ class HostBackend:
         store = GuildTenantStore(primary_guild=primary, primary_database=source,
                                  tenant_directory=tenant_directory,
                                  additional_guilds=tuple(guild for guild in approved if guild != primary))
-        return {**proof, **retain(store, self.profile['backupRoot'], self.profile['workRoot'])}
+        result = retain(store, self.profile['backupRoot'], self.profile['workRoot'], binding=binding)
+        if self.inspect()['Image'] != container['Image']:
+            raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
+        return {**proof, **binding, **result, 'state': 'PILOT_PREVIEW_VERIFIED'}
 
     def storage_budget(self):
         if shutil.disk_usage(self.profile['workRoot']).free < 1073741824: raise Denied('DISK_BUDGET_REQUIRES_OWNER')

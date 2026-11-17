@@ -9,6 +9,7 @@ from config import DB_PATH, SEED_PATH
 from database import tenants
 
 SCHEMA_VERSION = 1  # 0 is the historical additive-migration schema.
+tenant_scope_required = False
 _read_only = ContextVar('database_read_only', default=False)
 _read_session = ContextVar('database_read_session', default=None)
 
@@ -19,6 +20,8 @@ def in_read_only_scope():
 
 def current_path():
     tenant = tenants.current()
+    if tenant is None and tenant_scope_required:
+        raise PermissionError("Tenant storage requires a verified guild scope.")
     return tenant.database if tenant else DB_PATH
 
 

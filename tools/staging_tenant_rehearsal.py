@@ -1,6 +1,7 @@
 """Exercise backup and restore for every declared guild in disposable storage."""
 from contextlib import closing
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import sqlite3
@@ -34,7 +35,7 @@ def rehearse(store, scratch_directory):
         return _capture_and_probe(store, Path(scratch) / "backups", Path(scratch) / "restore")
 
 
-def retain(store, backup_root, scratch_directory):
+def retain(store, backup_root, scratch_directory, *, binding=None):
     """Keep private backup files and a receipt only after every restore passes."""
     from tools.staging_configuration import atomic_json
 
@@ -55,8 +56,11 @@ def retain(store, backup_root, scratch_directory):
     batch = Path(tempfile.mkdtemp(prefix="tenant-pilot-", dir=backup_root))
     with tempfile.TemporaryDirectory(prefix="tenant-restore-", dir=scratch_directory) as scratch:
         entries = _capture_and_probe(store, batch, Path(scratch))
-    atomic_json(batch / "verified.json", {"schemaVersion": 1, "tenants": entries})
-    return {"backupBatch": batch.name, "tenantRestores": entries}
+    receipt = batch / "verified.json"
+    atomic_json(receipt, {"schemaVersion": 1, "tenants": entries, "binding": binding,
+                          "rollbackRehearsal": "PRIMARY_ONLY_PASS"})
+    return {"backupBatch": batch.name, "backupReceiptSha256": _digest(receipt),
+            "tenantRestores": entries, "rollbackRehearsal": "PRIMARY_ONLY_PASS"}
 
 
 def _capture_and_probe(store, source, restored):
@@ -74,7 +78,43 @@ def _capture_and_probe(store, source, restored):
             if _digest(snapshot) != expected or _content_digest(snapshot) != _content_digest(clone):
                 raise ValueError("Tenant restore differs from its verified snapshot.")
         evidence.append({"guildId": guild_id, "backupSha256": expected, "restore": "PASS"})
+    primary_only = GuildTenantStore(primary_guild=store.primary_guild,
+                                    primary_database=clone_store.primary_database,
+                                    tenant_directory=restored)
+    with primary_only.scope(store.primary_guild) as primary:
+        if _content_digest(primary.database) != _content_digest(source / primary.database.name):
+            raise ValueError("Primary-only rollback does not match its verified snapshot.")
+    for guild_id in store.additional_guilds:
+        try:
+            with primary_only.scope(guild_id):
+                raise ValueError("Primary-only rollback admitted the secondary guild.")
+        except PermissionError:
+            with clone_store.scope(guild_id) as retained:
+                if _content_digest(retained.database) != _content_digest(source / retained.database.name):
+                    raise ValueError("Primary-only rollback changed the retained secondary tenant.")
     return tuple(evidence)
+
+
+def startup_override(profile, policy, image):
+    """Build the exact pilot override for the existing isolated Compose service."""
+    from hosts.gamerhq.skill_deployment_docker import IMAGE
+    from services.tenant_routing import PILOT_ENV, pilot_environment, pilot_routes
+
+    cohort = approved_binding(profile, policy)
+    if not cohort or not IMAGE.fullmatch(image) or profile.get("service") != "gamerhq-staging":
+        raise PermissionError("Protected Staging pilot startup is unavailable.")
+    value = pilot_environment(profile, cohort)
+    pilot_routes(value, primary=int(profile["stagingGuildId"]), database=profile["database"], get_guild=lambda _: None)
+    return {"services": {profile["service"]: {"image": image, "environment": {PILOT_ENV: value}}}}
+
+
+def rehearsal_binding(profile, policy, container):
+    image = container["Image"]
+    host_commit = container["Config"]["Labels"]["org.opencontainers.image.revision"]
+    override = startup_override(profile, policy, image)
+    encoded = json.dumps(override, sort_keys=True, separators=(",", ":")).encode()
+    return {"baselineHostCommit": host_commit, "baselineImage": image,
+            "startupOverrideSha256": hashlib.sha256(encoded).hexdigest()}
 
 
 def approved_binding(profile, policy):

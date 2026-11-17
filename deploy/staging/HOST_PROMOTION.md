@@ -17,13 +17,16 @@ before preparing an immutable promotion candidate.
    permissions it depends on are scoped. Keep the shared application on one
    process. Bind registration, Skill restore and scheduler to the verified
    cohort. Keep the primary-only startup path when pilot routing is absent.
-3. Quiesce writes under the existing promotion lock. For both databases,
-   preserve the immutable backup digest, ownership binding, integrity result,
-   and restore probe before approval. The offline
-   rehearsal uses the existing backup helper and compares restored logical
-   contents in disposable directories. The prepared protected preview retains
-   the two private backups and publishes a verified batch receipt only after
-   both restores pass. Incomplete batches are ineligible for recovery. The
+3. The protected preview checks the current approved image and primary health,
+   revalidates Discord guild and Core role grants including Pin Messages,
+   then takes two consistent SQLite snapshots. It compares the restored
+   logical contents in disposable directories and rehearses primary-only
+   routing with the secondary copy retained. The batch receipt is anchored by
+   SHA-256 and workflow run ID in private controller state only after both
+   restores pass. The promotion lock excludes other controller operations.
+   A preview does not stop the running bot or give a simultaneous checkpoint
+   across databases. A later promotion must quiesce the one shared Host and
+   capture a new dual checkpoint. Incomplete batches are ineligible for recovery. The
    controller stops at 14 retained batches, including incomplete batches, and
    requires reviewed retention before taking another snapshot. Both tenants
    must meet the existing Staging database size limit and leave at least 1 GiB
@@ -41,19 +44,39 @@ before preparing an immutable promotion candidate.
 | Entry point | Pilot routing boundary |
 | --- | --- |
 | Slash commands and autocomplete | The command tree binds the authenticated interaction before invoking command checks. A verified cohort registers guild commands only. |
-| Buttons, persistent views, modals and dynamic items | The Discord view store scopes the scheduled callback. Widgets registered in a guild are bound to that guild. Legacy unbound views remain primary-only. |
+| Buttons, persistent views, modals and dynamic items | The Discord view store scopes the scheduled callback. Stateless entry points may share handlers. Persisted candidate and server-change views are restored by saved message ID in their tenant. Legacy unbound views remain primary-only. |
 | Gateway listeners | The dispatch allowlist covers member, voice, role, channel, message and raw message events with unique guild provenance. Guild-less and ambiguous callbacks are held. Membership changes invalidate the proof. |
 | Skill lifecycle and scheduling | Pilot Runtime calls require scope for both guilds. Each guild has its own scheduler pass. The legacy unbound compatibility path exists only when pilot routing is absent. |
 | Polls and retries | The reviewed cog loops run per verified scope. Channel change debounce reopens the same guild under the same proof. Proof invalidation cancels tracked work and blocks uncommitted SQLite writes. |
 | Game selector and legacy maintenance | The selector resolves managed links in the bound guild. The legacy catalog rename edits a shared seed and is unavailable in pilot mode. Public bot channel lookups reject channels outside the bound guild. |
+| Startup and setup permissions | The protected Compose override supplies the exact two guild IDs and bot ID. The Host checks authenticated Discord membership and both Core role masks before registering handlers. Confirmed setup rechecks Core permissions. |
+| Discord HTTP and Web API | Bot-token requests require a verified guild destination, including uncached channels. The authenticated Web API binds an authorized route guild before accessing the Skill Runtime. The pilot holds the process-wide Streamer watcher and legacy startup jobs. |
 
-Before activation, wire the scoped startup into the protected configuration
-loader, gate remaining global/external watchers and
-direct Discord writes, and rehearse controller-level rollback. A Discord
-request accepted by Discord before revocation cannot be undone by cancelling
-its local task. Capture and verify both database backups while writes are
-quiesced for the deployment checkpoint. The preview and its backup receipt
-do not authorize deployment.
+### Controller enrollment and live approval
+
+Enroll the exact allowlist and preview workflow digest in the existing
+root-owned controller. The `tenant-pilot-preview` workflow is deliberately
+limited to `main` and `deployment-security`. The reviewed Host and controller
+source need independent immutable pins. A draft branch or a successful CI run
+does not enroll the controller.
+
+The secondary database requires a reviewed storage handoff before the live
+preview can open it. Rootless Docker maps container UID 10001 to a subordinate
+host UID, distinct from the worker that creates backups. The strict secondary
+file contract is private mode `0600`; adding a named ACL changes the effective
+group mode and fails that contract. Rehearse the selected ownership-preserving
+backup handoff under the actual rootless mapping. Keep the primary database,
+its existing ACLs, and production mounts out of the change. Never replace a
+secondary file that fails ownership verification. The controller must fail
+closed if either database is inaccessible.
+
+The protected preview starts no Gateway and performs no Discord writes. It
+exercises database rollback in scratch directories. Container rollback needs
+separate deployment approval and a fresh dual checkpoint. Before restarting
+any older Host that assumes singleton membership, separately verify actual
+singleton Discord membership. Preserve the secondary database and its snapshots
+through the rollback. A Discord request accepted before revocation can still
+take effect. The preview receipt does not authorize activation or a live restore.
 
 ## Reviewing permission and ownership blockers
 

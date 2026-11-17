@@ -4,6 +4,7 @@ from contextlib import ExitStack, contextmanager
 from contextvars import Context, ContextVar
 from functools import wraps
 import logging
+import json
 import re
 
 import discord
@@ -19,6 +20,7 @@ class GuildAdmissionError(PermissionError):
 
 
 _interaction_actor = ContextVar("gamerhq_interaction_actor", default=None)
+_membership_read = ContextVar("gamerhq_membership_read", default=None)
 _GUILD_EVENTS = frozenset({
     "on_interaction", "on_message", "on_raw_message_edit", "on_raw_message_delete",
     "on_raw_bulk_message_delete", "on_guild_channel_create", "on_guild_channel_update",
@@ -27,6 +29,7 @@ _GUILD_EVENTS = frozenset({
     "on_member_update", "on_voice_state_update",
 })
 MEMBERSHIP_EVENTS = frozenset({"guild_join", "guild_remove", "disconnect", "resumed"})
+PILOT_ENV = "GAMERHQ_STAGING_TENANT_PILOT"
 
 
 def _task():
@@ -39,12 +42,17 @@ def _task():
 def event_guild(event_name, args):
     if event_name not in _GUILD_EVENTS:
         return None
+    ids = event_guild_ids(args)
+    return next(iter(ids)) if len(ids) == 1 else None
+
+
+def event_guild_ids(args):
     ids = set()
     for item in args:
         guild = item if isinstance(item, discord.Guild) else getattr(item, "guild", None)
         ids.update(ident for ident in (getattr(guild, "id", None), getattr(item, "guild_id", None))
                    if type(ident) is int)
-    return next(iter(ids)) if len(ids) == 1 else None
+    return ids
 
 
 def verified_actor(guild, user):
@@ -72,6 +80,70 @@ def verify_membership(application_id, approved, bot_user, guilds):
         raise GuildAdmissionError("Discord memberships differ from the approved guilds.")
 
 
+def pilot_environment(profile, approved):
+    """Serialize the existing controller's exact staging pin for stable Compose input."""
+    return json.dumps({
+        "applicationId": profile["stagingBotId"],
+        "guildIds": [str(guild) for guild in sorted(approved)],
+        "productionBotId": profile["productionBotId"],
+        "productionGuildId": profile["productionGuildId"],
+    }, sort_keys=True, separators=(",", ":"))
+
+
+def pilot_routes(value, *, primary, database, get_guild):
+    """Read only a dedicated, explicit staging binding from the container environment."""
+    from pathlib import Path
+
+    if value is None:
+        return None
+    try:
+        pin = json.loads(value)
+        if type(pin) is not dict or set(pin) != {"applicationId", "guildIds", "productionBotId", "productionGuildId"}:
+            raise ValueError
+        app = _discord_id(pin["applicationId"])
+        raw_ids = pin["guildIds"]
+        if type(raw_ids) is not list or len(raw_ids) != 2:
+            raise ValueError
+        approved = frozenset(map(_discord_id, raw_ids))
+        if (len(approved) != 2 or primary not in approved or app == _discord_id(pin["productionBotId"])
+                or _discord_id(pin["productionGuildId"]) in approved):
+            raise ValueError
+        folder = Path(database).parent / "tenants"
+        if folder.is_symlink():
+            raise ValueError
+        store = tenants.GuildTenantStore(primary_guild=primary, primary_database=database,
+                                         tenant_directory=folder, additional_guilds=approved - {primary})
+    except (TypeError, ValueError, GuildAdmissionError):
+        raise GuildAdmissionError("Protected Staging tenant binding is invalid.") from None
+    return GuildRoutes(application_id=app, store=store, get_guild=get_guild)
+
+
+def verify_guild_permissions(guild_id, application_id, guild, member, roles):
+    """Check fresh authenticated REST membership and the Core install mask."""
+    from services.discord_permissions import CORE_INSTALL, missing, install_remediation
+
+    try:
+        if guild["id"] != str(guild_id) or member["user"]["id"] != str(application_id):
+            raise GuildAdmissionError("Discord guild or bot member identity does not match.")
+        if not isinstance(roles, list):
+            raise TypeError
+        grants = {_discord_id(row["id"]): int(row["permissions"]) for row in roles}
+        if len(grants) != len(roles):
+            raise ValueError
+        ids = {guild_id, *map(_discord_id, member["roles"])}
+        flags = 0
+        for ident in ids:
+            flags |= grants[ident]
+    except (KeyError, TypeError, ValueError):
+        raise GuildAdmissionError("Discord role inventory could not be verified.") from None
+    permissions = discord.Permissions(flags)
+    if permissions.administrator or str(application_id) == guild.get("owner_id"):
+        raise GuildAdmissionError("Staging pilot requires a non-administrator bot role.")
+    absent = missing(permissions, CORE_INSTALL)
+    if absent:
+        raise GuildAdmissionError(install_remediation(absent))
+
+
 class GuildRoutes:
     """Starts disabled. Only the trusted Host can submit Discord membership evidence."""
 
@@ -85,12 +157,29 @@ class GuildRoutes:
         self._proof = None
         self._revision = 0
         self._tasks = {}
+        self.accepting = True
 
-    async def refresh(self, http):
+    async def refresh(self, http, *, require_permissions=False):
+        token = _membership_read.set(self)
+        try:
+            await self._refresh(http, require_permissions=require_permissions)
+        finally:
+            _membership_read.reset(token)
+
+    async def _refresh(self, http, *, require_permissions):
         self.invalidate()
         revision = self._revision
         identity = await http.request(Route("GET", "/users/@me"))
         guilds = await http.request(Route("GET", "/users/@me/guilds"), params={"limit": 200})
+        verify_membership(self.application_id, self.allowed, identity, guilds)
+        if require_permissions:
+            for guild_id in sorted(self.allowed):
+                kwargs = {"guild_id": guild_id}
+                guild = await http.request(Route("GET", "/guilds/{guild_id}", **kwargs))
+                member = await http.request(Route("GET", "/guilds/{guild_id}/members/{user_id}",
+                                                  user_id=self.application_id, **kwargs))
+                roles = await http.request(Route("GET", "/guilds/{guild_id}/roles", **kwargs))
+                verify_guild_permissions(guild_id, self.application_id, guild, member, roles)
         if revision != self._revision:
             raise GuildAdmissionError("Membership changed during verification.")
         self.verify(identity, guilds)
@@ -109,12 +198,55 @@ class GuildRoutes:
             if task is not current_task:
                 task.cancel()
 
+    def bootstrap_scope(self):
+        """Use the primary installation for extension registration after REST proof."""
+        proof = self._proof
+
+        def validate():
+            if proof is None or self._proof is not proof:
+                raise GuildAdmissionError("Startup membership evidence expired.")
+
+        validate()
+        return self.store.scope(self.store.primary_guild, validate=validate)
+
     def require_runtime_scope(self, guild_id):
         bound = tenants.current()
         if bound is None:
             raise GuildAdmissionError("Pilot guild operations require a verified tenant scope.")
         tenants.require_guild(guild_id)
         self._guild(guild_id)
+
+    async def discord_request(self, request, route, get_channel, **kwargs):
+        """Guard the shared discord.py client before any guild resource request."""
+        read = route.method == "GET"
+        if read and route.path in {"/users/@me", "/users/@me/guilds", "/oauth2/applications/@me",
+                                    "/gateway", "/gateway/bot"}:
+            return await request(route, **kwargs)
+        guild_id = route.guild_id
+        if (read and _membership_read.get() is self and guild_id in self.allowed
+                and route.path in {"/guilds/{guild_id}", "/guilds/{guild_id}/members/{user_id}",
+                                   "/guilds/{guild_id}/roles"}):
+            return await request(route, **kwargs)
+        binding = tenants.current()
+        if binding is None:
+            raise GuildAdmissionError("Discord requests require a verified guild scope.")
+        self.require_runtime_scope(binding.guild_id)
+        if guild_id is not None and guild_id != binding.guild_id:
+            raise GuildAdmissionError("Discord request targets another guild.")
+        if route.channel_id is not None:
+            channel = get_channel(route.channel_id)
+            if channel is None:
+                raw = await request(Route("GET", "/channels/{channel_id}", channel_id=route.channel_id))
+                if raw.get("guild_id") != str(binding.guild_id) or raw.get("id") != str(route.channel_id):
+                    raise GuildAdmissionError("Discord channel ownership could not be verified.")
+                self.require_runtime_scope(binding.guild_id)
+                if read and route.path == "/channels/{channel_id}":
+                    return raw
+            elif getattr(getattr(channel, "guild", None), "id", None) != binding.guild_id:
+                raise GuildAdmissionError("Discord channel belongs to another guild.")
+        elif guild_id is None:
+            raise GuildAdmissionError("Discord request has no verifiable guild resource.")
+        return await request(route, **kwargs)
 
     def _guild(self, guild_id):
         if self._proof is None or type(guild_id) is not int or guild_id not in self.allowed:
@@ -155,6 +287,8 @@ class GuildRoutes:
 
     @contextmanager
     def interaction(self, interaction):
+        if not self.accepting:
+            raise GuildAdmissionError("Guild runtime is still starting.")
         guild_id = interaction.guild_id
         guild = self._guild(guild_id)
         actor = interaction.user
@@ -186,12 +320,14 @@ class GuildRoutes:
 
     async def serve_scheduler(self, runtime, stop, poll_seconds):
         while not stop.is_set():
-            results = await asyncio.gather(*(self.run_due(runtime, guild_id) for guild_id in sorted(self.allowed)),
-                                           return_exceptions=True)
-            for guild_id, result in zip(sorted(self.allowed), results, strict=True):
-                if isinstance(result, Exception) and not isinstance(result, GuildAdmissionError):
-                    logging.getLogger(__name__).error("Tenant scheduler pass failed guild=%s error=%s",
-                                                      guild_id, type(result).__name__)
+            if self.accepting:
+                guild_ids = sorted(self.allowed)
+                results = await asyncio.gather(*(self.run_due(runtime, guild_id) for guild_id in guild_ids),
+                                               return_exceptions=True)
+                for guild_id, result in zip(guild_ids, results, strict=True):
+                    if isinstance(result, Exception) and not isinstance(result, GuildAdmissionError):
+                        logging.getLogger(__name__).error("Tenant scheduler pass failed guild=%s error=%s",
+                                                          guild_id, type(result).__name__)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=poll_seconds)
             except TimeoutError:
@@ -216,12 +352,15 @@ def tenant_cycle(callback):
         routes = getattr(cog.bot, "guild_routes", None)
         if routes is None:
             return await callback(cog)
+        if not routes.accepting:
+            return
 
         async def tick(guild_id):
             with routes.scope(guild_id):
                 await callback(cog)
 
-        results = await asyncio.gather(*(tick(guild_id) for guild_id in sorted(routes.allowed)),
+        results = await asyncio.gather(*(asyncio.create_task(tick(guild_id), context=Context())
+                                         for guild_id in sorted(routes.allowed)),
                                        return_exceptions=True)
         for result in results:
             if isinstance(result, Exception) and not isinstance(result, GuildAdmissionError):
@@ -253,6 +392,16 @@ class GuildCommandTree(app_commands.CommandTree):
         # discord.py's tree invokes its checks and command in this awaited call.
         return await route_interaction(interaction, super()._call, interaction)
 
+
+def add_shared_entry_view(bot, view):
+    """Register a stateless entry point that resolves all state from the interaction."""
+    if getattr(bot, "guild_routes", None) is not None:
+        if not view.is_persistent() or view.__discord_ui_modal__:
+            raise ValueError("Only persistent entry views can be shared across guilds.")
+        view._gamerhq_shared_entry = True
+    bot.add_view(view)
+
+
 class GuildViewStore(ViewStore):
     """Scope dispatch of ordinary and persistent views, modals, and dynamic items."""
 
@@ -264,13 +413,14 @@ class GuildViewStore(ViewStore):
             tenant = tenants.current()
             origin = tenant.guild_id if tenant else None
             modal = view.__discord_ui_modal__
+            shared_entry = getattr(view, "_gamerhq_shared_entry", False) and message_id is None
 
             async def run(*args):
                 interaction = args[0 if modal else 1]
                 routes = getattr(interaction.client, "guild_routes", None)
                 if routes is not None:
                     expected = origin if origin is not None else routes.store.primary_guild
-                    if interaction.guild_id != expected:
+                    if not shared_entry and interaction.guild_id != expected:
                         return
                 return await route_interaction(interaction, original, *args)
 
@@ -290,12 +440,17 @@ class GuildConnectionState(ConnectionState):
             self._view_store = GuildViewStore(self)
 
     def parse_interaction_create(self, data):
-        routes = getattr(self._get_client(), "guild_routes", None)
+        client = self._get_client()
+        routes = getattr(client, "guild_routes", None)
         if routes is not None:
             try:
-                if _discord_id(data.get("application_id")) != routes.application_id:
+                if not routes.accepting or _discord_id(data.get("application_id")) != routes.application_id:
                     return
                 routes._guild(_discord_id(data.get("guild_id")))
             except GuildAdmissionError:
+                return
+        elif (primary := getattr(client, "legacy_guild_id", None)) is not None:
+            guild = data.get("guild_id")
+            if guild is not None and guild != str(primary):
                 return
         return super().parse_interaction_create(data)

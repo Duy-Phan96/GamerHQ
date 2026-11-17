@@ -273,7 +273,7 @@ async def _repair_server(guild: discord.Guild, bot=None) -> tuple[list[str], lis
     """Focused onboarding update. Unrelated categories/resources remain untouched."""
     from database import db
     from services.server_service import ServerMessageError
-    if not db.DB_PATH.is_file():
+    if not db.current_path().is_file():
         raise ServerMessageError('Runtime database is missing; restore/initialize it before Discord repair.')
     with db.connect() as conn:
         if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':

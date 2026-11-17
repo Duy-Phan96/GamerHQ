@@ -253,6 +253,8 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release, approved_p
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in values:
             raise ValueError("Invalid or duplicate staging environment key.")
         values[key] = value.strip().strip("\"'")
+    if "GAMERHQ_STAGING_TENANT_PILOT" in values:
+        raise ValueError("Staging pilot identity must come from the protected deployment controller.")
     if values.get("GUILD_ID") != ids["stagingGuildId"] or not values.get("DISCORD_TOKEN") or len(values.get("GAMERHQ_WEB_API_SECRET", "")) < 32:
         raise ValueError("Dedicated staging credentials are incomplete.")
     if not hmac.compare_digest(values["GAMERHQ_WEB_API_SECRET"].encode(), os.environ.get(profile["healthSecretEnv"], "").encode()):
@@ -288,25 +290,23 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release, approved_p
             verify_membership(int(ids["stagingBotId"]), expected, identity, guilds)
         except GuildAdmissionError:
             raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership') from None
-        from services.discord_permissions import CORE_INSTALL
         secondary = str(next(iter(expected - {int(ids["stagingGuildId"])})))
-        info = read_step('/guilds/' + secondary, 'guild-identity')
-        member = read_step(f'/guilds/{secondary}/members/{ids["stagingBotId"]}', 'bot-membership')
-        roles = read_step(f'/guilds/{secondary}/roles', 'guild-roles')
-        if info.get("id") != secondary or member.get("user", {}).get("id") != ids["stagingBotId"]:
-            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-identity')
-        direct_roles = {secondary, *member.get("roles", [])}
-        if any(row["id"] in direct_roles and discord.Permissions(int(row["permissions"])).administrator for row in roles):
-            raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', 'guild-roles')
-        required = discord.Permissions(**dict.fromkeys(CORE_INSTALL, True)).value
-        if category_permissions(secondary, ids["stagingBotId"], member, roles, {}) & required != required:
-            raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', 'guild-roles')
     guild_id = ids["stagingGuildId"]
     guild = read_step("/guilds/" + guild_id, 'guild-identity')
     if str(guild.get("id")) != guild_id:
         raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-identity')
     member = read_step(f"/guilds/{guild_id}/members/{ids['stagingBotId']}", 'bot-membership')
     roles = read_step(f"/guilds/{guild_id}/roles", 'guild-roles')
+    if approved_pilot is not None:
+        from services.tenant_routing import verify_guild_permissions
+        other_guild = read_step('/guilds/' + secondary, 'guild-identity')
+        other_member = read_step(f'/guilds/{secondary}/members/{ids["stagingBotId"]}', 'bot-membership')
+        other_roles = read_step(f'/guilds/{secondary}/roles', 'guild-roles')
+        for ident, info, host, grants in ((guild_id, guild, member, roles), (secondary, other_guild, other_member, other_roles)):
+            try:
+                verify_guild_permissions(int(ident), int(ids["stagingBotId"]), info, host, grants)
+            except GuildAdmissionError:
+                raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', 'pilot-guild-roles') from None
     for kind, key in (("text", "categoryId"), ("voice", "voiceCategoryId")):
         category = read_step("/channels/" + ids[key], kind + '-category')
         if str(category.get("guild_id")) != guild_id or category.get("type") != 4:
