@@ -87,6 +87,16 @@ preview do not authorize a Gateway startup. `tools.provision_staging_pilot_tenan
 is the one-shot command inside the reviewed container. It requires the exact
 pilot binding, checks the primary file exists, and never replaces a tenant file.
 
+If the enrolled preview reports `PILOT_SECONDARY_BACKUP_REJECTED`, the generic
+code only locates the secondary capture step. Use the checksum-pinned
+`tools/recover_staging_pilot_secondary.py` under separate owner approval. It
+uses the existing operation lock and the already approved container. Its
+public receipt gives the missing, ownership, mode, access or SQLite check
+that stopped capture. It creates only a genuinely absent secondary file via
+the atomic provisioning contract and leaves existing files intact. A successful
+receipt includes both temporary restore probes and the primary-only routing
+rehearsal. The next protected preview still owns the retained checkpoint.
+
 The protected preview starts no Gateway and performs no Discord writes. It
 exercises database rollback in scratch directories. Container rollback needs
 separate deployment approval and a fresh dual checkpoint. Before restarting

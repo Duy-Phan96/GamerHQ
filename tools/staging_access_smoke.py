@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import uuid
 
@@ -21,6 +22,7 @@ def run(args, **kwargs):
 def rehearsal_tenant_snapshot():
     """Exercise the private database handoff with different rootless UIDs."""
     from .staging_tenant_rehearsal import capture_container_tenant
+    from .recover_staging_pilot_secondary import WORKER_PROBE
 
     root = Path('/opt/gamerhq-staging/data')
     container = run(['docker', 'run', '--detach', '--rm', '--network', 'none', '--user', '10001:10001',
@@ -49,6 +51,11 @@ with sqlite3.connect(path) as db:
             with sqlite3.connect(output.as_uri() + '?mode=ro', uri=True) as db:
                 assert db.execute('SELECT name FROM games').fetchall() == [('synthetic',)]
         assert not os.access(root / 'tenants' / '10.sqlite', os.R_OK)
+        source = Path(__file__).resolve().parents[1]
+        proof = run([sys.executable, '-I', '-B', '-c', WORKER_PROBE, str(source), container, '2', '10'], check=True)
+        receipt = json.loads(proof.stdout)
+        assert receipt['state'] == 'DUAL_BACKUP_REHEARSAL_PASS' and receipt['rollbackRehearsal'] == 'PRIMARY_ONLY_PASS'
+        assert [(row['guildId'], row['restore']) for row in receipt['restores']] == [(2, 'PASS'), (10, 'PASS')]
         print('ROOTLESS_PRIVATE_TENANT_BACKUP_PASS')
     finally:
         run(['docker', 'stop', container], check=True)
