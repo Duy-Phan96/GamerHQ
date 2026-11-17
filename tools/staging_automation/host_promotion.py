@@ -166,9 +166,15 @@ def source_commit(backend, image):
 
 
 def build_overlay(backend, current):
-    policy, p = backend.policy['hostPromotion'], backend.profile
-    if (policy['commit'] != COMMIT or policy['archiveSha256'] != ARCHIVE_SHA256
-            or source_commit(backend, current) != BASELINE):
+    policy = backend.policy['hostPromotion']
+    if policy['commit'] != COMMIT or policy['archiveSha256'] != ARCHIVE_SHA256:
+        raise Denied('IMMUTABLE_RELEASE_CHANGED')
+    return build_reviewed_overlay(backend, current, COMMIT, ARCHIVE_SHA256, BASELINE, verify_compatibility)
+
+
+def build_reviewed_overlay(backend, current, commit, archive_sha256, baseline, check_compatibility):
+    p = backend.profile
+    if source_commit(backend, current) != baseline:
         raise Denied('IMMUTABLE_RELEASE_CHANGED')
     with tempfile.TemporaryDirectory(dir=p['workRoot'], prefix='host-source-') as directory:
         root = Path(directory)
@@ -181,14 +187,14 @@ def build_overlay(backend, current):
                 raise Denied('PUBLIC_METADATA_LIMIT')
             return result.stdout
         git('init', '--quiet'); git('remote', 'add', 'origin', REPOSITORY)
-        for commit in (COMMIT, BASELINE):
-            git('fetch', '--quiet', '--depth=1', 'origin', commit)
-        if git('rev-parse', COMMIT).decode().strip() != COMMIT:
+        for revision in (commit, baseline):
+            git('fetch', '--quiet', '--depth=1', 'origin', revision)
+        if git('rev-parse', commit).decode().strip() != commit:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
-        verify_compatibility(git)
+        check_compatibility(git)
         archive = root / 'source.tar'
-        git('archive', '--format=tar', '--output=' + str(archive), COMMIT)
-        if archive.stat().st_size > 32 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != ARCHIVE_SHA256:
+        git('archive', '--format=tar', '--output=' + str(archive), commit)
+        if archive.stat().st_size > 32 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != archive_sha256:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
         context = root / 'context'; context.mkdir()
         extract_application(archive, context)
@@ -203,13 +209,13 @@ def build_overlay(backend, current):
             dockerfile += f'COPY --chown=10001:10001 {path} /app/{path}\n'
         for path in DIRECTORIES:
             dockerfile += f'COPY --chown=10001:10001 {path}/ /app/{path}/\n'
-        dockerfile += f'RUN printf \'%s\\n\' {COMMIT} > /app/BUILD_COMMIT\nLABEL org.opencontainers.image.revision={COMMIT}\nUSER 10001:10001\n'
+        dockerfile += f'RUN printf \'%s\\n\' {commit} > /app/BUILD_COMMIT\nLABEL org.opencontainers.image.revision={commit}\nUSER 10001:10001\n'
         (context / 'Dockerfile').write_text(dockerfile, encoding='utf-8')
         identity = root / 'image-id'
         backend.run(['docker', 'build', '--network', 'none', '--iidfile', str(identity), str(context)], timeout=600)
         from hosts.gamerhq.skill_deployment_docker import IMAGE
         image = identity.read_text().strip()
-        if not IMAGE.fullmatch(image) or backend.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', alias]) != current or source_commit(backend, image) != COMMIT:
+        if not IMAGE.fullmatch(image) or backend.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', alias]) != current or source_commit(backend, image) != commit:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
         return image
 

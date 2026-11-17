@@ -4,7 +4,7 @@ import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
 WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare'})
 PUBLIC = frozenset({'status', 'challenge'})
 OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
 MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback'})
@@ -21,6 +21,7 @@ ERROR_CODES |= frozenset({'WEB_POLICY_REJECTED', 'WEB_NOT_ENROLLED', 'WEB_ARTIFA
 ERROR_CODES |= frozenset({'CATALOG_PREVIEW_NOT_ENROLLED', 'CATALOG_STAGING_SOURCE_REJECTED',
                          'CATALOG_VERIFIED_BACKUP_UNAVAILABLE'})
 ERROR_CODES |= frozenset({'PILOT_TENANT_PATH_REJECTED', 'PILOT_ENROLLMENT_REQUIRED', 'PILOT_SECONDARY_BACKUP_REJECTED'})
+ERROR_CODES |= frozenset({'PILOT_ACTIVATION_PIN_REJECTED', 'PILOT_CHECKPOINT_REJECTED', 'PILOT_PREVIEW_EXPIRED', 'PILOT_BASELINE_CHANGED'})
 
 
 class Denied(Exception):
@@ -60,6 +61,11 @@ def validate_policy(value):
         digest = value.get('tenantPilotWorkflowSha256')
         if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
             raise Denied('POLICY_REJECTED')
+    if 'tenantPilotActivation' in value:
+        from .pilot_activation import validate_pin
+        if 'tenantPilot' not in value or 'hostPromotion' not in value:
+            raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
+        validate_pin(value['tenantPilotActivation'])
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
@@ -73,7 +79,8 @@ def charge(state, operation, now=None):
     events = [e for e in state.get('events', []) if 0 <= now - e['at'] < 3600]
     if len(events) >= 60: raise Denied('REQUEST_RATE_LIMIT')
     if operation in MUTATIONS and sum(e['op'] in MUTATIONS for e in events) >= 12: raise Denied('MUTATION_RATE_LIMIT')
-    if operation in ('prepare', 'update', 'host-promote') and sum(e['op'] in ('prepare', 'update', 'host-promote') for e in events) >= 3: raise Denied('BUILD_RATE_LIMIT')
+    builds = {'prepare', 'update', 'host-promote', 'tenant-pilot-activation-prepare'}
+    if operation in builds and sum(e['op'] in builds for e in events) >= 3: raise Denied('BUILD_RATE_LIMIT')
     if operation == 'web-deploy' and sum(e['op'] == 'web-deploy' for e in events) >= 3:
         raise Denied('BUILD_RATE_LIMIT')
     if operation in ('restart', 'recover', 'host-promote'):
@@ -90,7 +97,7 @@ def admit(operation, state):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if (operation in WEB or operation == 'catalog-preview') and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
-    if operation == 'tenant-pilot-preview':
+    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare'):
         if state.get('recoveryRequired'):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if not state.get('enabled') or not state.get('bootstrapVerified'):

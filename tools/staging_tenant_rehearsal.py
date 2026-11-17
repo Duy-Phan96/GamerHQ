@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import stat
@@ -18,11 +19,61 @@ _RETAINED_BATCH_LIMIT = 14
 _MINIMUM_FREE_BYTES = 1024**3
 _TENANT_DATABASE_LIMIT = 256 * 1024**2
 _CONTAINER_SNAPSHOT_LIMIT = 16 * 1024**2
+PREVIEW_MAX_AGE = 3600  # Same lifetime as live Staging verification.
 
 
 def _digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def verify_activation_checkpoint(backup_root, preview, binding, expected_baseline, *, verified_at, now):
+    """Re-open the exact retained preview and rehash both private snapshots."""
+    from tools.backup_database import verify
+
+    if type(verified_at) is not int or not 0 <= now - verified_at <= PREVIEW_MAX_AGE:
+        raise ValueError("PILOT_PREVIEW_EXPIRED")
+    batch = preview.get('backupBatch', '')
+    if not isinstance(batch, str) or not re.fullmatch(r'tenant-pilot-[a-z0-9_]{8}', batch):
+        raise ValueError("PILOT_CHECKPOINT_REJECTED")
+    if any(preview.get(key) != value for key, value in expected_baseline.items()):
+        raise ValueError("PILOT_BASELINE_CHANGED")
+    folder = Path(backup_root) / batch
+    own_uid = os.geteuid() if os.name == 'posix' else None
+
+    def private(path, *, directory=False):
+        info = path.lstat()
+        if directory:
+            correct = stat.S_ISDIR(info.st_mode)
+        else:
+            correct = stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+        if not correct or (own_uid is not None and (info.st_uid != own_uid or stat.S_IMODE(info.st_mode) != (0o700 if directory else 0o600))):
+            raise ValueError("PILOT_CHECKPOINT_REJECTED")
+        return info
+
+    private(folder, directory=True)
+    manifest = folder / 'verified.json'
+    if private(manifest).st_size > 16_384:
+        raise ValueError("PILOT_CHECKPOINT_REJECTED")
+    raw = manifest.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != preview.get('backupReceiptSha256'):
+        raise ValueError("PILOT_CHECKPOINT_REJECTED")
+    receipt = json.loads(raw)
+    if (receipt.get('schemaVersion') != 1 or receipt.get('binding') != expected_baseline
+            or receipt.get('rollbackRehearsal') != 'PRIMARY_ONLY_PASS'):
+        raise ValueError("PILOT_CHECKPOINT_REJECTED")
+    rows = receipt.get('tenants', ())
+    if not isinstance(rows, list) or len(rows) != 2 or {str(row.get('guildId')) for row in rows} != set(binding['guildIds']):
+        raise ValueError("PILOT_CHECKPOINT_REJECTED")
+    for row in rows:
+        guild = str(row['guildId'])
+        snapshot = folder / f'{guild}.sqlite'
+        size = private(snapshot).st_size
+        limit = _TENANT_DATABASE_LIMIT if guild == binding['guildIds'][0] else _CONTAINER_SNAPSHOT_LIMIT
+        if not 0 < size <= limit or row.get('restore') != 'PASS' or _digest(snapshot) != row.get('backupSha256'):
+            raise ValueError("PILOT_CHECKPOINT_REJECTED")
+        verify(snapshot)
+    return receipt
 
 
 def _content_digest(path):

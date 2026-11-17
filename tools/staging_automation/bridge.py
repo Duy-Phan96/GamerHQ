@@ -20,6 +20,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         pilot_digest = hashlib.sha256(json.dumps(pilot, sort_keys=True, separators=(',', ':')).encode()).hexdigest() if pilot else None
         return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy,
                 'tenantPilotBindingSha256': pilot_digest,
+                'tenantPilotActivationPreparationEnrolled': 'tenantPilotActivation' in policy,
                 'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit'),
                 'webArtifactId': policy.get('webDeployment', {}).get('artifactId'),
                 'webRunId': policy.get('webDeployment', {}).get('runId'),
@@ -32,6 +33,8 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         if payload['operation'] == 'catalog-preview' and 'catalogPreviewWorkflowSha256' not in policy:
             raise Denied('CATALOG_PREVIEW_NOT_ENROLLED')
         if payload['operation'] == 'tenant-pilot-preview' and 'tenantPilot' not in policy:
+            raise Denied('OPERATION_NOT_ALLOWED')
+        if payload['operation'] == 'tenant-pilot-activation-prepare' and 'tenantPilotActivation' not in policy:
             raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] in WEB and 'webDeployment' not in policy:
             raise Denied('WEB_NOT_ENROLLED')
@@ -63,6 +66,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             if 'tenantPilot' not in policy:
                 raise Denied('OPERATION_NOT_ALLOWED')
             state.pop('tenantPilotPreview', None)
+            state.pop('tenantPilotActivationPrepared', None)
             save(state)
             result = backend.verify_tenant_pilot(expected_image=state['approvedImage'])
             if result.get('state') == 'PILOT_CORE_PERMISSIONS_REJECTED':
@@ -72,6 +76,15 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
                                              'baselineImage', 'startupOverrideSha256')
             }
             state['tenantPilotPreview']['runId'] = claims['run_id']
+            save(state)
+            return result
+        if operation == 'tenant-pilot-activation-prepare':
+            if 'tenantPilotActivation' not in policy or not state.get('tenantPilotPreview'):
+                raise Denied('PILOT_CHECKPOINT_REJECTED')
+            state.pop('tenantPilotActivationPrepared', None)
+            save(state)
+            result = backend.prepare_tenant_pilot_activation(state['tenantPilotPreview'], state['approvedImage'], now=now)
+            state['tenantPilotActivationPrepared'] = {**result, 'runId': claims['run_id']}
             save(state)
             return result
         if operation in WEB:

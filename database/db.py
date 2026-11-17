@@ -454,6 +454,17 @@ def connect():
         conn.close()
 
 
+def verify_pilot_schema():
+    """Require the installed schema during an owner-reviewed pilot startup."""
+    with read_only(), connect() as conn:
+        if conn.execute('PRAGMA user_version').fetchone()[0] != SCHEMA_VERSION:
+            raise ValueError('Pilot startup requires the current database schema.')
+        if conn.execute('PRAGMA quick_check').fetchall()[0][0] != 'ok':
+            raise ValueError('Pilot startup requires an intact database.')
+        conn.execute('SELECT installed, configured, enabled FROM skill_guild_state LIMIT 0')
+        conn.execute('SELECT revision, lease_token FROM skill_jobs LIMIT 0')
+
+
 def init_db():
     with connect() as conn:
         version = conn.execute('PRAGMA user_version').fetchone()[0]

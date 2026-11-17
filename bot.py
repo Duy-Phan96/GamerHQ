@@ -144,8 +144,9 @@ class GamerHQBot(commands.Bot):
         await routes.refresh(self.http, require_permissions=True)
         for guild_id in routes.store.additional_guilds:
             with routes.store.scope(guild_id):
-                pass  # A protected controller must provision and verify this database first.
+                db.verify_pilot_schema()
         with routes.bootstrap_scope():
+            db.verify_pilot_schema()
             await self._prepare_application()
 
     async def _prepare_application(self):
@@ -156,8 +157,9 @@ class GamerHQBot(commands.Bot):
             self.health_task = asyncio.create_task(heartbeat(self))
         from config import DB_PATH
         print(f"[GamerHQ] Runtime database: {DB_PATH.resolve()}")
-        db.init_db()
-        db.seed_catalog()
+        if getattr(self, 'guild_routes', None) is None:
+            db.init_db()
+            db.seed_catalog()
 
         from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
         from skills import first_party_skills

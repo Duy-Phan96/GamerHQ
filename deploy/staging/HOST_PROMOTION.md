@@ -2,8 +2,8 @@
 
 ## Two-guild pilot preparation
 
-The current enrolled Staging controller still verifies exclusive membership in
-the original guild. Follow the
+The enrolled Staging controller can preview the approved pair. Its existing
+Host promotion path still expects exclusive membership in the original guild. Follow the
 [guild tenancy decision](../../docs/architecture/decisions/ADR-001-guild-tenancy.md)
 before preparing an immutable promotion candidate.
 
@@ -104,6 +104,33 @@ any older Host that assumes singleton membership, separately verify actual
 singleton Discord membership. Preserve the secondary database and its snapshots
 through the rollback. A Discord request accepted before revocation can still
 take effect. The preview receipt does not authorize activation or a live restore.
+
+### Activation preparation and cutover
+
+The proposed `tenant-pilot-activation-prepare` operation requires a separately
+enrolled candidate commit, Linux CI run, archive checksum, and workflow digest.
+It uses the latest private controller preview from the protected workflow and
+checks that an owner approved that run on `main`. It requires the preview to be
+within the existing one-hour live verification window. It checks ownership,
+modes, and SHA-256 of the sealed receipt and both backups, then rechecks the
+exact Discord membership and Core permissions. The installed candidate
+dependencies and Event Manager wheel remain those of the approved baseline image.
+The image and exact startup override are checked offline in both pilot and
+primary-only configuration. Preparation never starts the Gateway.
+
+Pilot startup verifies the two database schemas read-only, including the
+existing primary. Catalog seeding and schema migrations remain in the
+legacy startup path. The live cutover still needs a controller operation that
+quiesces the existing Host, captures a fresh dual checkpoint, switches the
+single container, and can recover from an interrupted switch. Leave the prior
+Host stopped if a fallback would restart an older singleton build with two
+Discord memberships. Exercise the controller rollback on disposable storage
+and images before authorizing any real switch.
+
+After live activation is healthy, open `/server setup` in Servertest and use
+an owner-confirmed inventory preview. The owner can skip the template and
+choose a Skill instead. On repeat, verify zero duplicate channels, roles and
+managed entry points, with the original Staging resource IDs intact.
 
 ## Reviewing permission and ownership blockers
 

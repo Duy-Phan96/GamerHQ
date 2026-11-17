@@ -132,10 +132,12 @@ def test_web_workflow_cannot_deploy_with_routine_identity_or_without_owner_revie
 @pytest.mark.parametrize(('operation', 'digest_key'), [
     ('catalog-preview', 'catalogPreviewWorkflowSha256'),
     ('tenant-pilot-preview', 'tenantPilotWorkflowSha256'),
+    ('tenant-pilot-activation-prepare', 'tenantPilotActivation'),
 ])
 def test_staging_previews_require_protected_owner_review_and_exact_workflow(trust, operation, digest_key):
     policy, claims, token, read, reviews, _ = trust
-    policy[digest_key] = policy['routineWorkflowSha256']
+    digest = policy['routineWorkflowSha256']
+    policy[digest_key] = {'workflowSha256': digest} if operation == 'tenant-pilot-activation-prepare' else digest
     workflow = f'Duy-Phan96/GamerHQ/.github/workflows/staging-{operation}.yml@refs/heads/main'
     claims['workflow_ref'] = workflow
     with pytest.raises(Denied):

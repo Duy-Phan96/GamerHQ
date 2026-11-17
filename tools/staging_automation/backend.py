@@ -63,17 +63,27 @@ class HostBackend:
 
     def verify_tenant_pilot(self, *, expected_image):
         """Check Discord without a Gateway and retain verified private snapshots."""
+        return self._pilot_source('preview', expected_image)
+
+    def prepare_tenant_pilot_activation(self, preview, expected_image, *, now):
+        return self._pilot_source('prepare-activation', expected_image, preview=preview, now=now)
+
+    def _pilot_source(self, operation, expected_image, **payload):
         bundle = Path(__file__).resolve().parents[1] / 'pilot-source'
         if bundle.is_dir():
             python = '/opt/gamerhq-staging/deployment-worker/.venv/bin/python'
             launch = 'import sys; sys.path.insert(0, sys.argv[1]); from tools.staging_tenant_preview_entry import main; main()'
-            raw = self.run([python, '-I', '-B', '-c', launch, str(bundle)], timeout=420,
-                           stdin=json.dumps({'profile': self.profile, 'policy': self.policy, 'image': expected_image}))
+            raw = self.run([python, '-I', '-B', '-c', launch, str(bundle)], timeout=900 if payload else 420,
+                           stdin=json.dumps({'profile': self.profile, 'policy': self.policy, 'image': expected_image,
+                                             'operation': operation, **payload}))
             result = json.loads(raw)
             if 'denied' in result:
                 raise Denied(result['denied'])
             return result
-        return self._verify_tenant_pilot(expected_image=expected_image)
+        if operation == 'preview':
+            return self._verify_tenant_pilot(expected_image=expected_image)
+        from .pilot_activation import prepare
+        return prepare(self, payload['preview'], expected_image, now=payload['now'])
 
     def _verify_tenant_pilot(self, *, expected_image):
         from database.tenants import GuildTenantStore

@@ -63,3 +63,13 @@ jobs:
           set -euo pipefail
           [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           git show "$REVIEWED_COMMIT:tools/extend_staging_host_promotion.py" | sha256sum
+      - name: Publish exact proposed multi-guild Host archive checksum
+        if: github.head_ref == 'feat/guild-pilot-admission'
+        env:
+          CANDIDATE: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE" =~ ^[0-9a-f]{40}$ ]]
+          printf 'Candidate %s\n' "$CANDIDATE"
+          git archive --format=tar "$CANDIDATE" | sha256sum

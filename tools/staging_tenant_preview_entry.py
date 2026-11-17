@@ -13,7 +13,14 @@ def main():
         raise PermissionError('The preview runs in the existing worker sandbox.')
     packet = json.loads(sys.stdin.buffer.read(32768))
     try:
-        result = HostBackend(packet['profile'], packet['policy'])._verify_tenant_pilot(expected_image=packet['image'])
+        backend = HostBackend(packet['profile'], packet['policy'])
+        if packet.get('operation', 'preview') == 'preview':
+            result = backend._verify_tenant_pilot(expected_image=packet['image'])
+        elif packet['operation'] == 'prepare-activation':
+            from tools.staging_automation.pilot_activation import prepare
+            result = prepare(backend, packet['preview'], packet['image'], now=packet['now'])
+        else:
+            raise Denied('OPERATION_NOT_ALLOWED')
     except Denied as error:
         result = {'denied': error.code if error.code in ERROR_CODES else 'AUTOMATION_OPERATION_FAILED'}
     except Exception as error:
