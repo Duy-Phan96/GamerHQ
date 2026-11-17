@@ -520,7 +520,7 @@ def test_protected_controller_seals_both_live_snapshot_probes_only_on_success(pi
     backend = HostBackend(profile, policy)
     monkeypatch.setattr(backend, "policy_integrity", lambda: None)
     monkeypatch.setattr(backend, "health", lambda: {"state": "HOST_READY"})
-    monkeypatch.setattr(backend, "inspect", lambda: {"Image": image, "Config": {"Labels": {"org.opencontainers.image.revision": "1" * 40}}})
+    monkeypatch.setattr(backend, "inspect", lambda: {"Id": "b" * 64, "Image": image, "Config": {"Labels": {"org.opencontainers.image.revision": "1" * 40}}})
     verify = MagicMock(return_value={"verified": True, "gatewayStarted": False})
     monkeypatch.setattr(skill_staging, "verify_remote", verify)
 
@@ -533,6 +533,20 @@ def test_protected_controller_seals_both_live_snapshot_probes_only_on_success(pi
     primary_bytes = store.primary_database.read_bytes()
     secondary_path = store.tenant_directory / "2.sqlite"
     secondary_bytes = secondary_path.read_bytes()
+    from tools import staging_tenant_rehearsal as rehearsal
+
+    def local_capture(container, guild_id, destination):
+        assert container == "b" * 64
+
+        def run(args, *, stdout, **kwargs):
+            assert args[0:5] == ["docker", "exec", "--user", "10001:10001", container]
+            assert args[-1] == str(guild_id)
+            rehearsal.snapshot_bytes(store.tenant_directory, guild_id, 16 * 1024**2, stdout)
+
+        capture(container, guild_id, destination, run=run)
+
+    capture = rehearsal.capture_container_tenant
+    monkeypatch.setattr(rehearsal, "capture_container_tenant", local_capture)
     evidence = preview(1000)
     assert evidence["state"] == "PILOT_PREVIEW_VERIFIED"
     assert evidence["rollbackRehearsal"] == "PRIMARY_ONLY_PASS"
@@ -544,11 +558,28 @@ def test_protected_controller_seals_both_live_snapshot_probes_only_on_success(pi
     assert secondary_path.read_bytes() == secondary_bytes
 
     secondary_path.unlink()
-    with pytest.raises(Denied, match="AUTOMATION_OPERATION_FAILED"):
+    with pytest.raises(Denied, match="PILOT_SECONDARY_BACKUP_REJECTED"):
         preview(1001)
     assert "tenantPilotPreview" not in state
     assert list(tmp_path.glob("tenant-pilot-*/verified.json")) == [receipt]
     assert store.primary_database.read_bytes() == primary_bytes
+
+
+def test_container_snapshot_rejects_wrong_ownership_marker_and_oversize(pilot):
+    import io
+    import sqlite3
+    from tools.staging_tenant_rehearsal import snapshot_bytes
+
+    store, _, _ = pilot
+    path = store.tenant_directory / "2.sqlite"
+    output = io.BytesIO()
+    with pytest.raises(ValueError, match="size budget"):
+        snapshot_bytes(path.parent, 2, 1, output)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE gamerhq_tenant_identity SET guild_id=3")
+    with pytest.raises(PermissionError, match="Unexpected tenant identity"):
+        snapshot_bytes(path.parent, 2, 16 * 1024**2, output)
+    assert output.getvalue() == b""
 
 
 def test_internal_web_api_binds_the_authorized_guild_before_skill_access(pilot):

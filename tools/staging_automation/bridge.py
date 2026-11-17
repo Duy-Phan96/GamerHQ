@@ -1,5 +1,6 @@
 """Entry behind the separate forced-command key and existing systemd sandbox."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -15,7 +16,10 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     charge(state, operation, now); save(state)
     if operation == 'status':
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
+        pilot = policy.get('tenantPilot')
+        pilot_digest = hashlib.sha256(json.dumps(pilot, sort_keys=True, separators=(',', ':')).encode()).hexdigest() if pilot else None
         return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy,
+                'tenantPilotBindingSha256': pilot_digest,
                 'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit'),
                 'webArtifactId': policy.get('webDeployment', {}).get('artifactId'),
                 'webRunId': policy.get('webDeployment', {}).get('runId'),

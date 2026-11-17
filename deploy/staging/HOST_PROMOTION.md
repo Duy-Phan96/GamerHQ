@@ -55,20 +55,26 @@ before preparing an immutable promotion candidate.
 ### Controller enrollment and live approval
 
 Enroll the exact allowlist and preview workflow digest in the existing
-root-owned controller. The `tenant-pilot-preview` workflow is deliberately
+root-owned controller. The owner-confirmed Stage-only IDs are recorded in
+[the pilot binding](tenant-pilot-binding.json). The workflow checks the
+controller's binding digest before requesting the protected preview. The
+`tenant-pilot-preview` workflow is deliberately
 limited to `main` and `deployment-security`. The reviewed Host and controller
 source need independent immutable pins. A draft branch or a successful CI run
 does not enroll the controller.
 
-The secondary database requires a reviewed storage handoff before the live
-preview can open it. Rootless Docker maps container UID 10001 to a subordinate
-host UID, distinct from the worker that creates backups. The strict secondary
-file contract is private mode `0600`; adding a named ACL changes the effective
-group mode and fails that contract. Rehearse the selected ownership-preserving
-backup handoff under the actual rootless mapping. Keep the primary database,
-its existing ACLs, and production mounts out of the change. Never replace a
-secondary file that fails ownership verification. The controller must fail
-closed if either database is inaccessible.
+The secondary database must first be provisioned with `GuildTenantStore` as
+container UID 10001 under the reviewed Staging data mount. Rootless Docker
+maps that UID to a subordinate host UID. The controller backs up the `0600`
+file by executing a fixed SQLite reader as that UID in the already verified
+Staging container. The reader verifies ownership, guild identity and SQLite
+integrity, then streams at most 16 MiB directly to a new worker-owned `0600`
+snapshot. SQLite contents are excluded from receipts and logs. Larger files
+require a reviewed resource budget before the preview can pass. Verify this
+handoff on the actual rootless mapping during the protected preview. The
+primary database keeps its existing access policy. An absent, inaccessible,
+or unknown secondary file prevents a receipt. Provisioning and the protected
+preview do not authorize a Gateway startup.
 
 The protected preview starts no Gateway and performs no Discord writes. It
 exercises database rollback in scratch directories. Container rollback needs

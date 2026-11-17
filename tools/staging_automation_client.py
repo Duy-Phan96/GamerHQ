@@ -154,6 +154,14 @@ def main():
         if status.get('state') != 'ACTIVE' or status.get('hostPromotionSupported') is not True or status.get('bootstrapVerified') is not True:
             raise Denied('HOST_PROMOTION_NOT_INSTALLED')
         result = perform('host-promote')
+    elif args.operation == 'tenant-pilot-preview':
+        pin = json.loads(Path('deploy/staging/tenant-pilot-binding.json').read_text(encoding='utf-8'))
+        digest = hashlib.sha256(json.dumps(pin, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        status = exchange('status')
+        if (status.get('state') != 'ACTIVE' or status.get('bootstrapVerified') is not True
+                or status.get('recoveryRequired') is not False or status.get('tenantPilotBindingSha256') != digest):
+            raise Denied('PILOT_ENROLLMENT_REQUIRED')
+        result = perform('tenant-pilot-preview')
     elif args.operation == 'reconcile':
         status = exchange('status')
         if status.get('state') != 'ACTIVE': result = status

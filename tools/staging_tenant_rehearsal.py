@@ -2,9 +2,12 @@
 from contextlib import closing
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
+import subprocess
 import tempfile
 
 from database.tenants import GuildTenantStore
@@ -14,6 +17,7 @@ from tools.backup_database import backup_database
 _RETAINED_BATCH_LIMIT = 14
 _MINIMUM_FREE_BYTES = 1024**3
 _TENANT_DATABASE_LIMIT = 256 * 1024**2
+_CONTAINER_SNAPSHOT_LIMIT = 16 * 1024**2
 
 
 def _digest(path):
@@ -35,7 +39,7 @@ def rehearse(store, scratch_directory):
         return _capture_and_probe(store, Path(scratch) / "backups", Path(scratch) / "restore")
 
 
-def retain(store, backup_root, scratch_directory, *, binding=None):
+def retain(store, backup_root, scratch_directory, *, binding=None, secondary_capture=None):
     """Keep private backup files and a receipt only after every restore passes."""
     from tools.staging_configuration import atomic_json
 
@@ -44,6 +48,9 @@ def retain(store, backup_root, scratch_directory, *, binding=None):
         raise PermissionError("Pilot backup retention limit reached. Review the retained batches.")
     logical_bytes = 0
     for guild_id in (store.primary_guild, *sorted(store.additional_guilds)):
+        if secondary_capture is not None and guild_id != store.primary_guild:
+            logical_bytes += _CONTAINER_SNAPSHOT_LIMIT
+            continue
         with store.scope(guild_id) as tenant, closing(sqlite3.connect(tenant.database.as_uri() + "?mode=ro", uri=True)) as conn:
             size = conn.execute("PRAGMA page_count").fetchone()[0] * conn.execute("PRAGMA page_size").fetchone()[0]
             if size > _TENANT_DATABASE_LIMIT:
@@ -55,7 +62,7 @@ def retain(store, backup_root, scratch_directory, *, binding=None):
         raise PermissionError("Pilot backup and restore exceed the available Staging storage budget.")
     batch = Path(tempfile.mkdtemp(prefix="tenant-pilot-", dir=backup_root))
     with tempfile.TemporaryDirectory(prefix="tenant-restore-", dir=scratch_directory) as scratch:
-        entries = _capture_and_probe(store, batch, Path(scratch))
+        entries = _capture_and_probe(store, batch, Path(scratch), secondary_capture=secondary_capture)
     receipt = batch / "verified.json"
     atomic_json(receipt, {"schemaVersion": 1, "tenants": entries, "binding": binding,
                           "rollbackRehearsal": "PRIMARY_ONLY_PASS"})
@@ -63,15 +70,19 @@ def retain(store, backup_root, scratch_directory, *, binding=None):
             "tenantRestores": entries, "rollbackRehearsal": "PRIMARY_ONLY_PASS"}
 
 
-def _capture_and_probe(store, source, restored):
+def _capture_and_probe(store, source, restored, *, secondary_capture=None):
     guilds = (store.primary_guild, *sorted(store.additional_guilds))
     clone_store = GuildTenantStore(primary_guild=store.primary_guild,
                                    primary_database=restored / f"{store.primary_guild}.sqlite",
                                    tenant_directory=restored, additional_guilds=store.additional_guilds)
     evidence = []
     for guild_id in guilds:
-        with store.scope(guild_id) as tenant:
-            snapshot = backup_database(source / f"{guild_id}.sqlite", source=tenant.database)
+        snapshot = source / f"{guild_id}.sqlite"
+        if secondary_capture is not None and guild_id != store.primary_guild:
+            secondary_capture(guild_id, snapshot)
+        else:
+            with store.scope(guild_id) as tenant:
+                backup_database(snapshot, source=tenant.database)
         expected = _digest(snapshot)
         clone = backup_database(restored / snapshot.name, source=snapshot)
         with clone_store.scope(guild_id):
@@ -93,6 +104,73 @@ def _capture_and_probe(store, source, restored):
                 if _content_digest(retained.database) != _content_digest(source / retained.database.name):
                     raise ValueError("Primary-only rollback changed the retained secondary tenant.")
     return tuple(evidence)
+
+
+def snapshot_bytes(directory, guild_id, limit, output):
+    """Stdlib-only program executed as the existing Staging container user."""
+    from contextlib import closing
+    import os
+    from pathlib import Path
+    import sqlite3
+    import stat
+
+    name = str(guild_id)
+    if not 0 < guild_id < 2**63:
+        raise ValueError("Invalid guild ID.")
+    directory = Path(directory)
+    path = directory / (name + ".sqlite")
+    info = path.lstat()
+    if directory.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise PermissionError("Invalid tenant storage path.")
+    if os.name == "posix" and (stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid()):
+        raise PermissionError("Invalid tenant storage ownership or mode.")
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)) as source:
+        with closing(sqlite3.connect(":memory:")) as target:
+            page_count = source.execute("PRAGMA page_count").fetchone()[0]
+            page_size = source.execute("PRAGMA page_size").fetchone()[0]
+            if page_count * page_size > limit:
+                raise ValueError("Tenant backup requires an owner-reviewed size budget.")
+
+            def check_progress(_, __, total):
+                if total * page_size > limit:
+                    raise ValueError("Tenant grew beyond the backup size budget.")
+
+            source.backup(target, pages=128, progress=check_progress)
+            if target.execute("SELECT guild_id, ready FROM gamerhq_tenant_identity").fetchall() != [(guild_id, 1)]:
+                raise PermissionError("Unexpected tenant identity.")
+            if target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise ValueError("Tenant snapshot failed integrity verification.")
+            payload = target.serialize()
+            if not 0 < len(payload) <= limit:
+                raise ValueError("Tenant snapshot size is invalid.")
+            output.write(payload)
+
+
+def capture_container_tenant(container, guild_id, destination, *, run=subprocess.run):
+    """Export only the pinned secondary DB into a new worker-private file."""
+    from inspect import getsource
+    import re
+    from tools.backup_database import verify
+
+    if not re.fullmatch(r"[0-9a-f]{64}", container):
+        raise PermissionError("Approved Staging container identity is required.")
+    program = getsource(snapshot_bytes) + (
+        "\nimport sys\nsnapshot_bytes('/app/runtime/data/tenants', int(sys.argv[1]), "
+        f"{_CONTAINER_SNAPSHOT_LIMIT}, sys.stdout.buffer)\n"
+    )
+    fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            run(["docker", "exec", "--user", "10001:10001", container, "python", "-I", "-B", "-c", program, str(guild_id)],
+                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.DEVNULL, timeout=90, check=True)
+            output.flush()
+            os.fsync(output.fileno())
+        if not 0 < destination.stat().st_size <= _CONTAINER_SNAPSHOT_LIMIT:
+            raise ValueError("Tenant snapshot size is invalid.")
+        verify(destination)
+    except (OSError, ValueError, subprocess.SubprocessError, sqlite3.Error, KeyboardInterrupt):
+        destination.unlink(missing_ok=True)
+        raise
 
 
 def startup_override(profile, policy, image):

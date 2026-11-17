@@ -65,7 +65,7 @@ class HostBackend:
         """Check Discord without a Gateway and retain verified private snapshots."""
         from database.tenants import GuildTenantStore
         from hosts.gamerhq.skill_staging import verify_remote
-        from tools.staging_tenant_rehearsal import approved_binding, rehearsal_binding, retain
+        from tools.staging_tenant_rehearsal import approved_binding, capture_container_tenant, rehearsal_binding, retain
         approved = approved_binding(self.profile, self.policy)
         if approved is None:
             raise Denied('OPERATION_NOT_ALLOWED')
@@ -85,8 +85,15 @@ class HostBackend:
         store = GuildTenantStore(primary_guild=primary, primary_database=source,
                                  tenant_directory=tenant_directory,
                                  additional_guilds=tuple(guild for guild in approved if guild != primary))
-        result = retain(store, self.profile['backupRoot'], self.profile['workRoot'], binding=binding)
-        if self.inspect()['Image'] != container['Image']:
+        def capture(guild_id, destination):
+            try:
+                capture_container_tenant(container['Id'], guild_id, destination)
+            except (OSError, ValueError, subprocess.SubprocessError, sqlite3.Error):
+                raise Denied('PILOT_SECONDARY_BACKUP_REJECTED') from None
+
+        result = retain(store, self.profile['backupRoot'], self.profile['workRoot'], binding=binding, secondary_capture=capture)
+        current = self.inspect()
+        if (current['Id'], current['Image']) != (container['Id'], container['Image']):
             raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
         return {**proof, **binding, **result, 'state': 'PILOT_PREVIEW_VERIFIED'}
 

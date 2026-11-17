@@ -6,6 +6,12 @@ Use `services.discord_permissions` for capability checks and the Core install re
 
 ## Discord install and capability matrix
 
+The v1 Core install baseline is `CORE_INSTALL` in `services.discord_permissions`.
+The invite generator, setup and pilot checks use that same list. Skill manifests
+declare additional guild permissions when needed, and the Host checks them
+before enablement and restore. Destination and hierarchy checks remain with
+the feature that owns the affected resource.
+
 | Scope | Discord permissions and checks |
 | --- | --- |
 | Core install and managed entry points | View Channel, Read Message History, Send Messages, Embed Links, Attach Files and **Pin Messages**. Setup checks the destination's effective view/history/send/pin permissions before publishing. Reports and feature previews remain read-only. |

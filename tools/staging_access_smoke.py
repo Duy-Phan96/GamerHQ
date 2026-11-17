@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import tempfile
 import uuid
@@ -15,6 +16,42 @@ from .staging_bridge_protocol import encode
 
 def run(args, **kwargs):
     return subprocess.run(args, capture_output=True, text=True, timeout=180, **kwargs)
+
+
+def rehearsal_tenant_snapshot():
+    """Exercise the private database handoff with different rootless UIDs."""
+    from .staging_tenant_rehearsal import capture_container_tenant
+
+    root = Path('/opt/gamerhq-staging/data')
+    container = run(['docker', 'run', '--detach', '--rm', '--network', 'none', '--user', '10001:10001',
+                     '--volume', f'{root}:/app/runtime/data', 'python:3.12-slim', 'sleep', '120'],
+                    check=True).stdout.strip()
+    try:
+        seed = """
+import os, pathlib, sqlite3
+directory = pathlib.Path('/app/runtime/data/tenants')
+directory.mkdir(mode=0o700)
+path = directory / '10.sqlite'
+fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+os.close(fd)
+with sqlite3.connect(path) as db:
+    db.execute('CREATE TABLE games (name TEXT)')
+    db.execute("INSERT INTO games VALUES ('synthetic')")
+    db.execute('CREATE TABLE gamerhq_tenant_identity (guild_id INTEGER, ready INTEGER)')
+    db.execute('INSERT INTO gamerhq_tenant_identity VALUES (10, 1)')
+"""
+        run(['docker', 'exec', '--user', '10001:10001', container, 'python', '-I', '-B', '-c', seed], check=True)
+        assert not os.access(root / 'tenants' / '10.sqlite', os.R_OK)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'secondary.sqlite'
+            capture_container_tenant(container, 10, output)
+            assert output.stat().st_mode & 0o777 == 0o600
+            with sqlite3.connect(output.as_uri() + '?mode=ro', uri=True) as db:
+                assert db.execute('SELECT name FROM games').fetchall() == [('synthetic',)]
+        assert not os.access(root / 'tenants' / '10.sqlite', os.R_OK)
+        print('ROOTLESS_PRIVATE_TENANT_BACKUP_PASS')
+    finally:
+        run(['docker', 'stop', container], check=True)
 
 
 def main():
@@ -91,6 +128,9 @@ def main():
                 "'python:3.12-slim','python','-c',\"import sqlite3; c=sqlite3.connect('/state/gamerhq.db'); c.execute('create table bootstrap_acl_probe (value text)'); c.execute(\\\"insert into bootstrap_acl_probe values ('preserved')\\\"); c.commit(); c.close()\"],check=True); "
                 "import sqlite3; c=sqlite3.connect('/opt/gamerhq-staging/data/gamerhq.db'); assert c.execute('select value from bootstrap_acl_probe').fetchone()[0]=='preserved'; c.close(); print('ROOTLESS_SHARED_SQLITE_STORAGE_PASS')")
             assert acl.returncode == 0, acl.stderr
+            tenant = user("import os; from tools.staging_dispatch import environment; os.environ.clear(); os.environ.update(environment()); "
+                          "from tools.staging_access_smoke import rehearsal_tenant_snapshot; rehearsal_tenant_snapshot()")
+            assert tenant.returncode == 0 and 'ROOTLESS_PRIVATE_TENANT_BACKUP_PASS' in tenant.stdout, tenant.stderr
             profile = json.loads(Path('/etc/gamerhq-staging/settings/profile.json').read_text())
             assert profile['workerEnabled'] is False and Path(profile['database']).exists()
             assert run(['docker','inspect','--format','{{.State.Running}}','gamerhq-production-fixture']).stdout.strip() == 'true'
