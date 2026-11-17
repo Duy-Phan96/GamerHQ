@@ -19,6 +19,12 @@ class GuildAdmissionError(PermissionError):
     """No current proof authorizes the operation on this guild."""
 
 
+class GuildCorePermissionsError(GuildAdmissionError):
+    def __init__(self, guild_id, missing, message):
+        super().__init__(message)
+        self.guild_id, self.missing = guild_id, missing
+
+
 _interaction_actor = ContextVar("gamerhq_interaction_actor", default=None)
 _membership_read = ContextVar("gamerhq_membership_read", default=None)
 _GUILD_EVENTS = frozenset({
@@ -141,7 +147,7 @@ def verify_guild_permissions(guild_id, application_id, guild, member, roles):
         raise GuildAdmissionError("Staging pilot requires a non-administrator bot role.")
     absent = missing(permissions, CORE_INSTALL)
     if absent:
-        raise GuildAdmissionError(install_remediation(absent))
+        raise GuildCorePermissionsError(guild_id, absent, install_remediation(absent))
 
 
 class GuildRoutes:

@@ -63,6 +63,15 @@ limited to `main` and `deployment-security`. The reviewed Host and controller
 source need independent immutable pins. A draft branch or a successful CI run
 does not enroll the controller.
 
+`tools/enroll_staging_tenant_preview.py` is the root-owned enrollment step.
+It checks the installed controller bytes, worker Git revision, promoted Host,
+existing controller policy, active image and recovery latch. It takes the
+same private `operation.lock` as the deployment bridge. Supply the published
+installer SHA-256 and the digest of the reviewed workflow registered on
+`main`. That workflow checks out the exact enrollment source commit. The
+enrollment adds an isolated source bundle for the preview and leaves the
+legacy worker, current profile and Host promotion pin in place.
+
 The secondary database must first be provisioned with `GuildTenantStore` as
 container UID 10001 under the reviewed Staging data mount. Rootless Docker
 maps that UID to a subordinate host UID. The controller backs up the `0600`
@@ -74,7 +83,9 @@ require a reviewed resource budget before the preview can pass. Verify this
 handoff on the actual rootless mapping during the protected preview. The
 primary database keeps its existing access policy. An absent, inaccessible,
 or unknown secondary file prevents a receipt. Provisioning and the protected
-preview do not authorize a Gateway startup.
+preview do not authorize a Gateway startup. `tools.provision_staging_pilot_tenant`
+is the one-shot command inside the reviewed container. It requires the exact
+pilot binding, checks the primary file exists, and never replaces a tenant file.
 
 The protected preview starts no Gateway and performs no Discord writes. It
 exercises database rollback in scratch directories. Container rollback needs

@@ -1,0 +1,66 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from tools import enroll_staging_tenant_preview as enrollment
+
+
+def fixture():
+    image = 'sha256:' + 'a' * 64
+    policy = {'controllerCommit': enrollment.PREVIOUS, 'legacyWorkerCommit': enrollment.WORKER,
+              'repository': 'Duy-Phan96/GamerHQ', 'hostPromotion': {'commit': enrollment.HOST},
+              'routineWorkflowSha256': 'existing', 'catalogPreviewWorkflowSha256': 'existing-catalog'}
+    profile = {'environment': 'staging', 'applicationHostCommit': enrollment.HOST,
+               'hostSourceCommit': enrollment.WORKER, 'stagingBotId': enrollment.BINDING['applicationId'],
+               'stagingGuildId': enrollment.BINDING['guildIds'][0], 'productionGuildId': '333',
+               'productionBotId': '222', 'baseImage': image}
+    state = {'enabled': True, 'bootstrapVerified': True, 'recoveryRequired': False, 'approvedImage': image}
+    return policy, profile, state
+
+
+def test_tenant_enrollment_sets_only_exact_reviewed_preview_policy():
+    policy, profile, state = fixture()
+    manifest = Path('deploy/staging/tenant-pilot-binding.json')
+    assert json.loads(manifest.read_text()) == enrollment.BINDING
+    source = '1' * 40
+    workflow = b'reviewed-protected-preview'
+    result = enrollment.updated_policy(policy, source, workflow, profile, state)
+    assert result == {**policy, 'controllerCommit': source, 'tenantPilot': enrollment.BINDING,
+                      'tenantPilotWorkflowSha256': hashlib.sha256(workflow).hexdigest()}
+    assert enrollment.updated_policy(result, source, workflow, profile, state) == result
+    with pytest.raises(ValueError, match='IMMUTABLE_EXTENSION_CHANGED'):
+        enrollment.updated_policy(result, source, b'different-workflow', profile, state)
+
+
+@pytest.mark.parametrize(('target', 'key', 'value', 'error'), [
+    (0, 'legacyWorkerCommit', '2' * 40, 'REVIEWED_ENROLLMENT_REQUIRED'),
+    (1, 'stagingGuildId', '123', 'INSTALLED_STAGING_BASELINE_REQUIRED'),
+    (1, 'productionGuildId', enrollment.BINDING['guildIds'][1], 'STAGING_BINDING_REJECTED'),
+    (2, 'recoveryRequired', True, 'ACTIVE_STAGING_REQUIRED'),
+    (2, 'approvedImage', 'sha256:' + 'b' * 64, 'ACTIVE_STAGING_REQUIRED'),
+])
+def test_tenant_enrollment_fails_closed_on_changed_live_baseline(target, key, value, error):
+    packet = fixture()
+    packet[target][key] = value
+    with pytest.raises(ValueError, match=error):
+        enrollment.updated_policy(packet[0], '1' * 40, b'workflow', packet[1], packet[2])
+
+
+def test_offline_secondary_provision_preserves_primary_and_is_repeatable(tmp_path, monkeypatch):
+    from database import db
+    from services.tenant_routing import pilot_environment
+    from tools.provision_staging_pilot_tenant import provision
+
+    primary = tmp_path / 'gamerhq.db'
+    monkeypatch.setattr(db, 'DB_PATH', primary)
+    db.init_db()
+    baseline = primary.read_bytes()
+    _, profile, _ = fixture()
+    approved = tuple(map(int, enrollment.BINDING['guildIds']))
+    pin = pilot_environment(profile, approved)
+    assert provision(pin, approved[0], primary)['created'] is True
+    assert provision(pin, approved[0], primary)['created'] is False
+    assert (tmp_path / 'tenants' / f'{approved[1]}.sqlite').is_file()
+    assert primary.read_bytes() == baseline

@@ -65,6 +65,8 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             state.pop('tenantPilotPreview', None)
             save(state)
             result = backend.verify_tenant_pilot(expected_image=state['approvedImage'])
+            if result.get('state') == 'PILOT_CORE_PERMISSIONS_REJECTED':
+                return result
             state['tenantPilotPreview'] = {
                 key: result[key] for key in ('backupBatch', 'backupReceiptSha256', 'baselineHostCommit',
                                              'baselineImage', 'startupOverrideSha256')

@@ -177,6 +177,8 @@ def main():
     print(json.dumps(result))
     if args.operation == 'web-health' and result.get('state') == 'WEB_UNHEALTHY':
         raise SystemExit(1)
+    if args.operation == 'tenant-pilot-preview' and result.get('state') != 'PILOT_PREVIEW_VERIFIED':
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

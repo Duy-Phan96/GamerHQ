@@ -55,7 +55,7 @@ class HostBackend:
     def fresh_verify(self):
         from hosts.gamerhq.skill_staging import verify_remote
         from tools.skill_staging import write_record
-        if 'tenantPilot' in self.profile or 'tenantPilot' in self.policy:
+        if 'tenantPilot' in self.profile:
             # Routine deployment paths still snapshot only the primary database.
             raise Denied('OPERATION_NOT_ALLOWED')
         proof = verify_remote(self.profile)
@@ -63,20 +63,39 @@ class HostBackend:
 
     def verify_tenant_pilot(self, *, expected_image):
         """Check Discord without a Gateway and retain verified private snapshots."""
+        bundle = Path(__file__).resolve().parents[1] / 'pilot-source'
+        if bundle.is_dir():
+            python = '/opt/gamerhq-staging/deployment-worker/.venv/bin/python'
+            launch = 'import sys; sys.path.insert(0, sys.argv[1]); from tools.staging_tenant_preview_entry import main; main()'
+            raw = self.run([python, '-I', '-B', '-c', launch, str(bundle)], timeout=420,
+                           stdin=json.dumps({'profile': self.profile, 'policy': self.policy, 'image': expected_image}))
+            result = json.loads(raw)
+            if 'denied' in result:
+                raise Denied(result['denied'])
+            return result
+        return self._verify_tenant_pilot(expected_image=expected_image)
+
+    def _verify_tenant_pilot(self, *, expected_image):
         from database.tenants import GuildTenantStore
         from hosts.gamerhq.skill_staging import verify_remote
+        from services.tenant_routing import GuildCorePermissionsError
         from tools.staging_tenant_rehearsal import approved_binding, capture_container_tenant, rehearsal_binding, retain
-        approved = approved_binding(self.profile, self.policy)
+        proof_profile = {**self.profile, 'tenantPilot': self.policy.get('tenantPilot')}
+        approved = approved_binding(proof_profile, self.policy)
         if approved is None:
             raise Denied('OPERATION_NOT_ALLOWED')
         self.storage_budget()
-        proof = verify_remote(self.profile, approved_pilot=approved)
+        try:
+            proof = verify_remote(proof_profile, approved_pilot=approved, read_only_artifacts=True)
+        except GuildCorePermissionsError as error:
+            return {'state': 'PILOT_CORE_PERMISSIONS_REJECTED', 'guildId': str(error.guild_id),
+                    'missingPermissions': error.missing, 'gatewayStarted': False}
         if self.health()['state'] != 'HOST_READY':
             raise Denied('HOST_NOT_READY')
         container = self.inspect()
         if container['Image'] != expected_image:
             raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
-        binding = rehearsal_binding(self.profile, self.policy, container)
+        binding = rehearsal_binding(proof_profile, self.policy, container)
         primary = int(self.profile['stagingGuildId'])
         source = Path(self.profile['database']).resolve(strict=True)
         tenant_directory = source.parent / 'tenants'
