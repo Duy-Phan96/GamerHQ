@@ -23,7 +23,11 @@ before preparing an immutable promotion candidate.
    rehearsal uses the existing backup helper and compares restored logical
    contents in disposable directories. The prepared protected preview retains
    the two private backups and publishes a verified batch receipt only after
-   both restores pass. Incomplete batches are ineligible for recovery.
+   both restores pass. Incomplete batches are ineligible for recovery. The
+   controller stops at 14 retained batches, including incomplete batches, and
+   requires reviewed retention before taking another snapshot. Both tenants
+   must meet the existing Staging database size limit and leave at least 1 GiB
+   free after reserving space for the backup and restore.
 4. Preserve the installed Host, primary database and Event Manager authority
    through rollback. Revoke additional admission before rollback, stop scoped
    workers, and retain the secondary database and its verified backup for
@@ -41,6 +45,7 @@ before preparing an immutable promotion candidate.
 | Gateway listeners | The dispatch allowlist covers member, voice, role, channel, message and raw message events with unique guild provenance. Guild-less and ambiguous callbacks are held. Membership changes invalidate the proof. |
 | Skill lifecycle and scheduling | Pilot Runtime calls require scope for both guilds. Each guild has its own scheduler pass. The legacy unbound compatibility path exists only when pilot routing is absent. |
 | Polls and retries | The reviewed cog loops run per verified scope. Channel change debounce reopens the same guild under the same proof. Proof invalidation cancels tracked work and blocks uncommitted SQLite writes. |
+| Game selector and legacy maintenance | The selector resolves managed links in the bound guild. The legacy catalog rename edits a shared seed and is unavailable in pilot mode. Public bot channel lookups reject channels outside the bound guild. |
 
 Before activation, wire the scoped startup into the protected configuration
 loader, gate remaining global/external watchers and

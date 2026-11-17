@@ -2,11 +2,17 @@
 from contextlib import closing
 import hashlib
 from pathlib import Path
+import shutil
 import sqlite3
 import tempfile
 
 from database.tenants import GuildTenantStore
 from tools.backup_database import backup_database
+
+
+_RETAINED_BATCH_LIMIT = 14
+_MINIMUM_FREE_BYTES = 1024**3
+_TENANT_DATABASE_LIMIT = 256 * 1024**2
 
 
 def _digest(path):
@@ -32,6 +38,20 @@ def retain(store, backup_root, scratch_directory):
     """Keep private backup files and a receipt only after every restore passes."""
     from tools.staging_configuration import atomic_json
 
+    backup_root = Path(backup_root)
+    if sum(1 for _ in backup_root.glob("tenant-pilot-*")) >= _RETAINED_BATCH_LIMIT:
+        raise PermissionError("Pilot backup retention limit reached. Review the retained batches.")
+    logical_bytes = 0
+    for guild_id in (store.primary_guild, *sorted(store.additional_guilds)):
+        with store.scope(guild_id) as tenant, closing(sqlite3.connect(tenant.database.as_uri() + "?mode=ro", uri=True)) as conn:
+            size = conn.execute("PRAGMA page_count").fetchone()[0] * conn.execute("PRAGMA page_size").fetchone()[0]
+            if size > _TENANT_DATABASE_LIMIT:
+                raise PermissionError("Pilot database exceeds the existing Staging size budget.")
+            logical_bytes += size
+    # Allow for the retained batch and the simultaneous scratch restore even
+    # when both roots use the same filesystem. Never delete a batch implicitly.
+    if min(shutil.disk_usage(root).free for root in (backup_root, scratch_directory)) < _MINIMUM_FREE_BYTES + 2 * logical_bytes:
+        raise PermissionError("Pilot backup and restore exceed the available Staging storage budget.")
     batch = Path(tempfile.mkdtemp(prefix="tenant-pilot-", dir=backup_root))
     with tempfile.TemporaryDirectory(prefix="tenant-restore-", dir=scratch_directory) as scratch:
         entries = _capture_and_probe(store, batch, Path(scratch))

@@ -11,10 +11,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import DISPLAY_GROUP_ORDER, CHOOSE_GAMES_CHANNEL_ID
-from database import db
+from config import DISPLAY_GROUP_ORDER
+from database import db, tenants
 from services.game_service import (
     GameStructureError,
+    choose_games_channel_id,
     create_game_structure_confirmed,
     format_plan,
     inspect_game_structure,
@@ -1082,6 +1083,13 @@ class ConfirmRenameView(discord.ui.View):
         if not await check_admin(interaction):
             return
 
+        if tenants.current() is not None:
+            await interaction.response.send_message(
+                "This legacy rename also edits the shared catalog seed and is unavailable in the tenant pilot.",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.edit_message(
             content="⏳ **Renaming game safely…**",
             embed=None,
@@ -1414,8 +1422,7 @@ class Games(commands.Cog):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def database_info(self, interaction: discord.Interaction):
-        from config import DB_PATH
-
+        database_path = db.current_path()
         all_games = db.get_all_games(active_only=False)
         selectable = [g for g in all_games if g.get("selectable")]
         areas = [g for g in all_games if g.get("area_enabled")]
@@ -1428,8 +1435,8 @@ class Games(commands.Cog):
             "\n".join(
                 [
                     "🗄️ **GamerHQ Runtime Database**",
-                    f"Path: `{DB_PATH.resolve()}`",
-                    f"Exists: **{'Yes' if DB_PATH.exists() else 'No'}**",
+                    f"Path: `{database_path.resolve()}`",
+                    f"Exists: **{'Yes' if database_path.exists() else 'No'}**",
                     f"Game Library entries: **{len(all_games)}**",
                     f"Selectable games: **{len(selectable)}**",
                     f"DB-enabled areas: **{len(areas)}**",
@@ -2223,7 +2230,8 @@ class Games(commands.Cog):
             )
             return
 
-        channel = self.bot.get_channel(CHOOSE_GAMES_CHANNEL_ID)
+        guild = interaction.guild
+        channel = guild.get_channel(choose_games_channel_id(guild.id)) if guild else None
         if not isinstance(channel, discord.TextChannel):
             await interaction.response.send_message(
                 "❌ The configured choose-your-games channel could not be found. Nothing was changed.",

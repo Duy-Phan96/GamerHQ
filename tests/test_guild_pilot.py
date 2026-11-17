@@ -160,6 +160,36 @@ def test_backup_retention_keeps_only_completed_receipts_eligible(pilot, tmp_path
     assert all(record["restore"] == "PASS" for record in evidence["tenantRestores"])
 
 
+def test_backup_budget_preserves_existing_batches_and_rejects_low_disk(pilot, tmp_path):
+    store, _, _ = pilot
+    retained = [tmp_path / f"tenant-pilot-existing-{index}" for index in range(14)]
+    for batch in retained:
+        batch.mkdir()
+    with pytest.raises(PermissionError, match="retention limit"):
+        retain(store, tmp_path, tmp_path)
+    assert sorted(tmp_path.glob("tenant-pilot-*")) == sorted(retained)
+    retained.pop().rmdir()
+    with patch("tools.staging_tenant_rehearsal.shutil.disk_usage", return_value=SimpleNamespace(free=0)):
+        with pytest.raises(PermissionError, match="storage budget"):
+            retain(store, tmp_path, tmp_path)
+    assert sorted(tmp_path.glob("tenant-pilot-*")) == sorted(retained)
+
+
+def test_secondary_selector_cannot_read_primary_configuration_or_mappings(pilot):
+    from services import game_service
+
+    store, _, _ = pilot
+    with patch.object(game_service.config, "GUILD_ID", 1), patch.object(game_service, "CHOOSE_GAMES_CHANNEL_ID", 111):
+        with store.scope(1):
+            assert game_service.choose_games_channel_id(1) == 111
+        with store.scope(2):
+            assert game_service.choose_games_channel_id(2) == 0
+            db.set_setting("managed_channel:2:choose-your-games", "222")
+            assert game_service.choose_games_channel_id(2) == 222
+            with pytest.raises(PermissionError, match="another guild"):
+                game_service.choose_games_channel_id(1)
+
+
 def test_uncached_owner_envelope_and_modal_use_same_verified_guild(pilot):
     _, guilds, routes = pilot
     guild = guilds[2]
@@ -229,6 +259,37 @@ def test_gateway_modal_constructs_a_real_uncached_owner_member(pilot):
         assert guild.get_member(21) is None
 
     asyncio.run(scenario())
+
+
+def test_bot_channel_lookups_hold_cross_tenant_and_unbound_results(pilot):
+    from bot import GamerHQBot
+
+    _, guilds, routes = pilot
+    bot = GamerHQBot()
+    channel = SimpleNamespace(guild=guilds[1])
+
+    async def verify():
+        with (
+            patch.object(discord.Client, 'get_channel', return_value=channel),
+            patch.object(discord.Client, 'fetch_channel', new_callable=AsyncMock, return_value=channel) as fetch,
+        ):
+            assert bot.get_channel(99) is channel
+            assert await bot.fetch_channel(99) is channel
+            bot.guild_routes = routes
+            proof(routes)
+            assert bot.get_channel(99) is None
+            with pytest.raises(GuildAdmissionError, match='scope'):
+                await bot.fetch_channel(99)
+            assert fetch.await_count == 1
+            with routes.scope(2):
+                assert bot.get_channel(99) is None
+                with pytest.raises(GuildAdmissionError, match='does not belong'):
+                    await bot.fetch_channel(99)
+            with routes.scope(1):
+                assert bot.get_channel(99) is channel
+                assert await bot.fetch_channel(99) is channel
+
+    asyncio.run(verify())
 
 
 def test_revoke_cancels_in_flight_work_and_rolls_back_uncommitted_sql(pilot):

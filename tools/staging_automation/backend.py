@@ -72,9 +72,12 @@ class HostBackend:
         self.storage_budget()
         proof = verify_remote(self.profile, approved_pilot=approved)
         primary = int(self.profile['stagingGuildId'])
-        source = Path(self.profile['database'])
+        source = Path(self.profile['database']).resolve(strict=True)
+        tenant_directory = source.parent / 'tenants'
+        if tenant_directory.is_symlink():
+            raise Denied('PILOT_TENANT_PATH_REJECTED')
         store = GuildTenantStore(primary_guild=primary, primary_database=source,
-                                 tenant_directory=source.parent / 'tenants',
+                                 tenant_directory=tenant_directory,
                                  additional_guilds=tuple(guild for guild in approved if guild != primary))
         return {**proof, **retain(store, self.profile['backupRoot'], self.profile['workRoot'])}
 

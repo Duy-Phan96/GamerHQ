@@ -22,6 +22,27 @@ class GamerHQBot(commands.Bot):
         guild = self.get_guild(tenant.guild_id) if tenant else None
         return [guild] if guild else []
 
+    def get_channel(self, channel_id, /):
+        channel = super().get_channel(channel_id)
+        if getattr(self, 'guild_routes', None) is None:
+            return channel
+        tenant = tenants.current()
+        guild = getattr(channel, 'guild', None)
+        return channel if tenant and guild and guild.id == tenant.guild_id else None
+
+    async def fetch_channel(self, channel_id, /):
+        if getattr(self, 'guild_routes', None) is None:
+            return await super().fetch_channel(channel_id)
+        tenant = tenants.current()
+        if tenant is None:
+            raise GuildAdmissionError('Channel lookup requires a verified tenant scope.')
+        channel = await super().fetch_channel(channel_id)
+        current = tenants.current()
+        guild = getattr(channel, 'guild', None)
+        if current != tenant or guild is None or guild.id != tenant.guild_id:
+            raise GuildAdmissionError('Channel does not belong to this guild.')
+        return channel
+
     def _get_state(self, **options):
         return GuildConnectionState(dispatch=self.dispatch, handlers=self._handlers, hooks=self._hooks,
                                     http=self.http, **options)
