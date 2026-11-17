@@ -107,16 +107,24 @@ take effect. The preview receipt does not authorize activation or a live restore
 
 ### Activation preparation and cutover
 
-The proposed `tenant-pilot-activation-prepare` operation requires a separately
+The `tenant-pilot-activation-prepare` operation requires a separately
 enrolled candidate commit, Linux CI run, archive checksum, and workflow digest.
-It uses the latest private controller preview from the protected workflow and
-checks that an owner approved that run on `main`. It requires the preview to be
-within the existing one-hour live verification window. It checks ownership,
+The existing enrollment installer takes `--activation-preparation` and the
+distinct preparation-only owner approval. It verifies the currently enrolled
+controller and both protected workflow files on `main`.
+
+One owner-approved run takes the operation lock and creates fresh preview
+evidence, including both backups and restore probes, before building. The
+operation never consumes a prior preview. It checks ownership,
 modes, and SHA-256 of the sealed receipt and both backups, then rechecks the
 exact Discord membership and Core permissions. The installed candidate
 dependencies and Event Manager wheel remain those of the approved baseline image.
 The image and exact startup override are checked offline in both pilot and
-primary-only configuration. Preparation never starts the Gateway.
+primary-only configuration. A disposable networkless Compose service rehearses
+the same image stop, switch, and rollback commands with no mounts or credentials.
+The controller then rehashes both backups and confirms the original live
+container is healthy. Evidence must stay within the one-hour window.
+Preparation never starts the Gateway.
 
 Pilot startup verifies the two database schemas read-only, including the
 existing primary. Catalog seeding and schema migrations remain in the

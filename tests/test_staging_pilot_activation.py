@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from database import db, tenants
-from tools.staging_automation.pilot_activation import validate_pin, verified_run
+from tools.staging_automation.pilot_activation import prepare_session, validate_pin
 from tools.staging_automation.policy import Denied, admit, request
 from tools.staging_tenant_rehearsal import PREVIEW_MAX_AGE, retain, verify_activation_checkpoint
 
@@ -58,17 +58,6 @@ def test_activation_source_pin_and_owner_approved_preview_are_required():
     validate_pin(pin)
     with pytest.raises(Denied, match='PILOT_ACTIVATION_PIN_REJECTED'):
         validate_pin({**pin, 'commit': 'main'})
-    run = {'workflow_id': 421593554, 'head_branch': 'main', 'event': 'workflow_dispatch',
-           'conclusion': 'success', 'created_at': '2026-11-17T17:34:00Z'}
-    reviews = [{'state': 'approved', 'user': {'id': 5}, 'environments': [{'name': 'deployment-security'}]}]
-    preview = {'runId': '34', 'backupReceiptSha256': 'c' * 64}
-
-    def read(_, path):
-        return reviews if path.endswith('/approvals') else run
-
-    assert verified_run({'ownerId': '5'}, preview, read=read) > 0
-    with pytest.raises(Denied, match='PILOT_CHECKPOINT_REJECTED'):
-        verified_run({'ownerId': '6'}, preview, read=read)
     with pytest.raises(Denied, match='OPERATION_NOT_ALLOWED'):
         request({'version': 1, 'phase': 'automation', 'operation': 'tenant-pilot-activate'})
     with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
@@ -96,7 +85,7 @@ def test_protected_preparation_builds_and_probes_without_live_apply(checkpoint, 
     from tools.staging_automation import host_promotion, pilot_activation
 
     path, proof, binding, original = checkpoint
-    proof['runId'] = '3'
+    proof.update(state='PILOT_PREVIEW_VERIFIED', gatewayStarted=False, verifiedAt=900)
     source = 'a' * 40
     image = 'sha256:' + 'e' * 64
     policy = {'tenantPilot': binding, 'hostPromotion': {'commit': original['baselineHostCommit']},
@@ -108,10 +97,11 @@ def test_protected_preparation_builds_and_probes_without_live_apply(checkpoint, 
     profile = {'environment': 'staging', 'stagingGuildId': '1', 'stagingBotId': '90', 'productionBotId': '99',
                'productionGuildId': '3', 'service': 'gamerhq-staging', 'database': path / 'primary.sqlite',
                'backupRoot': path, 'releaseFile': release}
-    backend = SimpleNamespace(policy=policy, profile=profile, inspect=lambda: {'Image': original['baselineImage']},
+    backend = SimpleNamespace(policy=policy, profile=profile, inspect=lambda: {'Image': original['baselineImage'], 'Id': 'baseline'},
                               health=lambda: {'state': 'HOST_READY'}, run=Mock(return_value='PASS'),
                               skill=lambda: {'version': '0.1.2', 'state': {'installed': True, 'configured': True, 'enabled': False}})
-    monkeypatch.setattr(pilot_activation, 'verified_run', lambda *a, **k: 900)
+    rollback = Mock()
+    monkeypatch.setattr(pilot_activation, 'rehearse_container_rollback', rollback)
     monkeypatch.setattr(staging_tenant_rehearsal, 'rehearsal_binding', lambda *a: original)
     verify_remote = Mock()
     monkeypatch.setattr(skill_staging, 'verify_remote', verify_remote)
@@ -125,8 +115,17 @@ def test_protected_preparation_builds_and_probes_without_live_apply(checkpoint, 
     result = pilot_activation.prepare(backend, proof, original['baselineImage'], now=1000, read=ci)
     assert result['candidateImage'] == image and result['activationAuthorized'] is False
     assert result['backupReceiptSha256'] == proof['backupReceiptSha256']
+    assert result['containerRollbackRehearsal'] == 'PASS'
+    rollback.assert_called_once_with(backend, original['baselineImage'], image)
     assert verify_remote.call_args.kwargs == {'approved_pilot': (1, 2), 'read_only_artifacts': True}
     calls = [call.args[0] for call in backend.run.call_args_list]
     assert len(calls) == 2
     assert all(argv[:5] == ['docker', 'run', '--rm', '--network', 'none'] and '--volume' not in argv for argv in calls)
     assert '--env' in calls[0] and '--env' not in calls[1]
+
+
+def test_preparation_session_returns_current_permission_failure_without_build():
+    failure = {'state': 'PILOT_CORE_PERMISSIONS_REJECTED', 'missingPermissions': ['pin_messages']}
+    backend = SimpleNamespace(_verify_tenant_pilot=Mock(return_value=failure))
+    assert prepare_session(backend, 'image') is failure
+    backend._verify_tenant_pilot.assert_called_once_with(expected_image='image')

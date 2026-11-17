@@ -1,9 +1,10 @@
 """Protected staging preparation for the exact tenant pilot. No live apply."""
-from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
 import re
+import tempfile
+import time
 
 from .oidc import github
 from .policy import Denied
@@ -20,29 +21,45 @@ def validate_pin(value):
         raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
 
 
-def verified_run(policy, preview, *, read):
-    run_id = preview.get('runId')
-    digest = preview.get('backupReceiptSha256')
-    if (not isinstance(run_id, str) or not re.fullmatch(r'[1-9][0-9]{0,19}', run_id)
-            or not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)):
-        raise Denied('PILOT_CHECKPOINT_REJECTED')
-    run = read(policy, '/actions/runs/' + run_id)
-    if ((run.get('workflow_id'), run.get('head_branch'), run.get('event'), run.get('conclusion'))
-            != (421593554, 'main', 'workflow_dispatch', 'success')):
-        raise Denied('PILOT_CHECKPOINT_REJECTED')
-    reviews = read(policy, '/actions/runs/' + run_id + '/approvals')
-    if not any(row.get('state') == 'approved' and str(row.get('user', {}).get('id')) == policy['ownerId']
-               and any(env.get('name') == 'deployment-security' for env in row.get('environments', ())) for row in reviews):
-        raise Denied('PILOT_CHECKPOINT_REJECTED')
-    # Older preview receipts lack a timestamp. Use the start of the protected
-    # run as a conservative lower bound for their verification time.
-    try:
-        start = datetime.fromisoformat(run['created_at'].replace('Z', '+00:00'))
-        if start.tzinfo is None:
-            raise ValueError
-        return int(start.timestamp())
-    except (KeyError, TypeError, ValueError, AttributeError):
-        raise Denied('PILOT_CHECKPOINT_REJECTED') from None
+def prepare_session(backend, approved_image):
+    """Called under the protected operation lock after owner-approved OIDC."""
+    preview = backend._verify_tenant_pilot(expected_image=approved_image)
+    if preview.get('state') != 'PILOT_PREVIEW_VERIFIED':
+        return preview
+    return prepare(backend, preview, approved_image, now=int(time.time()))
+
+
+def rehearse_container_rollback(backend, baseline, candidate):
+    """Run the real Compose switch and rollback against an isolated service."""
+    from hosts.gamerhq.skill_deployment_docker import DockerSkillDeployment
+
+    with tempfile.TemporaryDirectory(dir=backend.profile['workRoot'], prefix='pilotrehearsal') as directory:
+        root = Path(directory)
+        name = root.name
+        compose = root / 'compose.json'
+        compose.write_text(json.dumps({'name': name, 'services': {'probe': {
+            'image': baseline, 'container_name': name, 'network_mode': 'none', 'read_only': True,
+            'user': '10001:10001', 'restart': 'no', 'cap_drop': ['ALL'],
+            'security_opt': ['no-new-privileges:true'], 'pids_limit': 32, 'mem_limit': '128m',
+            'entrypoint': ['python', '-I', '-B', '-c'], 'command': ['import time; time.sleep(300)'],
+        }}}))
+        docker = DockerSkillDeployment(base_image=baseline, sdk_wheel=root / 'unused.whl',
+                                       sdk_version='', sdk_sha256='', compose_file=compose,
+                                       service='probe', container=name, work_root=root, run=backend.run)
+        try:
+            docker.activate(baseline)
+            if docker.current_image() != baseline:
+                raise Denied('OFFLINE_PROBE_FAILED')
+            docker.stop()
+            docker.activate(candidate)
+            if docker.current_image() != candidate:
+                raise Denied('OFFLINE_PROBE_FAILED')
+            docker.stop()
+            docker.activate(baseline)
+            if docker.current_image() != baseline:
+                raise Denied('OFFLINE_PROBE_FAILED')
+        finally:
+            backend.run(['docker', 'compose', '--file', str(compose), 'down', '--timeout', '5'])
 
 
 def prepare(backend, preview, approved_image, *, now, read=github):
@@ -50,13 +67,16 @@ def prepare(backend, preview, approved_image, *, now, read=github):
     from tools.staging_tenant_rehearsal import approved_binding, rehearsal_binding, startup_override, verify_activation_checkpoint
     from .host_promotion import build_reviewed_overlay, require_baseline_skill, require_runtime_lifecycle, retained_state
 
+    started = time.monotonic()
     policy = backend.policy
     pin = policy['tenantPilotActivation']
     validate_pin(pin)
     baseline = policy['hostPromotion']['commit']
     profile = {**backend.profile, 'tenantPilot': policy['tenantPilot']}
     cohort = approved_binding(profile, policy)
-    verified_at = verified_run(policy, preview, read=read)
+    if preview.get('state') != 'PILOT_PREVIEW_VERIFIED' or preview.get('gatewayStarted') is not False:
+        raise Denied('PILOT_CHECKPOINT_REJECTED')
+    verified_at = preview.get('verifiedAt')
     candidate_ci = read(policy, '/actions/runs/' + pin['ciRun'])
     if (candidate_ci.get('workflow_id'), candidate_ci.get('head_sha'), candidate_ci.get('conclusion')) != (361334574, pin['commit'], 'success'):
         raise Denied('OFFLINE_PROBE_FAILED')
@@ -66,12 +86,15 @@ def prepare(backend, preview, approved_image, *, now, read=github):
     actual = rehearsal_binding(profile, policy, container)
     if actual['baselineHostCommit'] != baseline:
         raise Denied('PILOT_BASELINE_CHANGED')
-    try:
-        verify_activation_checkpoint(profile['backupRoot'], preview, policy['tenantPilot'], actual,
-                                     verified_at=verified_at, now=now)
-    except (ValueError, OSError) as error:
-        code = str(error)
-        raise Denied(code if code in {'PILOT_PREVIEW_EXPIRED', 'PILOT_BASELINE_CHANGED'} else 'PILOT_CHECKPOINT_REJECTED') from None
+    def recheck(checked_at):
+        try:
+            verify_activation_checkpoint(profile['backupRoot'], preview, policy['tenantPilot'], actual,
+                                         verified_at=verified_at, now=checked_at)
+        except (ValueError, OSError) as error:
+            code = str(error)
+            raise Denied(code if code in {'PILOT_PREVIEW_EXPIRED', 'PILOT_BASELINE_CHANGED'} else 'PILOT_CHECKPOINT_REJECTED') from None
+
+    recheck(now)
     verify_remote(profile, approved_pilot=cohort, read_only_artifacts=True)
     release = json.loads(Path(profile['releaseFile']).read_text())
     runtime = backend.skill()
@@ -97,6 +120,11 @@ def prepare(backend, preview, approved_image, *, now, read=github):
     argv = [candidate, '-I', '-B', '-c', main, PILOT_ENV, profile['stagingGuildId']]
     if backend.run([*probe, '--env', f'{PILOT_ENV}={binding}', *argv, *map(str, cohort)]) != 'PASS' or backend.run([*probe, *argv]) != 'PASS':
         raise Denied('OFFLINE_PROBE_FAILED')
+    rehearse_container_rollback(backend, approved_image, candidate)
+    if backend.inspect()['Id'] != container['Id'] or backend.health()['state'] != 'HOST_READY':
+        raise Denied('PILOT_BASELINE_CHANGED')
+    recheck(now + int(time.monotonic() - started))
     return {'state': 'PILOT_ACTIVATION_PREPARED', 'candidateCommit': pin['commit'], 'candidateImage': candidate,
-            'startupOverrideSha256': hashlib.sha256(canonical).hexdigest(), 'previewRun': preview['runId'],
+            'startupOverrideSha256': hashlib.sha256(canonical).hexdigest(), 'containerRollbackRehearsal': 'PASS',
+            'preview': preview,
             'backupReceiptSha256': preview['backupReceiptSha256'], 'gatewayStarted': False, 'activationAuthorized': False}

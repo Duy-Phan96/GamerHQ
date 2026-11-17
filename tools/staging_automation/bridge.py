@@ -79,12 +79,14 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             save(state)
             return result
         if operation == 'tenant-pilot-activation-prepare':
-            if 'tenantPilotActivation' not in policy or not state.get('tenantPilotPreview'):
+            if 'tenantPilotActivation' not in policy:
                 raise Denied('PILOT_CHECKPOINT_REJECTED')
             state.pop('tenantPilotActivationPrepared', None)
+            state.pop('tenantPilotPreview', None)
             save(state)
-            result = backend.prepare_tenant_pilot_activation(state['tenantPilotPreview'], state['approvedImage'], now=now)
-            state['tenantPilotActivationPrepared'] = {**result, 'runId': claims['run_id']}
+            result = backend.prepare_tenant_pilot_activation(state['approvedImage'])
+            if result.get('state') == 'PILOT_ACTIVATION_PREPARED':
+                state['tenantPilotActivationPrepared'] = {**result, 'runId': claims['run_id']}
             save(state)
             return result
         if operation in WEB:

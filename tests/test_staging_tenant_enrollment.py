@@ -48,6 +48,23 @@ def test_tenant_enrollment_fails_closed_on_changed_live_baseline(target, key, va
         enrollment.updated_policy(packet[0], '1' * 40, b'workflow', packet[1], packet[2])
 
 
+def test_preparation_upgrade_keeps_existing_pins_and_requires_enrolled_preview():
+    policy, profile, state = fixture()
+    policy.update(controllerCommit=enrollment.ENROLLED_PREVIEW, tenantPilot=enrollment.BINDING,
+                  tenantPilotWorkflowSha256=enrollment.PREVIEW_DIGEST)
+    commit = 'b' * 40
+    workflow = b'reviewed preparation'
+    updated = enrollment.updated_policy(policy, commit, workflow, profile, state, preparation=True)
+    assert {key: val for key, val in updated.items() if key not in {'controllerCommit', 'tenantPilotActivation'}} == {
+        key: val for key, val in policy.items() if key != 'controllerCommit'}
+    assert updated['tenantPilotActivation']['commit'] == enrollment.ACTIVATION_CANDIDATE
+    assert updated['tenantPilotActivation']['archiveSha256'] == enrollment.ACTIVATION_ARCHIVE
+    assert enrollment.updated_policy(updated, commit, workflow, profile, state, preparation=True) == updated
+    with pytest.raises(ValueError, match='PREVIEW_POLICY_CHANGED'):
+        enrollment.updated_policy({**policy, 'tenantPilotWorkflowSha256': '0' * 64},
+                                  commit, workflow, profile, state, preparation=True)
+
+
 def test_offline_secondary_provision_preserves_primary_and_is_repeatable(tmp_path, monkeypatch):
     from database import db
     from services.tenant_routing import pilot_environment

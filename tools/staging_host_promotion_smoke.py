@@ -42,6 +42,9 @@ asyncio.run(check())
             '--entrypoint', 'python', image, '-c', probe])
         assert all(json.loads(result)[check] == 'PASS' for check in ('compactEditor', 'configurationPreview', 'startupImports'))
         assert source_commit(backend, image) == COMMIT
+        from tools.staging_automation.pilot_activation import rehearse_container_rollback
+        rehearse_container_rollback(backend, args.base_image, image)
+        print('PILOT_COMPOSE_ROLLBACK_PASS')
         print(json.dumps({'hostCommit': COMMIT, 'archiveSha256': ARCHIVE_SHA256, 'overlay': 'PASS',
             'compactEditor': 'PASS', 'configurationPreview': 'PASS', 'startupImports': 'PASS', 'gatewayStarted': False, 'credentialsUsed': False, 'databaseMounted': False}))
 

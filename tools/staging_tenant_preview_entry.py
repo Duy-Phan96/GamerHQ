@@ -17,8 +17,8 @@ def main():
         if packet.get('operation', 'preview') == 'preview':
             result = backend._verify_tenant_pilot(expected_image=packet['image'])
         elif packet['operation'] == 'prepare-activation':
-            from tools.staging_automation.pilot_activation import prepare
-            result = prepare(backend, packet['preview'], packet['image'], now=packet['now'])
+            from tools.staging_automation.pilot_activation import prepare_session
+            result = prepare_session(backend, packet['image'])
         else:
             raise Denied('OPERATION_NOT_ALLOWED')
     except Denied as error:
