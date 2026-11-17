@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # The historical installer verifies its own bytes and allowed source diff.
-          ref: 2cb9adc79d42b95bf07ebd81600550be358cef11
+          ref: b2d4de3908c3a3ea6bdaa94c447ec72c4f702f0c
           path: reviewed-worker-revision
       - uses: actions/checkout@v4
         with:
@@ -58,4 +58,4 @@ jobs:
         run: sudo env GITHUB_ACTIONS=true python3 tools/staging_buildx_smoke.py
       - name: Verify reviewed source revision and real restricted SSH error reporting
         working-directory: reviewed-worker-revision
-        run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_worker_revision_smoke --commit 2cb9adc79d42b95bf07ebd81600550be358cef11
+        run: sudo env GITHUB_ACTIONS=true python3 -m tools.staging_worker_revision_smoke --commit b2d4de3908c3a3ea6bdaa94c447ec72c4f702f0c
