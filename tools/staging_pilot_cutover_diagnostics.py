@@ -1,6 +1,7 @@
 """Owner-run read-only receipt for the exact enrolled two-guild cutover."""
 from contextlib import closing
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -92,6 +93,34 @@ def health_audit(uid):
         return {'state': 'COLLECTED', 'events': events[-20:]}
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
         return {'state': 'UNAVAILABLE'}
+
+
+def health_credential_matches(profile, uid, container_setting):
+    """Compare only the API credential across the protected configuration and stopped container."""
+    key = 'GAMERHQ_STAGING_WEB_API_SECRET'
+    expected_bot_file = CONTROL / 'settings/bot.env'
+    if (profile.get('healthSecretEnv') != key or profile.get('botEnvFile') != str(expected_bot_file)
+            or (CONTROL / 'settings').resolve(strict=True) != CONTROL / 'settings'):
+        return {'state': 'PROTECTED_BINDING_REJECTED'}
+
+    def read_selected(path, name):
+        key_prefix = (name + '=').encode()
+        matches = [line[len(key_prefix):].strip().strip(bytes((34, 39))) for line in protected(path, uid, 0o600).splitlines()
+                   if line.startswith(key_prefix)]
+        return matches[0] if len(matches) == 1 and len(matches[0]) >= 32 else b''
+
+    try:
+        worker = read_selected(CONTROL / 'settings/worker.env', key)
+        bot = read_selected(expected_bot_file, 'GAMERHQ_WEB_API_SECRET')
+        lines = container_setting.splitlines()
+        prefix = 'GAMERHQ_WEB_API_SECRET='
+        value = lines[0][len(prefix):].encode() if len(lines) == 1 and lines[0].startswith(prefix) else b''
+        return {'state': 'COLLECTED', 'workerCredentialPresent': bool(worker), 'botFileCredentialPresent': bool(bot),
+                'containerCredentialPresent': len(value) >= 32,
+                'workerMatchesBotFile': bool(worker and bot and hmac.compare_digest(worker, bot)),
+                'workerMatchesContainer': bool(worker and value and hmac.compare_digest(worker, value))}
+    except (OSError, ValueError):
+        return {'state': 'CREDENTIAL_MATCH_UNAVAILABLE'}
 
 
 def inspect_database(path, *, secondary=False, sealed=False):
@@ -277,6 +306,11 @@ def collect():
             prefix = 'GAMERHQ_STAGING_TENANT_PILOT='
             template = '{{range .Config.Env}}{{if eq (printf "%.' + str(len(prefix)) + 's" .) "' + prefix + '"}}{{println .}}{{end}}{{end}}'
             binding = docker('inspect', '--format', template, 'gamerhq-staging-bot')
+            secret_prefix = 'GAMERHQ_WEB_API_SECRET='
+            secret_selector = ('{{range .Config.Env}}{{if eq (printf "%.' + str(len(secret_prefix)) +
+                               's" .) "' + secret_prefix + '"}}{{println .}}{{end}}{{end}}')
+            credentials = health_credential_matches(profile, uid, docker('inspect', '--format', secret_selector,
+                                                                       'gamerhq-staging-bot'))
             api_env = set(docker('inspect', '--format',
                                  '{{range .Config.Env}}{{if or (eq . "GAMERHQ_WEB_API_ENABLED=true") '
                                  '(eq . "GAMERHQ_WEB_API_HOST=0.0.0.0") (eq . "GAMERHQ_WEB_API_PORT=8080")}}'
@@ -295,6 +329,7 @@ def collect():
                          'configuredAdmission': mode, 'attachedNetworkPresent': 'gamerhq-staging-private' in observed['networks'],
                          'healthPortBindingExpected': observed['portBindings'] == expected_port,
                          'healthPortPublishedPorts': len(observed['portBindings'] or {}),
+                         'healthCredentialBinding': credentials,
                          'healthListenerEnvironmentExpected': api_env == {
                              'GAMERHQ_WEB_API_ENABLED=true', 'GAMERHQ_WEB_API_HOST=0.0.0.0', 'GAMERHQ_WEB_API_PORT=8080'},
                          'selinuxLevelAccepted': not level or bool(re.fullmatch(r's0:c[0-9]+,c[0-9]+', level)),

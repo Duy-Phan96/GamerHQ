@@ -403,7 +403,11 @@ def test_healthy_fallback_is_stopped_if_post_boot_verification_fails(tmp_path, m
     def health():
         if scenario == 'host-api-health':
             from urllib.error import HTTPError
-            raise HTTPError('http://127.0.0.1:18080', 503, 'fixture', None, None)
+            from tools.staging_health import verified_skill_health
+            monkeypatch.setenv('TEST_STAGING_HEALTH_SECRET', 'fixture')
+            request = Mock(side_effect=HTTPError('http://127.0.0.1:18080', 503, 'fixture', None, None))
+            return verified_skill_health({'healthSecretEnv': 'TEST_STAGING_HEALTH_SECRET',
+                                          'stagingGuildId': '1'}, request)
         return {'state': 'HOST_READY'}
 
     fallback.backend = SimpleNamespace(inspect=lambda: container, run=Mock(),
@@ -439,7 +443,9 @@ def test_healthy_fallback_is_stopped_if_post_boot_verification_fails(tmp_path, m
         with pytest.raises(ConfirmationFailure, match='AUTOMATION_OPERATION_FAILED') as error:
             fallback.rollback(record)
         assert error.value.stage == 'HOST_API_HEALTH'
-        assert fallback.save.call_args.kwargs == {'rollbackFailedCheck': 'HOST_API_HEALTH'}
+        assert fallback.save.call_args.kwargs == {
+            'rollbackFailedCheck': 'HOST_API_HEALTH',
+            'rollbackHealthFailure': {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 503}}
         assert operations == ['read-only-attestation', 'stop']
     else:
         assert fallback.rollback(record)['phase'] == 'PILOT_ROLLED_BACK'
@@ -463,3 +469,23 @@ def test_pilot_storage_attestation_never_remounts_when_checked_in_container(tmp_
     run.assert_called_once()
     assert run.call_args.args[0] == [
         'docker', 'compose', '--file', profile['composeFile'], '--profile', 'live-acceptance', 'config', '--quiet']
+
+
+def test_read_only_health_credential_comparison_returns_only_booleans(tmp_path, monkeypatch):
+    from tools import staging_pilot_cutover_diagnostics as diagnostic
+
+    monkeypatch.setattr(diagnostic, 'CONTROL', tmp_path)
+    settings = tmp_path / 'settings'
+    settings.mkdir()
+    bot = settings / 'bot.env'
+    secret = 'synthetic-value-for-health-check-12345'
+    profile = {'botEnvFile': str(bot), 'healthSecretEnv': 'GAMERHQ_STAGING_WEB_API_SECRET'}
+    monkeypatch.setattr(diagnostic, 'protected',
+                        lambda path, *args: (('GAMERHQ_WEB_API_SECRET' if path == bot else profile['healthSecretEnv'])
+                                            + '=' + secret + '\n').encode())
+    reply = diagnostic.health_credential_matches(profile, 1002, 'GAMERHQ_WEB_API_SECRET=' + secret)
+    assert reply == {'state': 'COLLECTED', 'workerCredentialPresent': True, 'botFileCredentialPresent': True,
+                     'containerCredentialPresent': True, 'workerMatchesBotFile': True, 'workerMatchesContainer': True}
+    assert secret not in json.dumps(reply)
+    assert diagnostic.health_credential_matches(profile, 1002, 'GAMERHQ_WEB_API_SECRET=' + 'X' * 40)[
+        'workerMatchesContainer'] is False

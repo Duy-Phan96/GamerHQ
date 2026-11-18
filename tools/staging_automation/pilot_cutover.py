@@ -21,6 +21,13 @@ class ConfirmationFailure(Denied):
     def __init__(self, stage, error):
         super().__init__(error.code if isinstance(error, Denied) else 'AUTOMATION_OPERATION_FAILED')
         self.stage = stage
+        self.detail = {}
+        if stage == 'HOST_API_HEALTH':
+            from tools.staging_health import HostHealthFailure
+            if isinstance(error, HostHealthFailure):
+                self.detail['reason'] = error.reason
+                if type(error.status) is int and 400 <= error.status <= 599:
+                    self.detail['httpStatus'] = error.status
 
 
 @contextmanager
@@ -44,9 +51,17 @@ def journal_status(profile):
         with path.open('rb') as stream:
             record = json.loads(stream.read(16384))
         phase = record.get('phase')
+        details = record.get('rollbackHealthFailure')
+        public = {}
+        if isinstance(details, dict) and re.fullmatch(r'HEALTH_[A-Z_]{3,45}', str(details.get('reason', ''))):
+            public['reason'] = details['reason']
+            status = details.get('httpStatus')
+            if type(status) is int and 400 <= status <= 599:
+                public['httpStatus'] = status
         return {'phase': phase if phase in PENDING | TERMINAL else 'UNKNOWN',
                 **{key: record[key] for key in ('failedCheck', 'rollbackFailedCheck')
-                   if record.get(key) in CONFIRMATION_CHECKS}}
+                   if record.get(key) in CONFIRMATION_CHECKS},
+                **({'rollbackHealthFailure': public} if public else {})}
     except (OSError, ValueError, TypeError, AttributeError):
         return {'phase': 'UNAVAILABLE'}
 
@@ -216,7 +231,8 @@ class PilotCutover:
         except Exception as error:
             try:
                 if isinstance(error, ConfirmationFailure):
-                    self.save(record, 'ROLLING_BACK', rollbackFailedCheck=error.stage)
+                    self.save(record, 'ROLLING_BACK', rollbackFailedCheck=error.stage,
+                              **({'rollbackHealthFailure': error.detail} if error.detail else {}))
             finally:
                 self.compose('stop', '--timeout', '30')
             raise
