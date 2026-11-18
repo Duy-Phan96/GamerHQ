@@ -20,7 +20,19 @@ def main():
             from tools.staging_automation.pilot_activation import prepare_session
             result = prepare_session(backend, packet['image'])
         elif packet['operation'] == 'cutover':
+            import fcntl
+            from pathlib import Path
+            import stat
             from tools.staging_automation.pilot_cutover import PilotCutover
+            # Reusing the inherited locked open-file description also keeps
+            # Compose in this operation if its parent is interrupted.
+            backend.operation_lock = packet['lockFd']
+            info = os.fstat(backend.operation_lock)
+            expected = (Path(backend.profile['workRoot']) / 'operation.lock').lstat()
+            if (not os.path.samestat(info, expected) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600):
+                raise Denied('CONCURRENT_OPERATION_REJECTED')
+            fcntl.flock(backend.operation_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             result = PilotCutover(backend, packet['prepared'], packet['image'], packet['runId']).run()
         else:
             raise Denied('OPERATION_NOT_ALLOWED')

@@ -88,7 +88,8 @@ class PilotCutover:
             path = self.path.with_name('tenant-pilot-compose.json')
             write_record(path, override)
             cmd.extend(['--file', str(path)])
-        self.backend.run([*cmd, *args, self.profile['service']], timeout=90)
+        self.backend.run([*cmd, *args, self.profile['service']], timeout=90,
+                         pass_fds=(self.backend.operation_lock,))
 
     def attest(self):
         from hosts.gamerhq.skill_staging import verify_remote
@@ -223,6 +224,8 @@ class PilotCutover:
             verify_activation_checkpoint(self.profile['backupRoot'], preview, self.policy['tenantPilot'],
                                          rehearsal_binding(self.profile, self.policy, current),
                                          verified_at=preview['verifiedAt'], now=int(time.time()))
+            if preparation_state(self.prepared, pin, int(time.time())) != 'FRESH':
+                raise Denied('PILOT_PREVIEW_EXPIRED')
             record = self.save({'binding': self.binding, 'baselineContainer': current['Id'],
                                 'activationRun': self.run_id}, 'STOPPING')
             try:

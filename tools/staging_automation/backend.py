@@ -73,7 +73,7 @@ class HostBackend:
     def cutover_tenant_pilot(self, expected_image, prepared, run_id):
         if self.operation_lock is None:
             raise Denied('CONCURRENT_OPERATION_REJECTED')
-        return self._pilot_source('cutover', expected_image, prepared=prepared, runId=run_id)
+        return self._pilot_source('cutover', expected_image, prepared=prepared, runId=run_id, lockFd=self.operation_lock)
 
     def _pilot_source(self, operation, expected_image, **evidence):
         bundle = Path(__file__).resolve().parents[1] / 'pilot-source'
