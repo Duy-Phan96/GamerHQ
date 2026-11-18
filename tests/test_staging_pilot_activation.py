@@ -724,3 +724,44 @@ def test_api_repair_source_is_only_the_reviewed_transport_file():
     archive = subprocess.check_output(['git', 'archive', '--format=tar', repair.PIN['commit']])
     assert hashlib.sha256(archive).hexdigest() == repair.PIN['archiveSha256']
     assert enrollment.API_REPAIR_PIN == repair.PIN
+
+
+def test_recovery_api_overlay_preserves_original_journal_binding_and_blocks_activation(monkeypatch):
+    from tools import staging_tenant_rehearsal
+    from tools.staging_automation import recovery_api_repair as repair
+    from tools.staging_automation.pilot_cutover import PilotCutover
+
+    original = {'fallbackImage': repair.PIN['parentImage']}
+    checkpoint = {'backupBatch': 'retained', 'backupReceiptSha256': 'f' * 64}
+    record = {'phase': 'ROLLING_BACK', 'checkpoint': checkpoint, 'binding': original,
+              'activationRun': '44283427505'}
+    proof = {'image': 'sha256:' + 'a' * 64, 'commit': repair.PIN['commit'], 'apiSha256': repair.PIN['apiSha256']}
+    transaction = object.__new__(PilotCutover)
+    transaction.policy = {'primaryRecoveryApiRepair': repair.PIN}
+    transaction.profile = {}
+    transaction.backend = object()
+    transaction.fallback = repair.PIN['parentImage']
+    transaction.verify_checkpoint = Mock()
+    transaction.load = lambda: record
+    def save(value, phase, **evidence):
+        record.update(phase=phase, **evidence)
+        return dict(record)
+    transaction.save = save
+    def rollback(value):
+        assert transaction.fallback == proof['image']
+        assert transaction.original_fallback == repair.PIN['parentImage']
+        assert value['binding'] == original
+        return save(value, 'PILOT_ROLLED_BACK')
+    transaction.rollback = rollback
+    prepare = Mock(return_value=proof)
+    monkeypatch.setattr(repair, 'prepare', prepare)
+    monkeypatch.setattr(staging_tenant_rehearsal, 'startup_override',
+                        lambda profile, policy, image, *, primary_only: {'image': image, 'primaryOnly': primary_only})
+    result = transaction.run(recovery_only=True)
+    assert result['state'] == 'PILOT_ROLLED_BACK' and result['recoveryVerified'] is True
+    assert result['recoveryHostCommit'] == proof['commit'] and result['activationAuthorized'] is False
+    assert record['binding'] == original and record['checkpoint'] == checkpoint
+    assert transaction.fallback_override['primaryOnly'] is True
+    with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
+        transaction.run(recovery_only=False)
+    assert prepare.call_count == 1
