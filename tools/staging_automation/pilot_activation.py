@@ -9,11 +9,11 @@ import time
 from .oidc import github
 from .policy import Denied
 
+PREVIEW_MAX_AGE = 3600  # Same lifetime as live Staging verification.
+
 
 def preparation_state(evidence, pin, now):
     """Compute expiry from the live verification time, never the run completion time."""
-    from tools.staging_tenant_rehearsal import PREVIEW_MAX_AGE
-
     if not isinstance(evidence, dict) or evidence.get('state') != 'PILOT_ACTIVATION_PREPARED':
         return 'MISSING'
     preview = evidence.get('preview')

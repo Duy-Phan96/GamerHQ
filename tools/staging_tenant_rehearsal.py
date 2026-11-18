@@ -13,13 +13,13 @@ import tempfile
 
 from database.tenants import GuildTenantStore
 from tools.backup_database import backup_database
+from tools.staging_automation.pilot_activation import PREVIEW_MAX_AGE
 
 
 _RETAINED_BATCH_LIMIT = 14
 _MINIMUM_FREE_BYTES = 1024**3
 _TENANT_DATABASE_LIMIT = 256 * 1024**2
 _CONTAINER_SNAPSHOT_LIMIT = 16 * 1024**2
-PREVIEW_MAX_AGE = 3600  # Same lifetime as live Staging verification.
 
 
 def _digest(path):

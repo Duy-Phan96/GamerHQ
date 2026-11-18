@@ -306,3 +306,33 @@ def test_cutover_requires_enrolled_workflow_and_holds_legacy_operations(tmp_path
     backend = SimpleNamespace(profile={'workRoot': tmp_path})
     with pytest.raises(Denied, match='OPERATION_NOT_ALLOWED'):
         execute('challenge', {'operation': 'restart'}, {'tenantPilotCutover': {}}, {}, backend, Mock(), now=1)
+
+
+def test_cutover_status_runs_with_only_the_installed_bridge_overlay(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path('tools/staging_automation')
+    overlay = tmp_path / 'staging_automation'
+    overlay.mkdir()
+    for name in ('__init__.py', 'bridge.py', 'oidc.py', 'policy.py', 'pilot_activation.py'):
+        shutil.copyfile(root / name, overlay / name)
+    script = """
+import json, sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+from staging_automation.bridge import execute
+assert not any(k.startswith("tools.") for k in sys.modules)
+policy = {'tenantPilotActivation': {}, 'tenantPilotCutover': {}, 'controllerCommit': 'controller',
+          'legacyWorkerCommit': 'worker', 'publicKeySha256': 'public', 'limits': {}}
+backend = SimpleNamespace(profile={'workRoot': sys.argv[1]})
+print(json.dumps(execute('status', None, policy, {}, backend, lambda _: None, now=1)))
+"""
+    process = subprocess.run([sys.executable, '-I', '-c', script, str(tmp_path)], cwd=tmp_path,
+                             capture_output=True, text=True, check=True)
+    result = json.loads(process.stdout)
+    assert result['tenantPilotCutoverEnrolled'] is True
+    assert result['tenantPilotCutoverJournal'] is False
+    assert result['tenantPilotPreparationState'] == 'MISSING'

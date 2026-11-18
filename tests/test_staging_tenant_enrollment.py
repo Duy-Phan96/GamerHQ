@@ -102,3 +102,23 @@ def test_cutover_enrollment_pins_exact_baseline_fallback_and_preparation():
     with pytest.raises(ValueError, match='PREPARATION_POLICY_CHANGED'):
         enrollment.updated_policy(policy, source, workflow, {**profile, 'baseImage': wrong},
                                   {**state, 'approvedImage': wrong}, cutover=True)
+
+
+def test_cutover_status_repair_preserves_the_enrolled_workflow_and_pins(monkeypatch):
+    policy, profile, state = fixture()
+    profile['baseImage'] = state['approvedImage'] = enrollment.BASELINE_IMAGE
+    workflow = b'registered cutover'
+    digest = hashlib.sha256(workflow).hexdigest()
+    monkeypatch.setattr(enrollment, 'CUTOVER_DIGEST', digest)
+    policy.update(controllerCommit=enrollment.ENROLLED_CUTOVER, tenantPilot=enrollment.BINDING,
+                  tenantPilotWorkflowSha256=enrollment.PREVIEW_DIGEST,
+                  tenantPilotActivation={'commit': enrollment.ACTIVATION_CANDIDATE,
+                                         'archiveSha256': enrollment.ACTIVATION_ARCHIVE,
+                                         'ciRun': enrollment.ACTIVATION_CI,
+                                         'workflowSha256': enrollment.PREPARATION_DIGEST},
+                  tenantPilotCutover={'fallback': enrollment.FALLBACK, 'workflowSha256': digest})
+    source = '7' * 40
+    result = enrollment.updated_policy(policy, source, workflow, profile, state, cutover=True, cutover_repair=True)
+    assert result == {**policy, 'controllerCommit': source}
+    with pytest.raises(ValueError, match='CUTOVER_POLICY_CHANGED'):
+        enrollment.updated_policy(policy, source, b'different', profile, state, cutover=True, cutover_repair=True)
