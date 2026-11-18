@@ -462,6 +462,7 @@ os.environ[profile['healthSecretEnv']]=packet['secret']
 native_run=subprocess.run
 native_verify=staging_rootless.verify_rootless
 native_request=skill_staging.host_request
+native_opener=skill_staging.build_opener
 native_audit=staging_configuration.audit
 backend=HostBackend(profile,{})
 native_inspect=backend.inspect
@@ -493,7 +494,7 @@ def request(*args,**kwargs):
     except (ValueError,TypeError,KeyError):
         evidence['reason']='HEALTH_RESPONSE_REJECTED'
         raise
-    evidence.update(stage='SKILL_HEALTH_VALIDATION',httpStatus=200)
+    evidence['stage']='SKILL_HEALTH_VALIDATION'
     if isinstance(value,dict):
         state=value.get('state')
         evidence['versionMatches']=value.get('version')=='0.1.2'
@@ -502,6 +503,15 @@ def request(*args,**kwargs):
             evidence['enabled']=state.get('enabled') is True
             evidence['healthy']=state.get('healthy') is True
     return value
+def build_opener(*args,**kwargs):
+    opener=native_opener(*args,**kwargs)
+    native_open=opener.open
+    def open_response(*args,**kwargs):
+        response=native_open(*args,**kwargs)
+        evidence['httpStatus']=response.status
+        return response
+    opener.open=open_response
+    return opener
 def audit(operation,state,**kwargs):
     evidence['stage']='HEALTH_AUDIT'
     return native_audit('tenant-pilot-api-rehearsal',state,**kwargs)
@@ -517,6 +527,7 @@ backend.inspect=inspect
 staging_rootless.verify_rootless=verify
 staging_health.subprocess.run=run
 skill_staging.host_request=request
+skill_staging.build_opener=build_opener
 staging_configuration.audit=audit
 samples=[]
 for idx in range(2):

@@ -576,7 +576,11 @@ def test_confirmation_probe_separates_first_transport_failure_from_later_ready(t
     profile.write_text(json.dumps({'healthUrl': 'http://127.0.0.1:18080', 'workerEnabled': True,
                                    'healthSecretEnv': 'FIXTURE_SECRET', 'stagingGuildId': '1'}))
     reply = {'version': '0.1.2', 'missingCapabilities': [], 'state': {'enabled': False, 'healthy': False}}
-    request = Mock(side_effect=[URLError(ConnectionRefusedError('private transport detail')), reply])
+    from unittest.mock import MagicMock
+    response = MagicMock(status=200)
+    response.__enter__.return_value = response
+    response.read.return_value = json.dumps(reply).encode()
+    network_open = Mock(side_effect=[URLError(ConnectionRefusedError('private transport detail')), response])
     docker = Mock(side_effect=lambda args, **_: SimpleNamespace(stdout=(
         json.dumps({'Running': True, 'Health': {'Status': 'healthy'}}) if '{{json .State}}' in args else 'healthy')))
     inspect = Mock(return_value={'Config': {'Labels': {}}})
@@ -584,7 +588,7 @@ def test_confirmation_probe_separates_first_transport_failure_from_later_ready(t
     monkeypatch.setattr(staging_dispatch, 'PROFILE', profile)
     monkeypatch.setattr(staging_dispatch, 'environment', lambda: {})
     monkeypatch.setattr(staging_rootless, 'verify_rootless', Mock())
-    monkeypatch.setattr(skill_staging, 'host_request', request)
+    monkeypatch.setattr(skill_staging, 'build_opener', lambda *_: SimpleNamespace(open=network_open))
     monkeypatch.setattr(staging_health.subprocess, 'run', docker)
     monkeypatch.setattr(HostBackend, 'inspect', inspect)
     monkeypatch.setattr(staging_configuration, 'audit', audit)
@@ -603,4 +607,7 @@ def test_confirmation_probe_separates_first_transport_failure_from_later_ready(t
     assert samples[1]['enabled'] is False and samples[1]['healthy'] is False
     assert 'fixture-secret' not in text and 'private transport detail' not in text
     assert inspect.call_count == 2 and docker.call_count == 6
+    assert network_open.call_count == 2
+    assert all(call.args[0].selector == '/api/v1/servers/1/skills/event-manager'
+               for call in network_open.call_args_list)
     audit.assert_called_once_with('tenant-pilot-api-rehearsal', 'HOST_READY')
