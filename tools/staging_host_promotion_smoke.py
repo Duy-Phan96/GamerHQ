@@ -90,7 +90,7 @@ asyncio.run(check())
         from tools.staging_automation.pilot_activation import rehearse_container_rollback
         rehearse_container_rollback(backend, args.base_image, image)
         print('PILOT_COMPOSE_ROLLBACK_PASS')
-        quiesced_checkpoint_smoke(backend, root, args.base_image)
+        quiesced_checkpoint_smoke(backend, root, image)
         print(json.dumps({'hostCommit': COMMIT, 'archiveSha256': ARCHIVE_SHA256, 'overlay': 'PASS',
             'compactEditor': 'PASS', 'configurationPreview': 'PASS', 'startupImports': 'PASS', 'gatewayStarted': False, 'credentialsUsed': False, 'databaseMounted': False}))
 

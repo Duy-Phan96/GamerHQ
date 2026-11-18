@@ -250,10 +250,10 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
         if (container["Id"] != baseline_container or container["Image"] != baseline_image
                 or state.get("Running") is not False or state.get("Status") != "exited"):
             raise Denied("PILOT_BASELINE_NOT_QUIESCED")
-        binding = rehearsal_binding(profile, backend.policy, container)
-        if binding["baselineHostCommit"] != backend.policy["hostPromotion"]["commit"]:
+        labels = container.get("Config", {}).get("Labels") or {}
+        if labels.get("org.opencontainers.image.revision") != backend.policy["hostPromotion"]["commit"]:
             raise Denied("PILOT_BASELINE_CHANGED")
-        return container, binding
+        return container, rehearsal_binding(profile, backend.policy, container)
 
     container, binding = verify_stopped()
     backend.storage_budget()
