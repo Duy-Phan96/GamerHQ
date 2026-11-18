@@ -44,6 +44,7 @@ def quiesced_checkpoint_smoke(backend, root, image, fallback):
     fixture = HostBackend(profile, policy)
     try:
         container = backend.run(['docker', 'run', '-d', '--name', name, '--network', 'none', '--read-only',
+                                 '--label', 'org.opencontainers.image.revision=' + baseline,
                                  '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--user', '10001:10001',
                                  '--pids-limit', '32', '--memory', '128m', '--entrypoint', 'python', image,
                                  '-I', '-B', '-c', 'import time; time.sleep(90)'])
