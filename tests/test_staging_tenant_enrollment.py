@@ -139,4 +139,4 @@ def test_cutover_status_repair_preserves_the_enrolled_workflow_and_pins(monkeypa
                                   cutover=True, cutover_repair=True, recovery_repair=True, recovery_completion=True)
     with pytest.raises(ValueError, match='ACTIVE_STAGING_REQUIRED'):
         enrollment.updated_policy(policy, source, workflow, profile, state, cutover=True,
-                                  cutover_repair=True, recovery_repair=True)
+                                  cutover_repair=True, recovery_repair=True, recovery_completion=True)
