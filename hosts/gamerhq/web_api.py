@@ -5,6 +5,8 @@ inside GamerHQWebPlatformService and the existing Skill Runtime.
 """
 from __future__ import annotations
 
+import asyncio
+from contextvars import Context
 import hmac
 import json
 from collections.abc import Iterable, Mapping
@@ -285,6 +287,11 @@ class GamerHQWebApiServer:
     async def start(self) -> None:
         if self._runner is not None:
             return
+        # The listener is a process-wide ingress. Its connection tasks must
+        # bind each authenticated request, never inherit setup_hook's tenant.
+        await asyncio.create_task(self._start_listener(), context=Context())
+
+    async def _start_listener(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
         await runner.setup()
         try:

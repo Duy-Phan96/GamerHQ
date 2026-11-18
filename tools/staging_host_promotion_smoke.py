@@ -34,6 +34,7 @@ def quiesced_checkpoint_smoke(backend, root, image, fallback):
     secondary = store.tenant_directory / '2.sqlite'
     for path in (store.tenant_directory, secondary):
         os.chown(path, 10001, 10001)
+    os.chown(primary, 10001, 10001)
     before = primary.read_bytes(), secondary.read_bytes()
     name = 'pilot-checkpoint-' + uuid.uuid4().hex
     baseline = source_commit(backend, image)
@@ -84,18 +85,36 @@ def recovery_health_smoke(docker, profile, policy, baseline, fallback, baseline_
                 'startupOverrideSha256': digest(startup_override(binding, policy, candidate)),
                 'fallbackStartupOverrideSha256': digest(startup_override(binding, policy, fallback, primary_only=True))}
     service = """
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json,sys
-class Handler(BaseHTTPRequestHandler):
- def do_GET(self):
-  assert self.path == '/api/v1/servers/1/skills/event-manager'
-  assert self.headers['Authorization'] == 'Bearer test'
-  assert self.headers['X-GamerHQ-Authorized-Guild-Ids'] == '1'
-  self.send_response(int(sys.argv[1])); self.end_headers()
-  self.wfile.write(json.dumps({'version':'0.1.2','missingCapabilities':[],
-      'state':{'installed':True,'configured':True,'enabled':False,'healthy':False}}).encode())
- def log_message(self,*args): pass
-HTTPServer(('0.0.0.0',8080), Handler).serve_forever()
+import asyncio,json,os,sys
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0,'/app')
+from database import db
+from services.tenant_routing import pilot_routes
+from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+from hosts.gamerhq.skill_packages import load_external_skill_packages
+from hosts.gamerhq.web_api import GamerHQWebApiServer
+binding=os.environ['GAMERHQ_STAGING_TENANT_PILOT']
+os.environ.clear()
+db.DB_PATH=Path('/app/runtime/data/primary.sqlite')
+guild=SimpleNamespace(id=1,me=SimpleNamespace(id=90))
+get_guild=lambda ident:guild if ident==1 else None
+routes=pilot_routes(binding,primary=1,database=db.DB_PATH,get_guild=get_guild)
+bot=SimpleNamespace(guild_routes=routes,get_guild=get_guild)
+runtime=GamerHQSkillRuntime(bot)
+assert load_external_skill_packages(runtime,('event-manager',)).loaded==('event-manager',)
+async def run():
+ routes.verify({'id':'90','bot':True},[{'id':'1'},{'id':'2'}])
+ server=GamerHQWebApiServer(bot=bot,skill_runtime=runtime,shared_secret='test',host='0.0.0.0')
+ if sys.argv[1]=='403':
+  # Exact pre-fix startup behavior: create listener inside bootstrap context.
+  server.start=server._start_listener
+ with routes.bootstrap_scope():
+  await server.start()
+ routes.verify({'id':'90','bot':True},[{'id':'1'},{'id':'2'}])
+ routes.accepting=True
+ await asyncio.Event().wait()
+asyncio.run(run())
 """
     containers = []
     def inspect():
@@ -153,7 +172,7 @@ HTTPServer(('0.0.0.0',8080), Handler).serve_forever()
                        lambda _: None, now=now, verifier=lambda *a, **k: {'jti': str(now), 'exp': now + 20, 'run_id': str(now)})
 
     try:
-        start(503)
+        start(403)
         try:
             protected_retry(captured)
         except Denied as error:
@@ -161,7 +180,7 @@ HTTPServer(('0.0.0.0',8080), Handler).serve_forever()
         else:
             raise AssertionError('Failed Host API unexpectedly released recovery')
         assert state['recoveryRequired'] and inspect()['State']['Running'] is False
-        assert transaction.load()['rollbackHealthFailure'] == {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 503}
+        assert transaction.load()['rollbackHealthFailure'] == {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 403}
         result = protected_retry(captured + 121)
         assert result['state'] == 'PILOT_ROLLED_BACK' and result['recoveryRequired'] is False
         assert result['recoveryVerified'] and result['activationAuthorized'] is False
@@ -174,9 +193,12 @@ HTTPServer(('0.0.0.0',8080), Handler).serve_forever()
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--base-image', required=True); args = parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--base-image', required=True)
+    parser.add_argument('--recovery-image', required=True)
+    args = parser.parse_args()
     from hosts.gamerhq.skill_deployment_docker import IMAGE
-    if not IMAGE.fullmatch(args.base_image):
+    if not IMAGE.fullmatch(args.base_image) or not IMAGE.fullmatch(args.recovery_image):
         raise ValueError('Immutable disposable image required')
     with tempfile.TemporaryDirectory(prefix='host-promotion-ci-') as root:
         backend = HostBackend({'workRoot': root}, {'hostPromotion': {'commit': COMMIT, 'archiveSha256': ARCHIVE_SHA256}})
@@ -211,7 +233,7 @@ asyncio.run(check())
         from tools.staging_automation.pilot_activation import rehearse_container_rollback
         rehearse_container_rollback(backend, args.base_image, image)
         print('PILOT_COMPOSE_ROLLBACK_PASS')
-        quiesced_checkpoint_smoke(backend, root, args.base_image, image)
+        quiesced_checkpoint_smoke(backend, root, args.base_image, args.recovery_image)
         print(json.dumps({'hostCommit': COMMIT, 'archiveSha256': ARCHIVE_SHA256, 'overlay': 'PASS',
             'compactEditor': 'PASS', 'configurationPreview': 'PASS', 'startupImports': 'PASS', 'gatewayStarted': False, 'credentialsUsed': False, 'databaseMounted': False}))
 

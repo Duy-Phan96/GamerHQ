@@ -693,3 +693,42 @@ def test_primary_only_watchdog_request_reads_real_event_manager_state(pilot, mon
     asyncio.run(verify())
     assert store.primary_database.read_bytes() == before
     assert secondary.read_bytes() == secondary_before
+
+
+def test_host_api_listener_does_not_inherit_expired_startup_tenant_scope(pilot, monkeypatch):
+    from hosts.gamerhq.web_api import GamerHQWebApiServer
+    from tools.skill_staging import host_request
+    from urllib.error import HTTPError
+
+    store, guilds, routes = pilot
+    bot = SimpleNamespace(guild_routes=routes, get_guild=guilds.get)
+    before = store.primary_database.read_bytes(), (store.tenant_directory / '2.sqlite').read_bytes()
+    monkeypatch.setenv('TEST_PILOT_API_KEY', 'fixture')
+
+    async def verify():
+        proof(routes)
+        server = GamerHQWebApiServer(bot=bot, skill_runtime=None, shared_secret='fixture', port=0)
+        async def status(**kwargs):
+            assert tenants.current().guild_id == kwargs['guild_id']
+            return {'version': '0.1.2', 'state': {'installed': True, 'configured': True, 'enabled': False,
+                                                'healthy': False}, 'missingCapabilities': []}
+        server.app['platform_service'] = SimpleNamespace(bot=bot, get_skill=status)
+        # Match setup_hook: listener starts while the primary bootstrap scope
+        # is active, then that scope expires before Gateway READY verification.
+        with routes.bootstrap_scope():
+            await server.start()
+        proof(routes)
+        try:
+            profile = {'healthUrl': 'http://127.0.0.1:' + str(server._runner.addresses[0][1]),
+                       'healthSecretEnv': 'TEST_PILOT_API_KEY', 'stagingGuildId': '1'}
+            result = await asyncio.to_thread(host_request, profile, '/api/v1/servers/1/skills/event-manager')
+            assert result['version'] == '0.1.2' and result['state']['enabled'] is False
+            routes.invalidate()
+            with pytest.raises(HTTPError) as error:
+                await asyncio.to_thread(host_request, profile, '/api/v1/servers/1/skills/event-manager')
+            assert error.value.code == 403
+        finally:
+            await server.close()
+
+    asyncio.run(verify())
+    assert (store.primary_database.read_bytes(), (store.tenant_directory / '2.sqlite').read_bytes()) == before
