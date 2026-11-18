@@ -91,8 +91,6 @@ from types import SimpleNamespace
 sys.path.insert(0,'/app')
 from database import db
 from services.tenant_routing import pilot_routes
-from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
-from hosts.gamerhq.skill_packages import load_external_skill_packages
 from hosts.gamerhq.web_api import GamerHQWebApiServer
 binding=os.environ['GAMERHQ_STAGING_TENANT_PILOT']
 os.environ.clear()
@@ -101,11 +99,18 @@ guild=SimpleNamespace(id=1,me=SimpleNamespace(id=90))
 get_guild=lambda ident:guild if ident==1 else None
 routes=pilot_routes(binding,primary=1,database=db.DB_PATH,get_guild=get_guild)
 bot=SimpleNamespace(guild_routes=routes,get_guild=get_guild)
-runtime=GamerHQSkillRuntime(bot)
-assert load_external_skill_packages(runtime,('event-manager',)).loaded==('event-manager',)
+async def skill_status(**kwargs):
+ routes.require_runtime_scope(kwargs['guild_id'])
+ with db.connect() as conn:
+  row=conn.execute("SELECT installed,configured,enabled FROM skill_guild_state WHERE guild_id=1 AND skill_id='event-manager'").fetchone()
+ return {'version':'0.1.2','missingCapabilities':[], 'state':{
+  'installed':bool(row[0]),'configured':bool(row[1]),'enabled':bool(row[2]),'healthy':False}}
 async def run():
  routes.verify({'id':'90','bot':True},[{'id':'1'},{'id':'2'}])
- server=GamerHQWebApiServer(bot=bot,skill_runtime=runtime,shared_secret='test',host='0.0.0.0')
+ server=GamerHQWebApiServer(bot=bot,skill_runtime=None,shared_secret='test',host='0.0.0.0')
+ # The real middleware/listener and SQLite lifecycle are under test. The
+ # transport failure precedes this fixture's package-version projection.
+ server.app['platform_service']=SimpleNamespace(bot=bot,get_skill=skill_status)
  if sys.argv[1]=='403':
   # Exact pre-fix startup behavior: create listener inside bootstrap context.
   server.start=server._start_listener
@@ -181,6 +186,7 @@ asyncio.run(run())
             raise AssertionError('Failed Host API unexpectedly released recovery')
         assert state['recoveryRequired'] and inspect()['State']['Running'] is False
         assert transaction.load()['rollbackHealthFailure'] == {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 403}
+        print('PILOT_API_CONTEXT_403_REPRODUCED')
         result = protected_retry(captured + 121)
         assert result['state'] == 'PILOT_ROLLED_BACK' and result['recoveryRequired'] is False
         assert result['recoveryVerified'] and result['activationAuthorized'] is False
