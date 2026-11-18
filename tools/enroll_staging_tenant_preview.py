@@ -223,7 +223,8 @@ def verify_api_repair_storage(bundle, profile, state, journal, uid):
             or databases['primary'].get('eventManagerAuthority') is not True
             or any(row['state'] != 'VERIFIED' for row in backups.values())):
         raise ValueError('RECOVERY_DATABASE_OR_BACKUP_REJECTED')
-    return {'container': container, 'databases': databases, 'backups': backups}
+    audit = inspect['health_audit'](uid, since='2026-11-18 20:25:00 UTC', until='2026-11-18 20:28:00 UTC')
+    return {'container': container, 'databases': databases, 'backups': backups, 'failedRecoveryAudit': audit}
 
 
 def enroll(source, workflow_digest, approval, *, preparation=False, cutover=False, cutover_repair=False,

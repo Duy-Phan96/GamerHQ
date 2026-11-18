@@ -89,11 +89,11 @@ def verify_journal(state, record):
                                       'PRIMARY_DATA_RETENTION', 'EVENT_MANAGER_LIFECYCLE', 'SECONDARY_DATA_INTEGRITY'}}}
 
 
-def health_audit(uid):
+def health_audit(uid, *, since='2026-11-18 12:02:00 UTC', until='2026-11-18 12:04:00 UTC'):
     """Use only the existing allowlisted health/journal events from the failed attempt."""
     try:
         result = subprocess.run(['/usr/bin/journalctl', '--no-pager', '--output=json',
-                                 '--since=2026-11-18 12:02:00 UTC', '--until=2026-11-18 12:04:00 UTC',
+                                 '--since=' + since, '--until=' + until,
                                  'SYSLOG_IDENTIFIER=gamerhq-staging', f'_UID={uid}'],
                                 capture_output=True, text=True, errors='replace', timeout=20, check=True)
         if len(result.stdout) > 262144:
