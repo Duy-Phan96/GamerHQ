@@ -171,3 +171,40 @@ def test_api_context_repair_enrollment_preserves_original_cutover_and_latch(monk
                                          cutover_repair=True, recovery_repair=True, recovery_completion=True, api_repair=True)
     assert updated == {**policy, 'controllerCommit': 'f' * 40, 'primaryRecoveryApiRepair': enrollment.API_REPAIR_PIN}
     assert state['recoveryRequired'] is True
+
+
+@pytest.mark.parametrize('failure', [None, 'running', 'database', 'backup'])
+def test_api_repair_enrollment_requires_quiescence_and_read_only_integrity(tmp_path, monkeypatch, failure):
+    import json
+    import runpy
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(enrollment, 'ROOT', tmp_path)
+    primary = tmp_path / 'data/gamerhq.db'
+    secondary = primary.parent / 'tenants' / (enrollment.BINDING['guildIds'][1] + '.sqlite')
+    secondary.parent.mkdir(parents=True)
+    primary.write_bytes(b'synthetic-primary')
+    secondary.write_bytes(b'synthetic-secondary')
+    before = primary.read_bytes(), secondary.read_bytes()
+    commands = []
+    def docker(args, **options):
+        commands.append(args)
+        return SimpleNamespace(stdout=json.dumps({'image': enrollment.API_REPAIR_PIN['parentImage'],
+                                                  'state': 'exited', 'running': failure == 'running'}))
+    monkeypatch.setattr(enrollment.subprocess, 'run', docker)
+    monkeypatch.setattr(runpy, 'run_path', lambda _: {
+        'inspect_database': lambda *a, **k: {'state': 'INTEGRITY_FAILED' if failure == 'database' else 'INTEGRITY_PASS',
+                                            'eventManagerAuthority': True},
+        'inspect_backup': lambda *a: {'state': 'REJECTED' if failure == 'backup' else 'VERIFIED'},
+        'health_audit': lambda *a, **k: {'state': 'COLLECTED', 'events': []}})
+    args = (tmp_path / 'bundle', {'database': str(primary), 'backupRoot': str(tmp_path / 'backups')},
+            {'tenantPilotActivationPrepared': {'preview': {}}}, {'checkpoint': {}}, 1002)
+    if failure is None:
+        result = enrollment.verify_api_repair_storage(*args)
+        assert result['container']['running'] is False
+    else:
+        with pytest.raises(ValueError):
+            enrollment.verify_api_repair_storage(*args)
+    assert len(commands) == 1 and 'inspect' in commands[0]
+    assert 'unix:///run/user/1002/docker.sock' in ' '.join(commands[0])
+    assert before == (primary.read_bytes(), secondary.read_bytes())
