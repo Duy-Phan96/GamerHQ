@@ -336,3 +336,26 @@ print(json.dumps(execute('status', None, policy, {}, backend, lambda _: None, no
     assert result['tenantPilotCutoverEnrolled'] is True
     assert result['tenantPilotCutoverJournal'] is False
     assert result['tenantPilotPreparationState'] == 'MISSING'
+
+
+def test_failed_cutover_diagnostic_binds_receipt_and_avoids_sqlite_sidecars(checkpoint):
+    from tools import staging_pilot_cutover_diagnostics as diagnostic
+    from tools.staging_automation.pilot_cutover import digest
+
+    proof = {'runId': diagnostic.PREPARATION_RUN, 'fallbackRollbackRehearsal': 'PASS'}
+    state = {'tenantPilotActivationPrepared': proof}
+    record = {'activationRun': diagnostic.ACTIVATION_RUN, 'phase': 'STOPPING',
+              'failedAt': 'STOPPING', 'failure': 'PILOT_SECONDARY_BACKUP_REJECTED',
+              'baselineContainer': 'f' * 64,
+              'binding': {'preparedSha256': digest(proof),
+                          **{key + 'Image': value for key, value in diagnostic.IMAGES.items()}}}
+    assert diagnostic.verify_journal(state, record) == {
+        'phase': 'STOPPING', 'failedAt': 'STOPPING', 'failure': 'PILOT_SECONDARY_BACKUP_REJECTED'}
+    with pytest.raises(ValueError, match='JOURNAL_BINDING_REJECTED'):
+        diagnostic.verify_journal(state, {**record, 'activationRun': '1'})
+    primary = checkpoint[0] / 'primary.sqlite'
+    original = primary.read_bytes()
+    assert diagnostic.inspect_database(primary)['state'] == 'INTEGRITY_PASS'
+    primary.with_name(primary.name + '-wal').touch()
+    assert diagnostic.inspect_database(primary)['state'] == 'SIDECAR_PRESENT'
+    assert primary.read_bytes() == original
