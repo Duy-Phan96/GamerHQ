@@ -1,10 +1,55 @@
 """Disposable CI overlay/provenance/UI probe; no credentials, DB or Gateway."""
 import argparse
 import json
+import os
+from pathlib import Path
 import tempfile
+import uuid
 
 from tools.staging_automation.backend import HostBackend
 from tools.staging_automation.host_promotion import ARCHIVE_SHA256, COMMIT, build_overlay, source_commit
+
+
+def quiesced_checkpoint_smoke(backend, root, image):
+    from database import db
+    from database.tenants import GuildTenantStore
+    from tools.staging_tenant_rehearsal import retain_quiesced
+
+    root = Path(root)
+    data, backups = root / 'data', root / 'backups'
+    data.mkdir(mode=0o755)
+    backups.mkdir(mode=0o700)
+    primary = data / 'primary.sqlite'
+    primary.touch(mode=0o600, exist_ok=False)
+    store = GuildTenantStore(primary_guild=1, primary_database=primary,
+                             tenant_directory=data / 'tenants', additional_guilds=(2,))
+    with store.scope(1):
+        db.init_db()
+    store.provision(2)
+    secondary = store.tenant_directory / '2.sqlite'
+    for path in (store.tenant_directory, secondary):
+        os.chown(path, 10001, 10001)
+    before = primary.read_bytes(), secondary.read_bytes()
+    name = 'pilot-checkpoint-' + uuid.uuid4().hex
+    baseline = source_commit(backend, image)
+    policy = {'hostPromotion': {'commit': baseline}, 'tenantPilot': {'applicationId': '90', 'guildIds': ['1', '2']}}
+    profile = {'environment': 'staging', 'stagingGuildId': '1', 'stagingBotId': '90', 'productionGuildId': '3',
+               'productionBotId': '99', 'service': 'gamerhq-staging', 'database': str(primary),
+               'backupRoot': str(backups), 'workRoot': str(root)}
+    fixture = HostBackend(profile, policy)
+    try:
+        container = backend.run(['docker', 'run', '-d', '--name', name, '--network', 'none', '--read-only',
+                                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--user', '10001:10001',
+                                 '--pids-limit', '32', '--memory', '128m', '--entrypoint', 'python', image,
+                                 '-I', '-B', '-c', 'import time; time.sleep(90)'])
+        backend.run(['docker', 'stop', '--time', '2', name])
+        fixture.inspect = lambda: json.loads(backend.run(['docker', 'inspect', name]))[0]
+        receipt = retain_quiesced(fixture, container, image)
+        assert receipt['quiesced'] and [row['restore'] for row in receipt['tenantRestores']] == ['PASS', 'PASS']
+        assert (primary.read_bytes(), secondary.read_bytes()) == before
+        print('PILOT_QUIESCED_DUAL_RESTORE_PASS')
+    finally:
+        backend.run(['docker', 'rm', '--force', name])
 
 
 def main():
@@ -45,6 +90,7 @@ asyncio.run(check())
         from tools.staging_automation.pilot_activation import rehearse_container_rollback
         rehearse_container_rollback(backend, args.base_image, image)
         print('PILOT_COMPOSE_ROLLBACK_PASS')
+        quiesced_checkpoint_smoke(backend, root, args.base_image)
         print(json.dumps({'hostCommit': COMMIT, 'archiveSha256': ARCHIVE_SHA256, 'overlay': 'PASS',
             'compactEditor': 'PASS', 'configurationPreview': 'PASS', 'startupImports': 'PASS', 'gatewayStarted': False, 'credentialsUsed': False, 'databaseMounted': False}))
 

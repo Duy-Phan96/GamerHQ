@@ -128,12 +128,25 @@ Preparation never starts the Gateway.
 
 Pilot startup verifies the two database schemas read-only, including the
 existing primary. Catalog seeding and schema migrations remain in the
-legacy startup path. The live cutover still needs a controller operation that
-quiesces the existing Host, captures a fresh dual checkpoint, switches the
-single container, and can recover from an interrupted switch. Leave the prior
-Host stopped if a fallback would restart an older singleton build with two
-Discord memberships. Exercise the controller rollback on disposable storage
-and images before authorizing any real switch.
+legacy startup path. Preparation readiness expires one hour after the live
+observation, even when its successful receipt is retained for audit. A fresh
+protected preparation is required after expiration.
+
+The quiesced checkpoint helper verifies the same pinned Host is stopped before
+copying either database and before sealing a receipt. A networkless helper
+reads the secondary file as the mapped container user through a read-only
+data mount. A failed restore or restarted baseline leaves the batch unsealed.
+
+The older primary Host iterates connected guilds during startup. With both
+Discord memberships present, use a separately built and reviewed rollback
+image with the explicit primary-only binding. That binding verifies the exact
+two Discord memberships and admits only the primary tenant for commands,
+interactions, Skill restore and scheduling. It retains the secondary file.
+
+Live cutover remains gated on immutable rollback image enrollment and a
+controller transaction that records the checkpoint, switches the single
+container, and handles interrupted switches. Rehearse that transaction on
+disposable storage and images before registering activation on `main`.
 
 After live activation is healthy, open `/server setup` in Servertest and use
 an owner-confirmed inventory preview. The owner can skip the template and

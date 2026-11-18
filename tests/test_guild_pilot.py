@@ -12,7 +12,7 @@ from services.authorization_service import authorized
 from services.discord_permissions import CORE_INSTALL
 from services.tenant_routing import (
     GuildAdmissionError, GuildCommandTree, GuildRoutes, GuildViewStore, PILOT_ENV,
-    add_shared_entry_view, event_guild, pilot_routes, route_interaction, tenant_cycle,
+    add_shared_entry_view, event_guild, pilot_environment, pilot_routes, route_interaction, tenant_cycle,
 )
 from tools.staging_tenant_rehearsal import approved_binding, rehearse, retain, startup_override
 
@@ -58,6 +58,41 @@ def test_pilot_rejects_missing_extra_duplicate_and_wrong_bot_memberships(pilot):
                 pytest.fail("Failed proof must invalidate admission")
     with pytest.raises(GuildAdmissionError):
         routes.verify({"id": "91", "bot": True}, [{"id": "1"}, {"id": "2"}])
+
+
+def test_primary_only_fallback_checks_exact_cohort_but_parks_secondary(pilot):
+    store, guilds, _ = pilot
+    profile = {"stagingBotId": "90", "productionBotId": "99", "productionGuildId": "3"}
+    value = pilot_environment(profile, (1, 2), primary_only=True)
+    routes = pilot_routes(value, primary=1, database=store.primary_database, get_guild=guilds.get)
+    assert routes.allowed == {1}
+    assert routes.membership == {1, 2}
+    secondary = store.tenant_directory / "2.sqlite"
+    before = secondary.read_bytes()
+
+    async def scenario():
+        proof(routes)
+        tree = SimpleNamespace(copy_global_to=MagicMock(), sync=AsyncMock())
+        await routes.sync_commands(tree)
+        assert tree.sync.await_args.kwargs["guild"].id == 1
+        assert tree.sync.await_count == 1
+        runtime = SimpleNamespace(restore_guild=AsyncMock())
+        with pytest.raises(GuildAdmissionError):
+            await routes.restore(runtime, 2)
+        runtime.restore_guild.assert_not_awaited()
+        with pytest.raises(GuildAdmissionError):
+            with routes.interaction(interaction(routes, guilds[2])):
+                pytest.fail("Parked guild must not have an interaction scope")
+        with routes.scope(1):
+            assert db.get_setting("customer") == "1"
+        with pytest.raises(GuildAdmissionError):
+            routes.verify({"id": "90", "bot": True}, [{"id": "1"}])
+        with pytest.raises(GuildAdmissionError):
+            with routes.scope(1):
+                pytest.fail("Invalid membership must revoke even primary admission")
+
+    asyncio.run(scenario())
+    assert secondary.read_bytes() == before
 
 
 def test_routes_scope_commands_views_and_revoke_delayed_operations(pilot):

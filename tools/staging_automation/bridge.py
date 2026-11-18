@@ -15,12 +15,18 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     now = int(time.time() if now is None else now)
     charge(state, operation, now); save(state)
     if operation == 'status':
+        preparation = {}
+        if 'tenantPilotActivation' in policy:
+            from .pilot_activation import preparation_state
+            preparation['tenantPilotPreparationState'] = preparation_state(
+                state.get('tenantPilotActivationPrepared'), policy['tenantPilotActivation'], now)
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
         pilot = policy.get('tenantPilot')
         pilot_digest = hashlib.sha256(json.dumps(pilot, sort_keys=True, separators=(',', ':')).encode()).hexdigest() if pilot else None
         return {'state': 'ACTIVE' if state.get('enabled') else 'NOT_ACTIVATED', 'controllerCommit': policy['controllerCommit'], 'legacyWorkerCommit': policy['legacyWorkerCommit'], 'publicKeySha256': policy['publicKeySha256'], 'bootstrapVerified': bool(state.get('bootstrapVerified')), 'limits': policy['limits'], 'recoveryRequired': bool(state.get('recoveryRequired')), 'hostPromotionSupported': 'hostPromotion' in policy,
                 'tenantPilotBindingSha256': pilot_digest,
                 'tenantPilotActivationPreparationEnrolled': 'tenantPilotActivation' in policy,
+                **preparation,
                 'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit'),
                 'webArtifactId': policy.get('webDeployment', {}).get('artifactId'),
                 'webRunId': policy.get('webDeployment', {}).get('runId'),

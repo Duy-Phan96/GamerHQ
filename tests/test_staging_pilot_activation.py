@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from database import db, tenants
-from tools.staging_automation.pilot_activation import prepare_session, validate_pin
+from tools.staging_automation.pilot_activation import preparation_state, prepare_session, validate_pin
 from tools.staging_automation.policy import Denied, admit, request
 from tools.staging_tenant_rehearsal import PREVIEW_MAX_AGE, retain, verify_activation_checkpoint
 
@@ -129,3 +129,66 @@ def test_preparation_session_returns_current_permission_failure_without_build():
     backend = SimpleNamespace(_verify_tenant_pilot=Mock(return_value=failure))
     assert prepare_session(backend, 'image') is failure
     backend._verify_tenant_pilot.assert_called_once_with(expected_image='image')
+
+
+def test_prepared_status_expires_from_live_observation_not_workflow_completion():
+    from tools.staging_automation.bridge import execute
+
+    pin = {'commit': 'a' * 40}
+    receipt = {'state': 'PILOT_ACTIVATION_PREPARED', 'candidateCommit': pin['commit'],
+               'gatewayStarted': False, 'activationAuthorized': False, 'containerRollbackRehearsal': 'PASS',
+               'preview': {'state': 'PILOT_PREVIEW_VERIFIED', 'verifiedAt': 100}}
+    save = Mock()
+    state = {'tenantPilotActivationPrepared': receipt}
+    policy = {'tenantPilotActivation': pin, 'controllerCommit': 'b' * 40, 'legacyWorkerCommit': 'c' * 40,
+              'publicKeySha256': 'd' * 64, 'limits': {}}
+    assert preparation_state(receipt, pin, 100 + PREVIEW_MAX_AGE) == 'FRESH'
+    assert preparation_state(receipt, pin, 99) == 'REJECTED'
+    assert preparation_state(receipt, {'commit': 'e' * 40}, 100) == 'REJECTED'
+    result = execute('status', None, policy, state, None, save, now=101 + PREVIEW_MAX_AGE)
+    assert result['tenantPilotPreparationState'] == 'EXPIRED'
+    assert state['tenantPilotActivationPrepared'] is receipt
+
+
+@pytest.mark.parametrize('changes', [None, 'before', 'during'])
+def test_quiesced_backup_requires_same_stopped_host_and_readonly_secondary(checkpoint, changes):
+    import shutil
+
+    from tools.staging_tenant_rehearsal import retain_quiesced
+
+    root, _, cohort, original = checkpoint
+    profile = {'environment': 'staging', 'stagingGuildId': '1', 'stagingBotId': '90',
+               'productionGuildId': '3', 'productionBotId': '99', 'service': 'gamerhq-staging',
+               'database': str(root / 'primary.sqlite'), 'backupRoot': root, 'workRoot': root}
+    baseline = {'Id': 'c' * 64, 'Image': original['baselineImage'],
+                'Config': {'Labels': {'org.opencontainers.image.revision': original['baselineHostCommit']}},
+                'State': {'Running': False, 'Status': 'exited'}}
+    running = {**baseline, 'State': {'Running': True, 'Status': 'running'}}
+    backend = SimpleNamespace(profile=profile, storage_budget=Mock(),
+                              policy={'hostPromotion': {'commit': original['baselineHostCommit']},
+                                      'tenantPilot': cohort},
+                              inspect=Mock(side_effect=[running, baseline, baseline] if changes == 'before'
+                                           else [baseline, baseline, running if changes else baseline]))
+    primary = root / 'primary.sqlite'
+    secondary = root / 'tenants' / '2.sqlite'
+    before = primary.read_bytes(), secondary.read_bytes()
+
+    def reader(args, *, stdout, **kwargs):
+        assert args[:8] == ['docker', 'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only']
+        assert args[args.index('--mount') + 1].endswith(',dst=/app/runtime/data,readonly')
+        assert args[args.index('--user') + 1] == '10001:10001'
+        assert args[-1] == '2' and '--env' not in args
+        with secondary.open('rb') as raw:
+            shutil.copyfileobj(raw, stdout)
+
+    capture = Mock(side_effect=reader)
+    if changes:
+        with pytest.raises(Denied, match='PILOT_BASELINE_NOT_QUIESCED'):
+            retain_quiesced(backend, baseline['Id'], baseline['Image'], run=capture)
+        assert capture.call_count == (0 if changes == 'before' else 1)
+        assert len(list(root.glob('tenant-pilot-*/verified.json'))) == 1
+    else:
+        result = retain_quiesced(backend, baseline['Id'], baseline['Image'], run=capture)
+        assert result['quiesced'] is True
+        assert [tenant['restore'] for tenant in result['tenantRestores']] == ['PASS', 'PASS']
+    assert (primary.read_bytes(), secondary.read_bytes()) == before

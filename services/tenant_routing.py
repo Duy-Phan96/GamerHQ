@@ -86,13 +86,14 @@ def verify_membership(application_id, approved, bot_user, guilds):
         raise GuildAdmissionError("Discord memberships differ from the approved guilds.")
 
 
-def pilot_environment(profile, approved):
+def pilot_environment(profile, approved, *, primary_only=False):
     """Serialize the existing controller's exact staging pin for stable Compose input."""
     return json.dumps({
         "applicationId": profile["stagingBotId"],
         "guildIds": [str(guild) for guild in sorted(approved)],
         "productionBotId": profile["productionBotId"],
         "productionGuildId": profile["productionGuildId"],
+        **({"primaryOnly": True} if primary_only else {}),
     }, sort_keys=True, separators=(",", ":"))
 
 
@@ -104,7 +105,9 @@ def pilot_routes(value, *, primary, database, get_guild):
         return None
     try:
         pin = json.loads(value)
-        if type(pin) is not dict or set(pin) != {"applicationId", "guildIds", "productionBotId", "productionGuildId"}:
+        keys = {"applicationId", "guildIds", "productionBotId", "productionGuildId"}
+        if (type(pin) is not dict or set(pin) not in (keys, keys | {"primaryOnly"})
+                or "primaryOnly" in pin and pin["primaryOnly"] is not True):
             raise ValueError
         app = _discord_id(pin["applicationId"])
         raw_ids = pin["guildIds"]
@@ -117,11 +120,13 @@ def pilot_routes(value, *, primary, database, get_guild):
         folder = Path(database).parent / "tenants"
         if folder.is_symlink():
             raise ValueError
+        secondary, = approved - {primary}
+        parked = secondary if pin.get("primaryOnly") else None
         store = tenants.GuildTenantStore(primary_guild=primary, primary_database=database,
-                                         tenant_directory=folder, additional_guilds=approved - {primary})
+                                         tenant_directory=folder, additional_guilds=() if parked else (secondary,))
     except (TypeError, ValueError, GuildAdmissionError):
         raise GuildAdmissionError("Protected Staging tenant binding is invalid.") from None
-    return GuildRoutes(application_id=app, store=store, get_guild=get_guild)
+    return GuildRoutes(application_id=app, store=store, get_guild=get_guild, inactive_guild=parked)
 
 
 def verify_guild_permissions(guild_id, application_id, guild, member, roles):
@@ -153,12 +158,16 @@ def verify_guild_permissions(guild_id, application_id, guild, member, roles):
 class GuildRoutes:
     """Starts disabled. Only the trusted Host can submit Discord membership evidence."""
 
-    def __init__(self, *, application_id, store, get_guild):
+    def __init__(self, *, application_id, store, get_guild, inactive_guild=None):
         self.application_id = _discord_id(str(application_id))
         self.store = store
         self.get_guild = get_guild
         self.allowed = frozenset({store.primary_guild, *store.additional_guilds})
-        if len(self.allowed) != 2:
+        if inactive_guild is None and len(self.allowed) == 2:
+            self.membership = self.allowed
+        elif len(self.allowed) == 1 and type(inactive_guild) is int and inactive_guild > 0 and inactive_guild not in self.allowed:
+            self.membership = self.allowed | {inactive_guild}
+        else:
             raise ValueError("The pilot requires exactly two approved guilds.")
         self._proof = None
         self._revision = 0
@@ -177,7 +186,7 @@ class GuildRoutes:
         revision = self._revision
         identity = await http.request(Route("GET", "/users/@me"))
         guilds = await http.request(Route("GET", "/users/@me/guilds"), params={"limit": 200})
-        verify_membership(self.application_id, self.allowed, identity, guilds)
+        verify_membership(self.application_id, self.membership, identity, guilds)
         if require_permissions:
             for guild_id in sorted(self.allowed):
                 kwargs = {"guild_id": guild_id}
@@ -193,7 +202,7 @@ class GuildRoutes:
     def verify(self, bot_user, guilds):
         """Check the exact set from GET /users/@me/guilds?limit=200 and the bot identity."""
         self.invalidate()
-        verify_membership(self.application_id, self.allowed, bot_user, guilds)
+        verify_membership(self.application_id, self.membership, bot_user, guilds)
         self._proof = object()
 
     def invalidate(self):

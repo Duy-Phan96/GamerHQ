@@ -10,6 +10,24 @@ from .oidc import github
 from .policy import Denied
 
 
+def preparation_state(evidence, pin, now):
+    """Compute expiry from the live verification time, never the run completion time."""
+    from tools.staging_tenant_rehearsal import PREVIEW_MAX_AGE
+
+    if not isinstance(evidence, dict) or evidence.get('state') != 'PILOT_ACTIVATION_PREPARED':
+        return 'MISSING'
+    preview = evidence.get('preview')
+    if (not isinstance(preview, dict) or preview.get('state') != 'PILOT_PREVIEW_VERIFIED'
+            or not isinstance(pin, dict) or evidence.get('candidateCommit') != pin.get('commit')
+            or evidence.get('activationAuthorized') is not False or evidence.get('gatewayStarted') is not False
+            or evidence.get('containerRollbackRehearsal') != 'PASS'):
+        return 'REJECTED'
+    verified = preview.get('verifiedAt')
+    if type(verified) is not int or now < verified:
+        return 'REJECTED'
+    return 'FRESH' if now - verified <= PREVIEW_MAX_AGE else 'EXPIRED'
+
+
 def validate_pin(value):
     fields = {'commit': 40, 'archiveSha256': 64, 'workflowSha256': 64}
     if not isinstance(value, dict) or set(value) != {*fields, 'ciRun'}:

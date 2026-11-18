@@ -90,7 +90,7 @@ def rehearse(store, scratch_directory):
         return _capture_and_probe(store, Path(scratch) / "backups", Path(scratch) / "restore")
 
 
-def retain(store, backup_root, scratch_directory, *, binding=None, secondary_capture=None):
+def retain(store, backup_root, scratch_directory, *, binding=None, secondary_capture=None, before_seal=None):
     """Keep private backup files and a receipt only after every restore passes."""
     from tools.staging_configuration import atomic_json
 
@@ -114,6 +114,8 @@ def retain(store, backup_root, scratch_directory, *, binding=None, secondary_cap
     batch = Path(tempfile.mkdtemp(prefix="tenant-pilot-", dir=backup_root))
     with tempfile.TemporaryDirectory(prefix="tenant-restore-", dir=scratch_directory) as scratch:
         entries = _capture_and_probe(store, batch, Path(scratch), secondary_capture=secondary_capture)
+    if before_seal is not None:
+        before_seal()
     receipt = batch / "verified.json"
     atomic_json(receipt, {"schemaVersion": 1, "tenants": entries, "binding": binding,
                           "rollbackRehearsal": "PRIMARY_ONLY_PASS"})
@@ -199,12 +201,15 @@ def snapshot_bytes(directory, guild_id, limit, output):
 
 def capture_container_tenant(container, guild_id, destination, *, run=subprocess.run):
     """Export only the pinned secondary DB into a new worker-private file."""
-    from inspect import getsource
-    import re
-    from tools.backup_database import verify
-
     if not re.fullmatch(r"[0-9a-f]{64}", container):
         raise PermissionError("Approved Staging container identity is required.")
+    _capture_tenant(["docker", "exec", "--user", "10001:10001", container, "python"], guild_id, destination, run)
+
+
+def _capture_tenant(command, guild_id, destination, run):
+    from inspect import getsource
+    from tools.backup_database import verify
+
     program = getsource(snapshot_bytes) + (
         "\nimport sys\nsnapshot_bytes('/app/runtime/data/tenants', int(sys.argv[1]), "
         f"{_CONTAINER_SNAPSHOT_LIMIT}, sys.stdout.buffer)\n"
@@ -212,7 +217,7 @@ def capture_container_tenant(container, guild_id, destination, *, run=subprocess
     fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         with os.fdopen(fd, "wb") as output:
-            run(["docker", "exec", "--user", "10001:10001", container, "python", "-I", "-B", "-c", program, str(guild_id)],
+            run([*command, "-I", "-B", "-c", program, str(guild_id)],
                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.DEVNULL, timeout=90, check=True)
             output.flush()
             os.fsync(output.fileno())
@@ -224,7 +229,60 @@ def capture_container_tenant(container, guild_id, destination, *, run=subprocess
         raise
 
 
-def startup_override(profile, policy, image):
+def retain_quiesced(backend, baseline_container, baseline_image, *, run=subprocess.run):
+    """Retain fresh dual snapshots while the approved Host remains stopped.
+
+    The caller holds the staging operation lock and owns the stopped-service
+    recovery. The secondary reader has only a read-only data bind and no
+    credentials or Gateway access.
+    """
+    from hosts.gamerhq.skill_deployment_docker import IMAGE
+    from tools.staging_automation.policy import Denied
+
+    profile = {**backend.profile, "tenantPilot": backend.policy["tenantPilot"]}
+    cohort = approved_binding(profile, backend.policy)
+    if not IMAGE.fullmatch(baseline_image) or not re.fullmatch(r"[0-9a-f]{64}", baseline_container):
+        raise Denied("PILOT_BASELINE_CHANGED")
+
+    def verify_stopped():
+        container = backend.inspect()
+        state = container.get("State", {})
+        if (container["Id"] != baseline_container or container["Image"] != baseline_image
+                or state.get("Running") is not False or state.get("Status") != "exited"):
+            raise Denied("PILOT_BASELINE_NOT_QUIESCED")
+        binding = rehearsal_binding(profile, backend.policy, container)
+        if binding["baselineHostCommit"] != backend.policy["hostPromotion"]["commit"]:
+            raise Denied("PILOT_BASELINE_CHANGED")
+        return binding
+
+    binding = verify_stopped()
+    backend.storage_budget()
+    source = Path(profile["database"]).resolve(strict=True)
+    if source != Path(profile["database"]) or (source.parent / "tenants").is_symlink() or "," in str(source.parent):
+        raise Denied("PILOT_TENANT_PATH_REJECTED")
+    primary = int(profile["stagingGuildId"])
+    store = GuildTenantStore(primary_guild=primary, primary_database=source,
+                             tenant_directory=source.parent / "tenants",
+                             additional_guilds=tuple(guild for guild in cohort if guild != primary))
+    reader = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+              "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
+              "--memory", "128m", "--cpus", "0.5", "--pids-limit", "32",
+              "--mount", f"type=bind,src={source.parent},dst=/app/runtime/data,readonly",
+              "--entrypoint", "python", baseline_image]
+
+    def capture(guild_id, destination):
+        verify_stopped()
+        try:
+            _capture_tenant(reader, guild_id, destination, run)
+        except (OSError, ValueError, subprocess.SubprocessError, sqlite3.Error):
+            raise Denied("PILOT_SECONDARY_BACKUP_REJECTED") from None
+
+    result = retain(store, profile["backupRoot"], profile["workRoot"], binding={**binding, "quiesced": True},
+                    secondary_capture=capture, before_seal=verify_stopped)
+    return {**result, "quiesced": True}
+
+
+def startup_override(profile, policy, image, *, primary_only=False):
     """Build the exact pilot override for the existing isolated Compose service."""
     from hosts.gamerhq.skill_deployment_docker import IMAGE
     from services.tenant_routing import PILOT_ENV, pilot_environment, pilot_routes
@@ -232,7 +290,7 @@ def startup_override(profile, policy, image):
     cohort = approved_binding(profile, policy)
     if not cohort or not IMAGE.fullmatch(image) or profile.get("service") != "gamerhq-staging":
         raise PermissionError("Protected Staging pilot startup is unavailable.")
-    value = pilot_environment(profile, cohort)
+    value = pilot_environment(profile, cohort, primary_only=primary_only)
     pilot_routes(value, primary=int(profile["stagingGuildId"]), database=profile["database"], get_guild=lambda _: None)
     return {"services": {profile["service"]: {"image": image, "environment": {PILOT_ENV: value}}}}
 
