@@ -23,10 +23,12 @@ class ConfirmationFailure(Denied):
         self.stage = stage
         self.detail = {}
         if stage == 'HOST_API_HEALTH':
-            from tools.staging_health import HostHealthFailure
-            if isinstance(error, HostHealthFailure):
+            from .backend import HealthDockerDenied
+            from tools.staging_health import HEALTH_FAILURE_REASONS, HostHealthFailure
+            self.detail['reason'] = 'HEALTH_UNCLASSIFIED_FAILURE'
+            if isinstance(error, (HostHealthFailure, HealthDockerDenied)) and error.reason in HEALTH_FAILURE_REASONS:
                 self.detail['reason'] = error.reason
-                if type(error.status) is int and 400 <= error.status <= 599:
+                if error.reason == 'HEALTH_HTTP_REJECTED' and type(error.status) is int and 300 <= error.status <= 599:
                     self.detail['httpStatus'] = error.status
 
 
@@ -44,6 +46,7 @@ def journal_path(profile):
 
 def journal_status(profile):
     from tools.staging_dispatch import protected_file
+    from tools.staging_health import HEALTH_FAILURE_REASONS
 
     path = journal_path(profile)
     try:
@@ -53,10 +56,11 @@ def journal_status(profile):
         phase = record.get('phase')
         details = record.get('rollbackHealthFailure')
         public = {}
-        if isinstance(details, dict) and re.fullmatch(r'HEALTH_[A-Z_]{3,45}', str(details.get('reason', ''))):
+        reason = details.get('reason') if isinstance(details, dict) else None
+        if isinstance(reason, str) and reason in HEALTH_FAILURE_REASONS:
             public['reason'] = details['reason']
             status = details.get('httpStatus')
-            if type(status) is int and 400 <= status <= 599:
+            if reason == 'HEALTH_HTTP_REJECTED' and type(status) is int and 300 <= status <= 599:
                 public['httpStatus'] = status
         return {'phase': phase if phase in PENDING | TERMINAL else 'UNKNOWN',
                 **{key: record[key] for key in ('failedCheck', 'rollbackFailedCheck')
@@ -206,8 +210,11 @@ class PilotCutover:
         with confirmation_step('POST_START_ATTESTATION'):
             self.attest(running_container=container['Id'])
         with confirmation_step('HOST_API_HEALTH'):
-            if self.backend.health()['state'] != 'HOST_READY':
-                raise Denied('HOST_NOT_READY')
+            from tools.staging_health import HostHealthFailure
+            health = self.backend.health()['state']
+            if health != 'HOST_READY':
+                raise HostHealthFailure('HEALTH_CONTAINER_ABSENT' if health == 'AWAITING_INITIAL_BOOTSTRAP'
+                                        else 'HEALTH_NOT_READY')
         with confirmation_step('CHECKPOINT_INTEGRITY'):
             batch = self.verify_checkpoint(record, recovery=recovery)
         primary = self.profile['stagingGuildId']
@@ -232,7 +239,7 @@ class PilotCutover:
             try:
                 if isinstance(error, ConfirmationFailure):
                     self.save(record, 'ROLLING_BACK', rollbackFailedCheck=error.stage,
-                              **({'rollbackHealthFailure': error.detail} if error.detail else {}))
+                              rollbackHealthFailure=error.detail or None)
             finally:
                 self.compose('stop', '--timeout', '30')
             raise

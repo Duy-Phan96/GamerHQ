@@ -11,6 +11,17 @@ if __name__ == "__main__":
     sys.path.insert(0, "/opt/gamerhq-staging/deployment-worker")
 
 
+HEALTH_FAILURE_REASONS = frozenset({
+    'HEALTH_DAEMON_REJECTED', 'HEALTH_CONTAINER_LOOKUP_FAILED', 'HEALTH_CONTAINER_ABSENT',
+    'HEALTH_CONTAINER_INSPECTION_REJECTED', 'HEALTH_GATEWAY_HEARTBEAT_REJECTED',
+    'HEALTH_CREDENTIAL_MISSING', 'HEALTH_HTTP_REJECTED', 'HEALTH_CONNECTION_REFUSED',
+    'HEALTH_TIMEOUT', 'HEALTH_TRANSPORT_REJECTED', 'HEALTH_RESPONSE_REJECTED',
+    'HEALTH_SKILL_VERSION_MISSING', 'HEALTH_SKILL_CAPABILITY_MISSING',
+    'HEALTH_ENABLED_SKILL_UNHEALTHY', 'HEALTH_AUDIT_REJECTED', 'HEALTH_NOT_READY',
+    'HEALTH_UNCLASSIFIED_FAILURE',
+})
+
+
 class HostHealthFailure(RuntimeError):
     """Stable, non-secret diagnostic for a failed Staging health verification."""
 
@@ -54,18 +65,28 @@ def health(profile):
     from tools.staging_configuration import audit
     try:
         verify_rootless(profile)
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         raise HostHealthFailure('HEALTH_DAEMON_REJECTED') from None
     if profile.get("workerEnabled") is not True:
-        audit("health", "READY_OFFLINE")
+        record_health(audit, 'READY_OFFLINE')
         return {"status": "READY_OFFLINE", "gatewayChecked": False}
-    result = subprocess.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", "gamerhq-staging-bot"],
-        capture_output=True, text=True, timeout=30, check=True)
+    try:
+        result = subprocess.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", "gamerhq-staging-bot"],
+            capture_output=True, text=True, timeout=30, check=True)
+    except (OSError, subprocess.SubprocessError):
+        raise HostHealthFailure('HEALTH_GATEWAY_HEARTBEAT_REJECTED') from None
     if result.stdout.strip() != "healthy":
         raise HostHealthFailure('HEALTH_GATEWAY_HEARTBEAT_REJECTED')
     verified_skill_health(profile, host_request)
-    audit("health", "HOST_READY")
+    record_health(audit, 'HOST_READY')
     return {"status": "HOST_READY", "gatewayChecked": True}
+
+
+def record_health(audit, result):
+    try:
+        audit('health', result)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise HostHealthFailure('HEALTH_AUDIT_REJECTED') from None
 
 
 def main():

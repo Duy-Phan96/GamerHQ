@@ -12,6 +12,13 @@ from .policy import Denied, release_allowed
 from .oidc import github, owner_protected
 
 
+class HealthDockerDenied(Denied):
+    def __init__(self, code, reason):
+        super().__init__(code)
+        self.reason = reason
+        self.status = None
+
+
 class HostBackend:
     def __init__(self, profile, policy):
         self.profile, self.policy = profile, policy
@@ -44,12 +51,27 @@ class HostBackend:
 
     def health(self):
         from hosts.gamerhq.staging_rootless import verify_rootless
-        verify_rootless(self.profile)
-        found = self.run(['docker', 'ps', '--all', '--filter', 'name=^/gamerhq-staging-bot$', '--format', '{{.ID}}'])
+        from tools.staging_health import HostHealthFailure, health
+
+        try:
+            verify_rootless(self.profile)
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            raise HostHealthFailure('HEALTH_DAEMON_REJECTED') from None
+        try:
+            found = self.run(['docker', 'ps', '--all', '--filter', 'name=^/gamerhq-staging-bot$', '--format', '{{.ID}}'])
+        except Denied as error:
+            raise HealthDockerDenied(error.code, 'HEALTH_CONTAINER_LOOKUP_FAILED') from None
         if not found: return {'state': 'AWAITING_INITIAL_BOOTSTRAP', 'gatewayStarted': False}
-        c = self.inspect()
-        if not c['State'].get('Running') or c['State'].get('Health', {}).get('Status') != 'healthy': raise Denied('HOST_NOT_HEALTHY')
-        from tools.staging_health import health
+        try:
+            c = self.inspect()
+            state = c['State']
+            healthy = state.get('Running') is True and state.get('Health', {}).get('Status') == 'healthy'
+        except Denied as error:
+            raise HealthDockerDenied(error.code, 'HEALTH_CONTAINER_INSPECTION_REJECTED') from None
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise HostHealthFailure('HEALTH_CONTAINER_INSPECTION_REJECTED') from None
+        if not healthy:
+            raise HealthDockerDenied('HOST_NOT_HEALTHY', 'HEALTH_GATEWAY_HEARTBEAT_REJECTED')
         result = health(self.profile)
         return {'state': result['status'], 'gatewayChecked': result['gatewayChecked'],
             'hostCommit': c['Config'].get('Labels', {}).get('org.opencontainers.image.revision')}

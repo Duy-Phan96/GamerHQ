@@ -413,7 +413,10 @@ def test_healthy_fallback_is_stopped_if_post_boot_verification_fails(tmp_path, m
     fallback.backend = SimpleNamespace(inspect=lambda: container, run=Mock(),
                                        health=health, skill=Mock(return_value={'version': '0.1.2'}))
     fallback.inspect = lambda: container
-    fallback.compose = lambda action, *args, **kwargs: operations.append(action)
+    def compose(action, *args, **kwargs):
+        operations.append(action)
+        container['State']['Running'] = action == 'up'
+    fallback.compose = compose
     fallback.save = Mock(side_effect=lambda record, phase, **values: {**record, 'phase': phase, **values})
     fallback.verify_checkpoint = lambda *args, **kwargs: tmp_path
     monkeypatch.setattr(host_promotion, 'source_commit', lambda backend, image: image)
@@ -447,10 +450,52 @@ def test_healthy_fallback_is_stopped_if_post_boot_verification_fails(tmp_path, m
             'rollbackFailedCheck': 'HOST_API_HEALTH',
             'rollbackHealthFailure': {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 503}}
         assert operations == ['read-only-attestation', 'stop']
+        assert not container['State']['Running']
+        held = {**record, **fallback.save.call_args.kwargs}
+        fallback.backend.health = Mock(return_value={'state': 'HOST_READY'})
+        recovered = fallback.rollback(held)
+        assert recovered['phase'] == 'PILOT_ROLLED_BACK'
+        assert recovered['checkpoint'] is held['checkpoint']
+        assert container['State']['Running']
+        assert operations == ['read-only-attestation', 'stop', 'read-only-attestation', 'up', 'read-only-attestation']
     else:
         assert fallback.rollback(record)['phase'] == 'PILOT_ROLLED_BACK'
         assert operations == ['read-only-attestation']
         assert fallback.backend.run.call_args.args[0][:5] == ['docker', 'exec', '--user', '10001:10001', container['Id']]
+
+
+@pytest.mark.parametrize('failure, reason', [
+    ('daemon', 'HEALTH_DAEMON_REJECTED'),
+    ('lookup', 'HEALTH_CONTAINER_LOOKUP_FAILED'),
+    ('inspect', 'HEALTH_CONTAINER_INSPECTION_REJECTED'),
+    ('heartbeat', 'HEALTH_GATEWAY_HEARTBEAT_REJECTED'),
+    ('audit', 'HEALTH_AUDIT_REJECTED'),
+])
+def test_confirmation_reports_non_http_health_failures(monkeypatch, failure, reason):
+    from hosts.gamerhq import staging_rootless
+    from tools import skill_staging, staging_configuration, staging_health
+    from tools.staging_automation.backend import HostBackend
+    from tools.staging_automation.pilot_cutover import ConfirmationFailure, confirmation_step
+    from tools.staging_automation.policy import Denied
+
+    daemon = Mock(side_effect=OSError('daemon detail') if failure == 'daemon' else None)
+    monkeypatch.setattr(staging_rootless, 'verify_rootless', daemon)
+    backend = HostBackend({'workerEnabled': True, 'healthSecretEnv': 'TEST_WATCHDOG_KEY', 'stagingGuildId': '1'}, {})
+    backend.run = Mock(return_value='container', side_effect=Denied('HOST_OPERATION_FAILED') if failure == 'lookup' else None)
+    backend.inspect = Mock(return_value={'State': {'Running': True, 'Health': {'Status': 'healthy'}}},
+                           side_effect=Denied('CONTAINER_MOUNTS_REJECTED') if failure == 'inspect' else None)
+    heartbeat = Mock(return_value=SimpleNamespace(stdout='healthy'),
+                     side_effect=OSError('docker detail') if failure == 'heartbeat' else None)
+    monkeypatch.setattr(staging_health.subprocess, 'run', heartbeat)
+    monkeypatch.setenv('TEST_WATCHDOG_KEY', 'fixture')
+    request = Mock(return_value={'version': '0.1.2', 'state': {'enabled': False, 'healthy': False}})
+    monkeypatch.setattr(skill_staging, 'host_request', request)
+    monkeypatch.setattr(staging_configuration, 'audit', Mock(side_effect=OSError('audit detail')))
+
+    with pytest.raises(ConfirmationFailure) as error, confirmation_step('HOST_API_HEALTH'):
+        backend.health()
+    assert error.value.detail == {'reason': reason}
+    assert request.call_count == int(failure == 'audit')
 
 
 def test_pilot_storage_attestation_never_remounts_when_checked_in_container(tmp_path, monkeypatch):
