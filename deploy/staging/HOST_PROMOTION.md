@@ -135,7 +135,10 @@ protected preparation is required after expiration.
 The quiesced checkpoint helper verifies the same pinned Host is stopped before
 copying either database and before sealing a receipt. A networkless helper
 reads the secondary file as the mapped container user through a read-only
-data mount. A failed restore or restarted baseline leaves the batch unsealed.
+data mount, with container logging disabled so the streamed snapshot is never
+persisted to Docker logs. Where Docker supplies a private SELinux level, the
+reader uses that exact level without relabeling the data. A failed restore or
+restarted baseline leaves the batch unsealed.
 
 The older primary Host iterates connected guilds during startup. With both
 Discord memberships present, use a separately built and reviewed rollback

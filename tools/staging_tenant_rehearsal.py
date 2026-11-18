@@ -253,9 +253,9 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
         binding = rehearsal_binding(profile, backend.policy, container)
         if binding["baselineHostCommit"] != backend.policy["hostPromotion"]["commit"]:
             raise Denied("PILOT_BASELINE_CHANGED")
-        return binding
+        return container, binding
 
-    binding = verify_stopped()
+    container, binding = verify_stopped()
     backend.storage_budget()
     source = Path(profile["database"]).resolve(strict=True)
     if source != Path(profile["database"]) or (source.parent / "tenants").is_symlink() or "," in str(source.parent):
@@ -264,9 +264,16 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
     store = GuildTenantStore(primary_guild=primary, primary_database=source,
                              tenant_directory=source.parent / "tenants",
                              additional_guilds=tuple(guild for guild in cohort if guild != primary))
-    reader = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+    labeling = []
+    if container.get("ProcessLabel"):
+        level = container["ProcessLabel"].split(":", 3)[-1]
+        if not re.fullmatch(r"s0:c[0-9]+,c[0-9]+", level):
+            raise Denied("PILOT_TENANT_PATH_REJECTED")
+        labeling = ["--security-opt", f"label=level:{level}"]
+    reader = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--log-driver", "none",
               "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--user", "10001:10001",
               "--memory", "128m", "--cpus", "0.5", "--pids-limit", "32",
+              *labeling,
               "--mount", f"type=bind,src={source.parent},dst=/app/runtime/data,readonly",
               "--entrypoint", "python", baseline_image]
 

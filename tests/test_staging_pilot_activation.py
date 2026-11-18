@@ -162,7 +162,8 @@ def test_quiesced_backup_requires_same_stopped_host_and_readonly_secondary(check
                'database': str(root / 'primary.sqlite'), 'backupRoot': root, 'workRoot': root}
     baseline = {'Id': 'c' * 64, 'Image': original['baselineImage'],
                 'Config': {'Labels': {'org.opencontainers.image.revision': original['baselineHostCommit']}},
-                'State': {'Running': False, 'Status': 'exited'}}
+                'State': {'Running': False, 'Status': 'exited'},
+                'ProcessLabel': 'system_u:system_r:container_t:s0:c100,c200'}
     running = {**baseline, 'State': {'Running': True, 'Status': 'running'}}
     backend = SimpleNamespace(profile=profile, storage_budget=Mock(),
                               policy={'hostPromotion': {'commit': original['baselineHostCommit']},
@@ -177,6 +178,8 @@ def test_quiesced_backup_requires_same_stopped_host_and_readonly_secondary(check
         assert args[:8] == ['docker', 'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only']
         assert args[args.index('--mount') + 1].endswith(',dst=/app/runtime/data,readonly')
         assert args[args.index('--user') + 1] == '10001:10001'
+        assert args[args.index('--log-driver') + 1] == 'none'
+        assert 'label=level:s0:c100,c200' in args
         assert args[-1] == '2' and '--env' not in args
         with secondary.open('rb') as raw:
             shutil.copyfileobj(raw, stdout)
