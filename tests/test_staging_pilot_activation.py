@@ -359,3 +359,19 @@ def test_failed_cutover_diagnostic_binds_receipt_and_avoids_sqlite_sidecars(chec
     primary.with_name(primary.name + '-wal').touch()
     assert diagnostic.inspect_database(primary)['state'] == 'SIDECAR_PRESENT'
     assert primary.read_bytes() == original
+
+
+def test_cutover_startup_diagnostic_exposes_only_reviewed_signals():
+    from tools.staging_pilot_cutover_diagnostics import summarize_startup
+
+    receipt = summarize_startup(
+        'discord.gateway Connected (Session ID: confidential-session).\n'
+        '  File "/app/bot.py", line 149, in setup_hook\n'
+        '  File "/usr/local/lib/python/site-packages/example.py", line 91, in run\n'
+        'database.tenants.PermissionError: Guild operation has expired.\n'
+        'RuntimeError: confidential-token\n'
+    )
+    assert receipt == {'state': 'COLLECTED',
+                       'frames': [{'file': 'bot.py', 'line': 149, 'function': 'setup_hook'}],
+                       'exceptions': ['PermissionError', 'RuntimeError'],
+                       'signals': ['GATEWAY_SESSION_OBSERVED', 'TENANT_SCOPE_EXPIRED']}

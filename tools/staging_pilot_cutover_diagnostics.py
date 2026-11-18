@@ -8,6 +8,7 @@ import re
 import sqlite3
 import stat
 import subprocess
+import time
 
 
 ROOT = Path('/opt/gamerhq-staging')
@@ -34,6 +35,9 @@ FIELDS = (
     '"user":{{json .Config.User}},"running":{{json .State.Running}},'
     '"status":{{json .State.Status}},"exitCode":{{json .State.ExitCode}},'
     '"health":{{with .State.Health}}{{json .Status}}{{else}}"none"{{end}},'
+    '"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},'
+    '"oomKilled":{{json .State.OOMKilled}},'
+    '"healthProbeExitCodes":[{{with .State.Health}}{{range $i,$row := .Log}}{{if $i}},{{end}}{{json $row.ExitCode}}{{end}}{{end}}],'
     '"processLabel":{{json .ProcessLabel}},"networks":{{json .NetworkSettings.Networks}},'
     '"mounts":{{json .Mounts}}}'
 )
@@ -146,6 +150,44 @@ def inspect_backup(backup_root, uid, evidence):
         return {'state': 'REJECTED'}
 
 
+def summarize_startup(log):
+    """Only publish known exception types, reviewed source locations and fixed reason codes."""
+    known = {
+        'GuildAdmissionError', 'GuildCorePermissionsError', 'PermissionError', 'OperationalError',
+        'IntegrityError', 'Forbidden', 'HTTPException', 'LoginFailure', 'PrivilegedIntentsRequired',
+        'ExtensionFailed', 'RuntimeError', 'ValueError', 'AttributeError', 'TypeError', 'ModuleNotFoundError',
+        'ConnectionClosed', 'ClientConnectorError', 'ConfigurationError', 'IndexError', 'KeyError', 'TimeoutError',
+    }
+    reasons = {
+        'Guild runtime is still starting.': 'ADMISSION_STILL_STARTING',
+        'Guild operation has expired.': 'TENANT_SCOPE_EXPIRED',
+        'Guild has no verified admission.': 'GUILD_ADMISSION_MISSING',
+        'Guild membership could not be verified.': 'GUILD_MEMBERSHIP_UNVERIFIED',
+        'Discord memberships differ from the approved guilds.': 'COHORT_REJECTED',
+        'Discord requests require a verified guild scope.': 'DISCORD_SCOPE_REQUIRED',
+        'Discord request has no verifiable guild resource.': 'DISCORD_RESOURCE_SCOPE_REQUIRED',
+        'Pilot guild operations require a verified tenant scope.': 'RUNTIME_SCOPE_REQUIRED',
+        'Pilot startup requires the current database schema.': 'DATABASE_SCHEMA_REJECTED',
+        'Pilot startup requires an intact database.': 'DATABASE_INTEGRITY_REJECTED',
+        'unable to open database file': 'SQLITE_OPEN_REJECTED',
+        'attempt to write a readonly database': 'SQLITE_WRITE_REJECTED',
+        'Guild pilot startup failed.': 'PILOT_STARTUP_FAILED',
+        'Guild pilot paused pending exact membership and storage verification.': 'PILOT_ADMISSION_PAUSED',
+        'Session ID:': 'GATEWAY_SESSION_OBSERVED',
+        'Internal Web API listening on': 'WEB_LISTENER_OBSERVED',
+    }
+    frames, exceptions, signals = [], [], []
+    for line in log.splitlines():
+        match = re.search(r'File "/app/((?:[a-zA-Z0-9_]+/)*[a-zA-Z0-9_]+\.py)", line (\d{1,5}), in ([a-zA-Z0-9_<>]+)', line)
+        if match:
+            frames.append({'file': match[1], 'line': int(match[2]), 'function': match[3]})
+        match = re.search(r'(?:^|\s)(?:[a-zA-Z0-9_.]+\.)?([A-Z][a-zA-Z0-9_]+):', line)
+        if match and match[1] in known:
+            exceptions.append(match[1])
+        signals.extend(code for phrase, code in reasons.items() if phrase in line and code not in signals)
+    return {'state': 'COLLECTED', 'frames': frames[-30:], 'exceptions': exceptions[-12:], 'signals': signals}
+
+
 def collect():
     import fcntl
     import pwd
@@ -183,12 +225,14 @@ def collect():
                f'XDG_RUNTIME_DIR=/run/user/{uid}', f'DOCKER_HOST=unix:///run/user/{uid}/docker.sock',
                'DOCKER_CONFIG=/etc/gamerhq-staging/docker-client']
 
-        def docker(*args):
+        def docker(*args, logs=False):
             result = subprocess.run(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i',
-                                     *env, 'docker', *args], capture_output=True, text=True, timeout=35, check=True)
-            if len(result.stdout) > 32768:
+                                     *env, 'docker', *args], capture_output=True, text=True, errors='replace',
+                                    timeout=35, check=True)
+            content = result.stdout + ('\n' + result.stderr if logs else '')
+            if len(content) > (262144 if logs else 32768):
                 raise ValueError('OUTPUT_LIMIT')
-            return result.stdout.strip()
+            return content.strip()
 
         ids = docker('ps', '-aq', '--filter', 'name=^/gamerhq-staging-bot$').splitlines()
         container = {'state': 'ABSENT'}
@@ -216,7 +260,28 @@ def collect():
                          'image': observed['image'], 'running': observed['running'], 'dockerHealth': observed['health'],
                          'exitCode': observed['exitCode'], 'matchesJournalBaseline': observed['id'] == recorded['baselineContainer'],
                          'configuredAdmission': mode, 'attachedNetworkPresent': 'gamerhq-staging-private' in observed['networks'],
-                         'selinuxLevelAccepted': not level or bool(re.fullmatch(r's0:c[0-9]+,c[0-9]+', level))}
+                         'selinuxLevelAccepted': not level or bool(re.fullmatch(r's0:c[0-9]+,c[0-9]+', level)),
+                         **{key: observed[key] for key in ('startedAt', 'finishedAt', 'oomKilled', 'healthProbeExitCodes')}}
+            try:
+                startup = summarize_startup(docker('logs', '--tail', '160', observed['id'], logs=True))
+            except (subprocess.SubprocessError, ValueError):
+                startup = {'state': 'UNAVAILABLE'}
+            try:
+                raw = docker('events', '--since', observed['startedAt'], '--until', str(int(time.time())),
+                             '--filter', 'container=' + observed['id'], '--format', '{{json .}}')
+                events = []
+                for line in raw.splitlines():
+                    event = json.loads(line)
+                    action = event.get('Action')
+                    if action in ('start', 'kill', 'stop', 'die', 'oom', 'health_status: unhealthy', 'health_status: healthy'):
+                        attrs = event.get('Actor', {}).get('Attributes', {})
+                        events.append({'action': action, 'time': event.get('time'),
+                                       **{key: attrs[key] for key in ('signal', 'exitCode')
+                                          if re.fullmatch(r'[0-9]{1,3}', str(attrs.get(key, '')))}})
+                startup['events'] = events[-20:]
+            except (subprocess.SubprocessError, ValueError, TypeError):
+                startup['eventHistory'] = 'UNAVAILABLE'
+            container['startupEvidence'] = startup
             if observed['running']:
                 try:
                     version = docker('exec', '--user', '10001:10001', observed['id'], 'python', '-I', '-B', '-c',
