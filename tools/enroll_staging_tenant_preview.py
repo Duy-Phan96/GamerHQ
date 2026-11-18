@@ -18,6 +18,7 @@ ENROLLED_PREVIEW = '93fa8958cbaff97cf2152293765e70a4365fcadb'
 ENROLLED_PREPARATION = 'd194013cda5da2f6bde032ec7d16c5fd0b6c42ec'
 ENROLLED_CUTOVER = 'd18d0a2d696b30c36d6b971819b1950723ddf8a9'
 STATUS_REPAIRED = 'a2d49804e94a1914b84711d1ffb6cb4e74dca2f3'
+RECOVERY_VERIFICATION = 'af276099e34d0c7fcbc94397c8fc39f9885b147d'
 CUTOVER_DIGEST = 'f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011'
 PREVIEW_DIGEST = '7c932e34572fee9cb691301902de4a2533128ca4444ec514754e72da15ec9e1d'
 PREPARATION_DIGEST = '487c3f213024d47435952345029d82854cc6089e8bccb46e1bc089e5ccc35290'
@@ -35,6 +36,7 @@ PREPARATION_APPROVAL = 'ENROLL STAGING TENANT PREPARATION ONLY'
 CUTOVER_APPROVAL = 'ENROLL STAGING TENANT CUTOVER POLICY ONLY'
 CUTOVER_REPAIR_APPROVAL = 'REPAIR STAGING TENANT CUTOVER STATUS ONLY'
 RECOVERY_REPAIR_APPROVAL = 'ENROLL STAGING PILOT RECOVERY VERIFICATION ONLY'
+RECOVERY_COMPLETION_APPROVAL = 'ENROLL VERIFIED PRIMARY ONLY RECOVERY COMPLETION'
 WORKFLOW = '.github/workflows/staging-tenant-pilot-preview.yml'
 PREPARATION_WORKFLOW = '.github/workflows/staging-tenant-pilot-activation-prepare.yml'
 CUTOVER_WORKFLOW = '.github/workflows/staging-tenant-pilot-cutover.yml'
@@ -120,9 +122,9 @@ def bundle_sources(archive, destination, gid):
 
 
 def updated_policy(policy, source, workflow, profile, state, *, preparation=False, cutover=False,
-                   cutover_repair=False, recovery_repair=False):
+                   cutover_repair=False, recovery_repair=False, recovery_completion=False):
     digest = hashlib.sha256(workflow).hexdigest()
-    previous = STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
+    previous = RECOVERY_VERIFICATION if recovery_completion else STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
     if policy.get('controllerCommit') not in (previous, source) or policy.get('legacyWorkerCommit') != WORKER:
         raise ValueError('REVIEWED_ENROLLMENT_REQUIRED')
     if policy.get('repository') != 'Duy-Phan96/GamerHQ' or policy.get('hostPromotion', {}).get('commit') != HOST:
@@ -175,13 +177,14 @@ def verify_recovery_journal(state, journal):
 
 
 def enroll(source, workflow_digest, approval, *, preparation=False, cutover=False, cutover_repair=False,
-           recovery_repair=False):
+           recovery_repair=False, recovery_completion=False):
     import fcntl
     import pwd
 
+    recovery_repair = recovery_repair or recovery_completion
     cutover_repair = cutover_repair or recovery_repair
     cutover = cutover or cutover_repair
-    required = RECOVERY_REPAIR_APPROVAL if recovery_repair else CUTOVER_REPAIR_APPROVAL if cutover_repair else CUTOVER_APPROVAL if cutover else PREPARATION_APPROVAL if preparation else APPROVAL
+    required = RECOVERY_COMPLETION_APPROVAL if recovery_completion else RECOVERY_REPAIR_APPROVAL if recovery_repair else CUTOVER_REPAIR_APPROVAL if cutover_repair else CUTOVER_APPROVAL if cutover else PREPARATION_APPROVAL if preparation else APPROVAL
     if os.geteuid() != 0 or approval != required:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
     if not re.fullmatch(r'[0-9a-f]{40}', source) or not re.fullmatch(r'[0-9a-f]{64}', workflow_digest):
@@ -191,7 +194,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
     revisions = ROOT / 'automation-controller/revisions'
     entry = revisions.parent / 'entry.py'
     policy_file = CONTROL / 'automation-policy.json'
-    previous_commit = STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
+    previous_commit = RECOVERY_VERIFICATION if recovery_completion else STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
     previous, target = revisions / previous_commit, revisions / source
     for path in (ROOT, CONTROL, entry.parent, revisions, previous, previous / 'staging_automation'):
         directory(path)
@@ -218,6 +221,12 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                 allowed |= {'hosts/gamerhq/skill_staging.py', 'tools/staging_automation/pilot_cutover.py',
                             'tools/staging_automation/bridge.py',
                             'tools/staging_pilot_cutover_diagnostics.py'}
+            if recovery_completion:
+                allowed |= {'tools/staging_automation/backend.py', 'tools/staging_health.py',
+                            'tools/staging_tenant_preview_entry.py', 'tools/staging_host_promotion_smoke.py',
+                            '.github/workflows/staging-automation-regression.yml', 'tools/repository_audit.py',
+                            'tests/test_repository_safety.py', 'tests/test_guild_pilot.py',
+                            'tests/test_staging_bootstrap_v2.py'}
             changes = set(git('diff', '--name-only', previous_commit, source, '--').decode().splitlines())
             if not changes <= allowed:
                 raise ValueError('UNREVIEWED_REPAIR_SCOPE')
@@ -272,7 +281,8 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
             if recovery_repair:
                 verify_recovery_journal(state, json.loads(checked(journal_path, uid, private=True)))
             updated = updated_policy(policy, source, workflow, profile, state, preparation=preparation,
-                                     cutover=cutover, cutover_repair=cutover_repair, recovery_repair=recovery_repair)
+                                     cutover=cutover, cutover_repair=cutover_repair, recovery_repair=recovery_repair,
+                                     recovery_completion=recovery_completion)
             if launcher not in (renderer(previous), renderer(target)) or (policy['controllerCommit'] == previous_commit and launcher != renderer(previous)):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
             blobs = {}
@@ -309,7 +319,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                 atomic(entry, launcher, gid)
                 atomic(policy_file, before, gid)
                 raise
-    return {'state': 'PILOT_RECOVERY_VERIFICATION_ENROLLED' if recovery_repair else 'PILOT_CUTOVER_STATUS_REPAIRED' if cutover_repair else 'PILOT_CUTOVER_POLICY_ENROLLED' if cutover else
+    return {'state': 'PRIMARY_ONLY_RECOVERY_COMPLETION_ENROLLED' if recovery_completion else 'PILOT_RECOVERY_VERIFICATION_ENROLLED' if recovery_repair else 'PILOT_CUTOVER_STATUS_REPAIRED' if cutover_repair else 'PILOT_CUTOVER_POLICY_ENROLLED' if cutover else
             'PILOT_ACTIVATION_PREPARATION_ENROLLED' if preparation else 'PILOT_PREVIEW_ENROLLED',
             'controllerCommit': source, 'legacyWorkerCommit': WORKER,
             'hostCommit': HOST, 'workflowSha256': workflow_digest, 'binding': BINDING,
@@ -328,11 +338,13 @@ if __name__ == '__main__':
     mode.add_argument('--cutover-policy', action='store_true')
     mode.add_argument('--repair-cutover-status', action='store_true')
     mode.add_argument('--repair-cutover-recovery', action='store_true')
+    mode.add_argument('--complete-primary-recovery-policy', action='store_true')
     args = parser.parse_args()
     try:
         receipt = enroll(args.commit, args.workflow_sha256, args.approval, preparation=args.activation_preparation,
                          cutover=args.cutover_policy, cutover_repair=args.repair_cutover_status,
-                         recovery_repair=args.repair_cutover_recovery)
+                         recovery_repair=args.repair_cutover_recovery,
+                         recovery_completion=args.complete_primary_recovery_policy)
     except (OSError, subprocess.SubprocessError):
         raise SystemExit('Staging enrollment failed a protected filesystem, Git or lock check.') from None
     print(json.dumps(receipt))
