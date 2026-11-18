@@ -116,7 +116,17 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             prepared = state.get('tenantPilotActivationPrepared')
             if not cutover or not isinstance(prepared, dict):
                 raise Denied('PILOT_CHECKPOINT_REJECTED')
-            return backend.cutover_tenant_pilot(state['approvedImage'], prepared, claims['run_id'])
+            recovery_only = state.get('recoveryRequired') is True
+            result = backend.cutover_tenant_pilot(state['approvedImage'], prepared, claims['run_id'],
+                                                  recovery_only=recovery_only)
+            if recovery_only:
+                if (result.get('state') != 'PILOT_ROLLED_BACK' or result.get('recoveryVerified') is not True
+                        or result.get('activationAuthorized') is not False):
+                    raise Denied('RECOVERY_REQUIRES_OWNER')
+                state['recoveryRequired'] = False
+                save(state)
+                return {**result, 'recoveryRequired': False}
+            return result
         if operation in WEB:
             from .web import WebDeployment
             web = WebDeployment(backend, policy['webDeployment'], state, save)

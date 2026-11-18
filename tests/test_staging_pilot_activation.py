@@ -308,6 +308,33 @@ def test_cutover_requires_enrolled_workflow_and_holds_legacy_operations(tmp_path
         execute('challenge', {'operation': 'restart'}, {'tenantPilotCutover': {}}, {}, backend, Mock(), now=1)
 
 
+@pytest.mark.parametrize('proof, released', [
+    ({'state': 'PILOT_ROLLED_BACK', 'activationAuthorized': False}, False),
+    ({'state': 'PILOT_ACTIVE', 'activationAuthorized': True, 'recoveryVerified': True}, False),
+    ({'state': 'PILOT_ROLLED_BACK', 'activationAuthorized': False, 'recoveryVerified': True}, True),
+])
+def test_bridge_releases_hold_only_for_verified_primary_recovery(tmp_path, proof, released):
+    from tools.staging_automation.bridge import execute
+
+    (tmp_path / 'tenant-pilot-cutover.json').touch()
+    cutover = Mock(return_value=proof)
+    backend = SimpleNamespace(profile={'workRoot': tmp_path}, cutover_tenant_pilot=cutover, policy_integrity=Mock())
+    state = {'recoveryRequired': True, 'enabled': True, 'bootstrapVerified': True, 'approvedImage': 'baseline',
+             'tenantPilotActivationPrepared': {},
+             'challenge': {'operation': 'tenant-pilot-cutover', 'nonce': 'fixture', 'expires': 60}}
+    saved = []
+    args = ('tenant-pilot-cutover', {'token': 'test', 'challenge': 'fixture'}, {'tenantPilotCutover': {}},
+            state, backend, lambda value: saved.append(value['recoveryRequired']))
+    verify = Mock(return_value={'jti': 'new', 'exp': 60, 'run_id': '42'})
+    if released:
+        assert execute(*args, verifier=verify, now=1)['recoveryRequired'] is False
+    else:
+        with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
+            execute(*args, verifier=verify, now=1)
+    cutover.assert_called_once_with('baseline', {}, '42', recovery_only=True)
+    assert saved[:-1] == [True, True] and saved[-1] is not released
+
+
 def test_cutover_status_runs_with_only_the_installed_bridge_overlay(tmp_path):
     import shutil
     import subprocess
@@ -424,6 +451,7 @@ def test_healthy_fallback_is_stopped_if_post_boot_verification_fails(tmp_path, m
     monkeypatch.setattr(host_promotion, 'require_retained', Mock())
     monkeypatch.setattr(host_promotion, 'require_baseline_skill', Mock())
     monkeypatch.setattr(host_promotion, 'require_runtime_lifecycle', Mock())
+    monkeypatch.setattr(host_promotion, 'application_fingerprint', Mock(return_value='unchanged'))
     monkeypatch.setattr(staging_tenant_rehearsal, 'capture_container_tenant', Mock())
 
     def verify_remote(*args, probe_storage=True, **kwargs):

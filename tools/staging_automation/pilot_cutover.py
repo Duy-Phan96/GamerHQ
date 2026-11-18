@@ -191,7 +191,8 @@ class PilotCutover:
     def confirm(self, image, override, record, *, recovery=False):
         from services.tenant_routing import PILOT_ENV
         from tools.staging_tenant_rehearsal import capture_container_tenant
-        from .host_promotion import require_baseline_skill, require_retained, require_runtime_lifecycle, retained_state
+        from .host_promotion import (application_fingerprint, require_baseline_skill, require_retained,
+                                     require_runtime_lifecycle, retained_state)
 
         expected_binding = override['services'][self.profile['service']]['environment'][PILOT_ENV]
         for _ in range(60):
@@ -230,7 +231,10 @@ class PilotCutover:
         secondary, = set(self.cohort) - {int(primary)}
         with confirmation_step('SECONDARY_DATA_INTEGRITY'):
             with tempfile.TemporaryDirectory(dir=self.profile['workRoot'], prefix='pilot-health-') as root:
-                capture_container_tenant(container['Id'], secondary, Path(root) / 'secondary.sqlite')
+                snapshot = Path(root) / 'secondary.sqlite'
+                capture_container_tenant(container['Id'], secondary, snapshot)
+                if recovery and application_fingerprint(snapshot) != application_fingerprint(batch / f'{secondary}.sqlite'):
+                    raise Denied('RECOVERY_REQUIRES_OWNER')
 
     def confirm_fallback(self, record):
         try:
@@ -268,13 +272,23 @@ class PilotCutover:
         self.confirm_fallback(record)
         return self.save(record, 'PILOT_ROLLED_BACK')
 
-    def run(self):
+    def run(self, *, recovery_only=False):
         from tools.staging_tenant_rehearsal import rehearsal_binding, verify_activation_checkpoint
         from .pilot_activation import preparation_state
 
         record = self.load()
+        if recovery_only and (not record or 'checkpoint' not in record
+                              or record['phase'] in {'PILOT_ACTIVE', 'PILOT_STOP_CANCELLED'}):
+            raise Denied('RECOVERY_REQUIRES_OWNER')
         if record:
-            if record['phase'] in TERMINAL:
+            if recovery_only and record['phase'] == 'PILOT_ROLLED_BACK':
+                # A crash or legacy controller can leave the journal terminal
+                # while the latch is still held. Re-prove all recovery gates.
+                try:
+                    record = self.rollback(record)
+                except Exception:
+                    raise Denied('RECOVERY_REQUIRES_OWNER') from None
+            elif record['phase'] in TERMINAL:
                 image = {'PILOT_ACTIVE': self.candidate, 'PILOT_ROLLED_BACK': self.fallback,
                          'PILOT_STOP_CANCELLED': self.baseline}[record['phase']]
                 current = self.backend.inspect()
@@ -328,6 +342,10 @@ class PilotCutover:
                     raise Denied('RECOVERY_REQUIRES_OWNER') from None
         result = {'state': record['phase'], 'activationRun': record['activationRun'],
                   'activationAuthorized': record['phase'] == 'PILOT_ACTIVE'}
+        if recovery_only:
+            if record['phase'] != 'PILOT_ROLLED_BACK' or self.load() != record:
+                raise Denied('RECOVERY_REQUIRES_OWNER')
+            result['recoveryVerified'] = True
         if 'checkpoint' in record:
             result['backupBatch'] = record['checkpoint']['backupBatch']
             result['backupReceiptSha256'] = record['checkpoint']['backupReceiptSha256']

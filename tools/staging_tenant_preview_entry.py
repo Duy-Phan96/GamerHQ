@@ -33,7 +33,8 @@ def main():
                     or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600):
                 raise Denied('CONCURRENT_OPERATION_REJECTED')
             fcntl.flock(backend.operation_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            result = PilotCutover(backend, packet['prepared'], packet['image'], packet['runId']).run()
+            result = PilotCutover(backend, packet['prepared'], packet['image'], packet['runId']).run(
+                recovery_only=packet['recoveryOnly'])
         else:
             raise Denied('OPERATION_NOT_ALLOWED')
     except Denied as error:
