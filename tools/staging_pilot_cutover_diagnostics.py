@@ -1,14 +1,17 @@
 """Owner-run read-only receipt for the exact enrolled two-guild cutover."""
 from contextlib import closing
+import argparse
 import hashlib
 import hmac
 import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sqlite3
 import stat
 import subprocess
+import tempfile
 import time
 
 
@@ -28,6 +31,9 @@ IMAGES = {'baseline': 'sha256:1fac8871a93d79180eae0c11ace3735ace453714425516dbfe
           'fallback': 'sha256:78e394acafa55e9bbf9810530b69beaa2ef9d1f3fccfa7c736669f85db0d0e02'}
 PHASES = {'STOPPING', 'CHECKPOINTED', 'STARTING', 'VERIFYING', 'ROLLING_BACK',
           'PILOT_ACTIVE', 'PILOT_ROLLED_BACK', 'PILOT_STOP_CANCELLED'}
+API_DIAGNOSTIC_APPROVAL = 'RUN ISOLATED STAGING HOST API DIAGNOSTIC'
+API_PATH = '/api/v1/servers/' + COHORT['guildIds'][0] + '/skills/event-manager'
+MAX_PROBE_DB = 32 * 1024**2
 FIELDS = (
     '{"id":{{json .Id}},"image":{{json .Image}},'
     '"host":{{json (index .Config.Labels "org.opencontainers.image.revision")}},'
@@ -245,7 +251,7 @@ def summarize_startup(log):
     return {'state': 'COLLECTED', 'frames': frames[-30:], 'exceptions': exceptions[-12:], 'signals': signals}
 
 
-def collect():
+def collect(*, api_probe=False):
     import fcntl
     import pwd
 
@@ -282,14 +288,25 @@ def collect():
                f'XDG_RUNTIME_DIR=/run/user/{uid}', f'DOCKER_HOST=unix:///run/user/{uid}/docker.sock',
                'DOCKER_CONFIG=/etc/gamerhq-staging/docker-client']
 
+        def as_worker(args, **kwargs):
+            return subprocess.run(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i',
+                                   *env, *args], capture_output=True, text=True, errors='replace',
+                                  timeout=35, check=True, **kwargs)
+
         def docker(*args, logs=False):
-            result = subprocess.run(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i',
-                                     *env, 'docker', *args], capture_output=True, text=True, errors='replace',
-                                    timeout=35, check=True)
+            result = as_worker(['docker', *args])
             content = result.stdout + ('\n' + result.stderr if logs else '')
             if len(content) > (262144 if logs else 32768):
                 raise ValueError('OUTPUT_LIMIT')
             return content.strip()
+
+        if api_probe:
+            if (state.get('recoveryRequired') is not True or journal['phase'] != 'ROLLING_BACK'
+                    or journal.get('rollbackFailedCheck') != 'HOST_API_HEALTH'
+                    or os.path.lexists(worker / 'access-revoked')
+                    or profile.get('healthUrl') != 'http://127.0.0.1:18080'):
+                raise ValueError('HELD_API_RECOVERY_REQUIRED')
+            return run_api_probe(docker, as_worker, profile, policy['controllerCommit'], recorded, uid)
 
         ids = docker('ps', '-aq', '--filter', 'name=^/gamerhq-staging-bot$').splitlines()
         container = {'state': 'ABSENT'}
@@ -376,9 +393,222 @@ def collect():
                 'productionChanged': False, 'databaseChanged': False, 'containersChanged': False}
 
 
-if __name__ == '__main__':
+API_CLIENT = """
+import json, os, socket, sys
+from urllib.error import HTTPError, URLError
+sys.path.insert(0, sys.argv[1])
+from tools.skill_staging import host_request
+packet=json.load(sys.stdin)
+profile={'healthUrl':sys.argv[2], 'healthSecretEnv':'GAMERHQ_DIAGNOSTIC_SECRET',
+         'stagingGuildId':packet['guild']}
+os.environ['GAMERHQ_DIAGNOSTIC_SECRET']=packet['secret']
+try:
+    value=host_request(profile,packet['path'])
+except HTTPError as error:
+    result={'state':'HTTP_REJECTED','httpStatus':error.code}
+except (URLError,OSError) as error:
+    cause=error.reason if isinstance(error,URLError) else error
+    result={'state': 'CONNECTION_REFUSED' if isinstance(cause,ConnectionRefusedError)
+            else 'TIMEOUT' if isinstance(cause,(TimeoutError,socket.timeout)) else 'TRANSPORT_REJECTED'}
+except (ValueError,TypeError,KeyError):
+    result={'state':'RESPONSE_REJECTED'}
+else:
+    lifecycle=value.get('state') if isinstance(value,dict) else None
+    if not isinstance(lifecycle,dict):
+        result={'state':'RESPONSE_REJECTED'}
+    else:
+        result={'state':'RESPONSE_COLLECTED','httpStatus':200,
+                'versionMatches':value.get('version')=='0.1.2',
+                'capabilitiesPass':value.get('missingCapabilities')==[],
+                'installed':lifecycle.get('installed') is True,
+                'configured':lifecycle.get('configured') is True,
+                'enabled':lifecycle.get('enabled') is True,
+                'healthy':lifecycle.get('healthy') is True}
+print(json.dumps(result))
+"""
+
+API_SERVER = """
+import asyncio, json, os, socket, sys, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from urllib.error import HTTPError
+sys.path.insert(0,'/app')
+
+def no_external_connect(event,args):
+    if event=='socket.connect':
+        sock,address=args
+        if sock.family not in (socket.AF_INET, socket.AF_INET6) or address[0] not in ('127.0.0.1','::1'):
+            raise PermissionError('Probe may connect only to its own loopback address.')
+sys.addaudithook(no_external_connect)
+os.environ.clear()
+os.environ['PYTHON_DOTENV_DISABLED']='1'
+packet=json.loads(sys.stdin.buffer.readline())
+assert os.geteuid()==os.getegid()==10001 and not packet.get('discordToken')
+from hosts.gamerhq.skill_packages import load_external_skill_packages
+from hosts.gamerhq.skill_runtime import GamerHQSkillRuntime
+from hosts.gamerhq.web_api import GamerHQWebApiServer
+from services.tenant_routing import pilot_routes
+from tools.skill_staging import host_request
+from database import db
+primary=int(packet['guild'])
+pin=packet['binding']
+with tempfile.TemporaryDirectory(dir='/tmp') as root:
+    database=Path(root)/'gamerhq.db'
+    data=sys.stdin.buffer.read(32*1024**2+1)
+    assert 0 < len(data) <= 32*1024**2
+    database.write_bytes(data)
+    db.DB_PATH=database
+    guild=SimpleNamespace(id=primary, me=SimpleNamespace(id=int(pin['applicationId'])))
+    get_guild=lambda ident: guild if ident==primary else None
+    routes=pilot_routes(json.dumps(pin),primary=primary,database=database,get_guild=get_guild)
+    routes.verify({'id':pin['applicationId'],'bot':True},[{'id':g} for g in pin['guildIds']])
+    routes.accepting=True
+    bot=SimpleNamespace(guild_routes=routes,get_guild=get_guild)
+    runtime=GamerHQSkillRuntime(bot)
+    assert load_external_skill_packages(runtime,('event-manager',)).loaded==('event-manager',)
+    async def probe():
+        server=GamerHQWebApiServer(bot=bot,skill_runtime=runtime,shared_secret=packet['secret'],host='0.0.0.0')
+        await server.start()
+        try:
+            os.environ['GAMERHQ_DIAGNOSTIC_SECRET']=packet['secret']
+            profile={'healthUrl':'http://127.0.0.1:8080','healthSecretEnv':'GAMERHQ_DIAGNOSTIC_SECRET','stagingGuildId':packet['guild']}
+            try:
+                value=await asyncio.to_thread(host_request,profile,packet['path'])
+            except HTTPError as error:
+                result={'state':'HTTP_REJECTED','httpStatus':error.code}
+            except Exception:
+                result={'state':'LOCAL_REQUEST_FAILED'}
+            else:
+                state=value.get('state',{}) if isinstance(value,dict) else {}
+                result={'state':'RESPONSE_COLLECTED','httpStatus':200,
+                        'versionMatches':value.get('version')=='0.1.2',
+                        'capabilitiesPass':value.get('missingCapabilities')==[],
+                        'installed':state.get('installed') is True,
+                        'configured':state.get('configured') is True,
+                        'enabled':state.get('enabled') is True,
+                        'healthy':state.get('healthy') is True}
+            print('GAMERHQ_API_PROBE '+json.dumps(result),flush=True)
+            await asyncio.sleep(55)
+        finally:
+            await server.close()
+    asyncio.run(probe())
+"""
+
+
+def api_receipt(raw):
+    value = json.loads(raw)
+    states = {'HTTP_REJECTED', 'CONNECTION_REFUSED', 'TIMEOUT', 'TRANSPORT_REJECTED',
+              'RESPONSE_REJECTED', 'RESPONSE_COLLECTED', 'LOCAL_REQUEST_FAILED'}
+    if not isinstance(value, dict) or value.get('state') not in states:
+        raise ValueError('API_PROBE_RECEIPT_REJECTED')
+    result = {'state': value['state']}
+    status = value.get('httpStatus')
+    if type(status) is int and 100 <= status <= 599:
+        result['httpStatus'] = status
+    for key in ('versionMatches', 'capabilitiesPass', 'installed', 'configured', 'enabled', 'healthy'):
+        if type(value.get(key)) is bool:
+            result[key] = value[key]
+    return result
+
+
+def run_api_probe(docker, as_worker, profile, controller, journal, uid):
+    """Run only the exact image's API in a disposable container over Staging loopback."""
+    current = json.loads(docker('inspect', '--format', FIELDS, 'gamerhq-staging-bot'))
+    if (current['running'] is not False or current['status'] != 'exited' or current['image'] != IMAGES['fallback']
+            or current['host'] != HOSTS['fallback'] or current['project'] != 'gamerhq-staging'):
+        raise ValueError('STOPPED_PINNED_FALLBACK_REQUIRED')
+    daemon = json.loads(docker('info', '--format', '{{if .ID}}{{json .}}{{end}}'))
+    if (not profile.get('dockerDaemonId') or daemon.get('ID') != profile.get('dockerDaemonId')
+            or not any('rootless' in opt for opt in daemon.get('SecurityOptions') or [])
+            or daemon.get('CgroupDriver') != 'systemd' or str(daemon.get('CgroupVersion')) != '2'):
+        raise ValueError('ROOTLESS_DAEMON_REJECTED')
+    if profile.get('workRoot') != str(ROOT / 'worker'):
+        raise ValueError('STAGING_PATH_REJECTED')
+    evidence = journal.get('checkpoint')
+    if inspect_backup(ROOT / 'backups', uid, evidence)['state'] != 'VERIFIED':
+        raise ValueError('CUTOVER_BACKUP_REJECTED')
+    primary = COHORT['guildIds'][0]
+    path = ROOT / 'backups' / evidence['backupBatch'] / (primary + '.sqlite')
+    data = protected(path, uid, 0o600, limit=MAX_PROBE_DB)
+    secret = secrets.token_urlsafe(40)
+    client_packet = {'guild': primary, 'path': API_PATH, 'secret': secret}
+    packet = {**client_packet, 'binding': {**COHORT, 'productionBotId': profile['productionBotId'],
+                                           'productionGuildId': profile['productionGuildId'], 'primaryOnly': True}}
+    name = 'gamerhq-staging-api-probe-' + secrets.token_hex(8)
+    bundle = ROOT / 'automation-controller/revisions' / controller / 'pilot-source'
+    worker_python = str(ROOT / 'deployment-worker/.venv/bin/python')
+    args = [
+        'create', '--name', name, '--interactive', '--pull', 'never', '--network', 'gamerhq-staging-private',
+        '--publish', '127.0.0.1:18080:8080', '--no-healthcheck', '--read-only', '--restart', 'no',
+        '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=48m,mode=1777', '--cap-drop', 'ALL',
+        '--security-opt', 'no-new-privileges:true', '--user', '10001:10001', '--memory', '256m', '--pids-limit', '32',
+        '--cpus', '0.5', '--log-driver', 'json-file', '--log-opt', 'max-size=64k', '--log-opt', 'max-file=1',
+        '--entrypoint', 'python', IMAGES['fallback'], '-I', '-B', '-c', API_SERVER,
+    ]
+    container = docker(*args)
+    if not re.fullmatch(r'[0-9a-f]{64}', container) or container == current['id']:
+        raise ValueError('DISPOSABLE_ID_REJECTED')
     try:
-        print(json.dumps(collect(), sort_keys=True))
+        with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as startup_errors:
+            source.write(json.dumps(packet).encode() + b'\n')
+            source.write(data)
+            source.seek(0)
+            import pwd
+            account = pwd.getpwuid(uid)
+            env = ['PATH=/usr/local/bin:/usr/bin:/bin', f'HOME={account.pw_dir}',
+                   f'XDG_RUNTIME_DIR=/run/user/{uid}', f'DOCKER_HOST=unix:///run/user/{uid}/docker.sock',
+                   'DOCKER_CONFIG=/etc/gamerhq-staging/docker-client']
+            job = subprocess.Popen(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i',
+                                    *env, 'docker', 'start', '--attach', '--interactive', container],
+                                   stdin=source, stdout=subprocess.DEVNULL, stderr=startup_errors)
+            try:
+                local = {'state': 'PROBE_STARTUP_UNVERIFIED'}
+                for _ in range(30):
+                    try:
+                        logs = docker('logs', '--tail', '30', container, logs=True)
+                    except subprocess.SubprocessError:
+                        logs = ''
+                    signals = [line for line in logs.splitlines() if line.startswith('GAMERHQ_API_PROBE ')]
+                    if signals:
+                        local = api_receipt(signals[-1].split(' ', 1)[1])
+                        break
+                    if job.poll() is not None:
+                        break
+                    time.sleep(1)
+                external = {'state': 'NOT_ATTEMPTED'}
+                if local['state'] == 'PROBE_STARTUP_UNVERIFIED':
+                    startup_errors.seek(0)
+                    errors = startup_errors.read(16384).lower()
+                    if b'address already in use' in errors or b'port is already allocated' in errors:
+                        local = {'state': 'LOOPBACK_PORT_OCCUPIED'}
+                else:
+                    reply = as_worker([worker_python, '-I', '-B', '-c', API_CLIENT, str(bundle),
+                                       'http://127.0.0.1:18080'], input=json.dumps(client_packet))
+                    external = api_receipt(reply.stdout)
+                return {'state': 'HOST_API_DIAGNOSTIC', 'fallbackImage': IMAGES['fallback'],
+                        'path': API_PATH, 'local': local, 'publishedLoopback': external,
+                        'gatewayStarted': False, 'productionChanged': False, 'liveDatabaseChanged': False,
+                        'recoveryLatchChanged': False}
+            finally:
+                if job.poll() is None:
+                    job.terminate()
+                    job.wait(timeout=10)
+    finally:
+        docker('rm', '--force', container)
+        after = json.loads(docker('inspect', '--format', FIELDS, 'gamerhq-staging-bot'))
+        if after['id'] != current['id'] or after['running'] is not False:
+            raise ValueError('LIVE_FALLBACK_STATE_CHANGED_EXTERNALLY')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--api-probe', action='store_true')
+    parser.add_argument('--approval')
+    args = parser.parse_args()
+    try:
+        if args.api_probe and args.approval != API_DIAGNOSTIC_APPROVAL:
+            raise ValueError('OWNER_DIAGNOSTIC_APPROVAL_REQUIRED')
+        print(json.dumps(collect(api_probe=args.api_probe), sort_keys=True))
     except BlockingIOError:
         raise SystemExit('{"diagnosticError":"OPERATION_LOCK_BUSY","productionChanged":false}') from None
     except subprocess.SubprocessError:

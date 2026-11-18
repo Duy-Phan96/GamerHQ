@@ -489,3 +489,62 @@ def test_read_only_health_credential_comparison_returns_only_booleans(tmp_path, 
     assert secret not in json.dumps(reply)
     assert diagnostic.health_credential_matches(profile, 1002, 'GAMERHQ_WEB_API_SECRET=' + 'X' * 40)[
         'workerMatchesContainer'] is False
+
+
+def test_isolated_api_diagnostic_publishes_only_loopback_without_live_mounts_or_credentials(monkeypatch):
+    import sys
+    from tools import staging_pilot_cutover_diagnostics as diagnostic
+
+    started = Mock()
+    job = Mock()
+    job.poll.return_value = None
+    live = {'id': 'a' * 64, 'running': False, 'status': 'exited', 'image': diagnostic.IMAGES['fallback'],
+            'host': diagnostic.HOSTS['fallback'], 'project': 'gamerhq-staging'}
+    daemon = {'ID': 'daemon', 'SecurityOptions': ['name=rootless'],
+              'CgroupDriver': 'systemd', 'CgroupVersion': '2'}
+    sample = {'state': 'RESPONSE_COLLECTED', 'httpStatus': 200, 'versionMatches': True,
+              'private': 'never copied to the receipt'}
+    calls = []
+
+    def docker(*args, **kwargs):
+        calls.append(args)
+        if args[0] == 'inspect':
+            return json.dumps(live)
+        if args[0] == 'info':
+            return json.dumps(daemon)
+        if args[0] == 'create':
+            return 'b' * 64
+        if args[0] == 'logs':
+            return 'GAMERHQ_API_PROBE ' + json.dumps(sample)
+        assert args == ('rm', '--force', 'b' * 64)
+
+    def spawn(args, **options):
+        packet = json.loads(options['stdin'].readline())
+        assert packet['binding']['primaryOnly'] is True
+        assert 'discordToken' not in packet
+        assert options['stdin'].read() == b'backup bytes'
+        started(*args)
+        return job
+
+    monkeypatch.setitem(sys.modules, 'pwd', SimpleNamespace(
+        getpwuid=lambda _: SimpleNamespace(pw_name='staging-fixture', pw_dir='/fixture')))
+    monkeypatch.setattr(diagnostic, 'protected', lambda *args, **kwargs: b'backup bytes')
+    monkeypatch.setattr(diagnostic, 'inspect_backup', Mock(return_value={'state': 'VERIFIED'}))
+    monkeypatch.setattr(diagnostic.subprocess, 'Popen', spawn)
+    worker = Mock(return_value=SimpleNamespace(stdout=json.dumps({'state': 'CONNECTION_REFUSED'})))
+    profile = {'dockerDaemonId': 'daemon', 'workRoot': str(diagnostic.ROOT / 'worker'),
+               'productionBotId': '3', 'productionGuildId': '4'}
+    result = diagnostic.run_api_probe(docker, worker, profile, 'controller',
+                                      {'checkpoint': {'backupBatch': 'tenant-pilot-3bnrqu5l'}}, 1002)
+
+    create = next(args for args in calls if args[0] == 'create')
+    assert create[create.index('--publish') + 1] == '127.0.0.1:18080:8080'
+    assert create[create.index('--network') + 1] == 'gamerhq-staging-private'
+    assert create[create.index('--entrypoint') + 1] == 'python'
+    assert all(flag not in create for flag in ('--env', '--env-file', '--volume', '--mount'))
+    assert diagnostic.IMAGES['fallback'] in create
+    assert '--interactive' in started.call_args.args
+    assert result['local'] == {'state': 'RESPONSE_COLLECTED', 'httpStatus': 200, 'versionMatches': True}
+    assert result['publishedLoopback'] == {'state': 'CONNECTION_REFUSED'}
+    assert result['gatewayStarted'] is False and result['liveDatabaseChanged'] is False
+    assert ('rm', '--force', 'b' * 64) in calls
