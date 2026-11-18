@@ -89,8 +89,11 @@ def atomic(path, content, gid):
         pending.unlink(missing_ok=True)
 
 
-def renderer(path):
-    return (f'import sys\nsys.path[:0]=[{str(path)!r},{str(ROOT / "deployment-worker")!r}]\n'
+def renderer(path, *, recovery_completion=False):
+    imports = f'{str(path)!r},{str(ROOT / "deployment-worker")!r}'
+    if recovery_completion:
+        imports = f'{str(path)!r},{str(path / "pilot-source")!r},{str(ROOT / "deployment-worker")!r}'
+    return (f'import sys\nsys.path[:0]=[{imports}]\n'
             'from staging_automation.bridge import entry\nentry()\n').encode()
 
 
@@ -283,7 +286,8 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
             updated = updated_policy(policy, source, workflow, profile, state, preparation=preparation,
                                      cutover=cutover, cutover_repair=cutover_repair, recovery_repair=recovery_repair,
                                      recovery_completion=recovery_completion)
-            if launcher not in (renderer(previous), renderer(target)) or (policy['controllerCommit'] == previous_commit and launcher != renderer(previous)):
+            target_launcher = renderer(target, recovery_completion=recovery_completion)
+            if launcher not in (renderer(previous), target_launcher) or (policy['controllerCommit'] == previous_commit and launcher != renderer(previous)):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
             blobs = {}
             overlay = OVERLAY | ({'pilot_activation.py'} if cutover else set()) | ({'pilot_cutover.py'} if cutover_repair else set())
@@ -314,7 +318,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                 if Path('/sys/fs/selinux/enforce').exists():
                     subprocess.run(['/usr/sbin/restorecon', '-RF', str(target)], check=True, capture_output=True, timeout=45)
                 atomic(policy_file, (json.dumps(updated, indent=2) + '\n').encode(), gid)
-                atomic(entry, renderer(target), gid)
+                atomic(entry, target_launcher, gid)
             except Exception:
                 atomic(entry, launcher, gid)
                 atomic(policy_file, before, gid)

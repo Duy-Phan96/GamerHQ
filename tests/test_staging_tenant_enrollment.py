@@ -140,3 +140,14 @@ def test_cutover_status_repair_preserves_the_enrolled_workflow_and_pins(monkeypa
     with pytest.raises(ValueError, match='ACTIVE_STAGING_REQUIRED'):
         enrollment.updated_policy(policy, source, workflow, profile, state, cutover=True,
                                   cutover_repair=True, recovery_repair=True, recovery_completion=True)
+
+def test_recovery_completion_launcher_selects_the_enrolled_health_source(tmp_path):
+    import ast
+
+    previous = enrollment.renderer(tmp_path)
+    expected = (f'import sys\nsys.path[:0]=[{str(tmp_path)!r},{str(enrollment.ROOT / "deployment-worker")!r}]\n'
+                'from staging_automation.bridge import entry\nentry()\n').encode()
+    assert previous == expected
+    tree = ast.parse(enrollment.renderer(tmp_path, recovery_completion=True))
+    assert ast.literal_eval(tree.body[1].value) == [str(tmp_path), str(tmp_path / 'pilot-source'),
+                                                  str(enrollment.ROOT / 'deployment-worker')]
