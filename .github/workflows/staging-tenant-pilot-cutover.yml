@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: aae6ef1de6513b887dc73d54ad273ad13096b1fc
+          ref: d18d0a2d696b30c36d6b971819b1950723ddf8a9
           persist-credentials: false
       - name: Apply or recover the enrolled Staging transaction
         env:
