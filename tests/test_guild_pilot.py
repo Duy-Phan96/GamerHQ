@@ -644,3 +644,52 @@ def test_internal_web_api_binds_the_authorized_guild_before_skill_access(pilot):
             service.get_skill.assert_awaited_once()
 
     asyncio.run(verify())
+
+
+def test_primary_only_watchdog_request_reads_real_event_manager_state(pilot, monkeypatch):
+    from aiohttp.test_utils import TestServer
+    from hosts.gamerhq.skill_packages import load_external_skill_packages
+    from hosts.gamerhq.web_api import create_web_api_app
+    from hosts.gamerhq.web_platform import GamerHQWebPlatformService
+    from tools.skill_staging import host_request
+    from urllib.error import HTTPError
+    from importlib.metadata import version, PackageNotFoundError
+
+    try:
+        if version("gamerhq-skill-event-manager") != "0.1.2":
+            pytest.skip("Exact staging Skill package required")
+    except PackageNotFoundError:
+        pytest.skip("Exact staging Skill package required")
+    store, guilds, _ = pilot
+    profile = {"stagingBotId": "90", "productionBotId": "99", "productionGuildId": "3"}
+    value = pilot_environment(profile, (1, 2), primary_only=True)
+    routes = pilot_routes(value, primary=1, database=store.primary_database, get_guild=guilds.get)
+    bot = SimpleNamespace(guild_routes=routes, get_guild=guilds.get)
+    runtime = GamerHQSkillRuntime(bot)
+    assert load_external_skill_packages(runtime, ('event-manager',)).loaded == ('event-manager',)
+    with store.scope(1), db.connect() as conn:
+        conn.execute("INSERT INTO skill_guild_state VALUES (1, 'event-manager', 1, 1, 0, '0.1.1', 0)")
+    before = store.primary_database.read_bytes()
+    secondary = store.tenant_directory / "2.sqlite"
+    secondary_before = secondary.read_bytes()
+    monkeypatch.setenv("TEST_PILOT_HEALTH_SECRET", "fixture")
+
+    async def verify():
+        proof(routes)
+        app = create_web_api_app(platform_service=GamerHQWebPlatformService(bot=bot, skill_runtime=runtime),
+                                 shared_secret="fixture")
+        async with TestServer(app) as server:
+            worker = {'healthUrl': str(server.make_url('/')).rstrip('/'), 'stagingGuildId': '1',
+                      'healthSecretEnv': 'TEST_PILOT_HEALTH_SECRET'}
+            result = await asyncio.to_thread(host_request, worker, '/api/v1/servers/1/skills/event-manager')
+            assert result['version'] == '0.1.2'
+            assert result['state']['installed'] and result['state']['configured']
+            assert not result['state']['enabled'] and not result['missingCapabilities']
+            with pytest.raises(HTTPError) as denied:
+                await asyncio.to_thread(host_request, {**worker, 'stagingGuildId': '2'},
+                                        '/api/v1/servers/2/skills/event-manager')
+            assert denied.value.code == 403
+
+    asyncio.run(verify())
+    assert store.primary_database.read_bytes() == before
+    assert secondary.read_bytes() == secondary_before

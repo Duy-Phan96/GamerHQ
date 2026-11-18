@@ -377,8 +377,8 @@ def test_cutover_startup_diagnostic_exposes_only_reviewed_signals():
                        'signals': ['GATEWAY_SESSION_OBSERVED', 'TENANT_SCOPE_EXPIRED']}
 
 
-@pytest.mark.parametrize('legacy_probe', [True, False])
-def test_healthy_fallback_is_stopped_if_post_boot_probe_relabels_mounts(tmp_path, monkeypatch, legacy_probe):
+@pytest.mark.parametrize('scenario', ['legacy-probe', 'host-api-health', 'success'])
+def test_healthy_fallback_is_stopped_if_post_boot_verification_fails(tmp_path, monkeypatch, scenario):
     from hosts.gamerhq import skill_staging
     from services.tenant_routing import PILOT_ENV
     from tools import staging_tenant_rehearsal
@@ -400,11 +400,17 @@ def test_healthy_fallback_is_stopped_if_post_boot_probe_relabels_mounts(tmp_path
     fallback.fallback_override = {'services': {'gamerhq-staging': {'environment': {PILOT_ENV: 'primary-only'}}}}
     container = {'Id': 'fallback-container', 'Image': 'fallback', 'Config': {'Env': [PILOT_ENV + '=primary-only']},
                  'State': {'Running': True, 'Health': {'Status': 'healthy'}}}
+    def health():
+        if scenario == 'host-api-health':
+            from urllib.error import HTTPError
+            raise HTTPError('http://127.0.0.1:18080', 503, 'fixture', None, None)
+        return {'state': 'HOST_READY'}
+
     fallback.backend = SimpleNamespace(inspect=lambda: container, run=Mock(),
-                                       health=lambda: {'state': 'HOST_READY'}, skill=Mock(return_value={'version': '0.1.2'}))
+                                       health=health, skill=Mock(return_value={'version': '0.1.2'}))
     fallback.inspect = lambda: container
     fallback.compose = lambda action, *args, **kwargs: operations.append(action)
-    fallback.save = lambda record, phase, **values: {**record, 'phase': phase, **values}
+    fallback.save = Mock(side_effect=lambda record, phase, **values: {**record, 'phase': phase, **values})
     fallback.verify_checkpoint = lambda *args, **kwargs: tmp_path
     monkeypatch.setattr(host_promotion, 'source_commit', lambda backend, image: image)
     monkeypatch.setattr(host_promotion, 'retained_state', Mock(return_value={}))
@@ -420,15 +426,21 @@ def test_healthy_fallback_is_stopped_if_post_boot_probe_relabels_mounts(tmp_path
         if probe_storage:
             raise PermissionError('simulated loss of access to the private mount')
 
-    if legacy_probe:
+    if scenario == 'legacy-probe':
         fallback.attest = lambda **kwargs: verify_remote()
     monkeypatch.setattr(skill_staging, 'verify_remote', verify_remote)
     record = {'phase': 'ROLLING_BACK', 'checkpoint': {}}
-    if legacy_probe:
+    if scenario == 'legacy-probe':
         with pytest.raises(ConfirmationFailure, match='AUTOMATION_OPERATION_FAILED') as error:
             fallback.rollback(record)
         assert error.value.stage == 'POST_START_ATTESTATION'
         assert operations == ['private-relabel', 'stop']
+    elif scenario == 'host-api-health':
+        with pytest.raises(ConfirmationFailure, match='AUTOMATION_OPERATION_FAILED') as error:
+            fallback.rollback(record)
+        assert error.value.stage == 'HOST_API_HEALTH'
+        assert fallback.save.call_args.kwargs == {'rollbackFailedCheck': 'HOST_API_HEALTH'}
+        assert operations == ['read-only-attestation', 'stop']
     else:
         assert fallback.rollback(record)['phase'] == 'PILOT_ROLLED_BACK'
         assert operations == ['read-only-attestation']

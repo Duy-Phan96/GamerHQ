@@ -13,7 +13,7 @@ import time
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
-CONTROLLER = 'a2d49804e94a1914b84711d1ffb6cb4e74dca2f3'
+CONTROLLERS = {'a2d49804e94a1914b84711d1ffb6cb4e74dca2f3', 'af276099e34d0c7fcbc94397c8fc39f9885b147d'}
 WORKER = '92db47042d58055cb0debdfd83f11f8508e19809'
 WORKFLOW = 'f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011'
 ACTIVATION_RUN = '44283427505'
@@ -37,6 +37,7 @@ FIELDS = (
     '"health":{{with .State.Health}}{{json .Status}}{{else}}"none"{{end}},'
     '"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},'
     '"oomKilled":{{json .State.OOMKilled}},'
+    '"portBindings":{{json .HostConfig.PortBindings}},'
     '"healthProbeExitCodes":[{{with .State.Health}}{{range $i,$row := .Log}}{{if $i}},{{end}}{{json $row.ExitCode}}{{end}}{{end}}],'
     '"processLabel":{{json .ProcessLabel}},"networks":{{json .NetworkSettings.Networks}},'
     '"mounts":{{json .Mounts}}}'
@@ -65,7 +66,32 @@ def verify_journal(state, record):
         raise ValueError('JOURNAL_BINDING_REJECTED')
     failure = record.get('failure')
     return {'phase': record['phase'], 'failedAt': record.get('failedAt') if record.get('failedAt') in PHASES else None,
-            'failure': failure if isinstance(failure, str) and re.fullmatch(r'[A-Z][A-Z0-9_]{2,80}', failure) else None}
+            'failure': failure if isinstance(failure, str) and re.fullmatch(r'[A-Z][A-Z0-9_]{2,80}', failure) else None,
+            **{key: record[key] for key in ('failedCheck', 'rollbackFailedCheck')
+               if record.get(key) in {'POST_START_ATTESTATION', 'HOST_API_HEALTH', 'CHECKPOINT_INTEGRITY',
+                                      'PRIMARY_DATA_RETENTION', 'EVENT_MANAGER_LIFECYCLE', 'SECONDARY_DATA_INTEGRITY'}}}
+
+
+def health_audit(uid):
+    """Use only the existing allowlisted health/journal events from the failed attempt."""
+    try:
+        result = subprocess.run(['/usr/bin/journalctl', '--no-pager', '--output=json',
+                                 '--since=2026-11-18 12:02:00 UTC', '--until=2026-11-18 12:04:00 UTC',
+                                 'SYSLOG_IDENTIFIER=gamerhq-staging', f'_UID={uid}'],
+                                capture_output=True, text=True, errors='replace', timeout=20, check=True)
+        if len(result.stdout) > 262144:
+            return {'state': 'OUTPUT_LIMIT'}
+        events = []
+        for line in result.stdout.splitlines():
+            row = json.loads(line)
+            message = json.loads(row['MESSAGE'])
+            if (message.get('operation') in ('health', 'automation-tenant-pilot-cutover')
+                    and message.get('state') in ('HOST_READY', 'READY_OFFLINE', 'STARTED', 'FAILED', 'PASS')):
+                events.append({'operation': message['operation'], 'state': message['state'],
+                               'utcEpoch': int(row['__REALTIME_TIMESTAMP']) // 1000000})
+        return {'state': 'COLLECTED', 'events': events[-20:]}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        return {'state': 'UNAVAILABLE'}
 
 
 def inspect_database(path, *, secondary=False, sealed=False):
@@ -175,6 +201,8 @@ def summarize_startup(log):
         'Guild pilot paused pending exact membership and storage verification.': 'PILOT_ADMISSION_PAUSED',
         'Session ID:': 'GATEWAY_SESSION_OBSERVED',
         'Internal Web API listening on': 'WEB_LISTENER_OBSERVED',
+        'Internal Web API listening on 0.0.0.0:8080': 'WEB_EXPECTED_CONTAINER_BIND',
+        'Internal Web API listening on 127.0.0.1:8080': 'WEB_LOOPBACK_ONLY_CONTAINER_BIND',
     }
     frames, exceptions, signals = [], [], []
     for line in log.splitlines():
@@ -209,7 +237,7 @@ def collect():
         policy = json.loads(protected(CONTROL / 'automation-policy.json', 0))
         state = json.loads(protected(worker / 'automation-state.json', uid, 0o600))
         profile = json.loads(protected(CONTROL / 'settings/profile.json', uid, 0o600))
-        if (policy.get('controllerCommit') != CONTROLLER or policy.get('legacyWorkerCommit') != WORKER
+        if (policy.get('controllerCommit') not in CONTROLLERS or policy.get('legacyWorkerCommit') != WORKER
                 or policy.get('tenantPilot') != COHORT or policy.get('tenantPilotCutover', {}).get('workflowSha256') != WORKFLOW
                 or profile.get('environment') != 'staging' or profile.get('container') != 'gamerhq-staging-bot'
                 or profile.get('stagingBotId') != COHORT['applicationId']
@@ -249,6 +277,10 @@ def collect():
             prefix = 'GAMERHQ_STAGING_TENANT_PILOT='
             template = '{{range .Config.Env}}{{if eq (printf "%.' + str(len(prefix)) + 's" .) "' + prefix + '"}}{{println .}}{{end}}{{end}}'
             binding = docker('inspect', '--format', template, 'gamerhq-staging-bot')
+            api_env = set(docker('inspect', '--format',
+                                 '{{range .Config.Env}}{{if or (eq . "GAMERHQ_WEB_API_ENABLED=true") '
+                                 '(eq . "GAMERHQ_WEB_API_HOST=0.0.0.0") (eq . "GAMERHQ_WEB_API_PORT=8080")}}'
+                                 '{{println .}}{{end}}{{end}}', 'gamerhq-staging-bot').splitlines())
             mode = 'LEGACY_PRIMARY' if not binding else 'REJECTED'
             if binding.startswith(prefix):
                 value = json.loads(binding[len(prefix):])
@@ -256,10 +288,15 @@ def collect():
                         (COHORT['applicationId'], COHORT['guildIds'])):
                     mode = 'PRIMARY_ONLY' if value.get('primaryOnly') is True else 'TWO_GUILD'
             level = (observed['processLabel'] or '').split(':', 3)[-1]
+            expected_port = {'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '18080'}]}
             container = {'state': observed['status'], 'kind': kind, 'hostCommit': observed['host'],
                          'image': observed['image'], 'running': observed['running'], 'dockerHealth': observed['health'],
                          'exitCode': observed['exitCode'], 'matchesJournalBaseline': observed['id'] == recorded['baselineContainer'],
                          'configuredAdmission': mode, 'attachedNetworkPresent': 'gamerhq-staging-private' in observed['networks'],
+                         'healthPortBindingExpected': observed['portBindings'] == expected_port,
+                         'healthPortPublishedPorts': len(observed['portBindings'] or {}),
+                         'healthListenerEnvironmentExpected': api_env == {
+                             'GAMERHQ_WEB_API_ENABLED=true', 'GAMERHQ_WEB_API_HOST=0.0.0.0', 'GAMERHQ_WEB_API_PORT=8080'},
                          'selinuxLevelAccepted': not level or bool(re.fullmatch(r's0:c[0-9]+,c[0-9]+', level)),
                          **{key: observed[key] for key in ('startedAt', 'finishedAt', 'oomKilled', 'healthProbeExitCodes')}}
             try:
@@ -294,9 +331,11 @@ def collect():
         secondary = primary.parent / 'tenants' / (COHORT['guildIds'][1] + '.sqlite')
         data = ({'primary': inspect_database(primary), 'secondary': inspect_database(secondary, secondary=True)}
                 if quiesced and not secondary.parent.is_symlink() else {'state': 'LIVE_OR_UNSAFE_PATH'})
-        return {'state': 'CUTOVER_DIAGNOSTICS', 'activationRun': ACTIVATION_RUN, 'controllerCommit': CONTROLLER,
+        return {'state': 'CUTOVER_DIAGNOSTICS', 'activationRun': ACTIVATION_RUN, 'controllerCommit': policy['controllerCommit'],
                 'operationLockAcquired': True, 'recoveryRequired': state.get('recoveryRequired'),
                 'approvedCohort': COHORT, 'journal': journal, 'container': container, 'database': data,
+                'protectedHealthUrlExpected': profile.get('healthUrl') == 'http://127.0.0.1:18080',
+                'lastRecoveryAudit': health_audit(uid),
                 'preparationBackup': inspect_backup(ROOT / 'backups', uid, state['tenantPilotActivationPrepared']['preview']),
                 'cutoverBackup': inspect_backup(ROOT / 'backups', uid, recorded.get('checkpoint')),
                 'productionChanged': False, 'databaseChanged': False, 'containersChanged': False}
