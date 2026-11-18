@@ -151,3 +151,23 @@ def test_recovery_completion_launcher_selects_the_enrolled_health_source(tmp_pat
     tree = ast.parse(enrollment.renderer(tmp_path, recovery_completion=True))
     assert ast.literal_eval(tree.body[1].value) == [str(tmp_path), str(tmp_path / 'pilot-source'),
                                                   str(enrollment.ROOT / 'deployment-worker')]
+
+
+def test_api_context_repair_enrollment_preserves_original_cutover_and_latch(monkeypatch):
+    policy, profile, state = fixture()
+    profile['baseImage'] = state['approvedImage'] = enrollment.BASELINE_IMAGE
+    state['recoveryRequired'] = True
+    workflow = b'registered cutover'
+    digest = hashlib.sha256(workflow).hexdigest()
+    monkeypatch.setattr(enrollment, 'CUTOVER_DIGEST', digest)
+    policy.update(controllerCommit=enrollment.RECOVERY_COMPLETION, tenantPilot=enrollment.BINDING,
+                  tenantPilotWorkflowSha256=enrollment.PREVIEW_DIGEST,
+                  tenantPilotActivation={'commit': enrollment.ACTIVATION_CANDIDATE,
+                                         'archiveSha256': enrollment.ACTIVATION_ARCHIVE,
+                                         'ciRun': enrollment.ACTIVATION_CI,
+                                         'workflowSha256': enrollment.PREPARATION_DIGEST},
+                  tenantPilotCutover={'fallback': enrollment.FALLBACK, 'workflowSha256': digest})
+    updated = enrollment.updated_policy(policy, 'f' * 40, workflow, profile, state, cutover=True,
+                                         cutover_repair=True, recovery_repair=True, recovery_completion=True, api_repair=True)
+    assert updated == {**policy, 'controllerCommit': 'f' * 40, 'primaryRecoveryApiRepair': enrollment.API_REPAIR_PIN}
+    assert state['recoveryRequired'] is True

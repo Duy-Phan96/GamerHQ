@@ -19,6 +19,14 @@ ENROLLED_PREPARATION = 'd194013cda5da2f6bde032ec7d16c5fd0b6c42ec'
 ENROLLED_CUTOVER = 'd18d0a2d696b30c36d6b971819b1950723ddf8a9'
 STATUS_REPAIRED = 'a2d49804e94a1914b84711d1ffb6cb4e74dca2f3'
 RECOVERY_VERIFICATION = 'af276099e34d0c7fcbc94397c8fc39f9885b147d'
+RECOVERY_COMPLETION = '68a2a43dbe5c19500ade302e8d571008b8542c4a'
+API_REPAIR_PIN = {
+    'commit': '8f450533ec0c9589b6fa375e34bd951f91dff419',
+    'archiveSha256': 'b84ed81d4371112634200021f24b43f436ac8113c4ecf6d273cd95daeca573e8',
+    'apiSha256': '17def9fc201fe4f7c9a4bd554a73e0fd9d2c6724eeb73e97056abf10d6c054ec',
+    'parentCommit': 'ca6bc4ac5604987dcab9b5310b7af2b9c53cf652',
+    'parentImage': 'sha256:78e394acafa55e9bbf9810530b69beaa2ef9d1f3fccfa7c736669f85db0d0e02',
+}
 CUTOVER_DIGEST = 'f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011'
 PREVIEW_DIGEST = '7c932e34572fee9cb691301902de4a2533128ca4444ec514754e72da15ec9e1d'
 PREPARATION_DIGEST = '487c3f213024d47435952345029d82854cc6089e8bccb46e1bc089e5ccc35290'
@@ -37,6 +45,7 @@ CUTOVER_APPROVAL = 'ENROLL STAGING TENANT CUTOVER POLICY ONLY'
 CUTOVER_REPAIR_APPROVAL = 'REPAIR STAGING TENANT CUTOVER STATUS ONLY'
 RECOVERY_REPAIR_APPROVAL = 'ENROLL STAGING PILOT RECOVERY VERIFICATION ONLY'
 RECOVERY_COMPLETION_APPROVAL = 'ENROLL VERIFIED PRIMARY ONLY RECOVERY COMPLETION'
+API_REPAIR_APPROVAL = 'ENROLL PRIMARY ONLY HOST API CONTEXT REPAIR'
 WORKFLOW = '.github/workflows/staging-tenant-pilot-preview.yml'
 PREPARATION_WORKFLOW = '.github/workflows/staging-tenant-pilot-activation-prepare.yml'
 CUTOVER_WORKFLOW = '.github/workflows/staging-tenant-pilot-cutover.yml'
@@ -125,9 +134,9 @@ def bundle_sources(archive, destination, gid):
 
 
 def updated_policy(policy, source, workflow, profile, state, *, preparation=False, cutover=False,
-                   cutover_repair=False, recovery_repair=False, recovery_completion=False):
+                   cutover_repair=False, recovery_repair=False, recovery_completion=False, api_repair=False):
     digest = hashlib.sha256(workflow).hexdigest()
-    previous = RECOVERY_VERIFICATION if recovery_completion else STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
+    previous = RECOVERY_COMPLETION if api_repair else RECOVERY_VERIFICATION if recovery_completion else STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
     if policy.get('controllerCommit') not in (previous, source) or policy.get('legacyWorkerCommit') != WORKER:
         raise ValueError('REVIEWED_ENROLLMENT_REQUIRED')
     if policy.get('repository') != 'Duy-Phan96/GamerHQ' or policy.get('hostPromotion', {}).get('commit') != HOST:
@@ -161,6 +170,10 @@ def updated_policy(policy, source, workflow, profile, state, *, preparation=Fals
             new = {**policy, 'controllerCommit': source, 'tenantPilotActivation': activation}
     else:
         new = {**policy, 'controllerCommit': source, 'tenantPilot': BINDING, 'tenantPilotWorkflowSha256': digest}
+    if api_repair:
+        if policy.get('primaryRecoveryApiRepair') not in (None, API_REPAIR_PIN):
+            raise ValueError('API_REPAIR_PIN_CHANGED')
+        new['primaryRecoveryApiRepair'] = API_REPAIR_PIN
     if policy['controllerCommit'] == source and policy != new:
         raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
     return new
@@ -179,15 +192,51 @@ def verify_recovery_journal(state, journal):
         raise ValueError('REVIEWED_RECOVERY_JOURNAL_REQUIRED')
 
 
+def verify_api_repair_storage(bundle, profile, state, journal, uid):
+    import runpy
+
+    # Use the checked-in bounded read-only inspector from the verified source.
+    inspect = runpy.run_path(str(bundle / 'tools/staging_pilot_cutover_diagnostics.py'))
+    env = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/var/lib/gamerhq-staging-bridge',
+           'XDG_RUNTIME_DIR': '/run/user/' + str(uid),
+           'DOCKER_HOST': 'unix:///run/user/' + str(uid) + '/docker.sock',
+           'DOCKER_CONFIG': '/etc/gamerhq-staging/docker-client'}
+    output = subprocess.run(['/usr/sbin/runuser', '-u', 'gamerhq-staging-bridge', '--', '/usr/bin/env', '-i',
+                             *[key + '=' + value for key, value in env.items()], 'docker', 'inspect', '--format',
+                             '{"image":{{json .Image}},"state":{{json .State.Status}},"running":{{json .State.Running}}}',
+                             'gamerhq-staging-bot'], capture_output=True, text=True, check=True, timeout=30)
+    if len(output.stdout) > 4096:
+        raise ValueError('RECOVERY_CONTAINER_REJECTED')
+    container = json.loads(output.stdout)
+    if container != {'image': API_REPAIR_PIN['parentImage'], 'state': 'exited', 'running': False}:
+        raise ValueError('STOPPED_REVIEWED_FALLBACK_REQUIRED')
+    primary = Path(profile['database'])
+    secondary = primary.parent / 'tenants' / (BINDING['guildIds'][1] + '.sqlite')
+    if (primary != ROOT / 'data/gamerhq.db' or profile['backupRoot'] != str(ROOT / 'backups')
+            or any(path.resolve(strict=True) != path for path in (primary, secondary))):
+        raise ValueError('RECOVERY_DATA_PATH_REJECTED')
+    databases = {'primary': inspect['inspect_database'](primary),
+                 'secondary': inspect['inspect_database'](secondary, secondary=True)}
+    backups = {'cutover': inspect['inspect_backup'](ROOT / 'backups', uid, journal['checkpoint']),
+               'preparation': inspect['inspect_backup'](ROOT / 'backups', uid, state['tenantPilotActivationPrepared']['preview'])}
+    if (any(row['state'] != 'INTEGRITY_PASS' for row in databases.values())
+            or databases['primary'].get('eventManagerAuthority') is not True
+            or any(row['state'] != 'VERIFIED' for row in backups.values())):
+        raise ValueError('RECOVERY_DATABASE_OR_BACKUP_REJECTED')
+    return {'container': container, 'databases': databases, 'backups': backups}
+
+
 def enroll(source, workflow_digest, approval, *, preparation=False, cutover=False, cutover_repair=False,
-           recovery_repair=False, recovery_completion=False):
+           recovery_repair=False, recovery_completion=False, api_repair=False):
     import fcntl
     import pwd
 
+    recovery_diagnostics = None
+    recovery_completion = recovery_completion or api_repair
     recovery_repair = recovery_repair or recovery_completion
     cutover_repair = cutover_repair or recovery_repair
     cutover = cutover or cutover_repair
-    required = RECOVERY_COMPLETION_APPROVAL if recovery_completion else RECOVERY_REPAIR_APPROVAL if recovery_repair else CUTOVER_REPAIR_APPROVAL if cutover_repair else CUTOVER_APPROVAL if cutover else PREPARATION_APPROVAL if preparation else APPROVAL
+    required = API_REPAIR_APPROVAL if api_repair else RECOVERY_COMPLETION_APPROVAL if recovery_completion else RECOVERY_REPAIR_APPROVAL if recovery_repair else CUTOVER_REPAIR_APPROVAL if cutover_repair else CUTOVER_APPROVAL if cutover else PREPARATION_APPROVAL if preparation else APPROVAL
     if os.geteuid() != 0 or approval != required:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
     if not re.fullmatch(r'[0-9a-f]{40}', source) or not re.fullmatch(r'[0-9a-f]{64}', workflow_digest):
@@ -197,7 +246,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
     revisions = ROOT / 'automation-controller/revisions'
     entry = revisions.parent / 'entry.py'
     policy_file = CONTROL / 'automation-policy.json'
-    previous_commit = RECOVERY_VERIFICATION if recovery_completion else STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
+    previous_commit = RECOVERY_COMPLETION if api_repair else RECOVERY_VERIFICATION if recovery_completion else STATUS_REPAIRED if recovery_repair else ENROLLED_CUTOVER if cutover_repair else ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
     previous, target = revisions / previous_commit, revisions / source
     for path in (ROOT, CONTROL, entry.parent, revisions, previous, previous / 'staging_automation'):
         directory(path)
@@ -214,6 +263,8 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
             revisions_to_fetch.extend((previous_commit, ACTIVATION_CANDIDATE))
         if cutover:
             revisions_to_fetch.append(FALLBACK['commit'])
+        if api_repair:
+            revisions_to_fetch.append(API_REPAIR_PIN['commit'])
         for revision in (*revisions_to_fetch, 'refs/heads/main'):
             git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
         if cutover_repair:
@@ -230,6 +281,9 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                             '.github/workflows/staging-automation-regression.yml', 'tools/repository_audit.py',
                             'tests/test_repository_safety.py', 'tests/test_guild_pilot.py',
                             'tests/test_staging_bootstrap_v2.py'}
+            if api_repair:
+                allowed |= {'hosts/gamerhq/web_api.py', 'tools/staging_automation/recovery_api_repair.py',
+                            'tools/staging_automation/policy.py'}
             changes = set(git('diff', '--name-only', previous_commit, source, '--').decode().splitlines())
             if not changes <= allowed:
                 raise ValueError('UNREVIEWED_REPAIR_SCOPE')
@@ -251,6 +305,14 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                 git('archive', '--format=tar', '--output', str(candidate_archive), revision)
                 if hashlib.sha256(candidate_archive.read_bytes()).hexdigest() != checksum:
                     raise ValueError('CANDIDATE_ARCHIVE_MISMATCH')
+            if api_repair:
+                git('archive', '--format=tar', '--output', str(candidate_archive), API_REPAIR_PIN['commit'])
+                if (hashlib.sha256(candidate_archive.read_bytes()).hexdigest() != API_REPAIR_PIN['archiveSha256']
+                        or git('diff', '--name-only', FALLBACK['commit'], API_REPAIR_PIN['commit']).decode().splitlines()
+                        != ['hosts/gamerhq/web_api.py']
+                        or hashlib.sha256(git('show', API_REPAIR_PIN['commit'] + ':hosts/gamerhq/web_api.py')).hexdigest()
+                        != API_REPAIR_PIN['apiSha256']):
+                    raise ValueError('API_REPAIR_SOURCE_MISMATCH')
         if git('show', source + ':tools/enroll_staging_tenant_preview.py') != Path(__file__).read_bytes():
             raise ValueError('INSTALLER_SOURCE_MISMATCH')
         if json.loads(git('show', source + ':deploy/staging/tenant-pilot-binding.json')) != BINDING:
@@ -282,12 +344,16 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
             profile = json.loads(checked(CONTROL / 'settings/profile.json', uid, private=True))
             state = json.loads(checked(ROOT / 'worker/automation-state.json', uid, private=True))
             if recovery_repair:
-                verify_recovery_journal(state, json.loads(checked(journal_path, uid, private=True)))
+                journal = json.loads(checked(journal_path, uid, private=True))
+                verify_recovery_journal(state, journal)
+                if api_repair and journal.get('rollbackHealthFailure') != {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 403}:
+                    raise ValueError('REVIEWED_API_FAILURE_REQUIRED')
             updated = updated_policy(policy, source, workflow, profile, state, preparation=preparation,
                                      cutover=cutover, cutover_repair=cutover_repair, recovery_repair=recovery_repair,
-                                     recovery_completion=recovery_completion)
+                                     recovery_completion=recovery_completion, api_repair=api_repair)
             target_launcher = renderer(target, recovery_completion=recovery_completion)
-            if launcher not in (renderer(previous), target_launcher) or (policy['controllerCommit'] == previous_commit and launcher != renderer(previous)):
+            previous_launcher = renderer(previous, recovery_completion=api_repair)
+            if launcher not in (previous_launcher, target_launcher) or (policy['controllerCommit'] == previous_commit and launcher != previous_launcher):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
             blobs = {}
             overlay = OVERLAY | ({'pilot_activation.py'} if cutover else set()) | ({'pilot_cutover.py'} if cutover_repair else set())
@@ -305,10 +371,14 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                 blobs['pilot_activation.py'] = git('show', source + ':tools/staging_automation/pilot_activation.py')
             if cutover:
                 blobs['pilot_cutover.py'] = git('show', source + ':tools/staging_automation/pilot_cutover.py')
+            if api_repair:
+                blobs['recovery_api_repair.py'] = git('show', source + ':tools/staging_automation/recovery_api_repair.py')
             directory(target, gid)
             directory(target / 'staging_automation', gid)
             directory(target / 'pilot-source', gid)
             bundle_sources(archive, target / 'pilot-source', gid)
+            if api_repair:
+                recovery_diagnostics = verify_api_repair_storage(target / 'pilot-source', profile, state, journal, uid)
             for name, body in blobs.items():
                 file = target / 'staging_automation' / name
                 if os.path.lexists(file) and checked(file) != body:
@@ -323,11 +393,14 @@ def enroll(source, workflow_digest, approval, *, preparation=False, cutover=Fals
                 atomic(entry, launcher, gid)
                 atomic(policy_file, before, gid)
                 raise
-    return {'state': 'PRIMARY_ONLY_RECOVERY_COMPLETION_ENROLLED' if recovery_completion else 'PILOT_RECOVERY_VERIFICATION_ENROLLED' if recovery_repair else 'PILOT_CUTOVER_STATUS_REPAIRED' if cutover_repair else 'PILOT_CUTOVER_POLICY_ENROLLED' if cutover else
+    return {'state': 'PRIMARY_ONLY_API_CONTEXT_REPAIR_ENROLLED' if api_repair else 'PRIMARY_ONLY_RECOVERY_COMPLETION_ENROLLED' if recovery_completion else 'PILOT_RECOVERY_VERIFICATION_ENROLLED' if recovery_repair else 'PILOT_CUTOVER_STATUS_REPAIRED' if cutover_repair else 'PILOT_CUTOVER_POLICY_ENROLLED' if cutover else
             'PILOT_ACTIVATION_PREPARATION_ENROLLED' if preparation else 'PILOT_PREVIEW_ENROLLED',
             'controllerCommit': source, 'legacyWorkerCommit': WORKER,
             'hostCommit': HOST, 'workflowSha256': workflow_digest, 'binding': BINDING,
             'activationAuthorized': False, 'gatewayChanged': False, 'productionChanged': False,
+            **({'readOnlyRecoveryEvidence': recovery_diagnostics, 'recoveryRequired': True,
+                'databaseChanged': False, 'containerChanged': False, 'repairImageBuilt': False,
+                'repairHostCommit': API_REPAIR_PIN['commit']} if api_repair else {}),
             **({'fallbackCommit': FALLBACK['commit'], 'fallbackArchiveSha256': FALLBACK['archiveSha256'],
                 'baselineImage': BASELINE_IMAGE} if cutover else {})}
 
@@ -343,12 +416,14 @@ if __name__ == '__main__':
     mode.add_argument('--repair-cutover-status', action='store_true')
     mode.add_argument('--repair-cutover-recovery', action='store_true')
     mode.add_argument('--complete-primary-recovery-policy', action='store_true')
+    mode.add_argument('--repair-primary-api-context', action='store_true')
     args = parser.parse_args()
     try:
         receipt = enroll(args.commit, args.workflow_sha256, args.approval, preparation=args.activation_preparation,
                          cutover=args.cutover_policy, cutover_repair=args.repair_cutover_status,
                          recovery_repair=args.repair_cutover_recovery,
-                         recovery_completion=args.complete_primary_recovery_policy)
+                         recovery_completion=args.complete_primary_recovery_policy,
+                         api_repair=args.repair_primary_api_context)
     except (OSError, subprocess.SubprocessError):
         raise SystemExit('Staging enrollment failed a protected filesystem, Git or lock check.') from None
     print(json.dumps(receipt))

@@ -80,6 +80,9 @@ def validate_policy(value):
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
+    if 'primaryRecoveryApiRepair' in value:
+        from .recovery_api_repair import validate_pin
+        validate_pin(value)
     return value
 
 

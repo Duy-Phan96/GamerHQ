@@ -149,12 +149,13 @@ class PilotCutover:
 
         pin = self.policy['tenantPilotActivation']
         fallback = self.policy['tenantPilotCutover']['fallback']
+        expected_fallback = getattr(self, 'recovery_api_repair', {}).get('commit', fallback['commit'])
         if (self.prepared.get('candidateCommit') != pin['commit']
                 or self.prepared.get('fallbackCommit') != fallback['commit']
                 or self.prepared.get('containerRollbackRehearsal') != 'PASS'
                 or self.prepared.get('fallbackRollbackRehearsal') != 'PASS'
                 or source_commit(self.backend, self.candidate) != pin['commit']
-                or source_commit(self.backend, self.fallback) != fallback['commit']):
+                or source_commit(self.backend, self.fallback) != expected_fallback):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
         if running_container:
             # A second :Z bind would relabel the live service's private data.
@@ -254,7 +255,8 @@ class PilotCutover:
                 and current['Image'] == self.baseline and current['State'].get('Running')
                 and self.backend.health()['state'] == 'HOST_READY'):
             return self.save(record, 'PILOT_STOP_CANCELLED')
-        if current and current['Image'] not in (self.baseline, self.candidate, self.fallback):
+        permitted = (self.baseline, self.candidate, self.fallback, getattr(self, 'original_fallback', self.fallback))
+        if current and current['Image'] not in permitted:
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if (record['phase'] == 'ROLLING_BACK' and 'checkpoint' in record and current
                 and current['Image'] == self.fallback and current['State'].get('Running')):
@@ -280,6 +282,18 @@ class PilotCutover:
         if recovery_only and (not record or 'checkpoint' not in record
                               or record['phase'] in {'PILOT_ACTIVE', 'PILOT_STOP_CANCELLED'}):
             raise Denied('RECOVERY_REQUIRES_OWNER')
+        if 'primaryRecoveryApiRepair' in self.policy:
+            if not recovery_only:
+                raise Denied('RECOVERY_REQUIRES_OWNER')
+            from .recovery_api_repair import prepare
+            from tools.staging_tenant_rehearsal import startup_override
+            self.verify_checkpoint(record, recovery=True)
+            proof = prepare(self.backend, record)
+            if record.get('recoveryApiRepair') != proof:
+                record = self.save(record, record['phase'], recoveryApiRepair=proof)
+            self.recovery_api_repair = proof
+            self.original_fallback, self.fallback = self.fallback, proof['image']
+            self.fallback_override = startup_override(self.profile, self.policy, self.fallback, primary_only=True)
         if record:
             if recovery_only and record['phase'] == 'PILOT_ROLLED_BACK':
                 # A crash or legacy controller can leave the journal terminal
@@ -346,6 +360,9 @@ class PilotCutover:
             if record['phase'] != 'PILOT_ROLLED_BACK' or self.load() != record:
                 raise Denied('RECOVERY_REQUIRES_OWNER')
             result['recoveryVerified'] = True
+            if hasattr(self, 'recovery_api_repair'):
+                result.update(recoveryHostCommit=self.recovery_api_repair['commit'],
+                              recoveryImage=self.recovery_api_repair['image'])
         if 'checkpoint' in record:
             result['backupBatch'] = record['checkpoint']['backupBatch']
             result['backupReceiptSha256'] = record['checkpoint']['backupReceiptSha256']

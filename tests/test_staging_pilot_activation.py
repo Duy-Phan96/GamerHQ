@@ -684,3 +684,43 @@ def test_confirmation_probe_separates_first_transport_failure_from_later_ready(t
     assert all(call.args[0].selector == '/api/v1/servers/1/skills/event-manager'
                for call in network_open.call_args_list)
     audit.assert_called_once_with('tenant-pilot-api-rehearsal', 'HOST_READY')
+
+
+def test_api_repair_requires_the_exact_failed_transaction_and_immutable_image(monkeypatch):
+    from tools.staging_automation import host_promotion, recovery_api_repair as repair
+
+    build = Mock(return_value='sha256:' + 'a' * 64)
+    monkeypatch.setattr(host_promotion, 'build_reviewed_overlay', build)
+    monkeypatch.setattr(host_promotion, 'source_commit', Mock(return_value=repair.PIN['commit']))
+    backend = SimpleNamespace(policy={'primaryRecoveryApiRepair': repair.PIN,
+                                      'tenantPilotCutover': {'fallback': {'commit': repair.PIN['parentCommit']}}},
+                              inspect=Mock(return_value={'Image': repair.PIN['parentImage'], 'State': {'Running': False}}),
+                              storage_budget=Mock(), run=Mock(return_value=repair.PIN['apiSha256']))
+    record = {'activationRun': '44283427505', 'phase': 'ROLLING_BACK',
+              'binding': {'fallbackImage': repair.PIN['parentImage']},
+              'rollbackHealthFailure': {'reason': 'HEALTH_HTTP_REJECTED', 'httpStatus': 403}}
+    proof = repair.prepare(backend, record)
+    assert proof == {'image': 'sha256:' + 'a' * 64, 'commit': repair.PIN['commit'], 'apiSha256': repair.PIN['apiSha256']}
+    assert repair.prepare(backend, {**record, 'recoveryApiRepair': proof}) == proof
+    assert build.call_count == 1
+    for invalid in ({'activationRun': 'different'}, {'phase': 'PILOT_ACTIVE'},
+                    {'rollbackHealthFailure': {'reason': 'HEALTH_TIMEOUT'}},
+                    {'recoveryApiRepair': {**proof, 'apiSha256': '0' * 64}}):
+        with pytest.raises(Denied):
+            repair.prepare(backend, {**record, **invalid})
+    backend.inspect.return_value['State']['Running'] = True
+    with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
+        repair.prepare(backend, record)
+    assert build.call_count == 1
+
+
+def test_api_repair_source_is_only_the_reviewed_transport_file():
+    import hashlib
+    import subprocess
+    from tools.staging_automation import recovery_api_repair as repair
+    from tools import enroll_staging_tenant_preview as enrollment
+
+    repair.verify_source(lambda *args: subprocess.check_output(['git', *args]))
+    archive = subprocess.check_output(['git', 'archive', '--format=tar', repair.PIN['commit']])
+    assert hashlib.sha256(archive).hexdigest() == repair.PIN['archiveSha256']
+    assert enrollment.API_REPAIR_PIN == repair.PIN
