@@ -74,6 +74,9 @@ def verify(token, policy, operation, challenge, *, read=read_url, now=None):
         elif operation == 'tenant-pilot-activation-prepare':
             filename = 'staging-tenant-pilot-activation-prepare.yml'
             digest = policy['tenantPilotActivation']['workflowSha256']
+        elif operation == 'tenant-pilot-cutover':
+            filename = 'staging-tenant-pilot-cutover.yml'
+            digest = policy['tenantPilotCutover']['workflowSha256']
         elif operation in WEB:
             filename = 'staging-web.yml'
             digest = policy['webDeployment']['workflowSha256']

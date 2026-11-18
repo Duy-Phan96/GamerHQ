@@ -14,12 +14,16 @@ from .oidc import verify
 def execute(operation, payload, policy, state, backend, save, *, verifier=verify, now=None):
     now = int(time.time() if now is None else now)
     charge(state, operation, now); save(state)
+    cutover = 'tenantPilotCutover' in policy
+    journal = cutover and os.path.lexists(Path(backend.profile['workRoot']) / 'tenant-pilot-cutover.json')
     if operation == 'status':
         preparation = {}
         if 'tenantPilotActivation' in policy:
             from .pilot_activation import preparation_state
             preparation['tenantPilotPreparationState'] = preparation_state(
                 state.get('tenantPilotActivationPrepared'), policy['tenantPilotActivation'], now)
+        if cutover:
+            preparation.update(tenantPilotCutoverEnrolled=True, tenantPilotCutoverJournal=journal)
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
         pilot = policy.get('tenantPilot')
         pilot_digest = hashlib.sha256(json.dumps(pilot, sort_keys=True, separators=(',', ':')).encode()).hexdigest() if pilot else None
@@ -42,6 +46,10 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] == 'tenant-pilot-activation-prepare' and 'tenantPilotActivation' not in policy:
             raise Denied('OPERATION_NOT_ALLOWED')
+        if payload['operation'] == 'tenant-pilot-cutover' and not cutover:
+            raise Denied('OPERATION_NOT_ALLOWED')
+        if journal and payload['operation'] not in ('health', 'smoke', 'tenant-pilot-cutover'):
+            raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] in WEB and 'webDeployment' not in policy:
             raise Denied('WEB_NOT_ENROLLED')
         nonce = uuid.uuid4().hex
@@ -56,13 +64,19 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     seen = {k: exp for k, exp in state.get('usedTokens', {}).items() if exp > now}
     if claims['jti'] in seen or len(seen) >= 256: raise Denied('OIDC_REPLAY_REJECTED')
     seen[claims['jti']] = claims['exp']; state['usedTokens'] = seen; state.pop('challenge', None); save(state)
+    if journal and operation not in ('health', 'smoke', 'tenant-pilot-cutover'):
+        raise Denied('OPERATION_NOT_ALLOWED')
     if operation == 'activate':
         image = backend.activate(state.get('approvedImage') if state.get('bootstrapVerified') else None)
         state.update(enabled=True, bootstrapVerified=True, approvedImage=image, activationRun=claims['run_id']); save(state)
         return {'state': 'ACTIVATED'}
     if operation == 'deactivate':
         state['enabled'] = False; save(state); return {'state': 'DEACTIVATED'}
-    admit(operation, state)
+    if operation == 'tenant-pilot-cutover' and journal:
+        # A protected retry can recover only the already journaled transaction.
+        admit(operation, {**state, 'recoveryRequired': False})
+    else:
+        admit(operation, state)
     if state.get('enabled'): backend.policy_integrity()
     try:
         if operation == 'catalog-preview':
@@ -95,6 +109,11 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
                 state['tenantPilotActivationPrepared'] = {**result, 'runId': claims['run_id']}
             save(state)
             return result
+        if operation == 'tenant-pilot-cutover':
+            prepared = state.get('tenantPilotActivationPrepared')
+            if not cutover or not isinstance(prepared, dict):
+                raise Denied('PILOT_CHECKPOINT_REJECTED')
+            return backend.cutover_tenant_pilot(state['approvedImage'], prepared, claims['run_id'])
         if operation in WEB:
             from .web import WebDeployment
             web = WebDeployment(backend, policy['webDeployment'], state, save)
@@ -165,7 +184,9 @@ def main():
         audit_id = uuid.uuid4().hex
         audit('automation-' + operation, 'STARTED', audit_id=audit_id)
         try:
-            result = execute(operation, envelope['configuration'], policy, state, HostBackend(profile, policy), lambda value: write_record(state_file, value))
+            backend = HostBackend(profile, policy)
+            backend.operation_lock = lock.fileno()
+            result = execute(operation, envelope['configuration'], policy, state, backend, lambda value: write_record(state_file, value))
         except Exception:
             audit('automation-' + operation, 'FAILED', audit_id=audit_id); raise
         audit('automation-' + operation, 'PASS', audit_id=audit_id)

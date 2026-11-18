@@ -4,10 +4,10 @@ import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
 WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'})
 PUBLIC = frozenset({'status', 'challenge'})
 OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
-MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback'})
+MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback', 'tenant-pilot-cutover'})
 PREFIX = 'gamerhq-staging-automation-v1'
 ERROR_CODES = frozenset(['ACCESS_REVOKED', 'AUTOMATION_NOT_ACTIVATED', 'AUTOMATION_REQUEST_REJECTED', 'DISK_BUDGET_REQUIRES_OWNER', 'DATABASE_BUDGET_REQUIRES_OWNER', 'BUILD_RATE_LIMIT', 'CHALLENGE_REJECTED', 'CLOCK_REGRESSION', 'CONCURRENT_OPERATION_REJECTED', 'CONTAINER_IDENTITY_REJECTED', 'CONTAINER_MOUNTS_REJECTED', 'CONTAINER_NETWORK_REJECTED', 'CONTAINER_PRIVILEGES_REJECTED', 'DEPLOYMENT_NOT_READY', 'GITHUB_POLICY_METADATA_UNAVAILABLE', 'HOST_NOT_HEALTHY', 'HOST_NOT_READY', 'HOST_OPERATION_FAILED', 'HTTP_REDIRECT_REJECTED', 'IMMUTABLE_RELEASE_CHANGED', 'INITIAL_BOOTSTRAP_NOT_VERIFIED', 'INITIAL_IMAGE_NOT_VERIFIED', 'LEGACY_ENVIRONMENT_NOT_PROTECTED', 'LEGACY_SOURCE_BINDING_REJECTED', 'MIGRATION_REQUIRES_OWNER', 'MUTATION_RATE_LIMIT', 'OFFLINE_PROBE_FAILED', 'OIDC_REJECTED', 'OIDC_REPLAY_REJECTED', 'OPERATION_NOT_ALLOWED', 'PACKAGE_UPDATE_REQUIRED', 'PAYLOAD_REJECTED', 'POLICY_REJECTED', 'PRIVILEGE_EXPANSION_REQUIRES_OWNER', 'PUBLIC_METADATA_LIMIT', 'PUBLISHER_REJECTED', 'RECOVERY_CIRCUIT_OPEN', 'RECOVERY_REQUIRES_OWNER', 'RELEASE_CHANNEL_REQUIRES_OWNER', 'RELEASE_DESCRIPTOR_REJECTED', 'REQUEST_LIMIT', 'REQUEST_RATE_LIMIT', 'REQUEST_REJECTED', 'RESOURCE_LIMIT_REQUIRES_OWNER', 'RESOURCE_POLICY_REJECTED', 'RESTART_COOLDOWN', 'RESTART_HEALTH_FAILED', 'RESTART_RATE_LIMIT', 'ROOT_EXECUTION_REJECTED', 'UNKNOWN_IMAGE_REQUIRES_OWNER', 'UPDATE_FAILED', 'VERSION_REQUIRES_OWNER'])
 
@@ -67,6 +67,16 @@ def validate_policy(value):
         if 'tenantPilot' not in value or 'hostPromotion' not in value:
             raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
         validate_pin(value['tenantPilotActivation'])
+    if 'tenantPilotCutover' in value:
+        from .pilot_activation import validate_pin
+        cutover = value['tenantPilotCutover']
+        if ('tenantPilotActivation' not in value or not isinstance(cutover, dict)
+                or set(cutover) != {'fallback', 'workflowSha256'} or not isinstance(cutover['fallback'], dict)):
+            raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
+        validate_pin({**cutover['fallback'], 'workflowSha256': cutover['workflowSha256']})
+        if set(cutover['fallback']) != {'commit', 'archiveSha256', 'ciRun'} or cutover['fallback']['commit'] in (
+                value['hostPromotion']['commit'], value['tenantPilotActivation']['commit']):
+            raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
@@ -84,8 +94,8 @@ def charge(state, operation, now=None):
     if operation in builds and sum(e['op'] in builds for e in events) >= 3: raise Denied('BUILD_RATE_LIMIT')
     if operation == 'web-deploy' and sum(e['op'] == 'web-deploy' for e in events) >= 3:
         raise Denied('BUILD_RATE_LIMIT')
-    if operation in ('restart', 'recover', 'host-promote'):
-        restarts = [e for e in events if e['op'] in ('restart', 'recover', 'host-promote')]
+    if operation in ('restart', 'recover', 'host-promote', 'tenant-pilot-cutover'):
+        restarts = [e for e in events if e['op'] in ('restart', 'recover', 'host-promote', 'tenant-pilot-cutover')]
         if len(restarts) >= 2: raise Denied('RESTART_RATE_LIMIT')
         if restarts and now - restarts[-1]['at'] < 120: raise Denied('RESTART_COOLDOWN')
         if now < state.get('circuitUntil', 0): raise Denied('RECOVERY_CIRCUIT_OPEN')
@@ -98,7 +108,7 @@ def admit(operation, state):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if (operation in WEB or operation == 'catalog-preview') and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
-    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare'):
+    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'):
         if state.get('recoveryRequired'):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if not state.get('enabled') or not state.get('bootstrapVerified'):

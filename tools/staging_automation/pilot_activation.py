@@ -47,7 +47,7 @@ def prepare_session(backend, approved_image):
     return prepare(backend, preview, approved_image, now=int(time.time()))
 
 
-def rehearse_container_rollback(backend, baseline, candidate):
+def rehearse_container_rollback(backend, baseline, candidate, fallback=None):
     """Run the real Compose switch and rollback against an isolated service."""
     from hosts.gamerhq.skill_deployment_docker import DockerSkillDeployment
 
@@ -73,8 +73,9 @@ def rehearse_container_rollback(backend, baseline, candidate):
             if docker.current_image() != candidate:
                 raise Denied('OFFLINE_PROBE_FAILED')
             docker.stop()
-            docker.activate(baseline)
-            if docker.current_image() != baseline:
+            target = fallback or baseline
+            docker.activate(target)
+            if docker.current_image() != target:
                 raise Denied('OFFLINE_PROBE_FAILED')
         finally:
             backend.run(['docker', 'compose', '--file', str(compose), 'down', '--timeout', '5'])
@@ -139,10 +140,28 @@ def prepare(backend, preview, approved_image, *, now, read=github):
     if backend.run([*probe, '--env', f'{PILOT_ENV}={binding}', *argv, *map(str, cohort)]) != 'PASS' or backend.run([*probe, *argv]) != 'PASS':
         raise Denied('OFFLINE_PROBE_FAILED')
     rehearse_container_rollback(backend, approved_image, candidate)
+    fallback_evidence = {}
+    if 'tenantPilotCutover' in policy:
+        pin = policy['tenantPilotCutover']['fallback']
+        ci = read(policy, '/actions/runs/' + pin['ciRun'])
+        if (ci.get('workflow_id'), ci.get('head_sha'), ci.get('conclusion')) != (361334574, pin['commit'], 'success'):
+            raise Denied('OFFLINE_PROBE_FAILED')
+        fallback = build_reviewed_overlay(backend, approved_image, pin['commit'], pin['archiveSha256'], baseline, compatibility)
+        fallback_override = startup_override(profile, policy, fallback, primary_only=True)
+        value = fallback_override['services'][profile['service']]['environment'][PILOT_ENV]
+        probe_primary = main.replace('print("PASS")', 'assert len(routes.membership)==2; print("PASS")')
+        if backend.run([*probe, '--env', f'{PILOT_ENV}={value}', fallback, '-I', '-B', '-c', probe_primary,
+                        PILOT_ENV, profile['stagingGuildId'], profile['stagingGuildId']]) != 'PASS':
+            raise Denied('OFFLINE_PROBE_FAILED')
+        from .pilot_cutover import digest
+        rehearse_container_rollback(backend, approved_image, candidate, fallback)
+        fallback_evidence = {'fallbackImage': fallback, 'fallbackCommit': pin['commit'],
+                             'fallbackStartupOverrideSha256': digest(fallback_override), 'fallbackRollbackRehearsal': 'PASS'}
     if backend.inspect()['Id'] != container['Id'] or backend.health()['state'] != 'HOST_READY':
         raise Denied('PILOT_BASELINE_CHANGED')
     recheck(now + int(time.monotonic() - started))
-    return {'state': 'PILOT_ACTIVATION_PREPARED', 'candidateCommit': pin['commit'], 'candidateImage': candidate,
+    return {'state': 'PILOT_ACTIVATION_PREPARED', 'candidateCommit': policy['tenantPilotActivation']['commit'], 'candidateImage': candidate,
             'startupOverrideSha256': hashlib.sha256(canonical).hexdigest(), 'containerRollbackRehearsal': 'PASS',
             'preview': preview,
-            'backupReceiptSha256': preview['backupReceiptSha256'], 'gatewayStarted': False, 'activationAuthorized': False}
+            'backupReceiptSha256': preview['backupReceiptSha256'], 'gatewayStarted': False, 'activationAuthorized': False,
+            **fallback_evidence}

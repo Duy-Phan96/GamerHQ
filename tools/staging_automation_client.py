@@ -136,7 +136,7 @@ def web_artifact(status):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check', 'web-health', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare'])
+    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check', 'web-health', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'])
     args = parser.parse_args()
     if args.operation == 'identity-check':
         from tools.staging_automation.oidc import verify
@@ -154,15 +154,21 @@ def main():
         if status.get('state') != 'ACTIVE' or status.get('hostPromotionSupported') is not True or status.get('bootstrapVerified') is not True:
             raise Denied('HOST_PROMOTION_NOT_INSTALLED')
         result = perform('host-promote')
-    elif args.operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare'):
+    elif args.operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'):
         pin = json.loads(Path('deploy/staging/tenant-pilot-binding.json').read_text(encoding='utf-8'))
         digest = hashlib.sha256(json.dumps(pin, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         status = exchange('status')
+        resuming = args.operation == 'tenant-pilot-cutover' and status.get('tenantPilotCutoverJournal') is True
         if (status.get('state') != 'ACTIVE' or status.get('bootstrapVerified') is not True
-                or status.get('recoveryRequired') is not False or status.get('tenantPilotBindingSha256') != digest):
+                or (not resuming and status.get('recoveryRequired') is not False) or status.get('tenantPilotBindingSha256') != digest):
             raise Denied('PILOT_ENROLLMENT_REQUIRED')
         if args.operation == 'tenant-pilot-activation-prepare' and status.get('tenantPilotActivationPreparationEnrolled') is not True:
             raise Denied('PILOT_ENROLLMENT_REQUIRED')
+        if args.operation == 'tenant-pilot-cutover':
+            if status.get('tenantPilotCutoverEnrolled') is not True:
+                raise Denied('PILOT_ENROLLMENT_REQUIRED')
+            if not resuming and status.get('tenantPilotPreparationState') != 'FRESH':
+                raise Denied('PILOT_PREVIEW_EXPIRED')
         result = perform(args.operation)
     elif args.operation == 'reconcile':
         status = exchange('status')
@@ -182,6 +188,8 @@ def main():
     if args.operation == 'tenant-pilot-preview' and result.get('state') != 'PILOT_PREVIEW_VERIFIED':
         raise SystemExit(1)
     if args.operation == 'tenant-pilot-activation-prepare' and result.get('state') != 'PILOT_ACTIVATION_PREPARED':
+        raise SystemExit(1)
+    if args.operation == 'tenant-pilot-cutover' and result.get('state') != 'PILOT_ACTIVE':
         raise SystemExit(1)
 
 

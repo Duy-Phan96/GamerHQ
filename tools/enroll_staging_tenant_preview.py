@@ -15,17 +15,24 @@ ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
 PREVIOUS = '876805290ef454523f9b36f1f9fbf90c3ec64a17'
 ENROLLED_PREVIEW = '93fa8958cbaff97cf2152293765e70a4365fcadb'
+ENROLLED_PREPARATION = 'd194013cda5da2f6bde032ec7d16c5fd0b6c42ec'
 PREVIEW_DIGEST = '7c932e34572fee9cb691301902de4a2533128ca4444ec514754e72da15ec9e1d'
+PREPARATION_DIGEST = '487c3f213024d47435952345029d82854cc6089e8bccb46e1bc089e5ccc35290'
 ACTIVATION_CANDIDATE = '12e0053f3af479235f7281b6f67637e564b962fc'
 ACTIVATION_ARCHIVE = '264753b5d384bdabad7cfee5ba631dd8d5845da65f0c6ef144e28c286290d3fc'
 ACTIVATION_CI = '44141632946'
+FALLBACK = {'commit': 'ca6bc4ac5604987dcab9b5310b7af2b9c53cf652',
+            'archiveSha256': 'e5e6e949f084671cff8a70abdaa92e64e18bdae2188701083554bbad3d03aca5', 'ciRun': '44267696433'}
+BASELINE_IMAGE = 'sha256:1fac8871a93d79180eae0c11ace3735ace453714425516dbfe72df262a50caf8'
 WORKER = '92db47042d58055cb0debdfd83f11f8508e19809'
 HOST = '40c88fada10f7990ef3d2cddb81f30b6381fe73e'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 APPROVAL = 'ENROLL STAGING TENANT PREVIEW'
 PREPARATION_APPROVAL = 'ENROLL STAGING TENANT PREPARATION ONLY'
+CUTOVER_APPROVAL = 'ENROLL STAGING TENANT CUTOVER POLICY ONLY'
 WORKFLOW = '.github/workflows/staging-tenant-pilot-preview.yml'
 PREPARATION_WORKFLOW = '.github/workflows/staging-tenant-pilot-activation-prepare.yml'
+CUTOVER_WORKFLOW = '.github/workflows/staging-tenant-pilot-cutover.yml'
 BINDING = {'applicationId': '1567098530525351976', 'guildIds': ['1567098041641738331', '1571908030532948129']}
 OVERLAY = {'backend.py', 'bridge.py', 'oidc.py', 'policy.py'}
 SOURCE_PATHS = {'deployment.py': 'hosts/gamerhq/skill_update_controller.py',
@@ -107,9 +114,9 @@ def bundle_sources(archive, destination, gid):
                 atomic(target, body, gid)
 
 
-def updated_policy(policy, source, workflow, profile, state, *, preparation=False):
+def updated_policy(policy, source, workflow, profile, state, *, preparation=False, cutover=False):
     digest = hashlib.sha256(workflow).hexdigest()
-    previous = ENROLLED_PREVIEW if preparation else PREVIOUS
+    previous = ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
     if policy.get('controllerCommit') not in (previous, source) or policy.get('legacyWorkerCommit') != WORKER:
         raise ValueError('REVIEWED_ENROLLMENT_REQUIRED')
     if policy.get('repository') != 'Duy-Phan96/GamerHQ' or policy.get('hostPromotion', {}).get('commit') != HOST:
@@ -124,13 +131,20 @@ def updated_policy(policy, source, workflow, profile, state, *, preparation=Fals
             or not re.fullmatch(r'sha256:[0-9a-f]{64}', state.get('approvedImage', ''))
             or profile.get('baseImage') != state['approvedImage']):
         raise ValueError('ACTIVE_STAGING_REQUIRED')
-    if preparation:
+    if preparation or cutover:
         if policy.get('tenantPilot') != BINDING or policy.get('tenantPilotWorkflowSha256') != PREVIEW_DIGEST:
             raise ValueError('PREVIEW_POLICY_CHANGED')
-        new = {**policy, 'controllerCommit': source, 'tenantPilotActivation': {
+        activation = {
             'commit': ACTIVATION_CANDIDATE, 'archiveSha256': ACTIVATION_ARCHIVE,
-            'ciRun': ACTIVATION_CI, 'workflowSha256': digest,
-        }}
+            'ciRun': ACTIVATION_CI, 'workflowSha256': PREPARATION_DIGEST if cutover else digest,
+        }
+        if cutover:
+            if policy.get('tenantPilotActivation') != activation or state['approvedImage'] != BASELINE_IMAGE:
+                raise ValueError('PREPARATION_POLICY_CHANGED')
+            new = {**policy, 'controllerCommit': source,
+                   'tenantPilotCutover': {'workflowSha256': digest, 'fallback': FALLBACK}}
+        else:
+            new = {**policy, 'controllerCommit': source, 'tenantPilotActivation': activation}
     else:
         new = {**policy, 'controllerCommit': source, 'tenantPilot': BINDING, 'tenantPilotWorkflowSha256': digest}
     if policy['controllerCommit'] == source and policy != new:
@@ -138,11 +152,11 @@ def updated_policy(policy, source, workflow, profile, state, *, preparation=Fals
     return new
 
 
-def enroll(source, workflow_digest, approval, *, preparation=False):
+def enroll(source, workflow_digest, approval, *, preparation=False, cutover=False):
     import fcntl
     import pwd
 
-    if os.geteuid() != 0 or approval != (PREPARATION_APPROVAL if preparation else APPROVAL):
+    if os.geteuid() != 0 or approval != (CUTOVER_APPROVAL if cutover else PREPARATION_APPROVAL if preparation else APPROVAL):
         raise ValueError('OWNER_APPROVAL_REQUIRED')
     if not re.fullmatch(r'[0-9a-f]{40}', source) or not re.fullmatch(r'[0-9a-f]{64}', workflow_digest):
         raise ValueError('IMMUTABLE_SOURCE_REQUIRED')
@@ -151,7 +165,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False):
     revisions = ROOT / 'automation-controller/revisions'
     entry = revisions.parent / 'entry.py'
     policy_file = CONTROL / 'automation-policy.json'
-    previous_commit = ENROLLED_PREVIEW if preparation else PREVIOUS
+    previous_commit = ENROLLED_PREPARATION if cutover else ENROLLED_PREVIEW if preparation else PREVIOUS
     previous, target = revisions / previous_commit, revisions / source
     for path in (ROOT, CONTROL, entry.parent, revisions, previous, previous / 'staging_automation'):
         directory(path)
@@ -163,19 +177,30 @@ def enroll(source, workflow_digest, approval, *, preparation=False):
                                   capture_output=True, timeout=180).stdout
 
         git('init', '--quiet')
-        revisions_to_fetch = (source, PREVIOUS, ENROLLED_PREVIEW, ACTIVATION_CANDIDATE) if preparation else (source, PREVIOUS)
+        revisions_to_fetch = [source, PREVIOUS]
+        if preparation or cutover:
+            revisions_to_fetch.extend((previous_commit, ACTIVATION_CANDIDATE))
+        if cutover:
+            revisions_to_fetch.append(FALLBACK['commit'])
         for revision in (*revisions_to_fetch, 'refs/heads/main'):
             git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
-        workflow = git('show', 'FETCH_HEAD:' + (PREPARATION_WORKFLOW if preparation else WORKFLOW))
+        path = CUTOVER_WORKFLOW if cutover else PREPARATION_WORKFLOW if preparation else WORKFLOW
+        workflow = git('show', 'FETCH_HEAD:' + path)
         if hashlib.sha256(workflow).hexdigest() != workflow_digest or f'ref: {source}\n'.encode() not in workflow:
             raise ValueError('WORKFLOW_DIGEST_OR_SOURCE_REJECTED')
-        if preparation:
+        if preparation or cutover:
             if hashlib.sha256(git('show', 'FETCH_HEAD:' + WORKFLOW)).hexdigest() != PREVIEW_DIGEST:
                 raise ValueError('PREVIEW_POLICY_CHANGED')
-            candidate_archive = Path(scratch) / 'candidate.tar'
-            git('archive', '--format=tar', '--output', str(candidate_archive), ACTIVATION_CANDIDATE)
-            if hashlib.sha256(candidate_archive.read_bytes()).hexdigest() != ACTIVATION_ARCHIVE:
-                raise ValueError('CANDIDATE_ARCHIVE_MISMATCH')
+            if cutover and hashlib.sha256(git('show', 'FETCH_HEAD:' + PREPARATION_WORKFLOW)).hexdigest() != PREPARATION_DIGEST:
+                raise ValueError('PREPARATION_POLICY_CHANGED')
+            pins = [(ACTIVATION_CANDIDATE, ACTIVATION_ARCHIVE)]
+            if cutover:
+                pins.append((FALLBACK['commit'], FALLBACK['archiveSha256']))
+            for revision, checksum in pins:
+                candidate_archive = Path(scratch) / 'candidate.tar'
+                git('archive', '--format=tar', '--output', str(candidate_archive), revision)
+                if hashlib.sha256(candidate_archive.read_bytes()).hexdigest() != checksum:
+                    raise ValueError('CANDIDATE_ARCHIVE_MISMATCH')
         if git('show', source + ':tools/enroll_staging_tenant_preview.py') != Path(__file__).read_bytes():
             raise ValueError('INSTALLER_SOURCE_MISMATCH')
         if json.loads(git('show', source + ':deploy/staging/tenant-pilot-binding.json')) != BINDING:
@@ -194,7 +219,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False):
                     or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
                 raise ValueError('PRIVATE_OPERATION_LOCK_REQUIRED')
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if (ROOT / 'worker/access-revoked').exists():
+            if (ROOT / 'worker/access-revoked').exists() or (cutover and os.path.lexists(ROOT / 'worker/tenant-pilot-cutover.json')):
                 raise ValueError('ACCESS_REVOKED')
             # Check the physical legacy source revision without reading its environment.
             worker = ROOT / 'deployment-worker'
@@ -205,7 +230,7 @@ def enroll(source, workflow_digest, approval, *, preparation=False):
             policy = json.loads(before)
             profile = json.loads(checked(CONTROL / 'settings/profile.json', uid, private=True))
             state = json.loads(checked(ROOT / 'worker/automation-state.json', uid, private=True))
-            updated = updated_policy(policy, source, workflow, profile, state, preparation=preparation)
+            updated = updated_policy(policy, source, workflow, profile, state, preparation=preparation, cutover=cutover)
             if launcher not in (renderer(previous), renderer(target)) or (policy['controllerCommit'] == previous_commit and launcher != renderer(previous)):
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
             blobs = {}
@@ -213,14 +238,16 @@ def enroll(source, workflow_digest, approval, *, preparation=False):
                 name = member.name
                 relative = SOURCE_PATHS.get(name, 'tools/staging_automation/' + name)
                 body = checked(member)
-                expected = previous_commit if name in OVERLAY else PREVIOUS
+                expected = previous_commit if name in OVERLAY or (cutover and name == 'pilot_activation.py') else PREVIOUS
                 if body != git('show', expected + ':' + relative):
                     raise ValueError('INSTALLED_SOURCE_MISMATCH')
                 blobs[name] = git('show', source + ':' + relative) if name in OVERLAY else body
             if not OVERLAY <= blobs.keys():
                 raise ValueError('INSTALLED_SOURCE_MISMATCH')
-            if preparation:
+            if preparation or cutover:
                 blobs['pilot_activation.py'] = git('show', source + ':tools/staging_automation/pilot_activation.py')
+            if cutover:
+                blobs['pilot_cutover.py'] = git('show', source + ':tools/staging_automation/pilot_cutover.py')
             directory(target, gid)
             directory(target / 'staging_automation', gid)
             directory(target / 'pilot-source', gid)
@@ -239,10 +266,13 @@ def enroll(source, workflow_digest, approval, *, preparation=False):
                 atomic(entry, launcher, gid)
                 atomic(policy_file, before, gid)
                 raise
-    return {'state': 'PILOT_ACTIVATION_PREPARATION_ENROLLED' if preparation else 'PILOT_PREVIEW_ENROLLED',
+    return {'state': 'PILOT_CUTOVER_POLICY_ENROLLED' if cutover else
+            'PILOT_ACTIVATION_PREPARATION_ENROLLED' if preparation else 'PILOT_PREVIEW_ENROLLED',
             'controllerCommit': source, 'legacyWorkerCommit': WORKER,
             'hostCommit': HOST, 'workflowSha256': workflow_digest, 'binding': BINDING,
-            'activationAuthorized': False, 'gatewayChanged': False, 'productionChanged': False}
+            'activationAuthorized': False, 'gatewayChanged': False, 'productionChanged': False,
+            **({'fallbackCommit': FALLBACK['commit'], 'fallbackArchiveSha256': FALLBACK['archiveSha256'],
+                'baselineImage': BASELINE_IMAGE} if cutover else {})}
 
 
 if __name__ == '__main__':
@@ -250,10 +280,13 @@ if __name__ == '__main__':
     parser.add_argument('--commit', required=True)
     parser.add_argument('--workflow-sha256', required=True)
     parser.add_argument('--approval', required=True)
-    parser.add_argument('--activation-preparation', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--activation-preparation', action='store_true')
+    mode.add_argument('--cutover-policy', action='store_true')
     args = parser.parse_args()
     try:
-        receipt = enroll(args.commit, args.workflow_sha256, args.approval, preparation=args.activation_preparation)
+        receipt = enroll(args.commit, args.workflow_sha256, args.approval, preparation=args.activation_preparation,
+                         cutover=args.cutover_policy)
     except (OSError, subprocess.SubprocessError):
         raise SystemExit('Staging enrollment failed a protected filesystem, Git or lock check.') from None
     print(json.dumps(receipt))

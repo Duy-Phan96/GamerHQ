@@ -15,10 +15,12 @@ from .oidc import github, owner_protected
 class HostBackend:
     def __init__(self, profile, policy):
         self.profile, self.policy = profile, policy
+        self.operation_lock = None
 
-    def run(self, args, timeout=30, *, stdin=None):
+    def run(self, args, timeout=30, *, stdin=None, pass_fds=()):
         try:
-            result = subprocess.run(args, input=stdin, capture_output=True, text=True, check=True, timeout=timeout)
+            result = subprocess.run(args, input=stdin, capture_output=True, text=True, check=True, timeout=timeout,
+                                    **({'pass_fds': pass_fds} if pass_fds else {}))
             if len(result.stdout.encode()) > 262144: raise ValueError()
             return result.stdout.strip()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:
@@ -68,20 +70,28 @@ class HostBackend:
     def prepare_tenant_pilot_activation(self, expected_image):
         return self._pilot_source('prepare-activation', expected_image)
 
-    def _pilot_source(self, operation, expected_image):
+    def cutover_tenant_pilot(self, expected_image, prepared, run_id):
+        if self.operation_lock is None:
+            raise Denied('CONCURRENT_OPERATION_REJECTED')
+        return self._pilot_source('cutover', expected_image, prepared=prepared, runId=run_id)
+
+    def _pilot_source(self, operation, expected_image, **evidence):
         bundle = Path(__file__).resolve().parents[1] / 'pilot-source'
         if bundle.is_dir():
             python = '/opt/gamerhq-staging/deployment-worker/.venv/bin/python'
             launch = 'import sys; sys.path.insert(0, sys.argv[1]); from tools.staging_tenant_preview_entry import main; main()'
-            raw = self.run([python, '-I', '-B', '-c', launch, str(bundle)], timeout=1000 if operation == 'prepare-activation' else 420,
+            inherited = {'pass_fds': (self.operation_lock,)} if operation == 'cutover' else {}
+            raw = self.run([python, '-I', '-B', '-c', launch, str(bundle)], timeout=420 if operation == 'preview' else 1000,
                            stdin=json.dumps({'profile': self.profile, 'policy': self.policy, 'image': expected_image,
-                                             'operation': operation}))
+                                             'operation': operation, **evidence}), **inherited)
             result = json.loads(raw)
             if 'denied' in result:
                 raise Denied(result['denied'])
             return result
         if operation == 'preview':
             return self._verify_tenant_pilot(expected_image=expected_image)
+        if operation == 'cutover':
+            raise Denied('OPERATION_NOT_ALLOWED')
         from .pilot_activation import prepare_session
         return prepare_session(self, expected_image)
 

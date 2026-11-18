@@ -19,6 +19,9 @@ def main():
         elif packet['operation'] == 'prepare-activation':
             from tools.staging_automation.pilot_activation import prepare_session
             result = prepare_session(backend, packet['image'])
+        elif packet['operation'] == 'cutover':
+            from tools.staging_automation.pilot_cutover import PilotCutover
+            result = PilotCutover(backend, packet['prepared'], packet['image'], packet['runId']).run()
         else:
             raise Denied('OPERATION_NOT_ALLOWED')
     except Denied as error:

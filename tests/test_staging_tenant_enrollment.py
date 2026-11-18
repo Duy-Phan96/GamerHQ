@@ -81,3 +81,24 @@ def test_offline_secondary_provision_preserves_primary_and_is_repeatable(tmp_pat
     assert provision(pin, approved[0], primary)['created'] is False
     assert (tmp_path / 'tenants' / f'{approved[1]}.sqlite').is_file()
     assert primary.read_bytes() == baseline
+
+
+def test_cutover_enrollment_pins_exact_baseline_fallback_and_preparation():
+    policy, profile, state = fixture()
+    profile['baseImage'] = state['approvedImage'] = enrollment.BASELINE_IMAGE
+    policy.update(controllerCommit=enrollment.ENROLLED_PREPARATION, tenantPilot=enrollment.BINDING,
+                  tenantPilotWorkflowSha256=enrollment.PREVIEW_DIGEST,
+                  tenantPilotActivation={'commit': enrollment.ACTIVATION_CANDIDATE,
+                                         'archiveSha256': enrollment.ACTIVATION_ARCHIVE,
+                                         'ciRun': enrollment.ACTIVATION_CI,
+                                         'workflowSha256': enrollment.PREPARATION_DIGEST})
+    workflow = b'exact cutover workflow'
+    source = 'f' * 40
+    result = enrollment.updated_policy(policy, source, workflow, profile, state, cutover=True)
+    assert result == {**policy, 'controllerCommit': source, 'tenantPilotCutover': {
+        'fallback': enrollment.FALLBACK, 'workflowSha256': hashlib.sha256(workflow).hexdigest()}}
+    assert enrollment.updated_policy(result, source, workflow, profile, state, cutover=True) == result
+    wrong = 'sha256:' + '0' * 64
+    with pytest.raises(ValueError, match='PREPARATION_POLICY_CHANGED'):
+        enrollment.updated_policy(policy, source, workflow, {**profile, 'baseImage': wrong},
+                                  {**state, 'approvedImage': wrong}, cutover=True)

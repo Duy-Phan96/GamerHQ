@@ -146,10 +146,27 @@ image with the explicit primary-only binding. That binding verifies the exact
 two Discord memberships and admits only the primary tenant for commands,
 interactions, Skill restore and scheduling. It retains the secondary file.
 
-Live cutover remains gated on immutable rollback image enrollment and a
-controller transaction that records the checkpoint, switches the single
-container, and handles interrupted switches. Rehearse that transaction on
-disposable storage and images before registering activation on `main`.
+The cutover policy enrollment pins the existing baseline image, the separate
+primary-only fallback source and archive checksum, and the exact protected
+cutover workflow. Enrollment creates no containers. The existing preparation
+workflow then builds and probes both images, including primary-only admission
+with both guild memberships, and rehearses switching to the fallback.
+
+The protected cutover accepts fresh controller-retained proof only. It
+re-attests Discord and the immutable images, journals the stop intent under
+the operation lock, and stops the current container to quiesce both databases.
+It seals and reopens the dual checkpoint before either candidate or fallback
+can start. The journal records the start intent and verification stage before
+checking Gateway readiness, exact mode, Event Manager lifecycle and tenant
+integrity. No live database is restored over current data.
+
+A retry of a protected cutover run with an incomplete journal can only roll
+back. If the old container is still healthy before quiescence, it is left
+running. Otherwise the controller stops any known candidate, rechecks the
+checkpoint and starts the enrolled primary-only fallback. Unknown container
+identity, failed backup verification or unhealthy fallback requires recovery
+review. Routine single-database operations remain held while the journal is
+present. Preserve the journal, tenant files and sealed snapshots for review.
 
 After live activation is healthy, open `/server setup` in Servertest and use
 an owner-confirmed inventory preview. The owner can skip the template and

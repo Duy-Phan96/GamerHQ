@@ -195,3 +195,114 @@ def test_quiesced_backup_requires_same_stopped_host_and_readonly_secondary(check
         assert result['quiesced'] is True
         assert [tenant['restore'] for tenant in result['tenantRestores']] == ['PASS', 'PASS']
     assert (primary.read_bytes(), secondary.read_bytes()) == before
+
+
+@pytest.mark.parametrize('boundary', ['before-stop', 'after-stop', 'checkpointed', 'created',
+                                      'readiness', 'postflight', 'complete'])
+def test_cutover_restart_recovers_without_overwriting_tenants(tmp_path, monkeypatch, boundary):
+    import time
+
+    from tools import staging_dispatch, staging_tenant_rehearsal
+    from tools.staging_automation.pilot_cutover import PilotCutover, digest
+
+    class Interrupted(BaseException):
+        pass
+
+    primary = tmp_path / 'primary.sqlite'
+    secondary = tmp_path / '2.sqlite'
+    primary.write_bytes(b'primary')
+    secondary.write_bytes(b'secondary')
+    proof = tmp_path / 'old-verification.json'
+    proof.write_text('{}')
+    profile = {'environment': 'staging', 'stagingGuildId': '1', 'stagingBotId': '90',
+               'productionGuildId': '3', 'productionBotId': '99', 'service': 'gamerhq-staging',
+               'database': str(primary), 'backupRoot': str(tmp_path), 'workRoot': str(tmp_path),
+               'verificationFile': str(proof)}
+    candidate, baseline, fallback = ['sha256:' + c * 64 for c in 'abc']
+    policy = {'tenantPilot': {'applicationId': '90', 'guildIds': ['1', '2']},
+              'tenantPilotActivation': {'commit': 'd' * 40},
+              'hostPromotion': {'commit': 'e' * 40}}
+    override_args = ({**profile, 'tenantPilot': policy['tenantPilot']}, policy)
+    override = staging_tenant_rehearsal.startup_override
+    prepared = {'state': 'PILOT_ACTIVATION_PREPARED', 'gatewayStarted': False, 'activationAuthorized': False,
+                'containerRollbackRehearsal': 'PASS', 'candidateCommit': 'd' * 40,
+                'preview': {'state': 'PILOT_PREVIEW_VERIFIED', 'verifiedAt': int(time.time())},
+                'candidateImage': candidate, 'fallbackImage': fallback,
+                'startupOverrideSha256': digest(override(*override_args, candidate)),
+                'fallbackStartupOverrideSha256': digest(override(*override_args, fallback, primary_only=True))}
+    current = {'Id': '1' * 64, 'Image': baseline, 'State': {'Running': True},
+               'Config': {'Labels': {'org.opencontainers.image.revision': 'e' * 40}}}
+    backend = SimpleNamespace(profile=profile, policy=policy, inspect=lambda: current,
+                              health=lambda: {'state': 'HOST_READY'})
+    launches = []
+    inject = True
+
+    def compose(_, operation, *args, override=None):
+        if operation == 'stop':
+            if inject and boundary == 'before-stop':
+                raise Interrupted
+            current['State']['Running'] = False
+            if inject and boundary == 'after-stop':
+                raise Interrupted
+        else:
+            assert current['State']['Running'] is False
+            current['Image'] = override['services'][profile['service']]['image']
+            current['State']['Running'] = True
+            launches.append(current['Image'])
+            if inject and boundary == 'created':
+                raise Interrupted
+
+    def confirm(self, image, override, record, **kwargs):
+        if inject and boundary == 'postflight':
+            raise Interrupted
+        if inject and boundary == 'readiness':
+            raise Denied('HOST_NOT_HEALTHY')
+
+    def verify_checkpoint(self, record, **kwargs):
+        if inject and boundary == 'checkpointed':
+            raise Interrupted
+
+    monkeypatch.setattr(staging_dispatch, 'protected_file', lambda *a, **k: None)
+    monkeypatch.setattr(os, 'geteuid', lambda: 1000, raising=False)
+    monkeypatch.setattr(staging_tenant_rehearsal, 'verify_activation_checkpoint', lambda *a, **k: None)
+    monkeypatch.setattr(PilotCutover, 'attest', lambda self: None)
+    monkeypatch.setattr(PilotCutover, 'inspect', lambda self: current)
+    monkeypatch.setattr(PilotCutover, 'compose', compose)
+    monkeypatch.setattr(PilotCutover, 'confirm', confirm)
+    monkeypatch.setattr(PilotCutover, 'verify_checkpoint', verify_checkpoint)
+    mock_checkpoint = Mock(return_value={'backupBatch': 'verified', 'backupReceiptSha256': 'f' * 64})
+    monkeypatch.setattr(PilotCutover, 'checkpoint', mock_checkpoint)
+
+    first = PilotCutover(backend, prepared, baseline, '123')
+    if boundary == 'complete':
+        assert first.run()['state'] == 'PILOT_ACTIVE'
+    elif boundary == 'readiness':
+        # Fail the candidate health check, but let the immediate fallback prove healthy.
+        def ready(self, image, *args, **kwargs):
+            if image == candidate:
+                raise Denied('HOST_NOT_HEALTHY')
+        monkeypatch.setattr(PilotCutover, 'confirm', ready)
+        assert first.run()['state'] == 'PILOT_ROLLED_BACK'
+    else:
+        with pytest.raises(Interrupted):
+            first.run()
+    inject = False
+    retry = PilotCutover(backend, prepared, baseline, '124')
+    expected = {'complete': 'PILOT_ACTIVE', 'before-stop': 'PILOT_STOP_CANCELLED'}.get(boundary, 'PILOT_ROLLED_BACK')
+    assert retry.run()['state'] == expected
+    assert retry.run()['activationRun'] == '123'
+    assert launches.count(candidate) <= 1
+    assert launches.count(fallback) == int(expected == 'PILOT_ROLLED_BACK')
+    assert (primary.read_bytes(), secondary.read_bytes()) == (b'primary', b'secondary')
+
+
+def test_cutover_requires_enrolled_workflow_and_holds_legacy_operations(tmp_path):
+    from tools.staging_automation.bridge import execute
+
+    challenge = {'operation': 'tenant-pilot-cutover'}
+    with pytest.raises(Denied, match='OPERATION_NOT_ALLOWED'):
+        execute('challenge', challenge, {}, {}, None, Mock(), now=1)
+    (tmp_path / 'tenant-pilot-cutover.json').touch()
+    backend = SimpleNamespace(profile={'workRoot': tmp_path})
+    with pytest.raises(Denied, match='OPERATION_NOT_ALLOWED'):
+        execute('challenge', {'operation': 'restart'}, {'tenantPilotCutover': {}}, {}, backend, Mock(), now=1)
