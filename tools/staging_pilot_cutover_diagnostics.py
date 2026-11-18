@@ -32,6 +32,16 @@ IMAGES = {'baseline': 'sha256:1fac8871a93d79180eae0c11ace3735ace453714425516dbfe
 PHASES = {'STOPPING', 'CHECKPOINTED', 'STARTING', 'VERIFYING', 'ROLLING_BACK',
           'PILOT_ACTIVE', 'PILOT_ROLLED_BACK', 'PILOT_STOP_CANCELLED'}
 API_DIAGNOSTIC_APPROVAL = 'RUN ISOLATED STAGING HOST API DIAGNOSTIC'
+CONFIRMATION_DIAGNOSTIC_APPROVAL = 'REHEARSE STAGING WATCHDOG IN THE CONTROLLER SANDBOX'
+CONFIRMATION_CONTROLLER = 'af276099e34d0c7fcbc94397c8fc39f9885b147d'
+CONFIRMATION_SOURCE = {
+    'tools/staging_automation/backend.py': 'e78f0f815e30768466a842ae2f512694e76c39d216ed7ed1023f1cba98ed2658',
+    'tools/staging_health.py': '6b2f9f943a92f8c5cd89565cd3842027051773e381cc12a23d97acb52f06176f',
+    'tools/skill_staging.py': '93955b6914540162199c5de847573b96d5eaa503407ded4c4a7829004df5f280',
+    'tools/staging_dispatch.py': 'b0b0d7d371e2de0e30f296a4080535173e6b835237ab1211cce3fe5fb3216c0c',
+    'hosts/gamerhq/staging_rootless.py': 'd1ddccdb70698f6836c741aff483b1b7d4a1560ac098492ae19b1890d7f9a6d2',
+    'tools/staging_configuration.py': '7dcfd68412420c70b16d0fedcd87f9895ffac8d74a710f8ac77fe1e35b5ab671',
+}
 API_PATH = '/api/v1/servers/' + COHORT['guildIds'][0] + '/skills/event-manager'
 MAX_PROBE_DB = 32 * 1024**2
 FIELDS = (
@@ -251,7 +261,7 @@ def summarize_startup(log):
     return {'state': 'COLLECTED', 'frames': frames[-30:], 'exceptions': exceptions[-12:], 'signals': signals}
 
 
-def collect(*, api_probe=False):
+def collect(*, api_probe=False, confirmation_probe=False):
     import fcntl
     import pwd
 
@@ -286,7 +296,8 @@ def collect(*, api_probe=False):
         journal = verify_journal(state, recorded)
         env = ['PATH=/usr/local/bin:/usr/bin:/bin', f'HOME={account.pw_dir}',
                f'XDG_RUNTIME_DIR=/run/user/{uid}', f'DOCKER_HOST=unix:///run/user/{uid}/docker.sock',
-               'DOCKER_CONFIG=/etc/gamerhq-staging/docker-client']
+               'DOCKER_CONFIG=/etc/gamerhq-staging/docker-client',
+               f'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus']
 
         def as_worker(args, **kwargs):
             return subprocess.run(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i',
@@ -306,7 +317,10 @@ def collect(*, api_probe=False):
                     or os.path.lexists(worker / 'access-revoked')
                     or profile.get('healthUrl') != 'http://127.0.0.1:18080'):
                 raise ValueError('HELD_API_RECOVERY_REQUIRED')
-            return run_api_probe(docker, as_worker, profile, policy['controllerCommit'], recorded, uid)
+            if confirmation_probe:
+                verify_confirmation_source(policy['controllerCommit'])
+            return run_api_probe(docker, as_worker, profile, policy['controllerCommit'], recorded, uid,
+                                 confirmation=confirmation_probe)
 
         ids = docker('ps', '-aq', '--filter', 'name=^/gamerhq-staging-bot$').splitlines()
         container = {'state': 'ABSENT'}
@@ -427,6 +441,108 @@ else:
 print(json.dumps(result))
 """
 
+CONFIRMATION_CLIENT = """
+import json, os, re, socket, subprocess, sys, time
+from urllib.error import HTTPError, URLError
+sys.path.insert(0,sys.argv[1])
+from hosts.gamerhq import staging_rootless
+from tools import skill_staging, staging_configuration, staging_health
+from tools.staging_automation.backend import HostBackend
+from tools.staging_automation.policy import Denied
+from tools.staging_dispatch import PROFILE, environment
+profile=json.loads(PROFILE.read_bytes())
+packet=json.load(sys.stdin)
+name=packet['container']
+assert re.fullmatch('gamerhq-staging-api-probe-[0-9a-f]{16}', name)
+assert profile['healthUrl']=='http://127.0.0.1:18080' and profile['workerEnabled'] is True
+values=environment()
+os.environ.clear()
+os.environ.update(values)
+os.environ[profile['healthSecretEnv']]=packet['secret']
+native_run=subprocess.run
+native_verify=staging_rootless.verify_rootless
+native_request=skill_staging.host_request
+native_audit=staging_configuration.audit
+backend=HostBackend(profile,{})
+native_inspect=backend.inspect
+evidence={}
+def verify(*args,**kwargs):
+    evidence['stage']='ROOTLESS_DAEMON'
+    return native_verify(*args,**kwargs)
+def run(args,*rest,**kwargs):
+    if args==['docker','inspect','--format','{{.State.Health.Status}}','gamerhq-staging-bot']:
+        evidence['stage']='DOCKER_HEARTBEAT'
+        answer=native_run([*args[:-1],name],*rest,**kwargs)
+        health=answer.stdout.strip()
+        evidence['dockerHealth']=health if health in ('healthy','starting','unhealthy') else 'UNAVAILABLE'
+        return answer
+    return native_run(args,*rest,**kwargs)
+def request(*args,**kwargs):
+    evidence['stage']='HOST_API_TRANSPORT'
+    try:
+        value=native_request(*args,**kwargs)
+    except HTTPError as error:
+        evidence.update(reason='HEALTH_HTTP_REJECTED', httpStatus=error.code)
+        raise
+    except (URLError,OSError) as error:
+        cause=error.reason if isinstance(error,URLError) else error
+        evidence['reason']=('HEALTH_CONNECTION_REFUSED' if isinstance(cause,ConnectionRefusedError)
+                           else 'HEALTH_TIMEOUT' if isinstance(cause,(TimeoutError,socket.timeout))
+                           else 'HEALTH_TRANSPORT_REJECTED')
+        raise
+    except (ValueError,TypeError,KeyError):
+        evidence['reason']='HEALTH_RESPONSE_REJECTED'
+        raise
+    evidence.update(stage='SKILL_HEALTH_VALIDATION',httpStatus=200)
+    if isinstance(value,dict):
+        state=value.get('state')
+        evidence['versionMatches']=value.get('version')=='0.1.2'
+        evidence['capabilitiesPass']=value.get('missingCapabilities')==[]
+        if isinstance(state,dict):
+            evidence['enabled']=state.get('enabled') is True
+            evidence['healthy']=state.get('healthy') is True
+    return value
+def audit(operation,state,**kwargs):
+    evidence['stage']='HEALTH_AUDIT'
+    return native_audit('tenant-pilot-api-rehearsal',state,**kwargs)
+def inspect():
+    evidence['stage']='CONTAINER_INSPECTION'
+    # Verify the held fallback's actual deployment contract. Only its stopped
+    # runtime state is replaced with the disposable server's observed state.
+    held=native_inspect()
+    fixture=json.loads(native_run(['docker','inspect','--format','{{json .State}}',name],
+                                 capture_output=True,text=True,timeout=30,check=True).stdout)
+    return {**held,'State':fixture}
+backend.inspect=inspect
+staging_rootless.verify_rootless=verify
+staging_health.subprocess.run=run
+skill_staging.host_request=request
+staging_configuration.audit=audit
+samples=[]
+for idx in range(2):
+    evidence={}
+    started=time.monotonic()
+    try:
+        outcome=backend.health()
+        evidence['reason']='HOST_READY' if outcome.get('state')=='HOST_READY' else 'HOST_NOT_READY'
+    except Denied as error:
+        evidence.setdefault('reason', error.code if error.code in ('HOST_NOT_HEALTHY',
+            'CONTAINER_IDENTITY_REJECTED','CONTAINER_PRIVILEGES_REJECTED','RESOURCE_LIMIT_REQUIRES_OWNER',
+            'CONTAINER_NETWORK_REJECTED','CONTAINER_MOUNTS_REJECTED') else 'HEALTH_BACKEND_REJECTED')
+    except Exception:
+        evidence.setdefault('reason', {'ROOTLESS_DAEMON':'HEALTH_DAEMON_REJECTED',
+                                      'CONTAINER_INSPECTION':'HEALTH_INSPECTION_REJECTED',
+                                      'DOCKER_HEARTBEAT':'HEALTH_GATEWAY_HEARTBEAT_REJECTED',
+                                      'SKILL_HEALTH_VALIDATION':'HEALTH_SKILL_REJECTED',
+                                      'HEALTH_AUDIT':'HEALTH_AUDIT_REJECTED'}.get(
+                                          evidence.get('stage'),'HEALTH_OTHER_REJECTED'))
+    evidence['elapsedMs']=int((time.monotonic()-started)*1000)
+    samples.append(evidence)
+    if idx==0:
+        time.sleep(1)
+print(json.dumps({'samples':samples}))
+"""
+
 API_SERVER = """
 import asyncio, json, os, socket, sys, tempfile
 from pathlib import Path
@@ -511,7 +627,52 @@ def api_receipt(raw):
     return result
 
 
-def run_api_probe(docker, as_worker, profile, controller, journal, uid):
+def confirmation_receipt(raw):
+    value = json.loads(raw)
+    samples = value.get('samples') if isinstance(value, dict) else None
+    if not isinstance(samples, list) or len(samples) != 2:
+        raise ValueError('CONFIRMATION_RECEIPT_REJECTED')
+    public = []
+    for row in samples:
+        if not isinstance(row, dict) or row.get('reason') not in (
+                'HOST_READY', 'HOST_NOT_READY', 'HEALTH_HTTP_REJECTED', 'HEALTH_CONNECTION_REFUSED',
+                'HEALTH_TIMEOUT', 'HEALTH_TRANSPORT_REJECTED', 'HEALTH_RESPONSE_REJECTED',
+                'HEALTH_DAEMON_REJECTED', 'HEALTH_GATEWAY_HEARTBEAT_REJECTED',
+                'HEALTH_SKILL_REJECTED', 'HEALTH_AUDIT_REJECTED', 'HEALTH_OTHER_REJECTED',
+                'HEALTH_INSPECTION_REJECTED', 'HEALTH_BACKEND_REJECTED', 'HOST_NOT_HEALTHY',
+                'CONTAINER_IDENTITY_REJECTED', 'CONTAINER_PRIVILEGES_REJECTED', 'RESOURCE_LIMIT_REQUIRES_OWNER',
+                'CONTAINER_NETWORK_REJECTED', 'CONTAINER_MOUNTS_REJECTED'):
+            raise ValueError('CONFIRMATION_RECEIPT_REJECTED')
+        result = {'reason': row['reason']}
+        if row.get('stage') in ('ROOTLESS_DAEMON', 'CONTAINER_INSPECTION', 'DOCKER_HEARTBEAT', 'HOST_API_TRANSPORT',
+                                'SKILL_HEALTH_VALIDATION', 'HEALTH_AUDIT'):
+            result['stage'] = row['stage']
+        if row.get('dockerHealth') in ('healthy', 'starting', 'unhealthy', 'UNAVAILABLE'):
+            result['dockerHealth'] = row['dockerHealth']
+        status = row.get('httpStatus')
+        if type(status) is int and 100 <= status <= 599:
+            result['httpStatus'] = status
+        elapsed = row.get('elapsedMs')
+        if type(elapsed) is int and 0 <= elapsed <= 35000:
+            result['elapsedMs'] = elapsed
+        for key in ('versionMatches', 'capabilitiesPass', 'enabled', 'healthy'):
+            if type(row.get(key)) is bool:
+                result[key] = row[key]
+        public.append(result)
+    return {'state': 'WATCHDOG_SAMPLES_COLLECTED', 'samples': public}
+
+
+def verify_confirmation_source(controller):
+    if controller != CONFIRMATION_CONTROLLER:
+        raise ValueError('CONFIRMATION_SOURCE_MISMATCH')
+    bundle = ROOT / 'automation-controller/revisions' / controller / 'pilot-source'
+    for relative, expected in CONFIRMATION_SOURCE.items():
+        path = bundle / relative
+        if path.resolve(strict=True) != path or hashlib.sha256(protected(path, 0)).hexdigest() != expected:
+            raise ValueError('CONFIRMATION_SOURCE_MISMATCH')
+
+
+def run_api_probe(docker, as_worker, profile, controller, journal, uid, *, confirmation=False):
     """Run only the exact image's API in a disposable container over Staging loopback."""
     current = json.loads(docker('inspect', '--format', FIELDS, 'gamerhq-staging-bot'))
     if (current['running'] is not False or current['status'] != 'exited' or current['image'] != IMAGES['fallback']
@@ -539,12 +700,18 @@ def run_api_probe(docker, as_worker, profile, controller, journal, uid):
     worker_python = str(ROOT / 'deployment-worker/.venv/bin/python')
     args = [
         'create', '--name', name, '--interactive', '--pull', 'never', '--network', 'gamerhq-staging-private',
-        '--publish', '127.0.0.1:18080:8080', '--no-healthcheck', '--read-only', '--restart', 'no',
+        '--publish', '127.0.0.1:18080:8080', '--read-only', '--restart', 'no',
         '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=48m,mode=1777', '--cap-drop', 'ALL',
         '--security-opt', 'no-new-privileges:true', '--user', '10001:10001', '--memory', '256m', '--pids-limit', '32',
         '--cpus', '0.5', '--log-driver', 'json-file', '--log-opt', 'max-size=64k', '--log-opt', 'max-file=1',
-        '--entrypoint', 'python', IMAGES['fallback'], '-I', '-B', '-c', API_SERVER,
     ]
+    if confirmation:
+        args += ['--health-cmd', """python -I -c "import socket; socket.create_connection(('127.0.0.1',8080),2).close()" """.strip(),
+                 '--health-interval', '1s', '--health-timeout', '3s', '--health-retries', '30',
+                 '--health-start-period', '30s']
+    else:
+        args += ['--no-healthcheck']
+    args += ['--entrypoint', 'python', IMAGES['fallback'], '-I', '-B', '-c', API_SERVER]
     container = docker(*args)
     if not re.fullmatch(r'[0-9a-f]{64}', container) or container == current['id']:
         raise ValueError('DISPOSABLE_ID_REJECTED')
@@ -581,11 +748,22 @@ def run_api_probe(docker, as_worker, profile, controller, journal, uid):
                     errors = startup_errors.read(16384).lower()
                     if b'address already in use' in errors or b'port is already allocated' in errors:
                         local = {'state': 'LOOPBACK_PORT_OCCUPIED'}
+                elif confirmation:
+                    for _ in range(12):
+                        if docker('inspect', '--format', '{{.State.Health.Status}}', container) == 'healthy':
+                            break
+                        time.sleep(1)
+                    reply = as_worker(['systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet',
+                                       '--property=RuntimeMaxSec=34s',
+                                       worker_python, '-I', '-B', '-c', CONFIRMATION_CLIENT, str(bundle)],
+                                      input=json.dumps({'container': name, 'secret': secret}))
+                    external = confirmation_receipt(reply.stdout)
                 else:
                     reply = as_worker([worker_python, '-I', '-B', '-c', API_CLIENT, str(bundle),
                                        'http://127.0.0.1:18080'], input=json.dumps(client_packet))
                     external = api_receipt(reply.stdout)
-                return {'state': 'HOST_API_DIAGNOSTIC', 'fallbackImage': IMAGES['fallback'],
+                return {'state': 'HOST_API_CONFIRMATION_REHEARSAL' if confirmation else 'HOST_API_DIAGNOSTIC',
+                        'fallbackImage': IMAGES['fallback'],
                         'path': API_PATH, 'local': local, 'publishedLoopback': external,
                         'gatewayStarted': False, 'productionChanged': False, 'liveDatabaseChanged': False,
                         'recoveryLatchChanged': False}
@@ -602,13 +780,17 @@ def run_api_probe(docker, as_worker, profile, controller, journal, uid):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--api-probe', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--api-probe', action='store_true')
+    mode.add_argument('--confirmation-probe', action='store_true')
     parser.add_argument('--approval')
     args = parser.parse_args()
     try:
-        if args.api_probe and args.approval != API_DIAGNOSTIC_APPROVAL:
+        if ((args.api_probe and args.approval != API_DIAGNOSTIC_APPROVAL)
+                or (args.confirmation_probe and args.approval != CONFIRMATION_DIAGNOSTIC_APPROVAL)):
             raise ValueError('OWNER_DIAGNOSTIC_APPROVAL_REQUIRED')
-        print(json.dumps(collect(api_probe=args.api_probe), sort_keys=True))
+        print(json.dumps(collect(api_probe=args.api_probe or args.confirmation_probe,
+                                 confirmation_probe=args.confirmation_probe), sort_keys=True))
     except BlockingIOError:
         raise SystemExit('{"diagnosticError":"OPERATION_LOCK_BUSY","productionChanged":false}') from None
     except subprocess.SubprocessError:

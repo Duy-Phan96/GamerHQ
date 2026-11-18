@@ -491,7 +491,8 @@ def test_read_only_health_credential_comparison_returns_only_booleans(tmp_path, 
         'workerMatchesContainer'] is False
 
 
-def test_isolated_api_diagnostic_publishes_only_loopback_without_live_mounts_or_credentials(monkeypatch):
+@pytest.mark.parametrize('confirmation', [False, True])
+def test_isolated_api_diagnostic_publishes_only_loopback_without_live_mounts_or_credentials(monkeypatch, confirmation):
     import sys
     from tools import staging_pilot_cutover_diagnostics as diagnostic
 
@@ -509,6 +510,8 @@ def test_isolated_api_diagnostic_publishes_only_loopback_without_live_mounts_or_
     def docker(*args, **kwargs):
         calls.append(args)
         if args[0] == 'inspect':
+            if args[-1] == 'b' * 64:
+                return 'healthy'
             return json.dumps(live)
         if args[0] == 'info':
             return json.dumps(daemon)
@@ -531,11 +534,15 @@ def test_isolated_api_diagnostic_publishes_only_loopback_without_live_mounts_or_
     monkeypatch.setattr(diagnostic, 'protected', lambda *args, **kwargs: b'backup bytes')
     monkeypatch.setattr(diagnostic, 'inspect_backup', Mock(return_value={'state': 'VERIFIED'}))
     monkeypatch.setattr(diagnostic.subprocess, 'Popen', spawn)
-    worker = Mock(return_value=SimpleNamespace(stdout=json.dumps({'state': 'CONNECTION_REFUSED'})))
+    transport_samples = [{'stage': 'HOST_API_TRANSPORT', 'reason': 'HEALTH_CONNECTION_REFUSED', 'dockerHealth': 'healthy'},
+                         {'stage': 'HEALTH_AUDIT', 'reason': 'HOST_READY', 'httpStatus': 200}]
+    worker = Mock(return_value=SimpleNamespace(stdout=json.dumps(
+        {'samples': transport_samples} if confirmation else {'state': 'CONNECTION_REFUSED'})))
     profile = {'dockerDaemonId': 'daemon', 'workRoot': str(diagnostic.ROOT / 'worker'),
                'productionBotId': '3', 'productionGuildId': '4'}
     result = diagnostic.run_api_probe(docker, worker, profile, 'controller',
-                                      {'checkpoint': {'backupBatch': 'tenant-pilot-3bnrqu5l'}}, 1002)
+                                      {'checkpoint': {'backupBatch': 'tenant-pilot-3bnrqu5l'}}, 1002,
+                                      confirmation=confirmation)
 
     create = next(args for args in calls if args[0] == 'create')
     assert create[create.index('--publish') + 1] == '127.0.0.1:18080:8080'
@@ -545,6 +552,55 @@ def test_isolated_api_diagnostic_publishes_only_loopback_without_live_mounts_or_
     assert diagnostic.IMAGES['fallback'] in create
     assert '--interactive' in started.call_args.args
     assert result['local'] == {'state': 'RESPONSE_COLLECTED', 'httpStatus': 200, 'versionMatches': True}
-    assert result['publishedLoopback'] == {'state': 'CONNECTION_REFUSED'}
+    if confirmation:
+        assert worker.call_args.args[0][:3] == ['systemd-run', '--user', '--pipe']
+        assert '--health-cmd' in create and '--no-healthcheck' not in create
+        assert result['publishedLoopback'] == {'state': 'WATCHDOG_SAMPLES_COLLECTED', 'samples': transport_samples}
+    else:
+        assert result['publishedLoopback'] == {'state': 'CONNECTION_REFUSED'}
     assert result['gatewayStarted'] is False and result['liveDatabaseChanged'] is False
     assert ('rm', '--force', 'b' * 64) in calls
+
+
+def test_confirmation_probe_separates_first_transport_failure_from_later_ready(tmp_path, monkeypatch, capsys):
+    import io
+    import sys
+    import time
+    from urllib.error import URLError
+    from hosts.gamerhq import staging_rootless
+    from tools import skill_staging, staging_configuration, staging_dispatch, staging_health
+    from tools import staging_pilot_cutover_diagnostics as diagnostic
+    from tools.staging_automation.backend import HostBackend
+
+    profile = tmp_path / 'profile.json'
+    profile.write_text(json.dumps({'healthUrl': 'http://127.0.0.1:18080', 'workerEnabled': True,
+                                   'healthSecretEnv': 'FIXTURE_SECRET', 'stagingGuildId': '1'}))
+    reply = {'version': '0.1.2', 'missingCapabilities': [], 'state': {'enabled': False, 'healthy': False}}
+    request = Mock(side_effect=[URLError(ConnectionRefusedError('private transport detail')), reply])
+    docker = Mock(side_effect=lambda args, **_: SimpleNamespace(stdout=(
+        json.dumps({'Running': True, 'Health': {'Status': 'healthy'}}) if '{{json .State}}' in args else 'healthy')))
+    inspect = Mock(return_value={'Config': {'Labels': {}}})
+    audit = Mock()
+    monkeypatch.setattr(staging_dispatch, 'PROFILE', profile)
+    monkeypatch.setattr(staging_dispatch, 'environment', lambda: {})
+    monkeypatch.setattr(staging_rootless, 'verify_rootless', Mock())
+    monkeypatch.setattr(skill_staging, 'host_request', request)
+    monkeypatch.setattr(staging_health.subprocess, 'run', docker)
+    monkeypatch.setattr(HostBackend, 'inspect', inspect)
+    monkeypatch.setattr(staging_configuration, 'audit', audit)
+    monkeypatch.setattr(os, 'environ', {})
+    monkeypatch.setattr(sys, 'argv', ['fixture', str(tmp_path)])
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(json.dumps({
+        'container': 'gamerhq-staging-api-probe-' + 'a' * 16, 'secret': 'fixture-secret'})))
+    monkeypatch.setattr(time, 'sleep', lambda _: None)
+    exec(diagnostic.CONFIRMATION_CLIENT, {})
+    text = capsys.readouterr().out
+    samples = diagnostic.confirmation_receipt(text)['samples']
+    assert samples[0]['reason'] == 'HEALTH_CONNECTION_REFUSED'
+    assert samples[0]['dockerHealth'] == 'healthy'
+    assert samples[1]['reason'] == 'HOST_READY' and samples[1]['httpStatus'] == 200
+    assert samples[1]['enabled'] is False and samples[1]['healthy'] is False
+    assert 'fixture-secret' not in text and 'private transport detail' not in text
+    assert inspect.call_count == 2 and docker.call_count == 6
+    audit.assert_called_once_with('tenant-pilot-api-rehearsal', 'HOST_READY')
