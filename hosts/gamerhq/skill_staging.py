@@ -169,7 +169,7 @@ def verify_daemon(profile):
         raise ValueError("Docker daemon identity differs from the approved staging VPS.")
 
 
-def verify_docker(profile):
+def verify_docker(profile, *, probe_storage=True):
     verified_check('STAGING_DAEMON_REJECTED','daemon',lambda:verify_daemon(profile))
     if not IMAGE.fullmatch(profile["baseImage"]):
         raise VerificationFailure('STAGING_BASE_IMAGE_MISSING','base-image')
@@ -190,6 +190,8 @@ def verify_docker(profile):
     database, backups = Path(profile["database"]), Path(profile["backupRoot"])
     if not database.is_file() or not backups.is_dir():
         raise VerificationFailure('STAGING_STORAGE_MISSING','storage-probe')
+    if not probe_storage:
+        return
     run(["docker", "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
         "--user", "10001:10001", "--volume", f"{database.parent}:/staging-data:Z",
         "--volume", f"{backups}:/staging-backups:Z", "--entrypoint", "python", profile["baseImage"], "-c",
@@ -235,13 +237,19 @@ def category_permissions(guild_id, bot_id, member, roles, category):
     return permissions
 
 
-def verify_remote(profile, *, read=discord_read, fetch=fetch_release, approved_pilot=None, read_only_artifacts=False):
+def verify_remote(profile, *, read=discord_read, fetch=fetch_release, approved_pilot=None, read_only_artifacts=False,
+                  probe_storage=True):
     validate_profile(profile)
     if "tenantPilot" in profile and approved_pilot is None:
         raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
     if platform.system() != "Linux":
         raise ValueError("Verify on the approved isolated Linux staging Host.")
-    verify_docker(profile)
+    if probe_storage:
+        verify_docker(profile)
+    else:
+        if approved_pilot is None or not read_only_artifacts:
+            raise ValueError('Pilot-only storage verification requires a separately inspected container.')
+        verify_docker(profile, probe_storage=False)
     ids = {key: str(profile.get(key, "0")) for key in ("stagingBotId", "stagingGuildId", "productionBotId", "productionGuildId", "categoryId", "voiceCategoryId")}
     if any(not value.isascii() or not value.isdigit() or int(value) <= 0 for value in ids.values()) or ids["stagingBotId"] == ids["productionBotId"] or ids["stagingGuildId"] == ids["productionGuildId"]:
         raise ValueError("Explicit distinct production/staging identities and staging categories are required.")

@@ -122,3 +122,13 @@ def test_cutover_status_repair_preserves_the_enrolled_workflow_and_pins(monkeypa
     assert result == {**policy, 'controllerCommit': source}
     with pytest.raises(ValueError, match='CUTOVER_POLICY_CHANGED'):
         enrollment.updated_policy(policy, source, b'different', profile, state, cutover=True, cutover_repair=True)
+
+    held = {**state, 'recoveryRequired': True}
+    policy['controllerCommit'] = enrollment.STATUS_REPAIRED
+    repaired = enrollment.updated_policy(policy, source, workflow, profile, held, cutover=True,
+                                         cutover_repair=True, recovery_repair=True)
+    assert repaired == {**policy, 'controllerCommit': source}
+    assert held['recoveryRequired'] is True
+    with pytest.raises(ValueError, match='ACTIVE_STAGING_REQUIRED'):
+        enrollment.updated_policy(policy, source, workflow, profile, state, cutover=True,
+                                  cutover_repair=True, recovery_repair=True)

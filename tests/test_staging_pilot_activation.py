@@ -375,3 +375,79 @@ def test_cutover_startup_diagnostic_exposes_only_reviewed_signals():
                        'frames': [{'file': 'bot.py', 'line': 149, 'function': 'setup_hook'}],
                        'exceptions': ['PermissionError', 'RuntimeError'],
                        'signals': ['GATEWAY_SESSION_OBSERVED', 'TENANT_SCOPE_EXPIRED']}
+
+
+@pytest.mark.parametrize('legacy_probe', [True, False])
+def test_healthy_fallback_is_stopped_if_post_boot_probe_relabels_mounts(tmp_path, monkeypatch, legacy_probe):
+    from hosts.gamerhq import skill_staging
+    from services.tenant_routing import PILOT_ENV
+    from tools import staging_tenant_rehearsal
+    from tools.staging_automation import host_promotion
+    from tools.staging_automation.pilot_cutover import ConfirmationFailure, PilotCutover
+
+    operations = []
+    fallback = object.__new__(PilotCutover)
+    fallback.baseline, fallback.candidate, fallback.fallback = ('baseline', 'candidate', 'fallback')
+    fallback.cohort = (1, 2)
+    release = tmp_path / 'release.json'
+    release.write_text('{}')
+    fallback.profile = {'service': 'gamerhq-staging', 'stagingGuildId': '1', 'database': str(tmp_path / 'db'),
+                        'releaseFile': release, 'workRoot': str(tmp_path)}
+    fallback.prepared = {'candidateCommit': 'candidate', 'fallbackCommit': 'fallback',
+                         'containerRollbackRehearsal': 'PASS', 'fallbackRollbackRehearsal': 'PASS'}
+    fallback.policy = {'tenantPilotActivation': {'commit': 'candidate'},
+                       'tenantPilotCutover': {'fallback': {'commit': 'fallback'}}}
+    fallback.fallback_override = {'services': {'gamerhq-staging': {'environment': {PILOT_ENV: 'primary-only'}}}}
+    container = {'Id': 'fallback-container', 'Image': 'fallback', 'Config': {'Env': [PILOT_ENV + '=primary-only']},
+                 'State': {'Running': True, 'Health': {'Status': 'healthy'}}}
+    fallback.backend = SimpleNamespace(inspect=lambda: container, run=Mock(),
+                                       health=lambda: {'state': 'HOST_READY'}, skill=Mock(return_value={'version': '0.1.2'}))
+    fallback.inspect = lambda: container
+    fallback.compose = lambda action, *args, **kwargs: operations.append(action)
+    fallback.save = lambda record, phase, **values: {**record, 'phase': phase, **values}
+    fallback.verify_checkpoint = lambda *args, **kwargs: tmp_path
+    monkeypatch.setattr(host_promotion, 'source_commit', lambda backend, image: image)
+    monkeypatch.setattr(host_promotion, 'retained_state', Mock(return_value={}))
+    monkeypatch.setattr(host_promotion, 'require_retained', Mock())
+    monkeypatch.setattr(host_promotion, 'require_baseline_skill', Mock())
+    monkeypatch.setattr(host_promotion, 'require_runtime_lifecycle', Mock())
+    monkeypatch.setattr(staging_tenant_rehearsal, 'capture_container_tenant', Mock())
+
+    def verify_remote(*args, probe_storage=True, **kwargs):
+        # Model the permission loss after mounting an active private :Z bind
+        # in a second storage probe. The original Host was already healthy.
+        operations.append('private-relabel' if probe_storage else 'read-only-attestation')
+        if probe_storage:
+            raise PermissionError('simulated loss of access to the private mount')
+
+    if legacy_probe:
+        fallback.attest = lambda **kwargs: verify_remote()
+    monkeypatch.setattr(skill_staging, 'verify_remote', verify_remote)
+    record = {'phase': 'ROLLING_BACK', 'checkpoint': {}}
+    if legacy_probe:
+        with pytest.raises(ConfirmationFailure, match='AUTOMATION_OPERATION_FAILED') as error:
+            fallback.rollback(record)
+        assert error.value.stage == 'POST_START_ATTESTATION'
+        assert operations == ['private-relabel', 'stop']
+    else:
+        assert fallback.rollback(record)['phase'] == 'PILOT_ROLLED_BACK'
+        assert operations == ['read-only-attestation']
+        assert fallback.backend.run.call_args.args[0][:5] == ['docker', 'exec', '--user', '10001:10001', container['Id']]
+
+
+def test_pilot_storage_attestation_never_remounts_when_checked_in_container(tmp_path, monkeypatch):
+    from hosts.gamerhq import skill_staging
+
+    database = tmp_path / 'gamerhq.db'
+    database.touch()
+    profile = {'database': str(database), 'backupRoot': str(tmp_path), 'composeFile': 'protected-compose.json',
+               'baseImage': 'sha256:' + 'a' * 64}
+    daemon = Mock()
+    run = Mock(return_value=SimpleNamespace(stdout=''))
+    monkeypatch.setattr(skill_staging, 'verify_daemon', daemon)
+    monkeypatch.setattr(skill_staging.subprocess, 'run', run)
+    skill_staging.verify_docker(profile, probe_storage=False)
+    daemon.assert_called_once_with(profile)
+    run.assert_called_once()
+    assert run.call_args.args[0] == [
+        'docker', 'compose', '--file', profile['composeFile'], '--profile', 'live-acceptance', 'config', '--quiet']

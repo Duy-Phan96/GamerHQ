@@ -24,6 +24,9 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
                 state.get('tenantPilotActivationPrepared'), policy['tenantPilotActivation'], now)
         if cutover:
             preparation.update(tenantPilotCutoverEnrolled=True, tenantPilotCutoverJournal=journal)
+            if journal:
+                from .pilot_cutover import journal_status
+                preparation['tenantPilotJournalStatus'] = journal_status(backend.profile)
         if payload is not None: raise Denied('PAYLOAD_REJECTED')
         pilot = policy.get('tenantPilot')
         pilot_digest = hashlib.sha256(json.dumps(pilot, sort_keys=True, separators=(',', ':')).encode()).hexdigest() if pilot else None

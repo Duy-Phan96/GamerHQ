@@ -6,16 +6,49 @@ from pathlib import Path
 import re
 import tempfile
 import time
+from contextlib import contextmanager
 
 from .policy import Denied
 
 
 TERMINAL = {'PILOT_ACTIVE', 'PILOT_ROLLED_BACK', 'PILOT_STOP_CANCELLED'}
 PENDING = {'STOPPING', 'CHECKPOINTED', 'STARTING', 'VERIFYING', 'ROLLING_BACK'}
+CONFIRMATION_CHECKS = {'POST_START_ATTESTATION', 'HOST_API_HEALTH', 'CHECKPOINT_INTEGRITY',
+                       'PRIMARY_DATA_RETENTION', 'EVENT_MANAGER_LIFECYCLE', 'SECONDARY_DATA_INTEGRITY'}
+
+
+class ConfirmationFailure(Denied):
+    def __init__(self, stage, error):
+        super().__init__(error.code if isinstance(error, Denied) else 'AUTOMATION_OPERATION_FAILED')
+        self.stage = stage
+
+
+@contextmanager
+def confirmation_step(stage):
+    try:
+        yield
+    except Exception as error:
+        raise ConfirmationFailure(stage, error) from None
 
 
 def journal_path(profile):
     return Path(profile['workRoot']) / 'tenant-pilot-cutover.json'
+
+
+def journal_status(profile):
+    from tools.staging_dispatch import protected_file
+
+    path = journal_path(profile)
+    try:
+        protected_file(path, private=True, uid=os.geteuid())
+        with path.open('rb') as stream:
+            record = json.loads(stream.read(16384))
+        phase = record.get('phase')
+        return {'phase': phase if phase in PENDING | TERMINAL else 'UNKNOWN',
+                **{key: record[key] for key in ('failedCheck', 'rollbackFailedCheck')
+                   if record.get(key) in CONFIRMATION_CHECKS}}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {'phase': 'UNAVAILABLE'}
 
 
 def digest(value):
@@ -91,7 +124,7 @@ class PilotCutover:
         self.backend.run([*cmd, *args, self.profile['service']], timeout=90,
                          pass_fds=(self.backend.operation_lock,))
 
-    def attest(self):
+    def attest(self, *, running_container=None):
         from hosts.gamerhq.skill_staging import verify_remote
         from .host_promotion import source_commit
 
@@ -104,7 +137,16 @@ class PilotCutover:
                 or source_commit(self.backend, self.candidate) != pin['commit']
                 or source_commit(self.backend, self.fallback) != fallback['commit']):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
-        return verify_remote(self.profile, approved_pilot=self.cohort, read_only_artifacts=True)
+        if running_container:
+            # A second :Z bind would relabel the live service's private data.
+            # Inspect already verified the mounts. Check access from their
+            # owning container and keep the remaining attestation read-only.
+            self.backend.run(['docker', 'exec', '--user', '10001:10001', running_container, 'python', '-I', '-B', '-c',
+                              'import os,sys; sys.exit(not all(os.access(p,os.R_OK|os.W_OK) for p in sys.argv[1:]))',
+                              '/app/runtime/data', '/app/runtime/data/gamerhq.db', '/app/backups'])
+        # Before launch, the existing Host binding and sealed dual checkpoint
+        # prove storage access. Do not relabel either mount ahead of a restart.
+        return verify_remote(self.profile, approved_pilot=self.cohort, read_only_artifacts=True, probe_storage=False)
 
     def checkpoint(self, record):
         from tools.staging_tenant_rehearsal import retain_quiesced, startup_override
@@ -146,21 +188,38 @@ class PilotCutover:
             time.sleep(3)
         else:
             raise Denied('HOST_NOT_HEALTHY')
-        self.attest()
-        if self.backend.health()['state'] != 'HOST_READY':
-            raise Denied('HOST_NOT_READY')
-        batch = self.verify_checkpoint(record, recovery=recovery)
+        with confirmation_step('POST_START_ATTESTATION'):
+            self.attest(running_container=container['Id'])
+        with confirmation_step('HOST_API_HEALTH'):
+            if self.backend.health()['state'] != 'HOST_READY':
+                raise Denied('HOST_NOT_READY')
+        with confirmation_step('CHECKPOINT_INTEGRITY'):
+            batch = self.verify_checkpoint(record, recovery=recovery)
         primary = self.profile['stagingGuildId']
-        before = retained_state(batch / f'{primary}.sqlite', primary)
-        after = retained_state(self.profile['database'], primary)
-        require_retained(before, after)
-        runtime = self.backend.skill()
-        release = json.loads(Path(self.profile['releaseFile']).read_bytes())
-        require_baseline_skill(release, runtime['version'])
-        require_runtime_lifecycle(after, runtime)
+        with confirmation_step('PRIMARY_DATA_RETENTION'):
+            before = retained_state(batch / f'{primary}.sqlite', primary)
+            after = retained_state(self.profile['database'], primary)
+            require_retained(before, after)
+        with confirmation_step('EVENT_MANAGER_LIFECYCLE'):
+            runtime = self.backend.skill()
+            release = json.loads(Path(self.profile['releaseFile']).read_bytes())
+            require_baseline_skill(release, runtime['version'])
+            require_runtime_lifecycle(after, runtime)
         secondary, = set(self.cohort) - {int(primary)}
-        with tempfile.TemporaryDirectory(dir=self.profile['workRoot'], prefix='pilot-health-') as root:
-            capture_container_tenant(container['Id'], secondary, Path(root) / 'secondary.sqlite')
+        with confirmation_step('SECONDARY_DATA_INTEGRITY'):
+            with tempfile.TemporaryDirectory(dir=self.profile['workRoot'], prefix='pilot-health-') as root:
+                capture_container_tenant(container['Id'], secondary, Path(root) / 'secondary.sqlite')
+
+    def confirm_fallback(self, record):
+        try:
+            self.confirm(self.fallback, self.fallback_override, record, recovery=True)
+        except Exception as error:
+            try:
+                if isinstance(error, ConfirmationFailure):
+                    self.save(record, 'ROLLING_BACK', rollbackFailedCheck=error.stage)
+            finally:
+                self.compose('stop', '--timeout', '30')
+            raise
 
     def rollback(self, record):
         current = self.inspect()
@@ -172,11 +231,7 @@ class PilotCutover:
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if (record['phase'] == 'ROLLING_BACK' and 'checkpoint' in record and current
                 and current['Image'] == self.fallback and current['State'].get('Running')):
-            try:
-                self.confirm(self.fallback, self.fallback_override, record, recovery=True)
-            except Exception:
-                self.compose('stop', '--timeout', '30')
-                raise
+            self.confirm_fallback(record)
             return self.save(record, 'PILOT_ROLLED_BACK')
         if current and current['State'].get('Running'):
             self.compose('stop', '--timeout', '30')
@@ -187,11 +242,7 @@ class PilotCutover:
             record = self.save(record, 'ROLLING_BACK')
         self.verify_checkpoint(record, recovery=True)
         self.compose('up', '--detach', '--no-build', '--pull', 'never', override=self.fallback_override)
-        try:
-            self.confirm(self.fallback, self.fallback_override, record, recovery=True)
-        except Exception:
-            self.compose('stop', '--timeout', '30')
-            raise
+        self.confirm_fallback(record)
         return self.save(record, 'PILOT_ROLLED_BACK')
 
     def run(self):
@@ -247,7 +298,8 @@ class PilotCutover:
                 try:
                     record = self.load()
                     code = error.code if isinstance(error, Denied) else 'AUTOMATION_OPERATION_FAILED'
-                    record = self.save(record, record['phase'], failedAt=record['phase'], failure=code)
+                    checks = {'failedCheck': error.stage} if isinstance(error, ConfirmationFailure) else {}
+                    record = self.save(record, record['phase'], failedAt=record['phase'], failure=code, **checks)
                     record = self.rollback(record)
                 except Exception:
                     raise Denied('RECOVERY_REQUIRES_OWNER') from None
