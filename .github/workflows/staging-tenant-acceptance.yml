@@ -1,0 +1,59 @@
+name: Protected Staging tenant read-only acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/staging-tenant-acceptance.yml']
+permissions:
+  contents: read
+concurrency:
+  group: host-staging-automation
+  cancel-in-progress: false
+jobs:
+  registration-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Registration only. No VPS or Discord access.'
+  collect:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7bd3d720cb2c57d39b610b5d40e6c0bcf0ca41c2
+          persist-credentials: false
+      - name: Collect redacted read-only evidence under the existing controller lock
+        id: receipt
+        env:
+          GAMERHQ_STAGING_PILOT_GENERATION: recovered-primary-v2
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+          GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
+        run: python3 -m tools.staging_automation_client tenant-acceptance > "$RUNNER_TEMP/tenant-acceptance.json"
+      - name: Publish human-readable acceptance summary
+        if: always()
+        run: python3 -m tools.tenant_acceptance_report "$RUNNER_TEMP/tenant-acceptance.json" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Retain structured redacted receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenant-acceptance-${{ github.run_id }}
+          path: ${{ runner.temp }}/tenant-acceptance.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Record failed criteria without applying repairs
+        if: steps.receipt.outcome == 'success'
+        run: |
+          python3 - "$RUNNER_TEMP/tenant-acceptance.json" <<'PY'
+          import json,sys
+          value=json.load(open(sys.argv[1]))
+          print('Acceptance: '+value['status']+'; no repair or deployment attempted.')
+          sys.exit(1 if value['status']=='FAIL' else 0)
+          PY
