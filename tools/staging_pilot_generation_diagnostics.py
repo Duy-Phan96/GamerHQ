@@ -99,6 +99,7 @@ def transition_report(body, current):
             or [row.get('name') for row in plan] != ['entry', 'profile', 'state', 'policy']):
         return {**result, 'planState': 'REJECTED'}
     states = {}
+    state_audit = {}
     for row in plan:
         try:
             before, after = bytes.fromhex(row['before']), bytes.fromhex(row['after'])
@@ -109,9 +110,17 @@ def transition_report(body, current):
                               'currentSha256': sha(actual) if actual is not None else None,
                               'state': ('UNAVAILABLE' if actual is None else 'BOTH' if actual == before == after else
                                         'BEFORE' if actual == before else 'AFTER' if actual == after else 'UNKNOWN')}
+        if row['name'] == 'state':
+            volatile = {'events', 'lastNow', 'challenge', 'usedTokens'}
+            values = [document(value) for value in (before, after, actual)]
+            if all(values):
+                stripped = [{key: value for key, value in item.items() if key not in volatile} for item in values]
+                state_audit = {'matchesBeforeExceptRequestAudit': stripped[0] == stripped[2],
+                               'matchesAfterExceptRequestAudit': stripped[1] == stripped[2]}
     recognized = all(row['state'] in {'BEFORE', 'AFTER', 'BOTH'} for row in states.values())
     committed = all(row['state'] in {'AFTER', 'BOTH'} for row in states.values())
     return {**result, 'planState': 'PARSED', 'files': states,
+            'stateAuditComparison': state_audit,
             'planSha256': sha((json.dumps(record['plan'], sort_keys=True, indent=2) + '\n').encode()),
             'allCurrentBytesRecognized': recognized,
             'exactPhaseBytesConsistent': recognized if phase == 'PREPARED' else committed if phase == 'COMMITTED' else False}

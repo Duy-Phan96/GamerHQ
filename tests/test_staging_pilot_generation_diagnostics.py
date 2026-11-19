@@ -74,6 +74,23 @@ def test_diagnostic_reports_unknown_contents_and_malformed_plan_without_fixing_t
     assert 'credential' not in json.dumps(report)
 
 
+def test_status_rate_accounting_is_distinguished_from_changed_deployment_state():
+    before = {'approvedImage': 'accepted', 'recoveryRequired': False, 'events': [], 'lastNow': 1}
+    current = {**before, 'events': [{'op': 'status', 'at': 2}], 'lastNow': 2}
+    plan = {'source': diagnostics.SOURCE, 'phase': 'PREPARED', 'plan': {'files': [
+        {'name': name, 'before': json.dumps(before).encode().hex(), 'after': json.dumps(before).encode().hex()}
+        for name in ['entry', 'profile', 'state', 'policy']]}}
+    values = {name: json.dumps(before).encode() for name in ['entry', 'profile', 'state', 'policy']}
+    values['state'] = json.dumps(current).encode()
+    report = diagnostics.transition_report(json.dumps(plan).encode(), values)
+    assert report['files']['state']['state'] == 'UNKNOWN'
+    assert report['stateAuditComparison']['matchesBeforeExceptRequestAudit']
+    current['approvedImage'] = 'unknown'
+    values['state'] = json.dumps(current).encode()
+    report = diagnostics.transition_report(json.dumps(plan).encode(), values)
+    assert not report['stateAuditComparison']['matchesBeforeExceptRequestAudit']
+
+
 @pytest.mark.skipif(os.name != 'posix', reason='Real protected file ownership/mode contract is POSIX-only')
 def test_protected_metadata_reader_preserves_bytes_and_refuses_unsafe_file(tmp_path):
     path = tmp_path / 'protected'
