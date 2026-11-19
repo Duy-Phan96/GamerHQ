@@ -1,0 +1,38 @@
+name: Protected Staging tenant pilot activation preparation
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/staging-tenant-pilot-activation-prepare.yml']
+permissions:
+  contents: read
+concurrency:
+  group: host-staging-automation
+  cancel-in-progress: false
+jobs:
+  registration-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Workflow registration check. No Staging access.'
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 2a2b08b8d3c8165d7a70ced3c667024ba219b0ac
+          persist-credentials: false
+      - name: Verify the checkpoint and build the pinned Host without Gateway access
+        env:
+          GAMERHQ_STAGING_PILOT_GENERATION: recovered-primary-v2
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+          GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
+        run: python3 -m tools.staging_automation_client tenant-pilot-activation-prepare
