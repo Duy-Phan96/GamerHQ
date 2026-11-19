@@ -195,7 +195,8 @@ def test_owner_installer_remains_system_python_39_compatible():
     ast.parse(Path('tools/enroll_staging_tenant_acceptance.py').read_text(), feature_version=(3,9))
 
 
-def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort, monkeypatch):
+@pytest.mark.parametrize('historical_failure',[False,True])
+def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort, monkeypatch,historical_failure):
     from urllib.parse import urlsplit
     from tools import tenant_acceptance_collect as adapter
     requests = []
@@ -234,10 +235,26 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
     monkeypatch.setenv('DISCORD_TOKEN','private-test-token')
     monkeypatch.setenv('GAMERHQ_WEB_API_SECRET','private-api-credential')
     monkeypatch.setattr(adapter.aiohttp, 'ClientSession', lambda **kwargs: Session())
+    if historical_failure:
+        import subprocess,types
+        original=types.ModuleType('original_readonly_acceptance')
+        body=subprocess.check_output(['git','show','d1eed91e3e1608176704407843243afbefc8fd7c:services/tenant_acceptance.py'])
+        exec(compile(body,'original_readonly_acceptance.py','exec'),original.__dict__)
+        monkeypatch.setattr(adapter,'collect',original.collect)
     before = {path:path.read_bytes() for path in (cohort.primary_database, cohort._tenant(2).database)}
     packet = {'applicationId':'100','guildIds':['1','2'],'primaryGuildId':'1','database':str(cohort.primary_database)}
     result = asyncio.run(gather(packet))
     assert result['isolationGuards']['status'] == 'PASS', result
+    if historical_failure:
+        # Reproduce the complete live signature with the exact installed code,
+        # not just a synthetic TypeError: 2 identity reads + 5 per-guild reads,
+        # cached admission models, no successful preview, and no mutation.
+        assert result['discordReads']==12
+        assert all(row['reason']=='COLLECTION_UNAVAILABLE' and row['stage']=='DISCORD_INVENTORY' and row['passCount']==0 for row in result['guilds'])
+        assert all(row['status']=='PASS' for row in result['hostCrossTenantReadDenials'])
+        assert result['mutationsAttempted'] is False
+        assert all(path.read_bytes()==body for path,body in before.items())
+        return
     assert all(row.get('previewStable') for row in result['guilds']), result
     for row in result['guilds']:
         assert sorted(item['type'] for item in row['inventory']['channels']) == [0,2,4]
