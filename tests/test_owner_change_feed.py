@@ -66,7 +66,10 @@ class OwnerFeedTests(unittest.IsolatedAsyncioTestCase):
         return request
 
     async def test_structure_announcement_immediately_posts_one_notice_and_repeated_calls_do_not_duplicate(self):
-        change = self.change()
+        # A live epoch can contain the private fixture ID "8888". Keep the
+        # privacy assertion independent of the intentionally public timestamp.
+        with patch.object(structure, 'time', SimpleNamespace(time=lambda: 1700000000)):
+            change = self.change()
         with patch('services.server_log_service.emit', AsyncMock()):
             await structure._announce(self.guild, change, 'ignored title', 'secret description')
             await structure._announce(self.guild, change, 'ignored title', 'secret description')
@@ -82,6 +85,7 @@ class OwnerFeedTests(unittest.IsolatedAsyncioTestCase):
         # stay behind owner-only Details.
         self.assertIn('#secret-after', message.content)
         self.assertIn('renamed from', message.content)
+        self.assertIn('<t:1700000000:f>', message.content)
         for forbidden in ('secret-private-resource', 'never-publish-this', '<@71>', '8888', 'secret description'):
             self.assertNotIn(forbidden, message.content)
         mentions = self.room.send.call_args.kwargs['allowed_mentions']
