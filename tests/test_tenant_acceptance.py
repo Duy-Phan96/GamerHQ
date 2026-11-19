@@ -268,3 +268,9 @@ def test_memory_snapshot_is_consistent_without_holding_live_database_locks(cohor
             assert db.get_setting('fixture')=='old'
         with acceptance.readonly_snapshot():
             assert db.get_setting('fixture')=='new'
+
+
+def test_read_only_schema_metadata_remains_available_to_existing_helpers(cohort):
+    with cohort.scope(1),acceptance.readonly_snapshot() as connection:
+        assert connection.execute('PRAGMA table_info(settings)').fetchall()
+        assert connection.execute('PRAGMA query_only').fetchone()[0]==1

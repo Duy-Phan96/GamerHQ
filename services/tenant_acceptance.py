@@ -56,7 +56,9 @@ def readonly_snapshot(denied=None):
                    sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_RECURSIVE}
         def authorize(action, first, second, *_):
             if action == sqlite3.SQLITE_PRAGMA:
-                permit = first in {'integrity_check', 'user_version'} and second is None
+                permit = (first in {'integrity_check', 'user_version', 'query_only'} and second is None
+                          or first in {'table_info', 'index_list', 'foreign_key_list'}
+                          and isinstance(second, str) and re.fullmatch('[a-zA-Z_][a-zA-Z0-9_]{0,63}', second))
             else:
                 permit = action in allowed
             if not permit and denied is not None:
