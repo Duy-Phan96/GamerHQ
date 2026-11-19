@@ -138,6 +138,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check', 'web-health', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'])
     args = parser.parse_args()
+    recovery_complete = False
     if args.operation == 'identity-check':
         from tools.staging_automation.oidc import verify
         nonce = uuid.uuid4().hex
@@ -170,6 +171,20 @@ def main():
             if not resuming and status.get('tenantPilotPreparationState') != 'FRESH':
                 raise Denied('PILOT_PREVIEW_EXPIRED')
         result = perform(args.operation)
+        if args.operation == 'tenant-pilot-cutover' and result.get('state') == 'PILOT_ROLLED_BACK':
+            if (resuming and status.get('recoveryRequired') is True
+                    and result.get('recoveryVerified') is True and result.get('recoveryRequired') is False
+                    and result.get('activationAuthorized') is False):
+                current = exchange('status')
+                recovery_complete = (
+                    current.get('state') == 'ACTIVE' and current.get('bootstrapVerified') is True
+                    and current.get('tenantPilotBindingSha256') == digest
+                    and current.get('controllerCommit') == status.get('controllerCommit')
+                    and current.get('tenantPilotCutoverJournal') is True
+                    and current.get('tenantPilotJournalStatus', {}).get('phase') == 'PILOT_ROLLED_BACK'
+                    and current.get('recoveryRequired') is False)
+            result = {**result, 'clientVerification':
+                      'RECOVERY_TERMINAL_VERIFIED' if recovery_complete else 'RECOVERY_TERMINAL_NOT_VERIFIED'}
     elif args.operation == 'reconcile':
         status = exchange('status')
         if status.get('state') != 'ACTIVE': result = status
@@ -189,7 +204,7 @@ def main():
         raise SystemExit(1)
     if args.operation == 'tenant-pilot-activation-prepare' and result.get('state') != 'PILOT_ACTIVATION_PREPARED':
         raise SystemExit(1)
-    if args.operation == 'tenant-pilot-cutover' and result.get('state') != 'PILOT_ACTIVE':
+    if args.operation == 'tenant-pilot-cutover' and result.get('state') != 'PILOT_ACTIVE' and not recovery_complete:
         raise SystemExit(1)
 
 

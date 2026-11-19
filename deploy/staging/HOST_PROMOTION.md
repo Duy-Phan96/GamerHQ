@@ -494,3 +494,93 @@ authority/data retention and HOST_READY after application, then run scoped healt
 and smoke. The owner will manually test Discord and provide screenshots. Automated
 component snapshots and offline image probes do not establish live UX acceptance.
 Both legacy deployment gates and production remain unchanged.
+
+## Primary-only recovery accepted on 2026-11-19
+
+The controller completed the original transaction as `PILOT_ROLLED_BACK`, with
+`recoveryVerified=true`, `activationAuthorized=false` and
+`recoveryRequired=false`. Its recovery receipt is authoritative even though the
+GitHub client subsequently exited 1. That pinned client accepted only
+`PILOT_ACTIVE` as success. The reporting failure occurred after the successful
+controller operation. The completed historical GitHub run keeps its original
+conclusion. Further recovery execution is unnecessary for correcting that label.
+
+| Evidence | Verified result |
+| --- | --- |
+| [Recovery run 44484329551](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44484329551) | Controller PASS, terminal `PILOT_ROLLED_BACK`, recovery latch released |
+| [Independent health 44499169361](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44499169361) | `HOST_READY`, `gatewayChecked=true`, repaired Host commit confirmed |
+| [Fresh authenticated status 44503285618](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44503285618) | `PILOT_ROLLED_BACK`, `recoveryRequired=false`, controller `8d8e067463123f0b847d9daf7d5dd70a854a5930` |
+
+The accepted active Host is `8f450533ec0c9589b6fa375e34bd951f91dff419`,
+image `sha256:d308a43d80737c26b92a3aea2ef9d822f7aa2987fd701a56e354df722672818b`.
+It repairs the API listener's inherited bootstrap tenant context. The original
+fallback source was `ca6bc4ac5604987dcab9b5310b7af2b9c53cf652`.
+The immutable legacy worker remains
+`92db47042d58055cb0debdfd83f11f8508e19809`.
+
+The recovery retained both guild databases and Event Manager domain/resource
+state through the verified checkpoint. The package remains Event Manager 0.1.2.
+The preserved lifecycle baseline is installed/configured, stored version 0.1.1,
+enabled=false. Health accepts the disabled state. No lifecycle correction or
+database restore was part of this recovery. The historical 403 and failed-check
+fields remain in the journal as incident evidence. The terminal phase and clear
+latch describe the completed recovery. Production was unchanged.
+
+The corrected client accepts a recovery receipt only when the pre-operation
+status was held and journaled, the receipt verifies primary-only recovery with a
+clear latch, and a subsequent authenticated status confirms the same controller,
+same cohort, terminal journal and clear latch. A failed activation that returns
+to a healthy fallback still exits 1. Subprocess regressions exercise the actual
+client entry point and process exit codes.
+
+The active workflow still checks out client source
+`d18d0a2d696b30c36d6b971819b1950723ddf8a9` and retains enrolled workflow SHA256
+`f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011`.
+The next policy enrollment must bind the corrected immutable client reference
+and its workflow digest together. Updating source in PR #317 does not update
+that installed trust policy.
+
+## Next two-guild pilot preparation
+
+The cohort remains application `1567098530525351976`, primary GamerHQ Staging
+`1567098041641738331` and secondary Servertest `1571908030532948129`.
+The accepted runtime admits only the primary guild. Secondary storage stays
+retained and inaccessible to primary-only runtime operations.
+
+1. Obtain owner approval to adopt the accepted Host/image above as the next
+   baseline. Verify its current primary-only binding, health, source, installed
+   Skill artifact, lifecycle, mounts and both existing database identities.
+   Current policy/profile metadata still names Host
+   `40c88fada10f7990ef3d2cddb81f30b6381fe73e`; it must be reconciled through a
+   reviewed protected baseline enrollment before another pilot preparation.
+2. Freeze the reviewed PR revision as a new immutable pilot candidate with the
+   API context fix and corrected client. Independently verify its Linux archive
+   checksum and compatibility with Event Manager 0.1.2. The old activation pin
+   `12e0053f3af479235f7281b6f67637e564b962fc` lacks the API fix and is ineligible.
+3. Extend the existing controller for the new baseline generation. Baseline and
+   fallback may now be the same accepted primary-only image. The old controller
+   requires three distinct images and builds checkpoint binding from an assumed
+   two-guild baseline. Review and test those assumptions against the actual
+   primary-only baseline. Image, admission configuration and transaction
+   generation must jointly identify every start, verification and rollback.
+4. Under the existing operation lock, preserve the completed journal, original
+   preparation and sealed backup receipts as immutable incident history. A
+   reviewed generation transition must remain recoverable if interrupted between
+   history retention, baseline/profile selection and new journal initialization.
+   Retain both tenant files and their identities. Create no replacement database.
+5. Batch the corrected client/workflow digest, accepted baseline/fallback,
+   candidate archive pin, exact cohort and history transition in one reviewed
+   protected policy enrollment. It may retire the completed repair-only selector
+   only after confirming the terminal journal, clear latch and healthy baseline.
+   Required owner review, rootless isolation and production boundaries persist.
+6. After structural preparation passes CI, obtain fresh live membership and Core
+   permission evidence for both guilds. Prepare the pinned candidate offline,
+   verify dual backups and scratch restores, and rehearse actual container rollback
+   and interrupted admission changes. Previous preparation is expired. At cutover,
+   require a fresh quiesced dual checkpoint and renewed health/resource checks.
+7. Queue one protected cutover only after the new preparation is eligible and stop
+   for deployment-security owner approval. Servertest template application and
+   repeated-setup acceptance require their separate reviewed Discord preview.
+
+This plan authorizes preparation evidence only. The next pilot remains blocked
+on the reviewed baseline/controller generation and a separate protected cutover.

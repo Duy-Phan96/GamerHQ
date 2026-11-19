@@ -109,3 +109,8 @@ separate from this operation.
    changes in Servertest need their own reviewed preview and approval.
 5. Hold public enrollment until removal/rejoin, stale callback rejection,
    backup coverage for every admitted database and retention controls pass.
+
+The [2026-11-19 primary-only recovery acceptance and next pilot plan](../../../deploy/staging/HOST_PROMOTION.md#primary-only-recovery-accepted-on-2026-11-19)
+records the active repaired Host/image, retained tenant state and required
+protected baseline-generation transition. Future pilot preparation starts from
+that accepted runtime after reconciling its policy binding.
