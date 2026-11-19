@@ -91,6 +91,41 @@ def test_status_rate_accounting_is_distinguished_from_changed_deployment_state()
     assert not report['stateAuditComparison']['matchesBeforeExceptRequestAudit']
 
 
+def test_missing_legacy_revision_reproduces_git_128_and_explicit_fetch_repairs_only_scratch(tmp_path, monkeypatch):
+    seed, scratch = tmp_path / 'seed', tmp_path / 'scratch'
+    seed.mkdir()
+    scratch.mkdir()
+    def git(folder, *args, check=True):
+        return subprocess.run(['git', '-C', str(folder), '-c', 'gc.auto=0', *args],
+                              capture_output=True, check=check, timeout=30)
+    git(seed, 'init', '--quiet', '--initial-branch=main')
+    (seed / 'legacy.py').write_bytes(b'original immutable legacy source\n')
+    git(seed, 'add', 'legacy.py')
+    git(seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'legacy')
+    original = git(seed, 'rev-parse', 'HEAD').stdout.strip().decode()
+    (seed / 'current.py').write_bytes(b'current source\n')
+    git(seed, 'add', 'current.py')
+    git(seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'current')
+    tip = git(seed, 'rev-parse', 'HEAD').stdout.strip().decode()
+    git(scratch, 'init', '--quiet')
+    remote = seed.as_uri()
+    # Same depth-one dependency omission as the original b808 installer.
+    for reference in [tip, tip, 'refs/heads/main', tip, tip]:
+        git(scratch, 'fetch', '--quiet', '--depth=1', remote, reference)
+    rejected = git(scratch, 'show', original + ':legacy.py', check=False)
+    assert rejected.returncode == 128
+    retained = tmp_path / 'held-transition.json'
+    retained.write_bytes(b'unchanged protected transition fixture')
+    before = retained.read_bytes(), retained.stat().st_mtime_ns
+    monkeypatch.setattr(enrollment, 'PREVIOUS', tip)
+    monkeypatch.setattr(enrollment, 'LEGACY_CONTROLLER_BASE', original)
+    monkeypatch.setattr(enrollment, 'REPOSITORY', remote)
+    enrollment.fetch_sources(lambda *args: git(scratch, *args).stdout, tip)
+    assert git(scratch, 'show', original + ':legacy.py').stdout == b'original immutable legacy source\n'
+    assert git(scratch, 'rev-parse', 'FETCH_HEAD').stdout.strip().decode() == tip
+    assert (retained.read_bytes(), retained.stat().st_mtime_ns) == before
+
+
 @pytest.mark.skipif(os.name != 'posix', reason='Real protected file ownership/mode contract is POSIX-only')
 def test_protected_metadata_reader_preserves_bytes_and_refuses_unsafe_file(tmp_path):
     path = tmp_path / 'protected'
@@ -214,13 +249,20 @@ def test_full_collector_preserves_transition_and_tenants(tmp_path, monkeypatch, 
     snapshots = {path: (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns)
                  for path in tmp_path.rglob('*') if path.is_file()}
     calls = []
+    legacy_fetched = [False]
     def run(command, **kwargs):
         calls.append(command)
         if command[0] == 'git':
             if git_failure and 'fetch' in command:
                 raise subprocess.CalledProcessError(128, command, stderr=b'private-credential')
             if 'show' in command:
+                if command[-1] == diagnostics.ORIGINAL + ':tools/staging_automation/__init__.py':
+                    if not legacy_fetched[0]:
+                        raise subprocess.CalledProcessError(128, command, stderr=b'private-credential')
+                    return subprocess.CompletedProcess(command, 0, stdout=b'')
                 return subprocess.CompletedProcess(command, 0, stdout=git_blobs[command[-1]])
+            if 'fetch' in command and command[-1] == diagnostics.ORIGINAL:
+                legacy_fetched[0] = True
             if 'archive' in command:
                 return subprocess.CompletedProcess(command, 0, stdout=git_archives[command[-1]])
             if 'rev-parse' in command:
@@ -241,6 +283,8 @@ def test_full_collector_preserves_transition_and_tenants(tmp_path, monkeypatch, 
     else:
         assert result['sourceEvidence']['state'] == 'VERIFIED'
         assert result['controllerSources'][0]['matches']
+        assert result['originalFetchRehearsal']['exitCode'] == 128
+        assert result['legacyReadAfterExplicitFetch'] == 'PASS'
         assert all(row['matches'] for row in result['workflows'].values())
         assert all(row['matches'] for row in result['archivePins'].values())
     assert result['container']['matchesRecoveredBaseline']

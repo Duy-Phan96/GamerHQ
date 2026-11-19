@@ -710,3 +710,22 @@ Return only the public JSON receipt. Its transition phase and recognized/unknown
 byte states determine the reviewed next step. Preserve the original marker,
 incident archive, both tenant DBs and already staged source. A new diagnostic
 commit is not permission to retarget an existing immutable transition to it.
+
+
+Confirmed source defect: the b808 installer fetches source, 8d8e067, main,
+1899c6f and 8f450533 at depth one, then reads unchanged modules from the original
+87680529 controller without fetching that commit. Reproducing those exact five
+public fetches in a fresh repository returned Git exit 128 for
+`87680529:tools/staging_automation/__init__.py`; explicitly fetching 87680529 made
+the same read succeed (exit 0). This maps to INSTALLED_CONTROLLER, before target
+bundle staging or transition persistence. The corrected source fetch includes
+that exact immutable legacy dependency and verifies the helper still names it.
+No source-integrity comparison is skipped or weakened.
+
+This reproduction proves the missing-fetch defect, not the VPS marker phase or
+whether an earlier VPS prerequisite also failed. The read-only receipt repeats
+the original shallow-fetch contract on that VPS before fetching the missing
+revision for checksum comparison, so it can corroborate the exact rejection and
+still preserve the live transition. Capture the receipt before preparing any
+retry. Optional sandbox probes check later prerequisites without executing the
+enrollment. Original enrollment source b808 remains unchanged and immutable.

@@ -22,6 +22,7 @@ sys.dont_write_bytecode = True
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
 PREVIOUS = '8d8e067463123f0b847d9daf7d5dd70a854a5930'
+LEGACY_CONTROLLER_BASE = '876805290ef454523f9b36f1f9fbf90c3ec64a17'
 APPROVAL = 'ENROLL RECOVERED PRIMARY ONLY PILOT GENERATION'
 MANIFEST = 'deploy/staging/tenant-pilot-generation.json'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
@@ -45,6 +46,13 @@ def progress(stage):
     if stage not in STAGES:
         raise ValueError('UNCLASSIFIED_REJECTED')
     _stage_trace.append(stage)
+
+
+def fetch_sources(git, source):
+    # The installed bundle deliberately retains modules from the original
+    # controller. A depth-one fetch of PREVIOUS does not supply that commit.
+    for revision in (source, PREVIOUS, LEGACY_CONTROLLER_BASE, 'refs/heads/main'):
+        git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
 
 
 def rejection(error):
@@ -171,8 +179,7 @@ def enroll(source, approval):
                                   check=True, capture_output=True, timeout=180).stdout
         progress('SOURCE_FETCH')
         git('init', '--quiet')
-        for revision in (source, PREVIOUS, 'refs/heads/main'):
-            git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
+        fetch_sources(git, source)
         progress('SOURCE_SELF_VERIFICATION')
         if git('show', source + ':tools/enroll_staging_pilot_generation.py') != Path(__file__).read_bytes():
             raise ValueError('INSTALLER_SOURCE_MISMATCH')
@@ -192,6 +199,8 @@ def enroll(source, approval):
         module = types.ModuleType('verified_enrollment')
         module.__file__ = str(Path(scratch) / 'verified_enrollment.py')
         exec(compile(git('show', source + ':tools/enroll_staging_tenant_preview.py'), module.__file__, 'exec'), module.__dict__)
+        if module.PREVIOUS != LEGACY_CONTROLLER_BASE:
+            raise ValueError('CONTROLLER_SOURCE_MISMATCH')
         progress('INSTALLED_DIRECTORIES')
         for folder in (ROOT, CONTROL, revisions.parent, revisions, previous):
             module.directory(folder)

@@ -263,11 +263,29 @@ def collect(expected, *, probe_user_sandbox=False):
                                       capture_output=True, check=True, timeout=120).stdout
             try:
                 git('init', '--quiet')
-                for revision in (SOURCE, PREVIOUS, ORIGINAL, 'refs/heads/main'):
+                for revision in (SOURCE, PREVIOUS, 'refs/heads/main'):
                     git('fetch', '--quiet', '--depth=1', 'https://github.com/Duy-Phan96/GamerHQ.git', revision)
                 main = git('rev-parse', 'FETCH_HEAD').strip().decode()
                 result['sourceEvidence'] = {'state': 'VERIFIED', 'mainCommit': identity(main)}
                 manifest = document(git('show', SOURCE + ':deploy/staging/tenant-pilot-generation.json'))
+                result['archivePins'] = {}
+                for name in ['candidate', 'baseline']:
+                    pin = manifest[name]
+                    git('fetch', '--quiet', '--depth=1', 'https://github.com/Duy-Phan96/GamerHQ.git', pin['commit'])
+                    checksum = sha(git('archive', '--format=tar', pin['commit']))
+                    result['archivePins'][name] = {'commit': pin['commit'], 'expectedSha256': pin['archiveSha256'],
+                                                  'actualSha256': checksum, 'matches': checksum == pin['archiveSha256']}
+                # Reproduce b808's actual five shallow fetches in a disposable
+                # repository before adding the missing legacy dependency.
+                try:
+                    git('show', ORIGINAL + ':tools/staging_automation/__init__.py')
+                    result['originalFetchRehearsal'] = {'legacyCommitPresent': True, 'exitCode': 0}
+                except subprocess.CalledProcessError as error:
+                    result['originalFetchRehearsal'] = {'legacyCommitPresent': False, 'exitCode': error.returncode,
+                                                       'stage': 'INSTALLED_CONTROLLER', 'missingCommit': ORIGINAL}
+                git('fetch', '--quiet', '--depth=1', 'https://github.com/Duy-Phan96/GamerHQ.git', ORIGINAL)
+                git('show', ORIGINAL + ':tools/staging_automation/__init__.py')
+                result['legacyReadAfterExplicitFetch'] = 'PASS'
                 result['workflows'] = {}
                 for name, pin in manifest['workflows'].items():
                     body = git('show', main + ':.github/workflows/' + name)
@@ -296,13 +314,6 @@ def collect(expected, *, probe_user_sandbox=False):
                 actual_worker = git('-c', 'safe.directory=' + str(ROOT / 'deployment-worker'), '-C', str(ROOT / 'deployment-worker'),
                                     'rev-parse', 'HEAD').strip().decode()
                 result['workerSource'] = {'actualCommit': identity(actual_worker), 'matches': actual_worker == WORKER}
-                result['archivePins'] = {}
-                for name in ['candidate', 'baseline']:
-                    pin = manifest[name]
-                    git('fetch', '--quiet', '--depth=1', 'https://github.com/Duy-Phan96/GamerHQ.git', pin['commit'])
-                    checksum = sha(git('archive', '--format=tar', pin['commit']))
-                    result['archivePins'][name] = {'commit': pin['commit'], 'expectedSha256': pin['archiveSha256'],
-                                                  'actualSha256': checksum, 'matches': checksum == pin['archiveSha256']}
             except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
                 result['sourceEvidence'] = {'state': 'UNAVAILABLE',
                     **({'exitCode': error.returncode} if isinstance(error, subprocess.CalledProcessError) else {})}
