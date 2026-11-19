@@ -4,7 +4,7 @@ import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
 WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'})
 PUBLIC = frozenset({'status', 'challenge'})
 OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
 MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback', 'tenant-pilot-cutover'})
@@ -23,6 +23,7 @@ ERROR_CODES |= frozenset({'CATALOG_PREVIEW_NOT_ENROLLED', 'CATALOG_STAGING_SOURC
 ERROR_CODES |= frozenset({'PILOT_TENANT_PATH_REJECTED', 'PILOT_ENROLLMENT_REQUIRED', 'PILOT_SECONDARY_BACKUP_REJECTED'})
 ERROR_CODES |= frozenset({'PILOT_ACTIVATION_PIN_REJECTED', 'PILOT_CHECKPOINT_REJECTED', 'PILOT_PREVIEW_EXPIRED', 'PILOT_BASELINE_CHANGED'})
 ERROR_CODES |= frozenset({'PILOT_BASELINE_NOT_QUIESCED'})
+ERROR_CODES |= frozenset({'ACCEPTANCE_POLICY_REJECTED', 'ACCEPTANCE_BASELINE_REJECTED', 'ACCEPTANCE_SOURCE_REJECTED', 'ACCEPTANCE_RESPONSE_REJECTED'})
 
 
 class Denied(Exception):
@@ -81,6 +82,11 @@ def validate_policy(value):
     if 'tenantPilotGeneration' in value:
         from .pilot_generation import validate_generation
         validate_generation(value)
+    if 'tenantAcceptance' in value:
+        from .tenant_acceptance import validate_pin
+        validate_pin(value['tenantAcceptance'])
+        if 'tenantPilotGeneration' not in value:
+            raise Denied('ACCEPTANCE_POLICY_REJECTED')
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
@@ -115,7 +121,7 @@ def admit(operation, state):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if (operation in WEB or operation == 'catalog-preview') and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
-    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'):
+    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'):
         if state.get('recoveryRequired'):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if not state.get('enabled') or not state.get('bootstrapVerified'):

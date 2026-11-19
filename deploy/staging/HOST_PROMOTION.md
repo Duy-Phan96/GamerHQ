@@ -769,3 +769,74 @@ marker appearing before lock acquisition. Only external systemd/Discord/Docker
 baseline attestation is substituted; Git archives, immutable comparisons,
 ownership/modes, locking, SQLite checks and transaction writes are real. This is
 offline regression evidence, not VPS enrollment or pilot activation acceptance.
+
+### Automated read-only tenant acceptance
+
+Acceptance uses protected VPS/API tooling. Computer Use and owner-desktop
+automation are prohibited unless explicitly requested by the owner.
+
+`services/tenant_acceptance.py` reuses the existing tenant store, read-only SQL
+helpers, template preview, Staff mapping and resource ownership services. The
+ephemeral `tools/tenant_acceptance_collect.py` REST adapter runs inside the
+already healthy Host container as UID/GID 10001:10001. It never logs in, starts
+a Gateway, loads cogs into the live bot, installs/enables Skills, applies setup,
+or creates/edits/moves/deletes a Discord resource/message. It fetches the
+existing bot identity/cohort and GET-only, guild-allowlisted inventory, roles,
+Host/owner members and managed-message reads. Redirects, unrecognized hosts,
+cross-guild targets, non-GET methods and request/size/time excess fail closed.
+The token stays in the existing container environment. No credential is copied
+to Actions, a browser or a receipt, and `.env` loading is disabled.
+
+Each of two passes loads fresh REST models and a separate SQLite read
+transaction using URI mode=ro, query_only and an independent SQL authorizer.
+The existing setup preview computes plans in memory, preserving setup journal,
+pending creation checkpoints, audit history, mappings and managed messages.
+Receipts compare inventory/decision/ID/lifecycle fingerprints across both
+passes; report explicit Staff mapping and permissions, parent dependencies,
+managed-entry identifiers, journal state and historical audit aggregates.
+Audit references are not treated as active ownership. Both API lifecycle
+projections are compared to their own tenant's DB rows; wrong authorized-guild
+headers must receive HTTP 403. Existing command/view/modal/scheduler/lifecycle
+dispatch guards also run against in-memory envelopes and non-mutating callbacks
+with independently verified live models. They are labeled in-memory evidence,
+never live mutating command or job execution.
+
+Public output excludes names, message bodies, configuration values, member
+records and arbitrary exception details. Member overwrite identities except
+the Host are hashed; role/channel/message IDs and permission masks remain
+available for owner review. Optional modules and Skill-owned decisions remain
+separate from Core blockers. Existing API versions without a running flag are
+UNVERIFIED for runtime-running state; enabled/healthy never substitutes for it.
+Only owner/Host members are fetched, so full role-membership auditing also
+remains UNVERIFIED. No collection receipt automatically declares live UX or
+template-apply acceptance, or authorizes a merge of PR #317.
+
+The additive `tenant-acceptance` operation uses the existing controller identity,
+exclusive operation lock, workload identity/OIDC, exact immutable workflow
+digest/client and deployment-security owner review. It is permitted only for
+an enabled, non-recovery, already active recovered-primary-v2 pilot and exact
+running candidate. It does not change approved images or old journals. Source
+injection is ephemeral in the child process, SHA256-bound to root-owned source;
+it creates no container/mount or SELinux relabel. Its structured output is
+bounded/compressed with verified length/SHA256 so the existing 64KiB SSH limit
+is retained. Actions renders a summary and uploads only the redacted receipt.
+FAIL means an acceptance criterion failed, not that recovery is required;
+UNVERIFIED is never silently promoted to PASS.
+
+Before first use, owner-reviewed `tools/enroll_staging_tenant_acceptance.py`
+must verify installed eff7cc1 mixed sources, legacy worker, exact cohort,
+COMMITTED original generation, active journal/preparation binding, current
+Host health/image, registered main/default workflow bytes and immutable client
+source. It stages only reviewed source and atomically selects entry/policy
+under the existing lock. Its separate fsynced before/after transition can
+resume only the same source and known bytes. The old generation/active journal,
+profile, private state, databases, credentials, SSH/sandbox and Gateway remain
+unchanged. Unknown contents or failed checks leave selection held for owner
+review. Enrollment itself does not execute the collector.
+
+After its verified receipt, dispatch `staging-tenant-acceptance.yml` on main
+and stop for required deployment-security owner review. This is the single
+read-only live collection; do not dispatch preparation, cutover or setup to
+gather acceptance data. Register the exact workflow on both main and default
+develop; develop manual dispatch must skip protected execution. First build
+and test with synthetic fixtures; source CI is not independent live evidence.

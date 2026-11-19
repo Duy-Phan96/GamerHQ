@@ -322,3 +322,104 @@ def test_modified_installed_controller_still_fails_content_verification(installe
     with pytest.raises(ValueError, match='CONTROLLER_SOURCE_MISMATCH'):
         enrollment.enroll(fixture.source, enrollment.APPROVAL, require_absent=True)
     assert not fixture.marker.exists() and not fixture.calls
+
+
+@pytest.fixture
+def acceptance_installed(source_mirror, monkeypatch, tmp_path):
+    import pwd
+    from tools import enroll_staging_tenant_acceptance as installer
+    account = pwd.getpwnam('gamerhq-staging-bridge')
+    uid,gid = account.pw_uid,account.pw_gid
+    mirror,source = source_mirror
+    saved_refs = {}
+    for ref in ('refs/heads/main','refs/heads/develop'):
+        try: saved_refs[ref] = git(mirror,'rev-parse','--verify',ref).strip().decode()
+        except subprocess.CalledProcessError: saved_refs[ref] = None
+    for ref in saved_refs: git(mirror,'update-ref',ref,source)
+    root,control = tmp_path/'root',tmp_path/'control'
+    def folder(path,owner=0):
+        path.mkdir(parents=True,exist_ok=True)
+        os.chown(path,owner,gid);path.chmod(0o750)
+        return path
+    def put(path,body,owner=0,mode=0o640):
+        folder(path.parent, uid if path.parent==root/'worker' else 0)
+        path.write_bytes(body);os.chown(path,owner,gid);path.chmod(mode)
+        return path
+    folder(root);folder(control)
+    worker=folder(root/'deployment-worker')
+    git(worker,'init','--quiet')
+    git(worker,'fetch','--quiet','--depth=1',mirror.as_uri(),previous.WORKER)
+    git(worker,'checkout','--quiet','--detach','FETCH_HEAD')
+    previous_path=folder(root/'automation-controller/revisions'/installer.PREVIOUS)
+    folder(previous_path.parent);folder(previous_path.parent.parent)
+    folder(previous_path/'staging_automation')
+    overlays=previous.OVERLAY|{'pilot_activation.py','pilot_cutover.py','recovery_api_repair.py','pilot_generation.py'}
+    names={Path(name).name for name in git(mirror,'ls-tree','--name-only',installer.LEGACY,'tools/staging_automation/').decode().splitlines() if name.endswith('.py')}|set(previous.SOURCE_PATHS)|overlays
+    for name in names:
+        pin=installer.PREVIOUS if name in overlays else installer.LEGACY
+        relative=previous.SOURCE_PATHS.get(name,'tools/staging_automation/'+name)
+        put(previous_path/'staging_automation'/name,git(mirror,'show',pin+':'+relative))
+    prepared={'candidateImage':'sha256:'+'c'*64,'fallbackImage':generation.BASELINE_IMAGE}
+    state={'enabled':True,'bootstrapVerified':True,'recoveryRequired':False,
+           'approvedImage':generation.BASELINE_IMAGE,'tenantPilotActivationPrepared':prepared}
+    journal={'phase':'PILOT_ACTIVE','binding':{'preparedSha256':digest(json.dumps(prepared,sort_keys=True,separators=(',',':')).encode()),
+             'baselineImage':state['approvedImage'],'candidateImage':prepared['candidateImage'],
+             'fallbackImage':prepared['fallbackImage'],'generation':'recovered-primary-v2'}}
+    policy={'controllerCommit':installer.PREVIOUS,'legacyWorkerCommit':previous.WORKER,'tenantPilotGeneration':generation.GENERATION,'tenantPilot':generation.COHORT,
+            'tenantPilotActivation':{'commit':'1899c6f8cc498fefa0510d0e3f70453f6f1aa082'}}
+    profile={'environment':'staging','hostSourceCommit':previous.WORKER,'stagingBotId':generation.COHORT['applicationId'],'stagingGuildId':generation.COHORT['guildIds'][0],
+             'productionBotId':'888888888888888888','productionGuildId':'888888888888888889'}
+    folder(root/'worker',uid)
+    put(root/'worker/operation.lock',b'',uid,0o600)
+    incident=put(root/'worker/tenant-pilot-cutover-v2.json',generation.encode(journal),uid,0o600)
+    statefile=put(root/'worker/automation-state.json',generation.encode(state),uid,0o600)
+    marker=put(control/'pilot-generation-transition.json',generation.encode({'source':installer.PREVIOUS,'phase':'COMMITTED'}))
+    profilefile=put(control/'settings/profile.json',generation.encode(profile),uid,0o600)
+    entry=put(root/'automation-controller/entry.py',enrollment.gate(previous_path))
+    policyfile=put(control/'automation-policy.json',generation.encode(policy))
+    primary=put(root/'fixture-primary.sqlite',b'preserve-primary-fixture',uid,0o600)
+    secondary=put(root/'fixture-secondary.sqlite',b'preserve-secondary-fixture',uid,0o600)
+    preserved={path:(path.read_bytes(),path.stat().st_mode,path.stat().st_uid,path.stat().st_mtime_ns) for path in (incident,statefile,marker,profilefile,primary,secondary)}
+    native_run=subprocess.run
+    def run(command,*args,**kwargs):
+        if command[0]!='/usr/sbin/runuser':return native_run(command,*args,**kwargs)
+        assert '--property=ProtectSystem=strict' in command and '--property=NoNewPrivileges=yes' in command
+        packet=json.loads(kwargs['input'])
+        assert packet['image']==prepared['candidateImage']
+        return subprocess.CompletedProcess(command,0,'{"state":"ACTIVE_PILOT_VERIFIED"}','')
+    monkeypatch.setattr(subprocess,'run',run)
+    monkeypatch.setattr(installer,'ROOT',root);monkeypatch.setattr(installer,'CONTROL',control)
+    monkeypatch.setattr(installer,'REPOSITORY',mirror.as_uri())
+    old_path=list(sys.path)
+    old_modules={key:value for key,value in sys.modules.items() if key=='staging_automation' or key.startswith('staging_automation.')}
+    for key in old_modules:del sys.modules[key]
+    try:
+        yield SimpleNamespace(installer=installer,source=source,entry=entry,policy=policyfile,
+                              marker=control/'tenant-acceptance-transition.json',root=root)
+        for path,before in preserved.items():
+            assert (path.read_bytes(),path.stat().st_mode,path.stat().st_uid,path.stat().st_mtime_ns)==before
+    finally:
+        for ref,pin in saved_refs.items():
+            if pin is None:git(mirror,'update-ref','-d',ref)
+            else:git(mirror,'update-ref',ref,pin)
+        sys.path[:]=old_path
+        for key in list(sys.modules):
+            if key=='staging_automation' or key.startswith('staging_automation.'):del sys.modules[key]
+        sys.modules.update(old_modules)
+
+
+@pytest.mark.parametrize('boundary',[None,'PREPARED','entry','policy','COMMITTED'])
+def test_readonly_acceptance_enrollment_and_interrupted_resume_preserve_active_pilot(acceptance_installed,boundary):
+    f=acceptance_installed
+    def interrupt(phase):
+        if phase==boundary:raise PowerLoss()
+    if boundary:
+        with pytest.raises(PowerLoss):f.installer.enroll(f.source,f.installer.APPROVAL,checkpoint=interrupt)
+        assert json.loads(f.marker.read_bytes())['phase']==('COMMITTED' if boundary=='COMMITTED' else 'PREPARED')
+    result=f.installer.enroll(f.source,f.installer.APPROVAL)
+    assert result['state']=='TENANT_ACCEPTANCE_ENROLLED'
+    assert result['gatewayChanged'] is False and result['databaseChanged'] is False
+    assert json.loads(f.marker.read_bytes())['phase']=='COMMITTED'
+    policy=json.loads(f.policy.read_bytes())
+    assert policy['controllerCommit']==f.source and 'tenantAcceptance' in policy
+    assert f.installer.enroll(f.source,f.installer.APPROVAL)==result

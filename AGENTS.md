@@ -7,6 +7,8 @@
 - Avoid opportunistic refactors. Explain a larger refactor if required for the task.
 
 ## Invariants
+
+- GamerHQ acceptance uses repository tools, Discord/Host APIs and protected VPS workflows. Do not use Computer Use or control the owner's desktop unless the owner explicitly requests it.
 - Persisted SQLite/config is authoritative for managed resources where implemented. Prefer stored Discord IDs; names are fallback discovery, not proof of ownership.
 - Setup/sync/repair must be retryable and idempotent: no duplicate channels, roles, messages, overrides or records. Treat ambiguity as manual review.
 - Preserve private/Staff visibility and least privilege. Never make private state public through repair, migration or fallback.
