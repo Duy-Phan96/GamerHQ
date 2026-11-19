@@ -111,3 +111,17 @@ client.main()
         assert output['recoveryRequired'] is False
     elif expected:
         assert output['clientVerification'] == 'RECOVERY_TERMINAL_NOT_VERIFIED'
+
+
+def test_proposed_recovery_workflow_changes_only_the_reviewed_immutable_client():
+    root = Path(__file__).resolve().parents[1]
+    selected = '1c8878e869674f57fd66d3cad61d388aec033c5d'
+    previous = 'd18d0a2d696b30c36d6b971819b1950723ddf8a9'
+    workflow = (root / '.github/workflows/staging-tenant-pilot-cutover.yml').read_text().encode()
+    assert hashlib.sha256(workflow).hexdigest() == 'df965251158b07e4d5f544f91ec5ef3d6dcfa4000e9a8601dcb465014f35f1e4'
+    assert hashlib.sha256(workflow.replace(selected.encode(), previous.encode())).hexdigest() == (
+        'f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011')
+    changed = subprocess.check_output(['git', 'diff', '--name-only', previous, selected], cwd=root).decode().splitlines()
+    assert changed == ['tools/staging_automation_client.py']
+    actual = subprocess.check_output(['git', 'show', selected + ':tools/staging_automation_client.py'], cwd=root)
+    assert actual == (root / 'tools/staging_automation_client.py').read_text().encode()

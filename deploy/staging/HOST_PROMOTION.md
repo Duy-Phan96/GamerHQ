@@ -540,6 +540,17 @@ The next policy enrollment must bind the corrected immutable client reference
 and its workflow digest together. Updating source in PR #317 does not update
 that installed trust policy.
 
+PR #317 prepares immutable client
+`1c8878e869674f57fd66d3cad61d388aec033c5d`, changing only
+`tools/staging_automation_client.py` against the currently selected client.
+Its client-file SHA256 is
+`13fa5917c49b5b0baf5c28a6a92e443f78c5e8c7b7b3d52e7343ec8d2b3f0633`.
+The proposed workflow SHA256 is
+`df965251158b07e4d5f544f91ec5ef3d6dcfa4000e9a8601dcb465014f35f1e4`.
+Its only change from the enrolled workflow is the immutable checkout reference.
+The protected environment, owner reviewer, concurrency and OIDC checks persist.
+Register it with the next reviewed policy generation before dispatching it.
+
 ## Next two-guild pilot preparation
 
 The cohort remains application `1567098530525351976`, primary GamerHQ Staging
