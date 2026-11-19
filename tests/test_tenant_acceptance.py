@@ -30,7 +30,20 @@ def cohort(tmp_path, monkeypatch):
     return store
 
 
-def model(guild_id, *, staff=False):
+def channel_payloads(guild_id):
+    parent = guild_id * 10000 + 10
+    overwrites = [{'id':str(guild_id),'type':0,'allow':'0','deny':'1024'},
+                  {'id':'100','type':1,'allow':'68608','deny':'0'},
+                  {'id':'300','type':1,'allow':'1024','deny':'2048'}]
+    return [{'id':str(parent),'guild_id':str(guild_id),'type':4,'name':'private-category',
+             'position':0,'permission_overwrites':overwrites},
+            {'id':str(parent+1),'guild_id':str(guild_id),'type':0,'name':'private-text',
+             'position':1,'parent_id':str(parent),'permission_overwrites':overwrites},
+            {'id':str(parent+2),'guild_id':str(guild_id),'type':2,'name':'private-voice',
+             'position':2,'parent_id':str(parent),'bitrate':64000,'user_limit':0,'permission_overwrites':overwrites}]
+
+
+def model(guild_id, *, staff=False, populated=False):
     application, owner_id = 100, 200
     client = discord.Client(intents=discord.Intents.none())
     client.get_cog = lambda _: None
@@ -43,7 +56,7 @@ def model(guild_id, *, staff=False):
         return {'user': {'id': str(ident), 'username': 'private-member-value', 'discriminator': '0', 'avatar': None, 'bot': bot},
                 'roles': [bot_role['id']] if bot else [], 'joined_at': '2020-01-01T00:00:00+00:00', 'flags': 0}
     guild = discord.Guild(state=client._connection, data={'id': str(guild_id), 'name': 'private-guild-value', 'owner_id': str(owner_id),
-        'roles': [everyone, bot_role] + ([staff_role] if staff else []), 'channels': [], 'members': [member(application, True), member(owner_id)],
+        'roles': [everyone, bot_role] + ([staff_role] if staff else []), 'channels': channel_payloads(guild_id) if populated else [], 'members': [member(application, True), member(owner_id)],
         'verification_level': 0, 'default_message_notifications': 0, 'explicit_content_filter': 0, 'afk_timeout': 60, 'features': []})
     client._connection._guilds[guild_id] = guild
     guild._add_member(discord.Member(data=member(owner_id), guild=guild, state=client._connection))
@@ -53,7 +66,7 @@ def model(guild_id, *, staff=False):
     async def fetch_member(ident): return guild.get_member(ident)
     # Actual Guild REST methods call the model HTTP client, never Gateway/login.
     async def http(route, **kwargs):
-        if route.path.endswith('/channels'): return []
+        if route.path.endswith('/channels'): return channel_payloads(guild_id) if populated else []
         if route.path.endswith('/roles'): return [everyone, bot_role] + ([staff_role] if staff else [])
         if '/members/' in route.path: return member(int(route.url.rsplit('/', 1)[1]), int(route.url.rsplit('/', 1)[1]) == application)
         raise AssertionError('unexpected request')
@@ -211,7 +224,7 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
             if path.endswith('/roles'):
                 return Response([{'id':str(role.id),'name':role.name,'permissions':str(role.permissions.value),'position':role.position,
                                   'color':0,'managed':role.managed,'hoist':False} for role in guild.roles])
-            if path.endswith('/channels'): return Response([])
+            if path.endswith('/channels'): return Response(channel_payloads(guild_id))
             if '/members/' in path:
                 ident = int(parts[-1])
                 return Response({'user':{'id':str(ident),'username':'private-member-name','discriminator':'0','avatar':None,'bot':ident==100},
@@ -226,6 +239,10 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
     result = asyncio.run(gather(packet))
     assert result['isolationGuards']['status'] == 'PASS', result
     assert all(row.get('previewStable') for row in result['guilds']), result
+    for row in result['guilds']:
+        assert sorted(item['type'] for item in row['inventory']['channels']) == [0,2,4]
+        assert len(row['inventory']['channels']) == 3
+        assert all(len(item['overwrites']) == 3 for item in row['inventory']['channels'])
     assert all(row['status'] == 'PASS' for row in result['hostCrossTenantReadDenials'])
     assert result['mutationsAttempted'] is False
     assert len([url for url in requests if url.endswith('/channels')]) >= 4
@@ -285,3 +302,68 @@ def test_host_api_failure_keeps_exact_stage_and_http_status_without_body(cohort)
     assert result['guilds'][0]['stage']=='HOST_SKILL_STATE'
     assert result['guilds'][0]['reason']=='HOST_SKILL_READ_REJECTED'
     assert result['guilds'][0]['httpStatus']==403
+
+
+def test_populated_inventory_preserves_ids_parents_and_overwrites(cohort):
+    # Exact failure in the original collector, using a real discord.py enum.
+    with pytest.raises(TypeError): int(discord.ChannelType.text)
+    async def load(guild): return model(guild,populated=True)
+    before={path:path.read_bytes() for path in (cohort.primary_database,cohort._tenant(2).database)}
+    result=asyncio.run(acceptance.collect(cohort,100,load,AsyncMock(return_value=[skill()])))
+    for row in result['guilds']:
+        assert row['previewStable'], row
+        channels={item['id']:item for item in row['inventory']['channels']}
+        parent=int(row['guildId'])*10000+10
+        assert channels[str(parent)]['type']==4
+        assert channels[str(parent+1)]['parentId']==str(parent)
+        assert channels[str(parent+2)]['type']==2
+        assert all(len(channel['overwrites'])==3 for channel in channels.values())
+    assert all(path.read_bytes()==body for path,body in before.items())
+
+
+@pytest.mark.parametrize('failure,reason',[(TypeError('private-value'),'COLLECTION_TYPE_INVALID'),
+                                         (KeyError('private-value'),'COLLECTION_SCHEMA_INVALID'),
+                                         (TimeoutError('private-value'),'READ_TIMEOUT')])
+def test_inventory_projection_errors_are_specific_but_never_print_values(cohort,monkeypatch,failure,reason):
+    def fail(*_): raise failure
+    monkeypatch.setattr(acceptance,'inventory',fail)
+    result=asyncio.run(acceptance.collect(cohort,100,async_model,AsyncMock(return_value=[skill()])))
+    assert all(row['stage']=='INVENTORY_PROJECTION' and row['reason']==reason for row in result['guilds'])
+    assert 'private-value' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('status,code,reason',[(401,0,'DISCORD_READ_REJECTED'),(403,50001,'DISCORD_READ_REJECTED'),
+                                             (404,10003,'DISCORD_READ_REJECTED'),(429,0,'DISCORD_RATE_LIMITED')])
+def test_discord_failures_report_exact_status_operation_and_code_without_body(cohort,status,code,reason):
+    class Response:
+        reason='fixture'
+        def __init__(self):
+            self.status=status
+            self.content=SimpleNamespace(read=AsyncMock(return_value=json.dumps({'code':code,'message':'private-body'}).encode()))
+        async def __aenter__(self): return self
+        async def __aexit__(self,*_): pass
+    rest=ReadOnlyDiscord(SimpleNamespace(get=lambda *a,**k:Response()),'private-token',100,(1,2))
+    async def load(guild):
+        rest.guild_id=guild
+        await rest.request(Route('GET','/guilds/{guild_id}/channels',guild_id=guild))
+    result=asyncio.run(acceptance.collect(cohort,100,load,AsyncMock(return_value=[skill()])))
+    for row in result['guilds']:
+        assert row['reason']==reason and row['httpStatus']==status
+        assert row['operation']=='GUILD_CHANNELS'
+        if status in (403,404): assert row['discordCode']==code
+    assert 'private-body' not in json.dumps(result) and 'private-token' not in json.dumps(result)
+
+
+def test_non_json_success_response_is_redacted_and_not_inventory_success(cohort):
+    class Response:
+        status=200
+        content=SimpleNamespace(read=AsyncMock(return_value=b'private non-json response'))
+        async def __aenter__(self): return self
+        async def __aexit__(self,*_): pass
+    rest=ReadOnlyDiscord(SimpleNamespace(get=lambda *a,**k:Response()),'private-token',100,(1,2))
+    async def load(guild):
+        rest.guild_id=guild
+        await rest.request(Route('GET','/guilds/{guild_id}/roles',guild_id=guild))
+    result=asyncio.run(acceptance.collect(cohort,100,load,AsyncMock(return_value=[skill()])))
+    assert all(row['reason']=='DISCORD_RESPONSE_INVALID' and row['httpStatus']==200 and row['operation']=='GUILD_ROLES' for row in result['guilds'])
+    assert 'private' not in json.dumps(result)

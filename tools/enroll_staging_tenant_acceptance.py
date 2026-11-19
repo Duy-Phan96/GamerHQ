@@ -21,6 +21,8 @@ CONTROL = Path('/etc/gamerhq-staging')
 PREVIOUS = 'eff7cc14d2af0595ad7e80f99f0f24a7e4595bb9'
 LEGACY = '876805290ef454523f9b36f1f9fbf90c3ec64a17'
 APPROVAL = 'ENROLL READ ONLY TENANT ACCEPTANCE'
+REVISION_PREVIOUS = 'd1eed91e3e1608176704407843243afbefc8fd7c'
+REVISION_APPROVAL = 'REVISE READ ONLY TENANT ACCEPTANCE SOURCE'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 WORKFLOW = '.github/workflows/staging-tenant-acceptance.yml'
 FILES = ('services/tenant_acceptance.py', 'tools/tenant_acceptance_collect.py')
@@ -40,8 +42,8 @@ print(json.dumps({'state':'ACTIVE_PILOT_VERIFIED'}))
 """
 
 
-def launcher(target):
-    return ("import json,sys\nfrom pathlib import Path\n"
+def launcher(target, *, revise=False):
+    body = ("import json,sys\nfrom pathlib import Path\n"
             "try:\n g=json.loads(Path(" + repr(str(CONTROL / 'pilot-generation-transition.json')) + ").read_bytes())\n"
             " a=json.loads(Path(" + repr(str(CONTROL / 'tenant-acceptance-transition.json')) + ").read_bytes())\n"
             "except Exception:\n raise SystemExit('ACCEPTANCE_ENROLLMENT_HELD')\n"
@@ -49,14 +51,23 @@ def launcher(target):
             "if a.get('phase')!='COMMITTED' or a.get('source')!=" + repr(target.name) + ": raise SystemExit('ACCEPTANCE_ENROLLMENT_HELD')\n"
             "sys.path[:0]=" + repr([str(target), str(target / 'pilot-source'), str(ROOT / 'deployment-worker')]) + "\n"
             "from staging_automation.bridge import entry\nentry()\n").encode()
+    if revise:
+        original = CONTROL / 'tenant-acceptance-transition.json'
+        replacement = CONTROL / 'tenant-acceptance-source-transition.json'
+        body = body.replace(repr(str(original)).encode(), repr(str(replacement)).encode())
+        guard = ("import json\nfrom pathlib import Path\ntry:\n p=json.loads(Path(" + repr(str(original)) + ").read_bytes())\n"
+                 "except Exception:\n raise SystemExit('ACCEPTANCE_ENROLLMENT_HELD')\n"
+                 "if p.get('phase')!='COMMITTED' or p.get('source')!=" + repr(REVISION_PREVIOUS) + ": raise SystemExit('ACCEPTANCE_ENROLLMENT_HELD')\n")
+        body = guard.encode() + body
+    return body
 
 
-def enroll(source, approval, *, checkpoint=lambda _: None):
+def enroll(source, approval, *, checkpoint=lambda _: None, revise=False):
     global STAGE
     STAGE = 'OWNER_CHECK'
     import fcntl
     import pwd
-    if os.geteuid() != 0 or approval != APPROVAL or not re.fullmatch('[0-9a-f]{40}', source):
+    if os.geteuid() != 0 or approval != (REVISION_APPROVAL if revise else APPROVAL) or not re.fullmatch('[0-9a-f]{40}', source):
         raise ValueError('OWNER_APPROVAL_REQUIRED')
     account = pwd.getpwnam('gamerhq-staging-bridge')
     uid, gid = account.pw_uid, account.pw_gid
@@ -69,7 +80,7 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
                                   capture_output=True, check=True, timeout=180).stdout
         git('init', '--quiet')
         fetched = {}
-        for pin in (source, PREVIOUS, LEGACY, 'refs/heads/main', 'refs/heads/develop'):
+        for pin in dict.fromkeys((source, PREVIOUS, LEGACY, *((REVISION_PREVIOUS,) if revise else ()), 'refs/heads/main', 'refs/heads/develop')):
             git('fetch', '--quiet', '--depth=1', REPOSITORY, pin)
             actual = git('rev-parse', '--verify', 'FETCH_HEAD^{commit}').strip().decode('ascii')
             if not re.fullmatch('[0-9a-f]{40}', actual) or not pin.startswith('refs/') and actual != pin:
@@ -101,7 +112,8 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
         if helper.PREVIOUS != LEGACY or generation.PREVIOUS != '8d8e067463123f0b847d9daf7d5dd70a854a5930':
             raise ValueError('SOURCE_REJECTED')
         revisions = ROOT / 'automation-controller/revisions'
-        previous, target = revisions / PREVIOUS, revisions / source
+        installed = REVISION_PREVIOUS if revise else PREVIOUS
+        previous, target = revisions / installed, revisions / source
         STAGE = 'INSTALLED_SOURCE_VERIFICATION'
         for folder in (ROOT, CONTROL, revisions.parent, revisions, previous):
             helper.directory(folder)
@@ -111,6 +123,8 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
         overlays = helper.OVERLAY | {'pilot_activation.py', 'pilot_cutover.py', 'recovery_api_repair.py', 'pilot_generation.py'}
         for item in (previous / 'staging_automation').iterdir():
             expected = PREVIOUS if item.name in overlays else LEGACY
+            if revise and item.name in {'bridge.py','policy.py','oidc.py','tenant_acceptance.py'}:
+                expected = REVISION_PREVIOUS
             name = helper.SOURCE_PATHS.get(item.name, 'tools/staging_automation/' + item.name)
             if helper.checked(item) != git('show', expected + ':' + name):
                 raise ValueError('CONTROLLER_SOURCE_MISMATCH')
@@ -119,7 +133,7 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
         archive = Path(scratch) / 'source.tar'
         git('archive', '--format=tar', '--output', str(archive), source)
         helper.bundle_sources(archive, target / 'pilot-source', gid)
-        changed = {'bridge.py', 'policy.py', 'oidc.py'}
+        changed = set() if revise else {'bridge.py', 'policy.py', 'oidc.py'}
         for item in (previous / 'staging_automation').iterdir():
             content = git('show', source + ':tools/staging_automation/' + item.name) if item.name in changed else helper.checked(item)
             file = target / 'staging_automation' / item.name
@@ -147,6 +161,12 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
             old_generation = json.loads(generation_bytes)
             if old_generation.get('phase') != 'COMMITTED' or old_generation.get('source') != PREVIOUS:
                 raise ValueError('GENERATION_REJECTED')
+            acceptance_bytes = None
+            if revise:
+                acceptance_bytes = helper.checked(CONTROL / 'tenant-acceptance-transition.json')
+                accepted = json.loads(acceptance_bytes)
+                if accepted.get('phase') != 'COMMITTED' or accepted.get('source') != REVISION_PREVIOUS:
+                    raise ValueError('TRANSITION_REJECTED')
             incident = helper.checked(ROOT / 'worker/tenant-pilot-cutover-v2.json', uid, private=True)
             state_bytes = helper.checked(ROOT / 'worker/automation-state.json', uid, private=True)
             state = json.loads(state_bytes)
@@ -162,24 +182,37 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
                 raise ValueError('ACTIVE_PILOT_REQUIRED')
             paths = {'entry': revisions.parent / 'entry.py', 'policy': CONTROL / 'automation-policy.json'}
             def read(name): return helper.checked(paths[name])
-            marker = CONTROL / 'tenant-acceptance-transition.json'
+            marker = CONTROL / ('tenant-acceptance-source-transition.json' if revise else 'tenant-acceptance-transition.json')
             STAGE = 'TRANSITION_VERIFICATION'
             if marker.exists():
                 record = json.loads(helper.checked(marker))
                 if record.get('source') != source or record.get('incidentSha256') != hashlib.sha256(incident).hexdigest() or record.get('phase') not in {'PREPARED', 'COMMITTED'}:
                     raise ValueError('TRANSITION_REJECTED')
+                if revise and record.get('parentTransitionSha256') != hashlib.sha256(acceptance_bytes).hexdigest():
+                    raise ValueError('TRANSITION_REJECTED')
             else:
                 policy = json.loads(read('policy'))
-                if (policy.get('controllerCommit') != PREVIOUS or 'tenantAcceptance' in policy
+                if (policy.get('controllerCommit') != installed or (not revise and 'tenantAcceptance' in policy)
                         or policy.get('tenantPilotGeneration', {}).get('id') != 'recovered-primary-v2'
-                        or read('entry') != generation.gate(previous)):
+                        or read('entry') != (launcher(previous) if revise else generation.gate(previous))):
                     raise ValueError('PREVIOUS_POLICY_REJECTED')
+                if revise:
+                    previous_pin = {'workflowSha256': hashlib.sha256(workflow).hexdigest(), 'sourceSha256': {}}
+                    for path in FILES:
+                        expected_body = git('show', REVISION_PREVIOUS + ':' + path)
+                        if helper.checked(previous / 'pilot-source' / path) != expected_body:
+                            raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+                        previous_pin['sourceSha256'][path] = hashlib.sha256(expected_body).hexdigest()
+                    if policy.get('tenantAcceptance') != previous_pin:
+                        raise ValueError('PREVIOUS_POLICY_REJECTED')
                 pin = {'workflowSha256': hashlib.sha256(workflow).hexdigest(),
                        'sourceSha256': {path: hashlib.sha256(git('show', source + ':' + path)).hexdigest() for path in FILES}}
-                after = {'entry': launcher(target), 'policy': (json.dumps({**policy, 'controllerCommit': source,
+                after = {'entry': launcher(target, revise=revise), 'policy': (json.dumps({**policy, 'controllerCommit': source,
                                                                          'tenantAcceptance': pin}, sort_keys=True, indent=2) + '\n').encode()}
                 record = {'source': source, 'phase': 'PREPARED', 'incidentSha256': hashlib.sha256(incident).hexdigest(),
                           'plan': {'files': [{'name': name, 'before': read(name).hex(), 'after': after[name].hex()} for name in ('entry', 'policy')]}}
+                if revise:
+                    record['parentTransitionSha256'] = hashlib.sha256(acceptance_bytes).hexdigest()
             if len(record['plan']['files']) != 2 or {row['name'] for row in record['plan']['files']} != set(paths):
                 raise ValueError('TRANSITION_REJECTED')
             original = json.loads(bytes.fromhex(next(row['before'] for row in record['plan']['files'] if row['name'] == 'policy')))
@@ -232,9 +265,11 @@ def enroll(source, approval, *, checkpoint=lambda _: None):
                         or helper.checked(ROOT / 'worker/automation-state.json', uid, private=True) != state_bytes
                         or helper.checked(CONTROL / 'pilot-generation-transition.json') != generation_bytes):
                     raise ValueError('INCIDENT_CHANGED')
+                if revise and helper.checked(CONTROL / 'tenant-acceptance-transition.json') != acceptance_bytes:
+                    raise ValueError('INCIDENT_CHANGED')
                 generation.replace(marker, (json.dumps({**record, 'phase': 'COMMITTED'}, sort_keys=True) + '\n').encode(), 0, gid, 0o640)
                 checkpoint('COMMITTED')
-    return {'state': 'TENANT_ACCEPTANCE_ENROLLED', 'controllerCommit': source,
+    return {'state': 'TENANT_ACCEPTANCE_SOURCE_REVISED' if revise else 'TENANT_ACCEPTANCE_ENROLLED', 'controllerCommit': source,
             'recoveryRequired': False, 'activePilotPreserved': True, 'gatewayChanged': False,
             'databaseChanged': False, 'discordResourcesChanged': False, 'productionChanged': False}
 
@@ -243,9 +278,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--approval', required=True)
+    parser.add_argument('--revise', action='store_true', help='Owner-reviewed source-only revision of exact d1eed91 acceptance enrollment')
     args = parser.parse_args()
     try:
-        print(json.dumps(enroll(args.commit, args.approval)))
+        print(json.dumps(enroll(args.commit, args.approval, revise=args.revise)))
     except Exception as error:
         known = {'OWNER_APPROVAL_REQUIRED','SOURCE_REJECTED','INSTALLER_SOURCE_REJECTED','WORKFLOW_REGISTRATION_REQUIRED',
                  'CONTROLLER_SOURCE_MISMATCH','IMMUTABLE_EXTENSION_CHANGED','LOCK_REJECTED','ACCESS_REVOKED',

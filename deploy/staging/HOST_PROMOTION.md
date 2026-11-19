@@ -840,3 +840,27 @@ read-only live collection; do not dispatch preparation, cutover or setup to
 gather acceptance data. Register the exact workflow on both main and default
 develop; develop manual dispatch must skip protected execution. First build
 and test with synthetic fixtures; source CI is not independent live evidence.
+
+The first live collection (44624585597) returned both guilds UNVERIFIED at
+DISCORD_INVENTORY after 12 reads and successful live-binding ingress probes.
+The populated-channel regression reproduces a deterministic local TypeError:
+discord.py ChannelType is an enum value, not an int-convertible object. Export
+its integer `.value`; never infer deletion, missing permissions or token failure
+from this projection error. Empty-guild fixtures alone do not cover inventory.
+Fixtures must include categories, text/voice channels, parents and overwrites.
+INVENTORY_PROJECTION is now distinct from the initial REST/model stage, with
+bounded reason codes for invalid types/schema, timeout, transport, HTTP status,
+rate limit and model construction. Never export raw exception text or bodies.
+
+Collector corrections do not alter the enrolled Host/image or workflow/client.
+The existing enrollment tool's owner-only `--revise` path is limited to the
+verified d1eed91 acceptance enrollment. It preserves all controller module
+bytes, workflow digest, original COMMITTED acceptance/generation markers,
+active pilot journal, cohort, profile and private state. Only root-owned entry
+selection, controller source identity and the two acceptance source hashes are
+advanced through a separate fsynced source-transition marker under the same
+lock. Unknown predecessor/source/content is rejected; interruption holds the
+new entry until reviewed same-source retry. Enrollment does not collect data.
+After its receipt, queue one NEW acceptance dispatch on main and retain the
+existing deployment-security review. Never rerun setup or cutover to diagnose
+a collector failure, and never reuse the completed 44624585597 as pending review.

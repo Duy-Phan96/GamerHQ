@@ -27,9 +27,10 @@ MAX_BODY = 2 * 1024**2
 
 
 class AcceptanceReadError(ValueError):
-    def __init__(self, reason, status):
+    def __init__(self, reason, status=None, *, operation=None):
         super().__init__(reason)
         self.status = status
+        self.operation = operation
 
 
 class ReadOnlyDiscord:
@@ -66,18 +67,37 @@ class ReadOnlyDiscord:
         params = kwargs.get('params') or {}
         if any(key not in {'limit', 'before', 'after', 'around'} for key in params) or int(params.get('limit', 100)) > 100:
             raise ValueError('ACCEPTANCE_BUDGET_EXCEEDED')
-        async with self.session.get(route.url, params=params,
+        operation = {'/users/@me':'BOT_IDENTITY', '/users/@me/guilds':'GUILD_MEMBERSHIP',
+                     '/guilds/{guild_id}':'GUILD_IDENTITY', '/guilds/{guild_id}/roles':'GUILD_ROLES',
+                     '/guilds/{guild_id}/channels':'GUILD_CHANNELS'}.get(route.path, 'MANAGED_MESSAGE')
+        if '/members/' in route.path:
+            operation = 'HOST_MEMBER' if int(route.url.rsplit('/',1)[1]) == self.application else 'OWNER_MEMBER'
+        try:
+            return await self._get(route.url, params, operation)
+        except (TimeoutError, aiohttp.ClientConnectionError) as error:
+            reason = 'READ_TIMEOUT' if isinstance(error, TimeoutError) else 'DISCORD_TRANSPORT_FAILED'
+            raise AcceptanceReadError(reason, operation=operation) from None
+
+    async def _get(self, url, params, operation):
+        async with self.session.get(url, params=params,
                                     headers={'Authorization': 'Bot ' + self.token}, allow_redirects=False) as response:
             body = await response.content.read(MAX_BODY + 1)
             if len(body) > MAX_BODY:
                 raise ValueError('ACCEPTANCE_BUDGET_EXCEEDED')
-            if response.status == 404:
-                raise discord.NotFound(response, {'code': 10003, 'message': 'Resource unavailable'})
-            if response.status == 403:
-                raise discord.Forbidden(response, {'code': 50013, 'message': 'Read access unavailable'})
+            try:
+                value = json.loads(body)
+            except (ValueError, UnicodeError):
+                raise AcceptanceReadError('DISCORD_RESPONSE_INVALID', response.status, operation=operation) from None
+            if response.status in (403,404):
+                code = value.get('code') if isinstance(value,dict) else None
+                error = (discord.NotFound if response.status == 404 else discord.Forbidden)(
+                    response, {'code':code if type(code) is int and 0 <= code <= 999999 else 0, 'message':'Read access unavailable'})
+                error.operation = operation
+                raise error
             if response.status != 200:
-                raise ValueError('DISCORD_READ_REJECTED')
-            return json.loads(body)
+                raise AcceptanceReadError('DISCORD_RATE_LIMITED' if response.status == 429 else 'DISCORD_READ_REJECTED',
+                                          response.status, operation=operation)
+            return value
 
 
 async def gather(packet):
@@ -131,9 +151,12 @@ async def gather(packet):
             bot = await rest.request(Route('GET', '/guilds/{guild_id}/members/{user_id}', guild_id=guild_id, user_id=application))
             owner = await rest.request(Route('GET', '/guilds/{guild_id}/members/{user_id}', guild_id=guild_id, user_id=rest.owner_id))
             verify_guild_permissions(guild_id, application, payload, bot, roles)
-            model = discord.Guild(data={**payload, 'roles': roles, 'channels': channels, 'members': [bot, owner]}, state=client._connection)
-            model._add_member(discord.Member(data=owner, guild=model, state=client._connection))
-            model._add_member(discord.Member(data=bot, guild=model, state=client._connection))
+            try:
+                model = discord.Guild(data={**payload, 'roles': roles, 'channels': channels, 'members': [bot, owner]}, state=client._connection)
+                model._add_member(discord.Member(data=owner, guild=model, state=client._connection))
+                model._add_member(discord.Member(data=bot, guild=model, state=client._connection))
+            except (KeyError,TypeError,ValueError,AttributeError):
+                raise AcceptanceReadError('DISCORD_MODEL_INVALID', operation='MODEL_BUILD') from None
             client._connection._guilds[guild_id] = model
             return model, model.get_member(rest.owner_id), client
 

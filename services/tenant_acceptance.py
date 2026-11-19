@@ -94,7 +94,10 @@ def inventory(guild, application_id):
         parent = getattr(channel, 'category_id', None)
         if parent is not None and guild.get_channel(parent) is None:
             raise ValueError('UNVERIFIED_PARENT_REJECTED')
-        channels.append({'id': str(channel.id), 'type': int(channel.type),
+        channel_type = getattr(channel.type, 'value', None)
+        if type(channel_type) is not int:
+            raise ValueError('DISCORD_CHANNEL_TYPE_REJECTED')
+        channels.append({'id': str(channel.id), 'type': channel_type,
                          'parentId': str(parent) if parent else None,
                          'overwrites': overwrites(channel, application_id)})
     roles = []
@@ -277,6 +280,7 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                     guild, actor, bot = await load_guild(guild_id)
                     if guild.id != guild_id or actor.id != guild.owner_id or guild.me.id != application_id:
                         raise ValueError('GUILD_IDENTITY_REJECTED')
+                    stage = 'INVENTORY_PROJECTION'
                     snapshot = inventory(guild, application_id)
                     stage = 'TEMPLATE_PREVIEW'
                     draft = await preview(guild, actor, templates.GAMERHQ, bot)
@@ -308,18 +312,37 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
         except Exception as error:
             known = {'FOREIGN_RESOURCE_REJECTED', 'UNVERIFIED_PARENT_REJECTED', 'GUILD_IDENTITY_REJECTED',
                      'DATABASE_INTEGRITY_REJECTED', 'SKILL_RESPONSE_REJECTED', 'READ_ONLY_REQUEST_REJECTED',
-                     'DISCORD_RESPONSE_REJECTED', 'DISCORD_READ_REJECTED', 'ACCEPTANCE_BUDGET_EXCEEDED'}
+                     'DISCORD_RESPONSE_REJECTED', 'DISCORD_READ_REJECTED', 'ACCEPTANCE_BUDGET_EXCEEDED',
+                     'DISCORD_CHANNEL_TYPE_REJECTED', 'DISCORD_RESPONSE_INVALID', 'DISCORD_MODEL_INVALID',
+                     'DISCORD_RATE_LIMITED', 'DISCORD_TRANSPORT_FAILED', 'READ_TIMEOUT'}
             known.add('HOST_SKILL_READ_REJECTED')
             reason = error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in known else 'COLLECTION_UNAVAILABLE'
+            if reason == 'COLLECTION_UNAVAILABLE':
+                import asyncio
+                from services.tenant_routing import GuildAdmissionError, GuildCorePermissionsError
+                if isinstance(error, GuildCorePermissionsError): reason = 'CORE_PERMISSION_REJECTED'
+                elif isinstance(error, GuildAdmissionError): reason = 'GUILD_BINDING_REJECTED'
+                elif isinstance(error, (TimeoutError, asyncio.TimeoutError)): reason = 'READ_TIMEOUT'
+                elif isinstance(error, json.JSONDecodeError): reason = 'RESPONSE_JSON_INVALID'
+                elif isinstance(error, TypeError): reason = 'COLLECTION_TYPE_INVALID'
+                elif isinstance(error, (KeyError, AttributeError, ValueError)): reason = 'COLLECTION_SCHEMA_INVALID'
+                else: reason = 'COLLECTION_INTERNAL_ERROR'
             status = getattr(error, 'status', None)
             if type(status) is int and 300 <= status <= 599:
-                reason = 'HOST_SKILL_READ_REJECTED' if reason == 'HOST_SKILL_READ_REJECTED' else 'DISCORD_READ_REJECTED'
+                if reason not in {'HOST_SKILL_READ_REJECTED', 'DISCORD_RATE_LIMITED', 'DISCORD_RESPONSE_INVALID'}:
+                    reason = 'DISCORD_READ_REJECTED'
             if reason == 'READ_ONLY_REQUEST_REJECTED':
                 denied.append('HTTP')
             receipts.append({'guildId': str(guild_id), 'status': 'UNVERIFIED', 'reason': reason,
                              'stage': stage, 'passCount': len(passes), **({'lastVerifiedPass': passes[-1]} if passes else {})})
-            if type(status) is int and 300 <= status <= 599:
+            if type(status) is int and 100 <= status <= 599:
                 receipts[-1]['httpStatus'] = status
+            operation = getattr(error, 'operation', None)
+            if operation in {'BOT_IDENTITY','GUILD_MEMBERSHIP','GUILD_IDENTITY','GUILD_ROLES','GUILD_CHANNELS','HOST_MEMBER','OWNER_MEMBER','MANAGED_MESSAGE','MODEL_BUILD'}:
+                receipts[-1]['operation'] = operation
+            code = getattr(error, 'code', None)
+            if type(code) is int and 0 <= code <= 999999:
+                receipts[-1]['discordCode'] = code
     for receipt in receipts:
         if 'preview' not in receipt:
             continue

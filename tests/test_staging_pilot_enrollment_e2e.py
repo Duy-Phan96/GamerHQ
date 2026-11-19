@@ -423,3 +423,41 @@ def test_readonly_acceptance_enrollment_and_interrupted_resume_preserve_active_p
     policy=json.loads(f.policy.read_bytes())
     assert policy['controllerCommit']==f.source and 'tenantAcceptance' in policy
     assert f.installer.enroll(f.source,f.installer.APPROVAL)==result
+
+
+@pytest.mark.parametrize('boundary',[None,'PREPARED','entry','policy','COMMITTED'])
+def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(acceptance_installed,source_mirror,tmp_path,monkeypatch,boundary):
+    import types
+    f=acceptance_installed
+    mirror,_=source_mirror
+    # Install the exact originally enrolled d1eed91 script, not a permissive
+    # stand-in for the existing root-owned entry/policy/transition contract.
+    oldfile=tmp_path/'original-acceptance-installer.py'
+    oldfile.write_bytes(git(mirror,'show',f.installer.REVISION_PREVIOUS+':tools/enroll_staging_tenant_acceptance.py'))
+    old=types.ModuleType('original_acceptance_installer');old.__file__=str(oldfile)
+    exec(compile(oldfile.read_bytes(),str(oldfile),'exec'),old.__dict__)
+    monkeypatch.setattr(old,'ROOT',f.root);monkeypatch.setattr(old,'CONTROL',f.policy.parent)
+    monkeypatch.setattr(old,'REPOSITORY',mirror.as_uri())
+    assert old.enroll(f.installer.REVISION_PREVIOUS,old.APPROVAL)['state']=='TENANT_ACCEPTANCE_ENROLLED'
+    original=f.marker.read_bytes()
+    before_policy=json.loads(f.policy.read_bytes())
+    prior=f.root/'automation-controller/revisions'/f.installer.REVISION_PREVIOUS
+    prior_modules={p.name:p.read_bytes() for p in (prior/'staging_automation').iterdir()}
+    def interrupt(stage):
+        if stage==boundary:raise PowerLoss()
+    if boundary:
+        with pytest.raises(PowerLoss):
+            f.installer.enroll(f.source,f.installer.REVISION_APPROVAL,revise=True,checkpoint=interrupt)
+        if boundary in ('entry','policy'):
+            held=subprocess.run([sys.executable,'-B',str(f.entry)],capture_output=True,text=True,timeout=20)
+            assert held.returncode!=0 and 'ACCEPTANCE_ENROLLMENT_HELD' in held.stderr
+    result=f.installer.enroll(f.source,f.installer.REVISION_APPROVAL,revise=True)
+    assert result['state']=='TENANT_ACCEPTANCE_SOURCE_REVISED'
+    assert f.marker.read_bytes()==original
+    assert json.loads((f.policy.parent/'tenant-acceptance-source-transition.json').read_bytes())['phase']=='COMMITTED'
+    after=json.loads(f.policy.read_bytes())
+    assert {k:v for k,v in after.items() if k not in {'controllerCommit','tenantAcceptance'}}=={k:v for k,v in before_policy.items() if k not in {'controllerCommit','tenantAcceptance'}}
+    assert after['tenantAcceptance']['workflowSha256']==before_policy['tenantAcceptance']['workflowSha256']
+    current=f.root/'automation-controller/revisions'/f.source
+    assert {p.name:p.read_bytes() for p in (current/'staging_automation').iterdir()}==prior_modules
+    assert f.installer.enroll(f.source,f.installer.REVISION_APPROVAL,revise=True)==result
