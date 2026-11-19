@@ -15,6 +15,9 @@ import sys
 import tempfile
 import textwrap
 import types
+import uuid
+
+sys.dont_write_bytecode = True
 
 ROOT = Path('/opt/gamerhq-staging')
 CONTROL = Path('/etc/gamerhq-staging')
@@ -235,6 +238,20 @@ def enroll(source, approval):
                 record = {'phase': 'PREPARED', 'source': source, 'plan': plan,
                           'incidentSha256': hashlib.sha256(original_incident).hexdigest()}
             desired = {item['name']: bytes.fromhex(item['after']) for item in plan['files']}
+            original_state = json.loads(original['state'])
+            incident = json.loads(original_incident)
+            if incident.get('phase') != 'PILOT_ROLLED_BACK':
+                raise ValueError('COMPLETED_INCIDENT_REQUIRED')
+            # Reuse the original immutable transaction contract; only the
+            # terminal phase differs from its enrollment-time ROLLING_BACK.
+            module.verify_recovery_journal(original_state, {**incident, 'phase': 'ROLLING_BACK'})
+            import runpy
+            inspector = runpy.run_path(str(target / 'pilot-source/tools/staging_pilot_cutover_diagnostics.py'))
+            original_profile = json.loads(original['profile'])
+            historical_backups = [inspector['inspect_backup'](Path(original_profile['backupRoot']), uid, value)
+                                  for value in (incident['checkpoint'], original_state['tenantPilotActivationPrepared']['preview'])]
+            if any(value.get('state') != 'VERIFIED' for value in historical_backups):
+                raise ValueError('INCIDENT_BACKUP_REJECTED')
             probe_profile, probe_policy = [json.loads(desired[key]) for key in ('profile', 'policy')]
             probe_profile = generation.effective_profile(probe_profile, probe_policy)
             # This is the existing restricted systemd sandbox, with live writes absent.
@@ -242,6 +259,7 @@ def enroll(source, approval):
                            'XDG_RUNTIME_DIR=/run/user/' + str(uid), 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus']
             command = ['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i', *environment,
                        'systemd-run', '--user', '--pipe', '--wait', '--collect', '--quiet',
+                       '--unit=gamerhq-staging-automation-generation-' + uuid.uuid4().hex,
                        '--property=NoNewPrivileges=yes', '--property=ProtectSystem=strict', '--property=ProtectHome=yes',
                        '--property=ReadWritePaths=' + str(ROOT / 'worker') + ' ' + str(ROOT / 'backups'),
                        '--property=RestrictSUIDSGID=yes', '--property=RuntimeMaxSec=300s',
