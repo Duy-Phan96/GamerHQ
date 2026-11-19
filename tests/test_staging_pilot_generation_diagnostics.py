@@ -14,6 +14,45 @@ from tools import enroll_staging_pilot_generation as enrollment
 from tools import staging_pilot_generation_diagnostics as diagnostics
 
 
+@pytest.mark.parametrize('returned', [b'b' * 40 + b'\n', b'not-a-commit\n', b'\xff\n'])
+def test_revision_fetch_rejects_wrong_or_malformed_fetch_head(returned):
+    calls = []
+    def git(*args):
+        calls.append(args)
+        return returned if args[0] == 'rev-parse' else b''
+    with pytest.raises(ValueError, match='FETCHED_REVISION_REJECTED'):
+        enrollment.fetch_revision(git, 'a' * 40)
+    assert calls == [('fetch', '--quiet', '--depth=1', enrollment.REPOSITORY, 'a' * 40),
+                     ('rev-parse', '--verify', 'FETCH_HEAD^{commit}')]
+
+
+def test_all_source_revisions_are_fetched_and_verified_before_immutable_reads():
+    calls, head = [], None
+    def git(*args):
+        nonlocal head
+        calls.append(args)
+        if args[0] == 'fetch':
+            head = 'd' * 40 if args[-1] == 'refs/heads/main' else args[-1]
+            return b''
+        assert args == ('rev-parse', '--verify', 'FETCH_HEAD^{commit}')
+        return (head + '\n').encode()
+    enrollment.fetch_sources(git, 'a' * 40)
+    assert [call[-1] for call in calls if call[0] == 'fetch'] == [
+        'a' * 40, enrollment.PREVIOUS, enrollment.LEGACY_CONTROLLER_BASE, 'refs/heads/main']
+    assert len(calls) == 8
+
+
+def test_fresh_only_cli_preserves_the_explicit_guard(monkeypatch, capsys):
+    def enroll(source, approval, *, require_absent):
+        assert require_absent is True
+        return {'state': 'RECOVERED_PRIMARY_GENERATION_ENROLLED'}
+    monkeypatch.setattr(enrollment, 'enroll', enroll)
+    monkeypatch.setattr(sys, 'argv', ['installer', '--commit', 'a' * 40,
+                                    '--approval', enrollment.APPROVAL, '--require-absent-transition'])
+    enrollment.main()
+    assert json.loads(capsys.readouterr().out)['state'] == 'RECOVERED_PRIMARY_GENERATION_ENROLLED'
+
+
 @pytest.mark.parametrize('error,reason,extra', [
     (ValueError('CONTROLLER_SOURCE_MISMATCH'), 'CONTROLLER_SOURCE_MISMATCH', {}),
     (ValueError('private-token-must-never-appear'), 'VALIDATION_REJECTED', {}),

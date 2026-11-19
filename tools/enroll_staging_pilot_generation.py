@@ -39,7 +39,8 @@ SOURCE_LIMIT BASELINE_PIN_REJECTED COHORT_PIN_REJECTED WORKER_DIRECTORY_REJECTED
 GENERATION_ALREADY_IN_USE GENERATION_TRANSACTION_CHANGED GENERATION_STATE_CHANGED ENROLLED_CONTROLLER_REQUIRED
 PREVIOUS_GENERATION_CHANGED COMPLETED_INCIDENT_REQUIRED REVIEWED_RECOVERY_JOURNAL_REQUIRED
 INCIDENT_BACKUP_REJECTED PROBE_OUTPUT_LIMIT INCIDENT_HISTORY_CHANGED RECOVERY_REQUIRES_OWNER
-PILOT_CHECKPOINT_REJECTED IMMUTABLE_RELEASE_CHANGED'''.split())
+PILOT_CHECKPOINT_REJECTED IMMUTABLE_RELEASE_CHANGED FETCHED_REVISION_REJECTED
+EXISTING_TRANSITION_REQUIRES_REVIEW'''.split())
 
 
 def progress(stage):
@@ -48,11 +49,22 @@ def progress(stage):
     _stage_trace.append(stage)
 
 
+def fetch_revision(git, revision):
+    git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
+    try:
+        actual = git('rev-parse', '--verify', 'FETCH_HEAD^{commit}').strip().decode('ascii')
+    except (UnicodeError, AttributeError):
+        raise ValueError('FETCHED_REVISION_REJECTED') from None
+    if (not re.fullmatch('[0-9a-f]{40}', actual)
+            or revision != 'refs/heads/main' and actual != revision):
+        raise ValueError('FETCHED_REVISION_REJECTED')
+
+
 def fetch_sources(git, source):
     # The installed bundle deliberately retains modules from the original
     # controller. A depth-one fetch of PREVIOUS does not supply that commit.
     for revision in (source, PREVIOUS, LEGACY_CONTROLLER_BASE, 'refs/heads/main'):
-        git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
+        fetch_revision(git, revision)
 
 
 def rejection(error):
@@ -157,7 +169,7 @@ except Exception as error:
 '''
 
 
-def enroll(source, approval):
+def enroll(source, approval, *, require_absent=False):
     import fcntl
     import pwd
 
@@ -171,6 +183,8 @@ def enroll(source, approval):
     revisions = ROOT / 'automation-controller/revisions'
     target, previous = revisions / source, revisions / PREVIOUS
     transaction_path = CONTROL / 'pilot-generation-transition.json'
+    if require_absent and os.path.lexists(transaction_path):
+        raise ValueError('EXISTING_TRANSITION_REQUIRES_REVIEW')
     with tempfile.TemporaryDirectory(prefix='gamerhq-pilot-generation-') as scratch:
         env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_GLOBAL': '/dev/null',
                'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
@@ -192,7 +206,7 @@ def enroll(source, approval):
                 raise ValueError('WORKFLOW_REGISTRATION_REQUIRED')
         progress('ARCHIVE_VERIFICATION')
         for pin in (manifest['candidate'], manifest['baseline']):
-            git('fetch', '--quiet', '--depth=1', REPOSITORY, pin['commit'])
+            fetch_revision(git, pin['commit'])
             if hashlib.sha256(git('archive', '--format=tar', pin['commit'])).hexdigest() != pin['archiveSha256']:
                 raise ValueError('ARCHIVE_PIN_REJECTED')
         progress('ENROLLMENT_HELPER')
@@ -252,6 +266,8 @@ def enroll(source, approval):
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o600:
                 raise ValueError('OPERATION_LOCK_REJECTED')
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if require_absent and os.path.lexists(transaction_path):
+                raise ValueError('EXISTING_TRANSITION_REQUIRES_REVIEW')
             if os.path.lexists(parent / 'access-revoked') or os.path.lexists(parent / 'tenant-pilot-cutover-v2.json'):
                 raise ValueError('GENERATION_ALREADY_IN_USE')
             paths = {'entry': revisions.parent / 'entry.py', 'policy': CONTROL / 'automation-policy.json',
@@ -261,6 +277,7 @@ def enroll(source, approval):
                                       private=name in {'profile', 'state'})
             progress('TRANSITION_VALIDATION')
             original_incident = module.checked(parent / 'tenant-pilot-cutover.json', uid, private=True)
+            initial_phase = 'ABSENT'
             if transaction_path.exists():
                 record = json.loads(module.checked(transaction_path))
                 if record.get('source') != source or record.get('incidentSha256') != hashlib.sha256(original_incident).hexdigest():
@@ -269,6 +286,7 @@ def enroll(source, approval):
                 original = {item['name']: bytes.fromhex(item['before']) for item in plan['files']}
                 if record.get('phase') not in {'PREPARED', 'COMMITTED'}:
                     raise ValueError('GENERATION_TRANSACTION_CHANGED')
+                initial_phase = record['phase']
                 if any(read(item['name']) not in ((bytes.fromhex(item['after']),) if record['phase'] == 'COMMITTED'
                                                  else (bytes.fromhex(item['before']), bytes.fromhex(item['after'])))
                        for item in plan['files'] if record['phase'] != 'COMMITTED' or item['name'] != 'state'):
@@ -351,6 +369,7 @@ def enroll(source, approval):
                     raise ValueError('INCIDENT_HISTORY_CHANGED')
                 return {'state': 'RECOVERED_PRIMARY_GENERATION_ENROLLED', 'alreadyEnrolled': True,
                         'controllerCommit': source, 'generation': generation.GENERATION['id'],
+                        'initialTransitionPhase': initial_phase,
                         'activationAuthorized': False, 'gatewayChanged': False, 'databaseChanged': False,
                         'productionChanged': False, 'verification': proof}
             progress('INCIDENT_ARCHIVE')
@@ -373,6 +392,7 @@ def enroll(source, approval):
             progress('TRANSITION_COMMIT')
             replace(transaction_path, generation.encode({**record, 'phase': 'COMMITTED', 'verification': proof}), 0, gid, 0o640)
     return {'state': 'RECOVERED_PRIMARY_GENERATION_ENROLLED', 'controllerCommit': source,
+            'initialTransitionPhase': initial_phase,
             'baselineHostCommit': generation.BASELINE_COMMIT, 'baselineImage': generation.BASELINE_IMAGE,
             'generation': generation.GENERATION['id'], 'transitionSha256': transition_digest,
             'incidentSha256': record['incidentSha256'], 'incidentPreserved': True, 'recoveryRequired': False,
@@ -385,9 +405,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--approval', required=True)
+    parser.add_argument('--require-absent-transition', action='store_true',
+                        help='Fresh enrollment only; fail closed if a marker exists at admission or under the lock.')
     args = parser.parse_args()
     try:
-        receipt = enroll(args.commit, args.approval)
+        options = {'require_absent': True} if args.require_absent_transition else {}
+        receipt = enroll(args.commit, args.approval, **options)
         print(json.dumps(receipt))
         if receipt.get('state') != 'RECOVERED_PRIMARY_GENERATION_ENROLLED':
             raise SystemExit(1)

@@ -6,6 +6,27 @@ on:
 permissions:
   contents: read
 jobs:
+  generation-enrollment:
+    # Entire installer runs as root against /tmp fixtures, never the VPS.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated test dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/enrollment-tests"
+          "$RUNNER_TEMP/enrollment-tests/bin/python" -m pip install -r requirements.lock -r requirements-dev.txt
+          "$RUNNER_TEMP/enrollment-tests/bin/python" -m pip install --no-deps -r requirements-skills.lock
+      - name: Rehearse exact enrollment, power loss, retry and immutable source rejection
+        run: |
+          set -euo pipefail
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin gamerhq-staging-bridge
+          sudo env GAMERHQ_PILOT_ENROLLMENT_E2E=true "$RUNNER_TEMP/enrollment-tests/bin/python" -m pytest -q tests/test_staging_pilot_enrollment_e2e.py
   scoped-identity:
     runs-on: ubuntu-latest
     timeout-minutes: 25

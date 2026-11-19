@@ -729,3 +729,43 @@ revision for checksum comparison, so it can corroborate the exact rejection and
 still preserve the live transition. Capture the receipt before preparing any
 retry. Optional sandbox probes check later prerequisites without executing the
 enrollment. Original enrollment source b808 remains unchanged and immutable.
+
+### Reviewed retry after owner-confirmed missing historical source
+
+The subsequent owner read-only receipt reports GENERATION_ENROLLMENT_DIAGNOSTICS,
+transition ABSENT, a clear recovery latch, healthy recovered Host 8f450533/image
+d308a43d, and valid directory, lock, sandbox, archive and workflow contracts. Its
+original-fetch rehearsal failed at INSTALLED_CONTROLLER with Git exit 128 for
+876805290ef454523f9b36f1f9fbf90c3ec64a17; the same read passed after an explicit
+fetch. This confirms the missing shallow dependency as the actual rejection.
+No transition was created; no sandbox or permission relaxation is warranted.
+
+Before any Git source read the corrected installer explicitly fetches its own
+immutable revision, installed overlay revision 8d8e067, retained legacy revision
+87680529, and registered main. Each immutable FETCH_HEAD must resolve to the
+exact requested commit; main is captured once and its workflow bytes must still
+match the sealed digests. Candidate 1899c6f and recovered baseline 8f450533 are
+separately fetched and verified against their unchanged archive checksums.
+The legacy worker HEAD is independently checked in its installed checkout.
+Missing objects, failed fetches, wrong fetched identity or altered content abort
+without falling back to ancestry assumptions or disabling byte comparisons.
+
+The fresh owner retry uses `--require-absent-transition`. It reads the marker
+condition at admission and again under the existing exclusive operation lock,
+before deployment metadata writes. If a marker now exists, it returns
+EXISTING_TRANSITION_REQUIRES_REVIEW; preserve that marker and stop. Success
+records initialTransitionPhase=ABSENT and RECOVERED_PRIMARY_GENERATION_ENROLLED.
+An interrupted transition remains resumable only with the same immutable source
+and the reviewed retry path (without the fresh-only flag), known before/after
+bytes, original incident, and newly verified baseline/backup proof. Never remove
+or retarget its marker to get a fresh enrollment through.
+
+The Linux root fixture CI executes the actual installer against temporary Git,
+root-owned controller files, staging-owned private state, both synthetic tenant
+databases and sealed historical backups. It exercises power loss after each of
+the four fsynced metadata writes, held entry execution, source-preserving resume,
+idempotent completion, unknown-state refusal, source-content rejection and a
+marker appearing before lock acquisition. Only external systemd/Discord/Docker
+baseline attestation is substituted; Git archives, immutable comparisons,
+ownership/modes, locking, SQLite checks and transaction writes are real. This is
+offline regression evidence, not VPS enrollment or pilot activation acceptance.
