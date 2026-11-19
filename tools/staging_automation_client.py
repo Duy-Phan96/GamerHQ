@@ -204,7 +204,7 @@ def main():
         result = perform(args.operation, release)
     if args.operation == 'tenant-acceptance':
         from tools.staging_automation.tenant_acceptance import unpack_receipt
-        result = unpack_receipt(result)
+        result = {**unpack_receipt(result), 'auditId': result.get('auditId'), 'operation': 'tenant-acceptance'}
     print(json.dumps(result))
     if args.operation == 'web-health' and result.get('state') == 'WEB_UNHEALTHY':
         raise SystemExit(1)
