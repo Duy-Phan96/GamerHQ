@@ -220,3 +220,25 @@ def test_enrollment_cli_reports_rejected_preflight_as_failure(monkeypatch, capsy
             installer.main()
         assert error.value.code == 1
     assert json.loads(capsys.readouterr().out)['state'] == state
+
+
+def test_root_policy_builder_needs_only_system_python_standard_library(tmp_path):
+    import shutil
+    module = tmp_path / 'staging_automation'
+    module.mkdir()
+    for name in ['__init__.py', 'policy.py', 'pilot_generation.py']:
+        shutil.copyfile(Path('tools/staging_automation') / name, module / name)
+    script = '''
+import json,sys
+sys.path.insert(0,sys.argv[1])
+from staging_automation.pilot_generation import generation_documents
+p=json.load(sys.stdin)
+result=generation_documents(*p[:4],source='e'*40,candidate=p[4],cutover_digest='a'*64,preparation_digest='b'*64)
+assert result[2]['recoveryRequired'] is False
+assert not any(name.split('.')[0] in {'hosts','database','discord','cryptography'} for name in sys.modules)
+print('SYSTEM_PYTHON_POLICY_BUILDER_PASS')
+'''
+    result = subprocess.run([sys.executable, '-I', '-S', '-c', script, str(tmp_path)],
+                            input=json.dumps(documents()), text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert 'SYSTEM_PYTHON_POLICY_BUILDER_PASS' in result.stdout

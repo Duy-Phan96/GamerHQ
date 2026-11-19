@@ -66,11 +66,13 @@ PROBE = r'''
 import json,os,sys
 sys.path[:0]=[sys.argv[1],sys.argv[1]+'/pilot-source', '/opt/gamerhq-staging/deployment-worker']
 from staging_automation.backend import HostBackend
+from staging_automation.policy import validate_policy
 from tools.staging_dispatch import environment
 from tools.staging_tenant_rehearsal import rehearsal_binding,verify_activation_checkpoint
 from tools.staging_automation.host_promotion import require_baseline_skill,require_runtime_lifecycle,retained_state
 packet=json.load(sys.stdin)
 profile,policy=packet['profile'],packet['policy']
+validate_policy(policy)
 values=environment();os.environ.clear();os.environ.update(values)
 backend=HostBackend(profile,policy)
 c=backend.inspect()
@@ -210,7 +212,8 @@ def enroll(source, approval):
                     current = json.loads(read('state'))
                     if (current.get('pilotGeneration') != generation.GENERATION['id']
                             or current.get('approvedImage') != generation.BASELINE_IMAGE
-                            or current.get('recoveryRequired') is not False):
+                            or current.get('recoveryRequired') is not False
+                            or current.get('enabled') is not True or current.get('bootstrapVerified') is not True):
                         raise ValueError('GENERATION_STATE_CHANGED')
             else:
                 original = {name: read(name) for name in paths}
@@ -228,8 +231,6 @@ def enroll(source, approval):
                     old_policy, old_profile, old_state, json.loads(original_incident), source=source, candidate=candidate,
                     cutover_digest=manifest['workflows']['staging-tenant-pilot-cutover.yml']['sha256'],
                     preparation_digest=manifest['workflows']['staging-tenant-pilot-activation-prepare.yml']['sha256'])
-                from staging_automation.policy import validate_policy
-                validate_policy(new_policy)
                 desired = {'entry': gate(target), 'policy': generation.encode(new_policy),
                            'profile': generation.encode(new_profile), 'state': generation.encode(new_state)}
                 # Entry goes first: after any state/policy write, old code cannot run.
