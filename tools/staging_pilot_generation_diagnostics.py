@@ -138,16 +138,20 @@ def selected_state(policy, profile, state):
             'cohortMatchesExpected': policy.get('tenantPilot') == COHORT}
 
 
-def unit_signals(raw):
+def unit_signals(raw, *, diagnostic_unit=None):
     """Allowlisted systemd failure facts, never journal messages or commands."""
     if len(raw.encode()) > 262144:
         return {'state': 'OUTPUT_LIMIT'}
     signals = []
+    def accepted(unit):
+        if not isinstance(unit, str):
+            return False
+        if diagnostic_unit is not None:
+            return bool(re.fullmatch(r'gamerhq-staging-diagnostic-[0-9a-f]{32}\.service', diagnostic_unit)) and unit == diagnostic_unit
+        return bool(re.fullmatch(r'gamerhq-staging-automation-generation-[0-9a-f]{32}\.service', unit))
     for line in raw.splitlines():
         event = document(line)
-        unit = next((event.get(key) for key in ['USER_UNIT', 'UNIT', '_SYSTEMD_USER_UNIT']
-                     if isinstance(event.get(key), str) and re.fullmatch(
-                         r'gamerhq-staging-automation-generation-[0-9a-f]{32}\.service', event[key])), None)
+        unit = next((event.get(key) for key in ['USER_UNIT', 'UNIT', '_SYSTEMD_USER_UNIT'] if accepted(event.get(key))), None)
         if unit is None:
             continue
         message = event.get('MESSAGE', '')
@@ -193,6 +197,15 @@ def sandbox_probes(account, environment):
                 'productionPathsInaccessible': facts.get('productionPathsInaccessible') is True,
                 'namespaceFailureObserved': any(text in stderr for text in (
                     '226/NAMESPACE', 'Failed to set up mount namespacing', 'Failed at step NAMESPACE'))}
+            if reply.returncode:
+                logs = subprocess.run(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i', *environment,
+                                       'journalctl', '--user', '--no-pager', '--since=-5m', '-n', '12', '--output=json',
+                                       '--unit=' + name + '.service'], text=True, capture_output=True, timeout=15)
+                evidence = unit_signals(logs.stdout, diagnostic_unit=name + '.service')
+                results[key]['unitSignals'] = evidence
+                if any(row['reason'] in {'SYSTEMD_NAMESPACE_FAILED', 'SYSTEMD_MOUNT_NAMESPACE_FAILED'}
+                       for row in evidence.get('signals', [])):
+                    results[key]['namespaceFailureObserved'] = True
         except (OSError, subprocess.SubprocessError):
             results[key] = {'state': 'UNAVAILABLE'}
     return results
@@ -319,6 +332,7 @@ def collect(expected, *, probe_user_sandbox=False):
                     **({'exitCode': error.returncode} if isinstance(error, subprocess.CalledProcessError) else {})}
         environment = ['PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=' + account.pw_dir,
                        'XDG_RUNTIME_DIR=/run/user/' + str(uid), 'DOCKER_HOST=unix:///run/user/' + str(uid) + '/docker.sock',
+                       'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus',
                        'DOCKER_CONFIG=/etc/gamerhq-staging/docker-client']
         try:
             answer = subprocess.run(['/usr/sbin/runuser', '-u', account.pw_name, '--', '/usr/bin/env', '-i', *environment,

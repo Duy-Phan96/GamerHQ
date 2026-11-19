@@ -183,6 +183,9 @@ def test_bounded_read_only_probes_isolate_namespace_failure_without_enrollment(m
     assert outcome['generationNamespaceProperties']['exitCode'] == 226
     assert 'private-credential' not in json.dumps(outcome)
     for command in calls:
+        if 'journalctl' in command:
+            assert any(item.startswith('--unit=gamerhq-staging-diagnostic-') for item in command)
+            continue
         assert 'systemd-run' in command
         assert '--property=RuntimeMaxSec=15s' in command
         assert command[-4:-1] == ['-S', '-B', '-c']
