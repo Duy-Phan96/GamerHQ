@@ -125,7 +125,9 @@ def test_proposed_recovery_workflow_changes_only_client_and_explicit_generation_
     changed = subprocess.check_output(['git', 'diff', '--name-only', previous, selected], cwd=root).decode().splitlines()
     assert changed == ['tools/staging_automation_client.py']
     actual = subprocess.check_output(['git', 'show', selected + ':tools/staging_automation_client.py'], cwd=root)
-    assert actual == (root / 'tools/staging_automation_client.py').read_text().encode()
+    # The enrolled cutover keeps its immutable client even when unrelated,
+    # separately protected operations extend the working-tree client later.
+    assert hashlib.sha256(actual).hexdigest() == 'fbeb2708c6bc443788a7dc83183040fd40b7a229467bcf6fd21c9af8fc0efce9'
 
 
 @pytest.mark.parametrize('operation', ['tenant-pilot-cutover', 'tenant-pilot-activation-prepare'])
