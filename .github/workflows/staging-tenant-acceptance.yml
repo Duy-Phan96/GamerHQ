@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: host-staging-automation
+  group: ${{ github.event_name == 'workflow_dispatch' && 'host-staging-automation' || format('tenant-acceptance-registration-{0}', github.event.pull_request.number) }}
   cancel-in-progress: false
 jobs:
   registration-check:
