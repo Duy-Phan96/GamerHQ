@@ -298,8 +298,12 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
             inventories[guild_id] = {row['id'] for group in ('channels', 'roles') for row in result['inventory'][group]}
             inventories[guild_id].update(row['resourceId'] for row in result['preview']['rows'] if row['kind'] == 'message' and row['resourceId'])
             blockers = sum(result['preview']['counts'][key] for key in ('Needs review','Blocked','Will create','Will reuse'))
-            status = 'FAIL' if not stable or result['lifecycleMismatches'] or result['preview']['foreignLifecycleRows'] or blockers else 'PASS'
+            selected = result['preview']['journal']['state'] != 'ABSENT'
+            template_status = 'UNVERIFIED' if not selected else 'FAIL' if blockers else 'PASS'
+            status = ('FAIL' if not stable or result['lifecycleMismatches'] or result['preview']['foreignLifecycleRows'] or template_status == 'FAIL'
+                      else 'UNVERIFIED' if not selected or any(row['runtime']['status'] == 'UNVERIFIED' for row in result['skills']) else 'PASS')
             receipts.append({'guildId': str(guild_id), 'status': status, 'previewStable': stable,
+                             'templateAcceptance': {'status': template_status, 'selected': selected},
                              'previewFingerprints': [fingerprint(value) for value in passes], **result})
         except Exception as error:
             known = {'FOREIGN_RESOURCE_REJECTED', 'UNVERIFIED_PARENT_REJECTED', 'GUILD_IDENTITY_REJECTED',
@@ -309,7 +313,7 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
             reason = error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in known else 'COLLECTION_UNAVAILABLE'
             status = getattr(error, 'status', None)
             if type(status) is int and 300 <= status <= 599:
-                reason = 'DISCORD_READ_REJECTED'
+                reason = 'HOST_SKILL_READ_REJECTED' if reason == 'HOST_SKILL_READ_REJECTED' else 'DISCORD_READ_REJECTED'
             if reason == 'READ_ONLY_REQUEST_REJECTED':
                 denied.append('HTTP')
             receipts.append({'guildId': str(guild_id), 'status': 'UNVERIFIED', 'reason': reason,

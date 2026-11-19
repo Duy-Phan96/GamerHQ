@@ -76,6 +76,8 @@ def test_actual_two_guild_previews_are_stable_private_and_do_not_write(cohort):
         assert row.get('previewStable') is True, row
         assert row['preview']['staff']['verified'] is False
         assert row['preview']['journal']['state'] == 'ABSENT'
+        assert row['templateAcceptance'] == {'status':'UNVERIFIED','selected':False}
+        assert row['status'] == 'UNVERIFIED'
         assert row['skills'][0]['runtime']['status'] == 'UNVERIFIED'
         assert not row['foreignMappings']
     encoded = json.dumps(result)
@@ -274,3 +276,12 @@ def test_read_only_schema_metadata_remains_available_to_existing_helpers(cohort)
     with cohort.scope(1),acceptance.readonly_snapshot() as connection:
         assert connection.execute('PRAGMA table_info(settings)').fetchall()
         assert connection.execute('PRAGMA query_only').fetchone()[0]==1
+
+
+def test_host_api_failure_keeps_exact_stage_and_http_status_without_body(cohort):
+    from tools.tenant_acceptance_collect import AcceptanceReadError
+    result=asyncio.run(acceptance.collect(cohort,100,async_model,
+                      AsyncMock(side_effect=AcceptanceReadError('HOST_SKILL_READ_REJECTED',403))))
+    assert result['guilds'][0]['stage']=='HOST_SKILL_STATE'
+    assert result['guilds'][0]['reason']=='HOST_SKILL_READ_REJECTED'
+    assert result['guilds'][0]['httpStatus']==403

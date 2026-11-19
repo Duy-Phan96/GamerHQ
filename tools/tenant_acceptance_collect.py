@@ -26,6 +26,12 @@ from services.tenant_acceptance import collect, fingerprint, guard_probes
 MAX_BODY = 2 * 1024**2
 
 
+class AcceptanceReadError(ValueError):
+    def __init__(self, reason, status):
+        super().__init__(reason)
+        self.status = status
+
+
 class ReadOnlyDiscord:
     def __init__(self, session, token, application, cohort):
         self.session, self.token, self.application = session, token, application
@@ -144,7 +150,7 @@ async def gather(packet):
         async def load_skills(guild_id):
             status, body = await host_get(guild_id, guild_id)
             if status != 200:
-                raise ValueError('HOST_SKILL_READ_REJECTED')
+                raise AcceptanceReadError('HOST_SKILL_READ_REJECTED', status)
             return body['skills']
 
         result = await collect(store, application, load_guild, load_skills)
