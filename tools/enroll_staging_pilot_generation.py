@@ -25,6 +25,49 @@ PREVIOUS = '8d8e067463123f0b847d9daf7d5dd70a854a5930'
 APPROVAL = 'ENROLL RECOVERED PRIMARY ONLY PILOT GENERATION'
 MANIFEST = 'deploy/staging/tenant-pilot-generation.json'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
+STAGES = ('OWNER_CHECK', 'SOURCE_FETCH', 'SOURCE_SELF_VERIFICATION', 'WORKFLOW_REGISTRATION',
+          'ARCHIVE_VERIFICATION', 'ENROLLMENT_HELPER', 'INSTALLED_DIRECTORIES', 'INSTALLED_WORKER',
+          'INSTALLED_CONTROLLER', 'BUNDLE_STAGING', 'BASELINE_PIN', 'OPERATION_LOCK',
+          'TRANSITION_VALIDATION', 'BASELINE_STATE', 'GENERATION_DOCUMENTS', 'INCIDENT_VERIFICATION',
+          'BASELINE_PROBE', 'INCIDENT_ARCHIVE', 'TRANSITION_PREPARE', 'TRANSITION_APPLY', 'TRANSITION_COMMIT')
+_stage_trace = []
+REJECTIONS = frozenset('''OWNER_APPROVAL_REQUIRED IMMUTABLE_SOURCE_REQUIRED INSTALLER_SOURCE_MISMATCH
+WORKFLOW_REGISTRATION_REQUIRED ARCHIVE_PIN_REJECTED PROTECTED_DIRECTORY_REQUIRED PROTECTED_FILE_REQUIRED
+LEGACY_WORKER_MISMATCH CONTROLLER_SOURCE_MISMATCH IMMUTABLE_EXTENSION_CHANGED SOURCE_PATH_REJECTED
+SOURCE_LIMIT BASELINE_PIN_REJECTED COHORT_PIN_REJECTED WORKER_DIRECTORY_REJECTED OPERATION_LOCK_REJECTED
+GENERATION_ALREADY_IN_USE GENERATION_TRANSACTION_CHANGED GENERATION_STATE_CHANGED ENROLLED_CONTROLLER_REQUIRED
+PREVIOUS_GENERATION_CHANGED COMPLETED_INCIDENT_REQUIRED REVIEWED_RECOVERY_JOURNAL_REQUIRED
+INCIDENT_BACKUP_REJECTED PROBE_OUTPUT_LIMIT INCIDENT_HISTORY_CHANGED RECOVERY_REQUIRES_OWNER
+PILOT_CHECKPOINT_REJECTED IMMUTABLE_RELEASE_CHANGED'''.split())
+
+
+def progress(stage):
+    if stage not in STAGES:
+        raise ValueError('UNCLASSIFIED_REJECTED')
+    _stage_trace.append(stage)
+
+
+def rejection(error):
+    """No exception text, command, subprocess output or private value is logged."""
+    code = getattr(error, 'code', None)
+    value = error.args[0] if error.args else None
+    reason = code if isinstance(code, str) and code in REJECTIONS else (
+        value if isinstance(value, str) and value in REJECTIONS else 'VALIDATION_REJECTED')
+    evidence = {}
+    if isinstance(error, subprocess.TimeoutExpired):
+        reason = 'SUBPROCESS_TIMED_OUT'
+    elif isinstance(error, subprocess.SubprocessError):
+        reason = 'SUBPROCESS_REJECTED'
+        if isinstance(error, subprocess.CalledProcessError) and type(error.returncode) is int:
+            evidence['exitCode'] = max(-255, min(255, error.returncode))
+    elif isinstance(error, OSError):
+        reason = 'FILESYSTEM_REJECTED'
+        if type(error.errno) is int and 0 < error.errno <= 4096:
+            evidence['errno'] = error.errno
+    return {'state': 'GENERATION_ENROLLMENT_REJECTED',
+            'stage': _stage_trace[-1] if _stage_trace else 'INITIALIZING',
+            'completedStages': _stage_trace[:-1], 'rejectionReason': reason,
+            'activationAuthorized': False, **evidence}
 
 
 def gate(target):
@@ -110,6 +153,7 @@ def enroll(source, approval):
     import fcntl
     import pwd
 
+    progress('OWNER_CHECK')
     if os.geteuid() != 0 or approval != APPROVAL:
         raise ValueError('OWNER_APPROVAL_REQUIRED')
     if not re.fullmatch('[0-9a-f]{40}', source):
@@ -125,36 +169,45 @@ def enroll(source, approval):
         def git(*args):
             return subprocess.run(['git', '-C', scratch, '-c', 'gc.auto=0', *args], env=env,
                                   check=True, capture_output=True, timeout=180).stdout
+        progress('SOURCE_FETCH')
         git('init', '--quiet')
         for revision in (source, PREVIOUS, 'refs/heads/main'):
             git('fetch', '--quiet', '--depth=1', REPOSITORY, revision)
+        progress('SOURCE_SELF_VERIFICATION')
         if git('show', source + ':tools/enroll_staging_pilot_generation.py') != Path(__file__).read_bytes():
             raise ValueError('INSTALLER_SOURCE_MISMATCH')
         manifest = json.loads(git('show', source + ':' + MANIFEST))
         main = git('rev-parse', 'FETCH_HEAD').strip().decode()
+        progress('WORKFLOW_REGISTRATION')
         for name, pin in manifest['workflows'].items():
             body = git('show', main + ':.github/workflows/' + name)
             if hashlib.sha256(body).hexdigest() != pin['sha256'] or ('ref: ' + pin['client'] + '\n').encode() not in body:
                 raise ValueError('WORKFLOW_REGISTRATION_REQUIRED')
+        progress('ARCHIVE_VERIFICATION')
         for pin in (manifest['candidate'], manifest['baseline']):
             git('fetch', '--quiet', '--depth=1', REPOSITORY, pin['commit'])
             if hashlib.sha256(git('archive', '--format=tar', pin['commit'])).hexdigest() != pin['archiveSha256']:
                 raise ValueError('ARCHIVE_PIN_REJECTED')
+        progress('ENROLLMENT_HELPER')
         module = types.ModuleType('verified_enrollment')
         module.__file__ = str(Path(scratch) / 'verified_enrollment.py')
         exec(compile(git('show', source + ':tools/enroll_staging_tenant_preview.py'), module.__file__, 'exec'), module.__dict__)
+        progress('INSTALLED_DIRECTORIES')
         for folder in (ROOT, CONTROL, revisions.parent, revisions, previous):
             module.directory(folder)
+        progress('INSTALLED_WORKER')
         if git('-c', 'safe.directory=' + str(ROOT / 'deployment-worker'), '-C', str(ROOT / 'deployment-worker'),
                'rev-parse', 'HEAD').strip().decode() != module.WORKER:
             raise ValueError('LEGACY_WORKER_MISMATCH')
         # Verify the actually enrolled mixed immutable bundle, not just its Git label.
+        progress('INSTALLED_CONTROLLER')
         overlays = module.OVERLAY | {'pilot_activation.py', 'pilot_cutover.py', 'recovery_api_repair.py'}
         for member in (previous / 'staging_automation').iterdir():
             relative = module.SOURCE_PATHS.get(member.name, 'tools/staging_automation/' + member.name)
             expected = PREVIOUS if member.name in overlays else module.PREVIOUS
             if module.checked(member) != git('show', expected + ':' + relative):
                 raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+        progress('BUNDLE_STAGING')
         for folder in (target, target / 'staging_automation', target / 'pilot-source'):
             module.directory(folder, gid)
         archive = Path(scratch) / 'source.tar'
@@ -174,11 +227,13 @@ def enroll(source, approval):
             subprocess.run(['/usr/sbin/restorecon', '-RF', str(target)], check=True, capture_output=True, timeout=45)
         sys.path.insert(0, str(target))
         from staging_automation import pilot_generation as generation
+        progress('BASELINE_PIN')
         if manifest['baseline'] != {'commit': generation.BASELINE_COMMIT, 'archiveSha256': generation.BASELINE_ARCHIVE,
                                     'image': generation.BASELINE_IMAGE, 'ciRun': manifest['baseline']['ciRun']}:
             raise ValueError('BASELINE_PIN_REJECTED')
         if json.loads(git('show', source + ':deploy/staging/tenant-pilot-binding.json')) != generation.COHORT:
             raise ValueError('COHORT_PIN_REJECTED')
+        progress('OPERATION_LOCK')
         parent = ROOT / 'worker'
         info = parent.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o022:
@@ -195,6 +250,7 @@ def enroll(source, approval):
             def read(name):
                 return module.checked(paths[name], uid if name in {'profile', 'state'} else 0,
                                       private=name in {'profile', 'state'})
+            progress('TRANSITION_VALIDATION')
             original_incident = module.checked(parent / 'tenant-pilot-cutover.json', uid, private=True)
             if transaction_path.exists():
                 record = json.loads(module.checked(transaction_path))
@@ -216,6 +272,7 @@ def enroll(source, approval):
                             or current.get('enabled') is not True or current.get('bootstrapVerified') is not True):
                         raise ValueError('GENERATION_STATE_CHANGED')
             else:
+                progress('BASELINE_STATE')
                 original = {name: read(name) for name in paths}
                 old_policy, old_profile, old_state = [json.loads(original[key]) for key in ('policy', 'profile', 'state')]
                 if old_policy.get('controllerCommit') != PREVIOUS or original['entry'] != module.renderer(previous, recovery_completion=True):
@@ -226,6 +283,7 @@ def enroll(source, approval):
                         or old_profile.get('baseImage') != old_state.get('approvedImage')
                         or old_profile.get('hostSourceCommit') != module.WORKER):
                     raise ValueError('PREVIOUS_GENERATION_CHANGED')
+                progress('GENERATION_DOCUMENTS')
                 candidate = {**manifest['candidate'], 'baselineCiRun': manifest['baseline']['ciRun']}
                 new_policy, new_profile, new_state = generation.generation_documents(
                     old_policy, old_profile, old_state, json.loads(original_incident), source=source, candidate=candidate,
@@ -238,6 +296,7 @@ def enroll(source, approval):
                                   for name in ('entry', 'profile', 'state', 'policy')]}
                 record = {'phase': 'PREPARED', 'source': source, 'plan': plan,
                           'incidentSha256': hashlib.sha256(original_incident).hexdigest()}
+            progress('INCIDENT_VERIFICATION')
             desired = {item['name']: bytes.fromhex(item['after']) for item in plan['files']}
             original_state = json.loads(original['state'])
             incident = json.loads(original_incident)
@@ -265,13 +324,14 @@ def enroll(source, approval):
                        '--property=ReadWritePaths=' + str(ROOT / 'worker') + ' ' + str(ROOT / 'backups'),
                        '--property=RestrictSUIDSGID=yes', '--property=RuntimeMaxSec=300s',
                        str(ROOT / 'deployment-worker/.venv/bin/python'), '-I', '-B', '-c', PROBE, str(target)]
+            progress('BASELINE_PROBE')
             result = subprocess.run(command, input=json.dumps({'profile': probe_profile, 'policy': probe_policy,
                                       'image': generation.BASELINE_IMAGE}), text=True, capture_output=True, check=True, timeout=330)
             if len(result.stdout) > 16384:
                 raise ValueError('PROBE_OUTPUT_LIMIT')
             proof = json.loads(result.stdout)
             if proof.get('state') != 'GENERATION_BASELINE_VERIFIED':
-                return {'state': 'GENERATION_PREFLIGHT_REJECTED', 'diagnostic': proof,
+                return {'state': 'GENERATION_PREFLIGHT_REJECTED', 'stage': 'BASELINE_PROBE', 'diagnostic': proof,
                         'activationAuthorized': False, 'gatewayChanged': False, 'databaseChanged': False,
                         'productionChanged': False, 'policyChanged': False}
             if record['phase'] == 'COMMITTED':
@@ -284,6 +344,7 @@ def enroll(source, approval):
                         'controllerCommit': source, 'generation': generation.GENERATION['id'],
                         'activationAuthorized': False, 'gatewayChanged': False, 'databaseChanged': False,
                         'productionChanged': False, 'verification': proof}
+            progress('INCIDENT_ARCHIVE')
             archive_path = CONTROL / 'pilot-generation-incident.json'
             historical = generation.encode({'incidentHex': original_incident.hex(),
                                               'policyHex': original['policy'].hex(), 'profileHex': original['profile'].hex(),
@@ -291,13 +352,16 @@ def enroll(source, approval):
             if archive_path.exists() and module.checked(archive_path) != historical:
                 raise ValueError('INCIDENT_HISTORY_CHANGED')
             replace(archive_path, historical, 0, gid, 0o640)
+            progress('TRANSITION_PREPARE')
             replace(transaction_path, generation.encode(record), 0, gid, 0o640)
             def write(name, body):
                 replace(paths[name], body, uid if name in {'state', 'profile'} else 0, gid,
                         0o600 if name in {'state', 'profile'} else 0o640)
+            progress('TRANSITION_APPLY')
             transition_digest = generation.transition(plan, read, write)
             if module.checked(parent / 'tenant-pilot-cutover.json', uid, private=True) != original_incident:
                 raise ValueError('INCIDENT_HISTORY_CHANGED')
+            progress('TRANSITION_COMMIT')
             replace(transaction_path, generation.encode({**record, 'phase': 'COMMITTED', 'verification': proof}), 0, gid, 0o640)
     return {'state': 'RECOVERED_PRIMARY_GENERATION_ENROLLED', 'controllerCommit': source,
             'baselineHostCommit': generation.BASELINE_COMMIT, 'baselineImage': generation.BASELINE_IMAGE,
@@ -308,6 +372,7 @@ def enroll(source, approval):
 
 
 def main():
+    _stage_trace.clear()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--approval', required=True)
@@ -317,8 +382,9 @@ def main():
         print(json.dumps(receipt))
         if receipt.get('state') != 'RECOVERED_PRIMARY_GENERATION_ENROLLED':
             raise SystemExit(1)
-    except (ValueError, OSError, subprocess.SubprocessError):
-        raise SystemExit('Pilot generation enrollment rejected; no activation authorized. Retain the protected transition for reviewed retry.') from None
+    except Exception as error:
+        print(json.dumps(rejection(error)))
+        raise SystemExit(1) from None
 
 
 if __name__ == '__main__':

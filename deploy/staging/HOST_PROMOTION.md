@@ -664,3 +664,49 @@ healthy owning container as UID/GID 10001:10001. The subsequent Discord/artifact
 checks retain daemon/config validation but suppress the temporary `:Z` storage
 probe: binding the same live data into another private SELinux container could
 relabel it. No visibility, mount access or storage permission check is removed.
+
+
+### Investigating the rejected b808b5b enrollment
+
+The owner received only the original installer's catch-all rejection sentence.
+At b808b5b, main discarded ValueError codes, filesystem errno and subprocess
+exit status. That sentence proves an exception reached the handler; it does not
+identify a check or prove that a protected transition exists.
+
+Authenticated read-only status
+[44526109875](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44526109875)
+confirms the old 8d8e067 controller is still selected, the original journal is
+PILOT_ROLLED_BACK, and recoveryRequired=false. This does not establish whether
+the root-owned generation transition is absent, PREPARED or COMMITTED. The old
+restricted operation set does not expose that file. Do not rerun enrollment or
+change its source pin, entry, marker or private state based on this sentence.
+
+The installer now reports an allowlisted stage, completed earlier stages, a
+specific safe rejection code, errno or exit status. It omits raw exceptions,
+commands, subprocess output, paths from errors, tokens and private plan bytes.
+The transition algorithm and all authorization/source-integrity checks remain
+unchanged. Reporting improvements are repository code, not live enrollment.
+
+`tools/staging_pilot_generation_diagnostics.py` is an ephemeral owner reader for
+the exact original b808b5b source. It takes the existing operation lock shared,
+observes protected metadata without reading unsafe-mode files, compares current
+bytes to sealed before/after hashes, and independently checks public workflow,
+archive, legacy-worker and mixed controller-source evidence. It never invokes
+enrollment, imports the old installer, writes protected files, opens tenant DBs,
+changes the latch, or starts/stops a Docker container. It retains partial receipt
+facts if public Git evidence is unavailable.
+
+The receipt also extracts only known systemd failure signals from the original
+generation units and reports configured protection on the existing user manager.
+With `--probe-user-sandbox`, two bounded read-only standard-library Python probes
+compare inherited protection with the exact generation namespace properties.
+They inspect access booleans only; they do not read Production files, credentials
+or SQLite, and cannot execute enrollment/Gateway code. The probes use distinct
+diagnostic unit names so their results cannot masquerade as the original failure.
+Do not infer a namespace defect from source review alone: require actual unit
+signals/probe results before changing any property or preparing a retry.
+
+Return only the public JSON receipt. Its transition phase and recognized/unknown
+byte states determine the reviewed next step. Preserve the original marker,
+incident archive, both tenant DBs and already staged source. A new diagnostic
+commit is not permission to retarget an existing immutable transition to it.
