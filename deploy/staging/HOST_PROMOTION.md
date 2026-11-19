@@ -658,3 +658,9 @@ container rollback. Only then queue cutover with deployment-security owner revie
 At execution require another fresh stopped-write dual checkpoint and restores.
 First Servertest template application remains a separate explicit confirmation.
 No new pilot run is ready or queued merely because source CI is green.
+
+Live preview and preparation storage access is verified inside the inspected,
+healthy owning container as UID/GID 10001:10001. The subsequent Discord/artifact
+checks retain daemon/config validation but suppress the temporary `:Z` storage
+probe: binding the same live data into another private SELinux container could
+relabel it. No visibility, mount access or storage permission check is removed.

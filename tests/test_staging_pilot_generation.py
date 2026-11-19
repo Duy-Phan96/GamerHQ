@@ -242,3 +242,26 @@ print('SYSTEM_PYTHON_POLICY_BUILDER_PASS')
                             input=json.dumps(documents()), text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert 'SYSTEM_PYTHON_POLICY_BUILDER_PASS' in result.stdout
+
+
+@pytest.mark.parametrize('failure', [None, 'stopped', 'denied'])
+def test_live_storage_preflight_never_rebinds_or_relabels_existing_data(failure):
+    from unittest.mock import Mock
+    from tools.staging_automation.backend import verify_live_storage
+    container = {'Id': 'a' * 64, 'State': {'Running': failure != 'stopped', 'Health': {'Status': 'healthy'}},
+                 'ProcessLabel': 'synthetic-accepted-mcs'}
+    run = Mock(side_effect=Denied('HOST_OPERATION_FAILED') if failure == 'denied' else None)
+    before = copy.deepcopy(container)
+    if failure:
+        with pytest.raises(Denied):
+            verify_live_storage(SimpleNamespace(run=run), container)
+    else:
+        verify_live_storage(SimpleNamespace(run=run), container)
+    assert container == before
+    if failure == 'stopped':
+        run.assert_not_called()
+    else:
+        command = run.call_args.args[0]
+        assert command[:5] == ['docker', 'exec', '--user', '10001:10001', container['Id']]
+        assert command[-3:] == ['/app/runtime/data', '/app/runtime/data/gamerhq.db', '/app/backups']
+        assert '--volume' not in command and '--mount' not in command

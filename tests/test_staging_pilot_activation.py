@@ -97,7 +97,8 @@ def test_protected_preparation_builds_and_probes_without_live_apply(checkpoint, 
     profile = {'environment': 'staging', 'stagingGuildId': '1', 'stagingBotId': '90', 'productionBotId': '99',
                'productionGuildId': '3', 'service': 'gamerhq-staging', 'database': path / 'primary.sqlite',
                'backupRoot': path, 'releaseFile': release}
-    backend = SimpleNamespace(policy=policy, profile=profile, inspect=lambda: {'Image': original['baselineImage'], 'Id': 'baseline'},
+    backend = SimpleNamespace(policy=policy, profile=profile, inspect=lambda: {'Image': original['baselineImage'], 'Id': 'baseline',
+                              'State': {'Running': True, 'Health': {'Status': 'healthy'}}},
                               health=lambda: {'state': 'HOST_READY'}, run=Mock(return_value='PASS'),
                               skill=lambda: {'version': '0.1.2', 'state': {'installed': True, 'configured': True, 'enabled': False}})
     rollback = Mock()
@@ -117,11 +118,12 @@ def test_protected_preparation_builds_and_probes_without_live_apply(checkpoint, 
     assert result['backupReceiptSha256'] == proof['backupReceiptSha256']
     assert result['containerRollbackRehearsal'] == 'PASS'
     rollback.assert_called_once_with(backend, original['baselineImage'], image)
-    assert verify_remote.call_args.kwargs == {'approved_pilot': (1, 2), 'read_only_artifacts': True}
+    assert verify_remote.call_args.kwargs == {'approved_pilot': (1, 2), 'read_only_artifacts': True, 'probe_storage': False}
     calls = [call.args[0] for call in backend.run.call_args_list]
-    assert len(calls) == 2
-    assert all(argv[:5] == ['docker', 'run', '--rm', '--network', 'none'] and '--volume' not in argv for argv in calls)
-    assert '--env' in calls[0] and '--env' not in calls[1]
+    assert len(calls) == 3
+    assert calls[0][:4] == ['docker', 'exec', '--user', '10001:10001']
+    assert all(argv[:5] == ['docker', 'run', '--rm', '--network', 'none'] and '--volume' not in argv for argv in calls[1:])
+    assert '--env' in calls[1] and '--env' not in calls[2]
 
 
 def test_preparation_session_returns_current_permission_failure_without_build():

@@ -114,7 +114,9 @@ def prepare(backend, preview, approved_image, *, now, read=github):
             raise Denied(code if code in {'PILOT_PREVIEW_EXPIRED', 'PILOT_BASELINE_CHANGED'} else 'PILOT_CHECKPOINT_REJECTED') from None
 
     recheck(now)
-    verify_remote(profile, approved_pilot=cohort, read_only_artifacts=True)
+    from .backend import verify_live_storage
+    verify_live_storage(backend, container)
+    verify_remote(profile, approved_pilot=cohort, read_only_artifacts=True, probe_storage=False)
     release = json.loads(Path(profile['releaseFile']).read_text())
     runtime = backend.skill()
     require_baseline_skill(release, runtime['version'])

@@ -19,6 +19,16 @@ class HealthDockerDenied(Denied):
         self.status = None
 
 
+def verify_live_storage(backend, container):
+    """Check access as the owning container UID without relabeling live mounts."""
+    if (container.get('State', {}).get('Running') is not True
+            or container['State'].get('Health', {}).get('Status') != 'healthy'):
+        raise Denied('HOST_NOT_HEALTHY')
+    backend.run(['docker', 'exec', '--user', '10001:10001', container['Id'], 'python', '-I', '-B', '-c',
+                 'import os,sys; sys.exit(not all(os.access(p,os.R_OK|os.W_OK) for p in sys.argv[1:]))',
+                 '/app/runtime/data', '/app/runtime/data/gamerhq.db', '/app/backups'])
+
+
 class HostBackend:
     def __init__(self, profile, policy):
         self.profile, self.policy = profile, policy
@@ -128,16 +138,17 @@ class HostBackend:
         if approved is None:
             raise Denied('OPERATION_NOT_ALLOWED')
         self.storage_budget()
-        try:
-            proof = verify_remote(proof_profile, approved_pilot=approved, read_only_artifacts=True)
-        except GuildCorePermissionsError as error:
-            return {'state': 'PILOT_CORE_PERMISSIONS_REJECTED', 'guildId': str(error.guild_id),
-                    'missingPermissions': error.missing, 'gatewayStarted': False}
-        if self.health()['state'] != 'HOST_READY':
-            raise Denied('HOST_NOT_READY')
         container = self.inspect()
         if container['Image'] != expected_image:
             raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
+        if self.health()['state'] != 'HOST_READY':
+            raise Denied('HOST_NOT_READY')
+        verify_live_storage(self, container)
+        try:
+            proof = verify_remote(proof_profile, approved_pilot=approved, read_only_artifacts=True, probe_storage=False)
+        except GuildCorePermissionsError as error:
+            return {'state': 'PILOT_CORE_PERMISSIONS_REJECTED', 'guildId': str(error.guild_id),
+                    'missingPermissions': error.missing, 'gatewayStarted': False}
         binding = rehearsal_binding(proof_profile, self.policy, container)
         primary = int(self.profile['stagingGuildId'])
         source = Path(self.profile['database']).resolve(strict=True)

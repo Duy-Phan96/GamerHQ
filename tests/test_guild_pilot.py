@@ -555,7 +555,10 @@ def test_protected_controller_seals_both_live_snapshot_probes_only_on_success(pi
     backend = HostBackend(profile, policy)
     monkeypatch.setattr(backend, "policy_integrity", lambda: None)
     monkeypatch.setattr(backend, "health", lambda: {"state": "HOST_READY"})
-    monkeypatch.setattr(backend, "inspect", lambda: {"Id": "b" * 64, "Image": image, "Config": {"Labels": {"org.opencontainers.image.revision": "1" * 40}}})
+    monkeypatch.setattr(backend, "inspect", lambda: {"Id": "b" * 64, "Image": image,
+                        "State": {"Running": True, "Health": {"Status": "healthy"}},
+                        "Config": {"Labels": {"org.opencontainers.image.revision": "1" * 40}}})
+    monkeypatch.setattr(backend, "run", MagicMock(return_value=''))
     verify = MagicMock(return_value={"verified": True, "gatewayStarted": False})
     monkeypatch.setattr(skill_staging, "verify_remote", verify)
 
