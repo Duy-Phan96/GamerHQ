@@ -12,7 +12,7 @@ from tools.staging_automation.backend import HostBackend
 from tools.staging_automation.host_promotion import ARCHIVE_SHA256, COMMIT, build_overlay, source_commit
 
 
-def quiesced_checkpoint_smoke(backend, root, image, fallback):
+def quiesced_checkpoint_smoke(backend, root, image, fallback, *, next_generation=False):
     from database import db
     from database.tenants import GuildTenantStore
     from tools.staging_tenant_rehearsal import retain_quiesced
@@ -42,12 +42,25 @@ def quiesced_checkpoint_smoke(backend, root, image, fallback):
     profile = {'environment': 'staging', 'stagingGuildId': '1', 'stagingBotId': '90', 'productionGuildId': '3',
                'productionBotId': '99', 'service': 'gamerhq-staging', 'database': str(primary),
                'backupRoot': str(backups), 'workRoot': str(root)}
+    extra = []
+    if next_generation:
+        from services.tenant_routing import PILOT_ENV
+        from tools.staging_automation import pilot_generation as generation
+        from tools.staging_tenant_rehearsal import baseline_override
+        policy.update(tenantPilotGeneration=generation.GENERATION,
+                      tenantPilotActivation={'commit': 'd' * 40},
+                      tenantPilotCutover={'fallback': {'commit': baseline, 'archiveSha256': 'f' * 64}})
+        policy['hostPromotion']['archiveSha256'] = 'f' * 64
+        profile['pilotGeneration'] = generation.GENERATION['id']
+        value = baseline_override({**profile, 'tenantPilot': policy['tenantPilot']}, policy, image)
+        extra = ['--env', PILOT_ENV + '=' + value['services'][profile['service']]['environment'][PILOT_ENV]]
+        (root / 'tenant-pilot-cutover.json').write_bytes(b'preserved terminal incident')
     fixture = HostBackend(profile, policy)
     try:
         container = backend.run(['docker', 'run', '-d', '--name', name, '--network', 'none', '--read-only',
                                  '--label', 'org.opencontainers.image.revision=' + baseline,
                                  '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--user', '10001:10001',
-                                 '--pids-limit', '32', '--memory', '128m', '--entrypoint', 'python', image,
+                                 '--pids-limit', '32', '--memory', '128m', *extra, '--entrypoint', 'python', image,
                                  '-I', '-B', '-c', 'import time; time.sleep(90)'])
         backend.run(['docker', 'stop', '--time', '2', name])
         fixture.inspect = lambda: json.loads(backend.run(['docker', 'inspect', name]))[0]
@@ -59,6 +72,9 @@ def quiesced_checkpoint_smoke(backend, root, image, fallback):
         backend.run(['docker', 'rm', '--force', name])
     recovery_health_smoke(backend, profile, policy, image, fallback, container, receipt)
     assert (primary.read_bytes(), secondary.read_bytes()) == before
+    if next_generation:
+        assert (root / 'tenant-pilot-cutover.json').read_bytes() == b'preserved terminal incident'
+        print('PILOT_GENERATION_BASELINE_ROLLBACK_PASS')
 
 
 def recovery_health_smoke(docker, profile, policy, baseline, fallback, baseline_container, receipt):
@@ -70,20 +86,22 @@ def recovery_health_smoke(docker, profile, policy, baseline, fallback, baseline_
     from tools.staging_automation.pilot_cutover import PilotCutover, digest
     from tools.staging_automation.policy import Denied
     from tools.staging_health import verified_skill_health
-    from tools.staging_tenant_rehearsal import startup_override
+    from tools.staging_tenant_rehearsal import startup_override, baseline_override
 
     root = Path(profile['workRoot'])
     release = root / 'fixture-release.json'
     release.write_text(json.dumps({'version': '0.1.2', 'reviewedCommit': host_promotion.BASELINE_SKILL_COMMIT,
                                    'sha256': host_promotion.BASELINE_SKILL_SHA256}))
     profile = {**profile, 'releaseFile': str(release), 'healthSecretEnv': 'GAMERHQ_CI_WATCHDOG_KEY'}
-    policy = {**policy, 'tenantPilotCutover': {}}
+    policy = {**policy, 'tenantPilotCutover': policy.get('tenantPilotCutover', {})}
     binding = {**profile, 'tenantPilot': policy['tenantPilot']}
     candidate = 'sha256:' + '2' * 64  # The candidate is ineligible in recovery mode.
     fixture_label = 'gamerhq-recovery-ci-' + uuid.uuid4().hex
     prepared = {'candidateImage': candidate, 'fallbackImage': fallback,
                 'startupOverrideSha256': digest(startup_override(binding, policy, candidate)),
                 'fallbackStartupOverrideSha256': digest(startup_override(binding, policy, fallback, primary_only=True))}
+    if 'tenantPilotGeneration' in policy:
+        prepared['generation'] = policy['tenantPilotGeneration']['id']
     service = """
 import asyncio,json,os,sys
 from pathlib import Path
@@ -165,7 +183,7 @@ asyncio.run(run())
     backend.cutover_tenant_pilot = lambda *_, recovery_only: transaction.run(recovery_only=recovery_only)
     captured = int(time.time())
     checkpoint = {**receipt, 'capturedAt': captured, 'baselineHostCommit': policy['hostPromotion']['commit'],
-                  'baselineImage': baseline, 'startupOverrideSha256': digest(startup_override(binding, policy, baseline))}
+                  'baselineImage': baseline, 'startupOverrideSha256': digest(baseline_override(binding, policy, baseline))}
     transaction.save({'binding': transaction.binding, 'baselineContainer': baseline_container,
                       'activationRun': 'original', 'checkpoint': checkpoint}, 'ROLLING_BACK')
     state = {'enabled': True, 'bootstrapVerified': True, 'approvedImage': baseline, 'recoveryRequired': True,
@@ -240,6 +258,17 @@ asyncio.run(check())
         rehearse_container_rollback(backend, args.base_image, image)
         print('PILOT_COMPOSE_ROLLBACK_PASS')
         quiesced_checkpoint_smoke(backend, root, args.base_image, args.recovery_image)
+        # Exercise the new same-image primary baseline/fallback with real Docker,
+        # real dual SQLite restore and the actual expired-context 403/retry.
+        from unittest.mock import patch
+        from tools.staging_automation import pilot_generation as generation
+        baseline_commit = source_commit(backend, args.recovery_image)
+        pin = {'id': 'recovered-primary-v2', 'baselineCommit': baseline_commit,
+               'baselineImage': args.recovery_image, 'baselineAdmission': 'PRIMARY_ONLY', 'incidentActivationRun': 'original'}
+        with tempfile.TemporaryDirectory(prefix='pilot-generation-ci-') as generation_root, patch.multiple(
+                generation, GENERATION=pin, COHORT={'applicationId': '90', 'guildIds': ['1', '2']},
+                BASELINE_COMMIT=baseline_commit, BASELINE_ARCHIVE='f' * 64):
+            quiesced_checkpoint_smoke(backend, generation_root, args.recovery_image, args.recovery_image, next_generation=True)
         print(json.dumps({'hostCommit': COMMIT, 'archiveSha256': ARCHIVE_SHA256, 'overlay': 'PASS',
             'compactEditor': 'PASS', 'configurationPreview': 'PASS', 'startupImports': 'PASS', 'gatewayStarted': False, 'credentialsUsed': False, 'databaseMounted': False}))
 

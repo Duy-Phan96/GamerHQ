@@ -159,6 +159,9 @@ def main():
         pin = json.loads(Path('deploy/staging/tenant-pilot-binding.json').read_text(encoding='utf-8'))
         digest = hashlib.sha256(json.dumps(pin, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         status = exchange('status')
+        generation = os.environ.get('GAMERHQ_STAGING_PILOT_GENERATION')
+        if generation and status.get('tenantPilotGeneration') != generation:
+            raise Denied('PILOT_ENROLLMENT_REQUIRED')
         resuming = args.operation == 'tenant-pilot-cutover' and status.get('tenantPilotCutoverJournal') is True
         if (status.get('state') != 'ACTIVE' or status.get('bootstrapVerified') is not True
                 or (not resuming and status.get('recoveryRequired') is not False) or status.get('tenantPilotBindingSha256') != digest):

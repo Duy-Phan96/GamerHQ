@@ -146,7 +146,12 @@ def prepare(backend, preview, approved_image, *, now, read=github):
         ci = read(policy, '/actions/runs/' + pin['ciRun'])
         if (ci.get('workflow_id'), ci.get('head_sha'), ci.get('conclusion')) != (361334574, pin['commit'], 'success'):
             raise Denied('OFFLINE_PROBE_FAILED')
-        fallback = build_reviewed_overlay(backend, approved_image, pin['commit'], pin['archiveSha256'], baseline, compatibility)
+        if 'tenantPilotGeneration' in policy:
+            from .pilot_generation import validate_generation
+            validate_generation(policy)
+            fallback = approved_image
+        else:
+            fallback = build_reviewed_overlay(backend, approved_image, pin['commit'], pin['archiveSha256'], baseline, compatibility)
         fallback_override = startup_override(profile, policy, fallback, primary_only=True)
         value = fallback_override['services'][profile['service']]['environment'][PILOT_ENV]
         probe_primary = main.replace('print("PASS")', 'assert len(routes.membership)==2; print("PASS")')
@@ -164,4 +169,5 @@ def prepare(backend, preview, approved_image, *, now, read=github):
             'startupOverrideSha256': hashlib.sha256(canonical).hexdigest(), 'containerRollbackRehearsal': 'PASS',
             'preview': preview,
             'backupReceiptSha256': preview['backupReceiptSha256'], 'gatewayStarted': False, 'activationAuthorized': False,
+            **({'generation': policy['tenantPilotGeneration']['id']} if 'tenantPilotGeneration' in policy else {}),
             **fallback_evidence}

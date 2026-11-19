@@ -26,9 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: 2a2b08b8d3c8165d7a70ced3c667024ba219b0ac
           persist-credentials: false
       - name: Verify the checkpoint and build the pinned Host without Gateway access
         env:
+          GAMERHQ_STAGING_PILOT_GENERATION: recovered-primary-v2
           GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
           GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
           GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}

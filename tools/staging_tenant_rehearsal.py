@@ -305,10 +305,27 @@ def startup_override(profile, policy, image, *, primary_only=False):
 def rehearsal_binding(profile, policy, container):
     image = container["Image"]
     host_commit = container["Config"]["Labels"]["org.opencontainers.image.revision"]
-    override = startup_override(profile, policy, image)
+    override = baseline_override(profile, policy, image)
+    if 'tenantPilotGeneration' in policy:
+        from services.tenant_routing import PILOT_ENV
+        expected = override['services'][profile['service']]['environment'][PILOT_ENV]
+        actual = [value for value in container['Config'].get('Env', []) if value.startswith(PILOT_ENV + '=')]
+        if actual != [PILOT_ENV + '=' + expected]:
+            raise PermissionError('Pilot baseline admission changed.')
     encoded = json.dumps(override, sort_keys=True, separators=(",", ":")).encode()
     return {"baselineHostCommit": host_commit, "baselineImage": image,
             "startupOverrideSha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def baseline_override(profile, policy, image):
+    """The accepted primary-only baseline is distinct from pilot admission."""
+    generation = policy.get('tenantPilotGeneration')
+    if generation is not None:
+        from tools.staging_automation.pilot_generation import validate_generation
+        validate_generation(policy)
+        if image != generation['baselineImage']:
+            raise PermissionError('Pilot baseline image changed.')
+    return startup_override(profile, policy, image, primary_only=generation is not None)
 
 
 def approved_binding(profile, policy):

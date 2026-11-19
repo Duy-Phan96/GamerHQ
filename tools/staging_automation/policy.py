@@ -50,7 +50,7 @@ def validate_policy(value):
         from .host_promotion import ARCHIVE_SHA256, COMMIT
         p = value['hostPromotion']
         if (not isinstance(p, dict) or set(p) != {'commit', 'archiveSha256', 'workflowSha256'}
-                or p['commit'] != COMMIT or p['archiveSha256'] != ARCHIVE_SHA256
+                or ('tenantPilotGeneration' not in value and (p['commit'] != COMMIT or p['archiveSha256'] != ARCHIVE_SHA256))
                 or not isinstance(p['workflowSha256'], str)
                 or not re.fullmatch('[0-9a-f]{64}', p['workflowSha256'])):
             raise Denied('POLICY_REJECTED')
@@ -74,9 +74,13 @@ def validate_policy(value):
                 or set(cutover) != {'fallback', 'workflowSha256'} or not isinstance(cutover['fallback'], dict)):
             raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
         validate_pin({**cutover['fallback'], 'workflowSha256': cutover['workflowSha256']})
-        if set(cutover['fallback']) != {'commit', 'archiveSha256', 'ciRun'} or cutover['fallback']['commit'] in (
-                value['hostPromotion']['commit'], value['tenantPilotActivation']['commit']):
+        if (set(cutover['fallback']) != {'commit', 'archiveSha256', 'ciRun'}
+                or cutover['fallback']['commit'] == value['tenantPilotActivation']['commit']
+                or ('tenantPilotGeneration' not in value and cutover['fallback']['commit'] == value['hostPromotion']['commit'])):
             raise Denied('PILOT_ACTIVATION_PIN_REJECTED')
+    if 'tenantPilotGeneration' in value:
+        from .pilot_generation import validate_generation
+        validate_generation(value)
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])

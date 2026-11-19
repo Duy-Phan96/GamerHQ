@@ -595,3 +595,66 @@ retained and inaccessible to primary-only runtime operations.
 
 This plan authorizes preparation evidence only. The next pilot remains blocked
 on the reviewed baseline/controller generation and a separate protected cutover.
+
+
+### Recovered-primary pilot generation (prepared, not enrolled)
+
+The owner review on 1899c6f requests one coherent new policy generation; it does
+not authorize another cutover. Authenticated status run
+[44514969499](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44514969499)
+again confirms the terminal original incident and clear recovery latch.
+
+`deploy/staging/tenant-pilot-generation.json` is the reviewed release manifest.
+The proposed activation Host is **1899c6f8cc498fefa0510d0e3f70453f6f1aa082**,
+archive SHA256 **b09ae812bf58fb79bf3b7df21a055d234ec7e4e8dbd5dc84b5cb9dc2bedfa23d**.
+Its complete Linux CI is 44504256668; the independent Linux archive check is in
+44504256756. This explicitly replaces the old 12e0053 candidate, which lacks the
+API listener context fix. The accepted baseline and primary-only fallback are
+both Host **8f450533ec0c9589b6fa375e34bd951f91dff419**, image
+**sha256:d308a43d80737c26b92a3aea2ef9d822f7aa2987fd701a56e354df722672818b**.
+The proposed immutable client is **2a2b08b8d3c8165d7a70ced3c667024ba219b0ac**;
+it retains the corrected recovery result and rejects a workflow-generation
+mismatch before requesting an operation challenge.
+
+The controller now distinguishes exactly two **authorized cohort members** from
+one **currently admitted primary**. A generation baseline is attested with its
+actual primary-only startup environment, not a hypothetical two-guild override.
+The candidate must remain a different image. Baseline/fallback image equality is
+allowed only for the exact reviewed recovered-primary generation; the old
+three-image rule still applies to historical policies. Fallback requires the
+same sealed checkpoint, both database checks, lifecycle retention, actual Host
+API readiness and primary-only admission as before.
+
+Owner enrollment uses `tools/enroll_staging_pilot_generation.py` and the existing
+operation lock, deployment identity, systemd sandbox and immutable revision
+layout. It requires matching registered main workflow bytes, exact archive pins,
+the installed 8d8e067 mixed source bundle, the completed original incident and a
+clear latch. It re-verifies the current healthy primary-only image, live bot and
+both guild identities/Core permissions, and fresh private dual backups with
+scratch restores. It changes only controller selection and deployment metadata;
+it does not start/stop a Gateway, write a tenant DB or mutate Discord.
+
+The original `worker/tenant-pilot-cutover.json` stays byte-for-byte intact. A
+root-owned incident archive also retains its original policy/profile/private
+state. The new journal is `worker/tenant-pilot-cutover-v2.json`, explicitly bound
+to `recovered-primary-v2`. Expired preparation, challenge and token replay cache
+are discarded during adoption; no old preview can authorize the new candidate.
+Routine single-database deployment operations are denied while this exact pilot
+generation is enrolled.
+
+The fsynced root transition contains original and desired bytes for entry,
+profile, private state and policy. Its entry guard is installed **before** any
+state/profile/policy changes and blocks execution until COMMITTED. A retry
+accepts only the recorded old/new bytes, re-proves live health and backups, then
+finishes the same transition. Unknown content, a held latch, a changed incident,
+a running new-generation transaction or a changed source/digest fails closed.
+Do not hand-edit the transition, incident or recovery latch. Preserve a pending
+transition and use the same immutable owner command for a reviewed retry.
+
+Registration and enrollment are not activation. Once enrollment has a verified
+public receipt, one protected preparation session must build/probe the exact new
+candidate, recheck fresh live permissions and dual restores, and rehearse actual
+container rollback. Only then queue cutover with deployment-security owner review.
+At execution require another fresh stopped-write dual checkpoint and restores.
+First Servertest template application remains a separate explicit confirmation.
+No new pilot run is ready or queued merely because source CI is green.

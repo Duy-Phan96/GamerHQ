@@ -199,7 +199,8 @@ def test_quiesced_backup_requires_same_stopped_host_and_readonly_secondary(check
 
 @pytest.mark.parametrize('boundary', ['before-stop', 'after-stop', 'checkpointed', 'created',
                                       'readiness', 'postflight', 'complete'])
-def test_cutover_restart_recovers_without_overwriting_tenants(tmp_path, monkeypatch, boundary):
+@pytest.mark.parametrize('next_generation', [False, True])
+def test_cutover_restart_recovers_without_overwriting_tenants(tmp_path, monkeypatch, boundary, next_generation):
     import time
 
     from tools import staging_dispatch, staging_tenant_rehearsal
@@ -222,6 +223,18 @@ def test_cutover_restart_recovers_without_overwriting_tenants(tmp_path, monkeypa
     policy = {'tenantPilot': {'applicationId': '90', 'guildIds': ['1', '2']},
               'tenantPilotActivation': {'commit': 'd' * 40},
               'hostPromotion': {'commit': 'e' * 40}}
+    if next_generation:
+        from tools.staging_automation import pilot_generation as generation
+        pin = {'id': 'recovered-primary-v2', 'baselineCommit': 'e' * 40, 'baselineImage': baseline,
+               'baselineAdmission': 'PRIMARY_ONLY', 'incidentActivationRun': '123'}
+        monkeypatch.setattr(generation, 'GENERATION', pin)
+        monkeypatch.setattr(generation, 'COHORT', policy['tenantPilot'])
+        monkeypatch.setattr(generation, 'BASELINE_COMMIT', 'e' * 40)
+        monkeypatch.setattr(generation, 'BASELINE_ARCHIVE', 'f' * 64)
+        policy['tenantPilotGeneration'] = pin
+        policy['hostPromotion']['archiveSha256'] = 'f' * 64
+        policy['tenantPilotCutover'] = {'fallback': {'commit': 'e' * 40, 'archiveSha256': 'f' * 64}}
+        fallback = baseline
     override_args = ({**profile, 'tenantPilot': policy['tenantPilot']}, policy)
     override = staging_tenant_rehearsal.startup_override
     prepared = {'state': 'PILOT_ACTIVATION_PREPARED', 'gatewayStarted': False, 'activationAuthorized': False,
@@ -230,8 +243,15 @@ def test_cutover_restart_recovers_without_overwriting_tenants(tmp_path, monkeypa
                 'candidateImage': candidate, 'fallbackImage': fallback,
                 'startupOverrideSha256': digest(override(*override_args, candidate)),
                 'fallbackStartupOverrideSha256': digest(override(*override_args, fallback, primary_only=True))}
+    if next_generation:
+        prepared['generation'] = policy['tenantPilotGeneration']['id']
+        from services.tenant_routing import PILOT_ENV
+        profile['pilotGeneration'] = 'recovered-primary-v2'
     current = {'Id': '1' * 64, 'Image': baseline, 'State': {'Running': True},
                'Config': {'Labels': {'org.opencontainers.image.revision': 'e' * 40}}}
+    if next_generation:
+        value = override(*override_args, baseline, primary_only=True)['services'][profile['service']]['environment'][PILOT_ENV]
+        current['Config']['Env'] = [PILOT_ENV + '=' + value]
     backend = SimpleNamespace(profile=profile, policy=policy, inspect=lambda: current,
                               health=lambda: {'state': 'HOST_READY'})
     launches = []

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "candidate": {
+    "commit": "1899c6f8cc498fefa0510d0e3f70453f6f1aa082",
+    "archiveSha256": "b09ae812bf58fb79bf3b7df21a055d234ec7e4e8dbd5dc84b5cb9dc2bedfa23d",
+    "ciRun": "44504256668"
+  },
+  "baseline": {
+    "commit": "8f450533ec0c9589b6fa375e34bd951f91dff419",
+    "archiveSha256": "b84ed81d4371112634200021f24b43f436ac8113c4ecf6d273cd95daeca573e8",
+    "image": "sha256:d308a43d80737c26b92a3aea2ef9d822f7aa2987fd701a56e354df722672818b",
+    "ciRun": "44514975244"
+  },
+  "workflows": {
+    "staging-tenant-pilot-cutover.yml": {
+      "sha256": "37c516f7e86787ef6315638bac3b39db1bd5574ae4febed33aeca48a2206e77b",
+      "client": "2a2b08b8d3c8165d7a70ced3c667024ba219b0ac"
+    },
+    "staging-tenant-pilot-activation-prepare.yml": {
+      "sha256": "5d781870c3d3acc1c189d0d8a32b91646551dac0caec8c7b01326a9a4ac2a14b",
+      "client": "2a2b08b8d3c8165d7a70ced3c667024ba219b0ac"
+    }
+  }
+}

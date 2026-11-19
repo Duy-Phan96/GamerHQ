@@ -41,7 +41,10 @@ def confirmation_step(stage):
 
 
 def journal_path(profile):
-    return Path(profile['workRoot']) / 'tenant-pilot-cutover.json'
+    generation = profile.get('pilotGeneration')
+    if generation is not None and generation != 'recovered-primary-v2':
+        raise Denied('PILOT_CHECKPOINT_REJECTED')
+    return Path(profile['workRoot']) / ('tenant-pilot-cutover-v2.json' if generation else 'tenant-pilot-cutover.json')
 
 
 def journal_status(profile):
@@ -82,6 +85,13 @@ class PilotCutover:
         self.backend = backend
         self.policy = backend.policy
         self.profile = {**backend.profile, 'tenantPilot': self.policy['tenantPilot']}
+        generation = self.policy.get('tenantPilotGeneration')
+        if generation is not None:
+            from .pilot_generation import validate_generation
+            validate_generation(self.policy)
+            self.profile['pilotGeneration'] = generation['id']
+            if prepared.get('generation') != generation['id']:
+                raise Denied('PILOT_CHECKPOINT_REJECTED')
         self.cohort = approved_binding(self.profile, self.policy)
         self.prepared = prepared
         self.run_id = run_id
@@ -90,7 +100,9 @@ class PilotCutover:
         self.candidate = prepared.get('candidateImage')
         self.fallback = prepared.get('fallbackImage')
         if (not all(isinstance(v, str) and IMAGE.fullmatch(v) for v in (self.baseline, self.candidate, self.fallback))
-                or len({self.baseline, self.candidate, self.fallback}) != 3):
+                or (generation is None and len({self.baseline, self.candidate, self.fallback}) != 3)
+                or (generation is not None and (self.baseline != generation['baselineImage']
+                    or self.fallback != self.baseline or self.candidate == self.baseline))):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
         self.candidate_override = startup_override(self.profile, self.policy, self.candidate)
         self.fallback_override = startup_override(self.profile, self.policy, self.fallback, primary_only=True)
@@ -101,6 +113,8 @@ class PilotCutover:
             'preparedSha256': digest(prepared), 'baselineImage': self.baseline,
             'candidateImage': self.candidate, 'fallbackImage': self.fallback,
         }
+        if generation is not None:
+            self.binding['generation'] = generation['id']
 
     def load(self):
         from tools.staging_dispatch import protected_file
@@ -169,21 +183,21 @@ class PilotCutover:
         return verify_remote(self.profile, approved_pilot=self.cohort, read_only_artifacts=True, probe_storage=False)
 
     def checkpoint(self, record):
-        from tools.staging_tenant_rehearsal import retain_quiesced, startup_override
+        from tools.staging_tenant_rehearsal import retain_quiesced, baseline_override
 
         captured = retain_quiesced(self.backend, record['baselineContainer'], self.baseline)
         binding = {'baselineHostCommit': self.policy['hostPromotion']['commit'], 'baselineImage': self.baseline,
-                   'startupOverrideSha256': digest(startup_override(self.profile, self.policy, self.baseline)),
+                   'startupOverrideSha256': digest(baseline_override(self.profile, self.policy, self.baseline)),
                    'quiesced': True}
         return {**captured, **binding, 'capturedAt': int(time.time())}
 
     def verify_checkpoint(self, record, *, recovery=False):
-        from tools.staging_tenant_rehearsal import startup_override, verify_activation_checkpoint
+        from tools.staging_tenant_rehearsal import baseline_override, verify_activation_checkpoint
 
         checkpoint = record['checkpoint']
         stamp = checkpoint['capturedAt']
         binding = {'baselineHostCommit': self.policy['hostPromotion']['commit'], 'baselineImage': self.baseline,
-                   'startupOverrideSha256': digest(startup_override(self.profile, self.policy, self.baseline)),
+                   'startupOverrideSha256': digest(baseline_override(self.profile, self.policy, self.baseline)),
                    'quiesced': True}
         verify_activation_checkpoint(self.profile['backupRoot'], checkpoint, self.policy['tenantPilot'], binding,
                                      verified_at=stamp, now=stamp if recovery else int(time.time()))

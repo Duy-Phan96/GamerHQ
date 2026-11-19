@@ -15,7 +15,11 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     now = int(time.time() if now is None else now)
     charge(state, operation, now); save(state)
     cutover = 'tenantPilotCutover' in policy
-    journal = cutover and os.path.lexists(Path(backend.profile['workRoot']) / 'tenant-pilot-cutover.json')
+    path = Path(backend.profile['workRoot']) / 'tenant-pilot-cutover.json' if cutover else None
+    if cutover and backend.profile.get('pilotGeneration'):
+        from .pilot_cutover import journal_path
+        path = journal_path(backend.profile)
+    journal = cutover and os.path.lexists(path)
     if operation == 'status':
         preparation = {}
         if 'tenantPilotActivation' in policy:
@@ -35,6 +39,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
                 'tenantPilotActivationPreparationEnrolled': 'tenantPilotActivation' in policy,
                 **preparation,
                 'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit'),
+                'tenantPilotGeneration': policy.get('tenantPilotGeneration', {}).get('id'),
                 'webArtifactId': policy.get('webDeployment', {}).get('artifactId'),
                 'webRunId': policy.get('webDeployment', {}).get('runId'),
                 'webCommit': policy.get('webDeployment', {}).get('commit'),
@@ -43,6 +48,9 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         if not isinstance(payload, dict) or set(payload) != {'operation'} or payload['operation'] in PUBLIC:
             raise Denied('PAYLOAD_REJECTED')
         request({'version': 1, 'phase': 'automation', 'operation': payload['operation']})
+        if 'tenantPilotGeneration' in policy and payload['operation'] not in {
+                'health', 'smoke', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'}:
+            raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] == 'catalog-preview' and 'catalogPreviewWorkflowSha256' not in policy:
             raise Denied('CATALOG_PREVIEW_NOT_ENROLLED')
         if payload['operation'] == 'tenant-pilot-preview' and 'tenantPilot' not in policy:
@@ -64,6 +72,9 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     challenge = state.get('challenge', {})
     if challenge.get('nonce') != payload['challenge'] or challenge.get('operation') != operation or challenge.get('expires', 0) <= now: raise Denied('CHALLENGE_REJECTED')
     claims = verifier(payload['token'], policy, operation, payload['challenge'], now=now)
+    if 'tenantPilotGeneration' in policy and operation not in {
+            'health', 'smoke', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover'}:
+        raise Denied('OPERATION_NOT_ALLOWED')
     seen = {k: exp for k, exp in state.get('usedTokens', {}).items() if exp > now}
     if claims['jti'] in seen or len(seen) >= 256: raise Denied('OIDC_REPLAY_REJECTED')
     seen[claims['jti']] = claims['exp']; state['usedTokens'] = seen; state.pop('challenge', None); save(state)
@@ -173,11 +184,15 @@ def main():
     from .backend import HostBackend
     if os.geteuid() == 0: raise Denied('ROOT_EXECUTION_REJECTED')
     protected_file(CONTROL / 'automation-policy.json')
-    policy = validate_policy(json.loads((CONTROL / 'automation-policy.json').read_text()))
+    policy_bytes = (CONTROL / 'automation-policy.json').read_bytes()
+    policy = validate_policy(json.loads(policy_bytes))
     protected_file(PROFILE, private=True, uid=os.geteuid())
     protected_file(CONTROL / 'policy.json')
-    profile = json.loads(PROFILE.read_text()); validate_profile(profile)
+    profile_bytes = PROFILE.read_bytes()
+    profile = json.loads(profile_bytes); validate_profile(profile)
     validate_binding(profile, json.loads((CONTROL / 'policy.json').read_text()))
+    from .pilot_generation import effective_profile
+    profile = effective_profile(profile, policy)
     if profile['hostSourceCommit'] != policy['legacyWorkerCommit']: raise Denied('LEGACY_SOURCE_BINDING_REJECTED')
     values = environment(); os.environ.clear(); os.environ.update(values)
     verify_rootless(profile)
@@ -185,6 +200,13 @@ def main():
     with (root / 'operation.lock').open('a') as lock:
         try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError: raise Denied('CONCURRENT_OPERATION_REJECTED') from None
+        if (CONTROL / 'automation-policy.json').read_bytes() != policy_bytes or PROFILE.read_bytes() != profile_bytes:
+            raise Denied('POLICY_REJECTED')
+        transition = CONTROL / 'pilot-generation-transition.json'
+        if transition.exists():
+            protected_file(transition)
+            if json.loads(transition.read_bytes()).get('phase') != 'COMMITTED':
+                raise Denied('RECOVERY_REQUIRES_OWNER')
         if (root / 'access-revoked').exists(): raise Denied('ACCESS_REVOKED')
         body = sys.stdin.buffer.read(32769)
         if len(body) > 32768: raise Denied('REQUEST_LIMIT')

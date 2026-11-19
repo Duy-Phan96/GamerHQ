@@ -113,15 +113,27 @@ client.main()
         assert output['clientVerification'] == 'RECOVERY_TERMINAL_NOT_VERIFIED'
 
 
-def test_proposed_recovery_workflow_changes_only_the_reviewed_immutable_client():
+def test_proposed_recovery_workflow_changes_only_client_and_explicit_generation_gate():
     root = Path(__file__).resolve().parents[1]
-    selected = '1c8878e869674f57fd66d3cad61d388aec033c5d'
+    selected = '2a2b08b8d3c8165d7a70ced3c667024ba219b0ac'
     previous = 'd18d0a2d696b30c36d6b971819b1950723ddf8a9'
     workflow = (root / '.github/workflows/staging-tenant-pilot-cutover.yml').read_text().encode()
-    assert hashlib.sha256(workflow).hexdigest() == 'df965251158b07e4d5f544f91ec5ef3d6dcfa4000e9a8601dcb465014f35f1e4'
-    assert hashlib.sha256(workflow.replace(selected.encode(), previous.encode())).hexdigest() == (
+    restored = workflow.replace(selected.encode(), previous.encode()).replace(
+        b'          GAMERHQ_STAGING_PILOT_GENERATION: recovered-primary-v2\n', b'')
+    assert hashlib.sha256(restored).hexdigest() == (
         'f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011')
     changed = subprocess.check_output(['git', 'diff', '--name-only', previous, selected], cwd=root).decode().splitlines()
     assert changed == ['tools/staging_automation_client.py']
     actual = subprocess.check_output(['git', 'show', selected + ':tools/staging_automation_client.py'], cwd=root)
     assert actual == (root / 'tools/staging_automation_client.py').read_text().encode()
+
+
+@pytest.mark.parametrize('operation', ['tenant-pilot-cutover', 'tenant-pilot-activation-prepare'])
+def test_new_workflow_never_requests_challenge_from_unmigrated_controller(operation):
+    with patch('sys.argv', ['client', operation]), patch.dict('os.environ', {
+            'GAMERHQ_STAGING_PILOT_GENERATION': 'recovered-primary-v2'}), patch.object(
+                client, 'exchange', return_value={'tenantPilotCutoverJournal': True}) as exchange, patch.object(client, 'perform') as perform:
+        with pytest.raises(Denied, match='PILOT_ENROLLMENT_REQUIRED'):
+            client.main()
+        exchange.assert_called_once_with('status')
+        perform.assert_not_called()
