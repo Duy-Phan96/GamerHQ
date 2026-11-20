@@ -710,3 +710,22 @@ def test_failed_message_lookup_keeps_verified_destination_and_rejects_foreign_de
         assert result['destinationChannelId']=='10011' and result['channelId'] is None
         row['channel']=model(2,populated=True)[0].get_channel(20011)
         with pytest.raises(ValueError,match='FOREIGN_RESOURCE_REJECTED'):acceptance.project_preview(guild,draft,100)
+
+
+def test_repeated_rate_limit_samples_are_bounded_without_losing_total_count():
+    now=[0.0]
+    class Response:
+        status=429;reason='fixture';headers={}
+        def __init__(self):self.content=SimpleNamespace(read=AsyncMock(side_effect=[b'{"retry_after":0}',b'']))
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+    rest=ReadOnlyDiscord(SimpleNamespace(get=lambda *a,**k:Response()),'private-token',100,(1,2))
+    rest.guild_id,rest.channels=1,{3};rest._clock=lambda:now[0]
+    async def sleep(seconds):now[0]+=seconds
+    rest._sleep=sleep
+    async def run():
+        for _ in range(3):
+            with pytest.raises(ValueError,match='DISCORD_RATE_LIMITED'):
+                await rest.request(Route('GET','/channels/{channel_id}/messages/{message_id}',channel_id=3,message_id=4))
+    asyncio.run(run())
+    assert len(rest.rate_limits)==8 and rest.rate_limit_count==9

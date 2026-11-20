@@ -962,6 +962,9 @@ time/body bounds are unchanged. No403/404 retry or permission expansion occurs.
 Retain bounded rate-limit events with operation/channel/message IDs and delay
 classification, never raw bodies/tokens. These diagnostic events are excluded
 only from semantic hashing; actual rows/IDs/permissions/reasons stay significant.
+Keep at most eight rate-limit samples per pass with a full count and explicit
+truncation flag, preserving the existing decoded/compressed receipt size limits
+even when both complete previews and retry evidence are retained.
 
 If a mapped-message read exhausts its budget, mark the collection UNVERIFIED /
 DISCORD_MESSAGE_READ_INCOMPLETE. Keep the last completed pass, the full

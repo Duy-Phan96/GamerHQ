@@ -78,6 +78,7 @@ class ReadOnlyDiscord:
         self._waited = 0
         self._clock, self._sleep = time.monotonic, asyncio.sleep
         self.rate_limits = []
+        self.rate_limit_count = 0
 
     async def request(self, route, **kwargs):
         self.requests += 1
@@ -157,7 +158,8 @@ class ReadOnlyDiscord:
                     elif status!=429:self._not_before=float('inf')
                 if status==429:
                     delay=seconds(value.get('retry_after')) if isinstance(value,dict) else None
-                    if len(self.rate_limits)<24:
+                    self.rate_limit_count+=1
+                    if len(self.rate_limits)<8:
                         self.rate_limits.append({**context,'operation':operation,'httpStatus':429,
                             'reason':'DISCORD_RATE_LIMITED','retryAfterSeconds':delay,
                             'global':value.get('global') is True if isinstance(value,dict) else False,
@@ -272,6 +274,7 @@ async def gather(packet):
             rest.guild_id, rest.channels, rest.owner_id = guild_id, set(), None
             rest.failures=[]
             rest.rate_limits=[]
+            rest.rate_limit_count=0
             payload = await rest.request(Route('GET', '/guilds/{guild_id}', guild_id=guild_id))
             if payload.get('id') != str(guild_id):
                 raise ValueError('GUILD_IDENTITY_REJECTED')
@@ -315,6 +318,7 @@ async def gather(packet):
                        if item.get('messageId') is not None and item.get('reason') in
                        {'DISCORD_RATE_LIMITED','READ_TIMEOUT','DISCORD_TRANSPORT_FAILED','DISCORD_RESPONSE_INVALID'}}
             return {'lookups':lookups,'httpFailures':list(rest.failures),'rateLimits':list(rest.rate_limits),
+                    'rateLimitCount':rest.rate_limit_count,'rateLimitsTruncated':rest.rate_limit_count>len(rest.rate_limits),
                     'unverifiedRows':sorted(row['key'] for row in draft['boards']['rows']
                         if row['kind']=='message' and row['status']!='EXACT_MATCH' and row.get('raw') in uncertain)}
         result = await collect(store, application, load_guild, load_skills, inspect_messages=message_probes)

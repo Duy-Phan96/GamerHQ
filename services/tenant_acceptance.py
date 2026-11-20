@@ -38,6 +38,8 @@ def comparison_value(value):
     if isinstance(plan.get('messageChecks'),dict):
         plan['messageChecks'].pop('httpFailures',None)
         plan['messageChecks'].pop('rateLimits',None)
+        plan['messageChecks'].pop('rateLimitCount',None)
+        plan['messageChecks'].pop('rateLimitsTruncated',None)
     return value
 
 
