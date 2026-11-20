@@ -438,7 +438,10 @@ def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(ac
         exec(compile(oldfile.read_bytes(),str(oldfile),'exec'),old.__dict__)
         monkeypatch.setattr(old,'ROOT',f.root);monkeypatch.setattr(old,'CONTROL',f.policy.parent)
         monkeypatch.setattr(old,'REPOSITORY',mirror.as_uri())
-        old.enroll(pin,old.REVISION_APPROVAL if index else old.APPROVAL,revise=bool(index))
+        if index:
+            old.enroll(pin,old.REVISION_APPROVAL,revise=True)
+        else:
+            old.enroll(pin,old.APPROVAL)
     original=f.marker.read_bytes()
     parents={f.policy.parent/name:(f.policy.parent/name).read_bytes() for name,_ in f.installer.ANCESTRY}
     before_policy=json.loads(f.policy.read_bytes())
