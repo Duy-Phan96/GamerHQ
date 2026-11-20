@@ -21,12 +21,13 @@ CONTROL = Path('/etc/gamerhq-staging')
 PREVIOUS = 'eff7cc14d2af0595ad7e80f99f0f24a7e4595bb9'
 LEGACY = '876805290ef454523f9b36f1f9fbf90c3ec64a17'
 APPROVAL = 'ENROLL READ ONLY TENANT ACCEPTANCE'
-REVISION_PREVIOUS = 'f9444487e3435f21f6d3fbe175b8daee780bbc05'
+REVISION_PREVIOUS = '03d656b7b75305156347b1bf0dd544847a27e95f'
 INITIAL_ACCEPTANCE = 'd1eed91e3e1608176704407843243afbefc8fd7c'
 ANCESTRY = (('tenant-acceptance-transition.json',INITIAL_ACCEPTANCE),
             ('tenant-acceptance-source-transition.json','9935969d1039958e667420f9dac13dcef3e8a958'),
-            ('tenant-acceptance-source-transition-v2.json',REVISION_PREVIOUS))
-SOURCE_TRANSITION = 'tenant-acceptance-source-transition-v3.json'
+            ('tenant-acceptance-source-transition-v2.json','f9444487e3435f21f6d3fbe175b8daee780bbc05'),
+            ('tenant-acceptance-source-transition-v3.json',REVISION_PREVIOUS))
+SOURCE_TRANSITION = 'tenant-acceptance-source-transition-v4.json'
 REVISION_APPROVAL = 'REVISE READ ONLY TENANT ACCEPTANCE SOURCE'
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 WORKFLOW = '.github/workflows/staging-tenant-acceptance.yml'
@@ -292,7 +293,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--approval', required=True)
-    parser.add_argument('--revise', action='store_true', help='Owner-reviewed source-only revision of exact f944448 acceptance enrollment')
+    parser.add_argument('--revise', action='store_true', help='Owner-reviewed source-only revision of exact 03d656b acceptance enrollment')
     args = parser.parse_args()
     try:
         print(json.dumps(enroll(args.commit, args.approval, revise=args.revise)))

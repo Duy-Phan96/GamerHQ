@@ -940,3 +940,46 @@ bindings, both databases, Gateway and security gates remain unchanged. The
 restricted key cannot replace the root-owned collector source pin. Require one
 checksum-verified owner source revision, then queue one NEW protected read-only
 acceptance run; never re-label completed 44734287411 as pending approval.
+
+Run 44746777950 supplies the previously missing decisive HTTP evidence:
+primary language1571894322700484690 and platform1571894329188818985, and
+secondary language1573046188536635423 changed only after HTTP429. Inventory,
+Skills and lifecycle mismatch fingerprints were stable. Primary language's
+additional exact-ID probe returned HTTP200 with matching Host author, guild,
+channel, body, controls, state ownership and pin; the other two probes still
+returned429. No404/moved-channel evidence exists for these three lookups.
+The previous response-fragment correction is retained, but is not the proven
+cause of this newer run. The adapter replaces discord.py's request handler and
+therefore also bypassed its normal rate-limit bucket/retry handling.
+
+The observer now serializes its GETs, honors exhausted-bucket reset-after and
+global/route429 retry_after guidance, and performs at most three attempts.
+The same cooldown survives both independent previews; successful messages are
+never cached across previews. Unknown or excessive delay guidance holds reads
+fail-closed. Per-response delay is capped at30 seconds, cumulative wait60
+seconds, and all attempts count against the existing500-request budget; outer
+time/body bounds are unchanged. No403/404 retry or permission expansion occurs.
+Retain bounded rate-limit events with operation/channel/message IDs and delay
+classification, never raw bodies/tokens. These diagnostic events are excluded
+only from semantic hashing; actual rows/IDs/permissions/reasons stay significant.
+
+If a mapped-message read exhausts its budget, mark the collection UNVERIFIED /
+DISCORD_MESSAGE_READ_INCOMPLETE. Keep the last completed pass, the full
+incomplete pass and their observed comparison instead of promoting the failed
+read to a valid missing-resource decision or pretending the hashes match.
+A later successful diagnostic probe does not repair an incomplete preview.
+Expose destinationChannelId independently of channelId: the latter is the
+verified message resource's channel and becomes null when lookup fails; that
+null is not evidence that its known destination moved. Validate both bindings.
+Regression fixtures cover the exact primary-language/platform and
+secondary-language lookup shapes using synthetic IDs and existing Host message
+verification, plus header cooldown, concurrent reads, retry exhaustion and
+invalid/oversized guidance. Genuine403/404 and identity mismatches remain errors.
+
+The fourth source-only revision accepts only installed03d656b, preserves all
+four immutable COMMITTED ancestors, and seals a separatev4 source marker.
+It retains the same controller/client/workflow/security policy, both tenant
+databases, running Host/Gateway and all Discord resources. Owner enrollment is
+still required because the restricted deployment key cannot replace root-owned
+observer sources. Only after its verified receipt, prepare a NEW protected
+read-only acceptance run; never dispatch the old observer as proof of this fix.

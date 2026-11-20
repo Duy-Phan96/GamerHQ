@@ -37,6 +37,7 @@ def comparison_value(value):
     plan['journal'].pop('audit', None)
     if isinstance(plan.get('messageChecks'),dict):
         plan['messageChecks'].pop('httpFailures',None)
+        plan['messageChecks'].pop('rateLimits',None)
     return value
 
 
@@ -209,7 +210,9 @@ def project_preview(guild, draft, application_id):
         resource = row.get('resource')
         actual_guild = getattr(getattr(resource, 'guild', None), 'id', guild.id)
         channel = getattr(resource, 'channel', None)
-        if actual_guild != guild.id or channel is not None and channel.guild.id != guild.id:
+        destination = row.get('channel')
+        if (actual_guild != guild.id or channel is not None and channel.guild.id != guild.id
+                or destination is not None and destination.guild.id != guild.id):
             raise ValueError('FOREIGN_RESOURCE_REJECTED')
         ident = str(resource.id) if resource is not None else None
         saved = row.get('raw')
@@ -224,6 +227,7 @@ def project_preview(guild, draft, application_id):
                      'reason': reason_code(row, staff), 'reasonFingerprint': fingerprint(row.get('reason', '')),
                      'private': row.get('private') is True,
                      'channelId':str(channel.id) if channel is not None else None,
+                     'destinationChannelId':str(destination.id) if destination is not None else None,
                      'proposedOverwrites':overwrites(SimpleNamespace(overwrites=row['create_overwrites']), application_id)
                           if 'create_overwrites' in row else None})
         if saved:
@@ -331,6 +335,7 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
     denied = []
     for guild_id in guild_ids:
         passes = []
+        incomplete = None
         stage = 'DATABASE_SNAPSHOT'
         try:
             for _ in range(2):
@@ -358,8 +363,12 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                     for observed in skills:
                         if any(observed['state'][key] for key in ('installed', 'configured', 'enabled')) and not any(row['id'] == observed['id'] for row in projection['lifecycle']):
                             mismatches.append(observed['id'])
-                    passes.append({'inventory': snapshot, 'preview': projection, 'skills': skills,
-                                   'lifecycleMismatches': mismatches})
+                    current={'inventory':snapshot,'preview':projection,'skills':skills,'lifecycleMismatches':mismatches}
+                    if projection.get('messageChecks',{}).get('unverifiedRows'):
+                        stage='MAPPED_MESSAGE_VERIFICATION'
+                        incomplete=current
+                        raise ValueError('DISCORD_MESSAGE_READ_INCOMPLETE')
+                    passes.append(current)
             comparison=compare_passes(passes[0],passes[1])
             stable = comparison['semanticFingerprints'][0] == comparison['semanticFingerprints'][1]
             result = passes[-1]
@@ -380,7 +389,7 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                      'DISCORD_RESPONSE_REJECTED', 'DISCORD_READ_REJECTED', 'ACCEPTANCE_BUDGET_EXCEEDED',
                      'DISCORD_CHANNEL_TYPE_REJECTED', 'DISCORD_RESPONSE_INVALID', 'DISCORD_MODEL_INVALID',
                      'DISCORD_RATE_LIMITED', 'DISCORD_TRANSPORT_FAILED', 'READ_TIMEOUT', 'COMMAND_REGISTRY_UNAVAILABLE',
-                     'DISCORD_MESSAGE_BINDING_REJECTED'}
+                     'DISCORD_MESSAGE_BINDING_REJECTED','DISCORD_MESSAGE_READ_INCOMPLETE'}
             known.add('HOST_SKILL_READ_REJECTED')
             reason = error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in known else 'COLLECTION_UNAVAILABLE'
             if reason == 'COLLECTION_UNAVAILABLE':
@@ -401,6 +410,9 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                 denied.append('HTTP')
             receipts.append({'guildId': str(guild_id), 'status': 'UNVERIFIED', 'reason': reason,
                              'stage': stage, 'passCount': len(passes), **({'lastVerifiedPass': passes[-1]} if passes else {})})
+            if incomplete is not None:
+                receipts[-1]['incompletePass']=incomplete
+                if passes:receipts[-1]['incompleteComparison']=compare_passes(passes[-1],incomplete)
             if type(status) is int and 100 <= status <= 599:
                 receipts[-1]['httpStatus'] = status
             operation = getattr(error, 'operation', None)

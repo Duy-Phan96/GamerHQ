@@ -517,7 +517,7 @@ def test_comparison_keeps_real_changes_and_separates_history_and_unordered_refer
     (200,{'id':'4','channel_id':'999'},'DISCORD_MESSAGE_BINDING_REJECTED'),
     (403,{'code':50001},'DISCORD_HTTP_REJECTED'),
     (404,{'code':10008},'DISCORD_HTTP_REJECTED'),
-    (429,{'retry_after':2},'DISCORD_RATE_LIMITED'),
+    (429,{'retry_after':-1},'DISCORD_RATE_LIMITED'),
 ])
 def test_exact_message_lookup_binding_and_redacted_http_failures(status,body,expected):
     class Response:
@@ -582,3 +582,131 @@ def test_mapped_board_probes_are_get_only_scoped_and_preserve_db(cohort,monkeypa
         assert row['httpStatus']==(404 if case=='missing' else 403)
     assert 'private-' not in json.dumps(row)
     assert cohort.primary_database.read_bytes()==before
+
+
+@pytest.mark.parametrize('guild_id,section,rejections',[(1,'language',1),(1,'platform',2),(2,'language',1)])
+def test_consecutive_role_message_previews_respect_429_and_keep_exact_identity(cohort,monkeypatch,guild_id,section,rejections):
+    from services import server_operations as ops
+    from services.operation_context import read_scope
+    guild,_,client=model(guild_id,populated=True)
+    channel=guild.get_channel(guild_id*10000+11)
+    key=f'role_message:{guild_id}:{section}'
+    message_id=4000+guild_id
+    with cohort.scope(guild_id):
+        db.set_setting(f'managed_channel:{guild_id}:choose-your-roles',channel.id)
+        db.set_setting(key,message_id)
+    # Exercise the actual lookup/content/component path; permission preflight
+    # has separate populated-guild integration coverage above.
+    monkeypatch.setattr(ops,'public_message_issue',AsyncMock(return_value=None))
+    now=[0.0];sent=[];delays=[]
+    class Response:
+        reason='fixture'
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+    class Session:
+        def get(self,url,**kwargs):
+            assert url.endswith('/messages/'+str(message_id))
+            sent.append(now[0]);response=Response()
+            limited=1<=len(sent)-1<=rejections
+            response.status=429 if limited else 200
+            response.headers={'X-RateLimit-Remaining':'0','X-RateLimit-Reset-After':'0.25'} if limited else {}
+            body={'retry_after':0.25,'global':False} if limited else payload
+            response.content=SimpleNamespace(read=AsyncMock(side_effect=[json.dumps(body).encode(),b'']))
+            return response
+    rest=ReadOnlyDiscord(Session(),'private-token',100,(1,2))
+    rest.guild_id,rest.channels=guild_id,{channel.id}
+    rest._clock=lambda:now[0]
+    async def sleep(seconds):delays.append(seconds);now[0]+=seconds
+    rest._sleep=sleep;client.http.request=rest.request
+    before=cohort._tenant(guild_id).database.read_bytes() if guild_id==2 else cohort.primary_database.read_bytes()
+    async def run():
+        nonlocal payload
+        with cohort.scope(guild_id),acceptance.readonly_snapshot():
+            view=ops.message_view(guild,key)
+            payload={'id':str(message_id),'channel_id':str(channel.id),'author':{'id':'100','username':'fixture','discriminator':'0','avatar':None,'bot':True},
+                     'content':'Fixture role board','components':view.to_components(),'embeds':[],'attachments':[],
+                     'timestamp':'2026-01-01T00:00:00+00:00','edited_timestamp':None,'mentions':[],'mention_roles':[],
+                     'type':0,'flags':0,'tts':False,'mention_everyone':False,'pinned':True}
+            rows=[]
+            for _ in range(2):
+                with read_scope():rows.append(await ops.inspect_message(guild,key,channel,payload['content'],payload['content'],boards={key:(channel,payload['content'])}))
+            return rows
+    payload={}
+    rows=asyncio.run(run())
+    assert [r['status'] for r in rows]==['EXACT_MATCH','EXACT_MATCH']
+    assert all(r['resource'].id==message_id and r['resource'].channel.id==channel.id and r['safe']==[message_id] for r in rows)
+    assert len(sent)==2+rejections and len(delays)==rejections
+    assert all(delay>=0.25 for delay in delays)
+    assert not rest.failures and len(rest.rate_limits)==rejections
+    assert (cohort._tenant(guild_id).database if guild_id==2 else cohort.primary_database).read_bytes()==before
+
+
+@pytest.mark.parametrize('retry_after',[None,True,-1,31,'NaN',float('inf'),0.1])
+def test_rate_limit_retry_is_bounded_and_never_reclassifies_missing(retry_after):
+    class Response:
+        status=429;reason='fixture';headers={}
+        def __init__(self):self.content=SimpleNamespace(read=AsyncMock(side_effect=[json.dumps({'retry_after':retry_after}).encode(),b'']))
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+    sent=[];now=[0.0]
+    def get(*a,**k):sent.append(now[0]);return Response()
+    rest=ReadOnlyDiscord(SimpleNamespace(get=get),'private-token',100,(1,2))
+    rest.guild_id,rest.channels=1,{3};rest._clock=lambda:now[0]
+    async def sleep(seconds):now[0]+=seconds
+    rest._sleep=sleep
+    with pytest.raises(ValueError,match='DISCORD_RATE_LIMITED'):
+        asyncio.run(rest.request(Route('GET','/channels/{channel_id}/messages/{message_id}',channel_id=3,message_id=4)))
+    assert len(sent)==(3 if retry_after==0.1 else 1)
+    assert rest.failures[0]['httpStatus']==429
+
+
+def test_exhausted_message_read_retains_both_projections_as_unverified(cohort):
+    calls={1:0,2:0}
+    async def probes(guild,draft,application):
+        calls[guild.id]+=1
+        return {'lookups':[],'httpFailures':[{'httpStatus':429,'reason':'DISCORD_RATE_LIMITED'}],
+                'unverifiedRows':['role_message:'+str(guild.id)+':language'] if calls[guild.id]==2 else []}
+    result=asyncio.run(acceptance.collect(cohort,100,async_model,AsyncMock(return_value=[skill()]),inspect_messages=probes))
+    for guild in result['guilds']:
+        assert guild['status']=='UNVERIFIED' and guild['reason']=='DISCORD_MESSAGE_READ_INCOMPLETE'
+        assert guild['passCount']==1 and guild['stage']=='MAPPED_MESSAGE_VERIFICATION'
+        assert 'lastVerifiedPass' in guild and 'incompletePass' in guild and 'incompleteComparison' in guild
+        assert guild['incompleteComparison']['semanticFingerprints'][0]!=guild['incompleteComparison']['semanticFingerprints'][1]
+
+
+def test_zero_remaining_header_serializes_independent_reads_and_budget_fails_closed():
+    sent=[];now=[0.0]
+    class Response:
+        status=200;reason='fixture'
+        def __init__(self):
+            self.headers={'X-RateLimit-Remaining':'0','X-RateLimit-Reset-After':'0.5'}
+            self.content=SimpleNamespace(read=AsyncMock(side_effect=[b'{"id":"4","channel_id":"3"}',b'']))
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+    def get(*a,**k):sent.append(now[0]);return Response()
+    rest=ReadOnlyDiscord(SimpleNamespace(get=get),'private-token',100,(1,2))
+    rest.guild_id,rest.channels=1,{3};rest._clock=lambda:now[0]
+    async def sleep(seconds):now[0]+=seconds;await asyncio.sleep(0)
+    rest._sleep=sleep
+    route=Route('GET','/channels/{channel_id}/messages/{message_id}',channel_id=3,message_id=4)
+    async def run():
+        result=await asyncio.gather(*(rest.request(route) for _ in range(3)))
+        assert len(result)==3 and len(sent)==3
+        assert sent[1]-sent[0]>=0.5 and sent[2]-sent[1]>=0.5
+        rest._waited=60
+        with pytest.raises(ValueError,match='DISCORD_RATE_LIMITED'):await rest.request(route)
+        assert len(sent)==3
+    asyncio.run(run())
+
+
+def test_failed_message_lookup_keeps_verified_destination_and_rejects_foreign_destination(cohort):
+    guild,_,_=model(1,populated=True)
+    channel=guild.get_channel(10011)
+    row={'key':'role_message:1:language','kind':'message','status':'AMBIGUOUS',
+         'resource':None,'raw':'4000','channel':channel,'candidates':[],'reason':'Lookup incomplete'}
+    draft={'structure':{'rows':[]},'boards':{'rows':[row]},'choices':{},'progress':{},'deferred':[]}
+    with cohort.scope(1),acceptance.readonly_snapshot():
+        result=acceptance.project_preview(guild,draft,100)['rows'][0]
+        assert result['destinationChannelId']=='10011' and result['channelId'] is None
+        row['channel']=model(2,populated=True)[0].get_channel(20011)
+        with pytest.raises(ValueError,match='FOREIGN_RESOURCE_REJECTED'):acceptance.project_preview(guild,draft,100)

@@ -6,11 +6,13 @@ come only from the existing container environment and never enter the receipt.
 import asyncio
 from contextlib import closing
 import json
+import math
 import os
 from pathlib import Path
 import re
 import sqlite3
 import stat
+import time
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -68,6 +70,14 @@ class ReadOnlyDiscord:
         self.requests = 0
         self.denied = 0
         self.failures = []
+        # This adapter replaces discord.py's HTTP request handler, including
+        # its rate limiter. Serialize this observer's GETs and honor Discord's
+        # reset guidance across previews; never share a cached message result.
+        self._gate = asyncio.Lock()
+        self._not_before = 0
+        self._waited = 0
+        self._clock, self._sleep = time.monotonic, asyncio.sleep
+        self.rate_limits = []
 
     async def request(self, route, **kwargs):
         self.requests += 1
@@ -99,7 +109,9 @@ class ReadOnlyDiscord:
         if '/members/' in route.path:
             operation = 'HOST_MEMBER' if int(route.url.rsplit('/',1)[1]) == self.application else 'OWNER_MEMBER'
         try:
-            result = await self._get(route.url, params, operation)
+            result = await self._get(route.url, params, operation,
+                {'channelId':str(channel) if channel else None,
+                 'messageId':route.url.rsplit('/',1)[1] if route.path.endswith('/messages/{message_id}') else None})
             if route.path == '/channels/{channel_id}/messages/{message_id}':
                 if (not isinstance(result,dict) or str(result.get('id'))!=route.url.rsplit('/',1)[1]
                         or str(result.get('channel_id'))!=str(channel)):
@@ -107,7 +119,8 @@ class ReadOnlyDiscord:
             return result
         except (TimeoutError, aiohttp.ClientConnectionError) as error:
             reason = 'READ_TIMEOUT' if isinstance(error, TimeoutError) else 'DISCORD_TRANSPORT_FAILED'
-            if len(self.failures)<24:self.failures.append({'operation':operation,'reason':reason,'channelId':str(channel) if channel else None})
+            if len(self.failures)<24:self.failures.append({'operation':operation,'reason':reason,'channelId':str(channel) if channel else None,
+                'messageId':route.url.rsplit('/',1)[1] if route.path.endswith('/messages/{message_id}') else None})
             raise AcceptanceReadError(reason, operation=operation) from None
         except (AcceptanceReadError,discord.HTTPException) as error:
             if len(self.failures)<24:
@@ -118,7 +131,45 @@ class ReadOnlyDiscord:
                     'messageId':route.url.rsplit('/',1)[1] if route.path.endswith('/messages/{message_id}') else None})
             raise
 
-    async def _get(self, url, params, operation):
+    async def _get(self, url, params, operation, context):
+        async with self._gate:
+            for attempt in range(3):
+                pause=max(0,self._not_before-self._clock())
+                if not math.isfinite(pause) or pause>30.1 or self._waited+pause>60:
+                    raise AcceptanceReadError('DISCORD_RATE_LIMITED',429,operation=operation)
+                if pause:
+                    self._waited+=pause
+                    await self._sleep(pause)
+                if attempt:
+                    self.requests+=1
+                    if self.requests>500:raise AcceptanceReadError('ACCEPTANCE_BUDGET_EXCEEDED',operation=operation)
+                status,value,headers = await self._response(url,params,operation)
+                def seconds(raw):
+                    if isinstance(raw,bool):return None
+                    try:result=float(raw)
+                    except (TypeError,ValueError,OverflowError):return None
+                    return result if math.isfinite(result) and 0<=result<=30 else None
+                reset=seconds(headers.get('X-RateLimit-Reset-After'))
+                if str(headers.get('X-RateLimit-Remaining'))=='0':
+                    # Unknown/oversized guidance is a hold, never permission
+                    # to continue sending requests against an exhausted bucket.
+                    if reset is not None:self._not_before=max(self._not_before,self._clock()+reset+0.05)
+                    elif status!=429:self._not_before=float('inf')
+                if status==429:
+                    delay=seconds(value.get('retry_after')) if isinstance(value,dict) else None
+                    if len(self.rate_limits)<24:
+                        self.rate_limits.append({**context,'operation':operation,'httpStatus':429,
+                            'reason':'DISCORD_RATE_LIMITED','retryAfterSeconds':delay,
+                            'global':value.get('global') is True if isinstance(value,dict) else False,
+                            'attempt':attempt+1})
+                    self._not_before=max(self._not_before,self._clock()+delay+0.05 if delay is not None else float('inf'))
+                    if delay is None or attempt==2:raise AcceptanceReadError('DISCORD_RATE_LIMITED',429,operation=operation)
+                    continue
+                if status!=200:
+                    raise AcceptanceReadError('DISCORD_READ_REJECTED',status,operation=operation)
+                return value
+
+    async def _response(self,url,params,operation):
         async with self.session.get(url, params=params,
                                     headers={'Authorization': 'Bot ' + self.token}, allow_redirects=False) as response:
             try:
@@ -135,10 +186,7 @@ class ReadOnlyDiscord:
                     response, {'code':code if type(code) is int and 0 <= code <= 999999 else 0, 'message':'Read access unavailable'})
                 error.operation = operation
                 raise error
-            if response.status != 200:
-                raise AcceptanceReadError('DISCORD_RATE_LIMITED' if response.status == 429 else 'DISCORD_READ_REJECTED',
-                                          response.status, operation=operation)
-            return value
+            return response.status,value,getattr(response,'headers',{})
 
 
 async def inspect_mapped_messages(guild,draft,application):
@@ -223,6 +271,7 @@ async def gather(packet):
         async def load_guild(guild_id):
             rest.guild_id, rest.channels, rest.owner_id = guild_id, set(), None
             rest.failures=[]
+            rest.rate_limits=[]
             payload = await rest.request(Route('GET', '/guilds/{guild_id}', guild_id=guild_id))
             if payload.get('id') != str(guild_id):
                 raise ValueError('GUILD_IDENTITY_REJECTED')
@@ -261,8 +310,13 @@ async def gather(packet):
             return body['skills']
 
         async def message_probes(guild,draft,application):
-            return {'lookups':await inspect_mapped_messages(guild,draft,application),
-                    'httpFailures':list(rest.failures)}
+            lookups=await inspect_mapped_messages(guild,draft,application)
+            uncertain={item.get('messageId') for item in rest.failures
+                       if item.get('messageId') is not None and item.get('reason') in
+                       {'DISCORD_RATE_LIMITED','READ_TIMEOUT','DISCORD_TRANSPORT_FAILED','DISCORD_RESPONSE_INVALID'}}
+            return {'lookups':lookups,'httpFailures':list(rest.failures),'rateLimits':list(rest.rate_limits),
+                    'unverifiedRows':sorted(row['key'] for row in draft['boards']['rows']
+                        if row['kind']=='message' and row['status']!='EXACT_MATCH' and row.get('raw') in uncertain)}
         result = await collect(store, application, load_guild, load_skills, inspect_messages=message_probes)
         if len(guilds) == 2 and all(client.get_guild(guild) is not None for guild in guilds):
             routes = GuildRoutes(application_id=application, store=store, get_guild=client.get_guild)
