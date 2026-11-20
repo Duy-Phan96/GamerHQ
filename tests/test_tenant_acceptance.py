@@ -451,3 +451,16 @@ def test_command_derived_guide_is_never_verified_from_empty_registry(cohort):
     guild,_,_=model(1)
     with pytest.raises(ValueError,match='COMMAND_REGISTRY_UNAVAILABLE'):
         acceptance.project_preview(guild,{'boards':{'rows':[{'key':'server_staff_commands_message_id'}]}},100)
+
+
+def test_native_board_warning_stays_review_evidence_not_bulk_schema_failure(cohort):
+    guild,_,_=model(1)
+    warning={'key':'private warning text','name':'private warning text','kind':'warning',
+             'status':'AMBIGUOUS','resource':None,'raw':None,'candidates':[]}
+    draft={'structure':{'rows':[]},'boards':{'rows':[warning]},'choices':{},'progress':{},'deferred':[]}
+    with cohort.scope(1),acceptance.readonly_snapshot():
+        result=acceptance.project_preview(guild,draft,100)
+    assert result['counts']['Needs review']==1
+    assert result['rows'][0]['decision']=='AMBIGUOUS'
+    assert result['rows'][0]['reason']=='RESOURCE_REVIEW_REQUIRED'
+    assert 'private warning text' not in json.dumps(result)

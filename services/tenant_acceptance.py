@@ -164,7 +164,9 @@ def project_preview(guild, draft, application_id):
         ident = str(resource.id) if resource is not None else None
         saved = row.get('raw')
         saved = str(saved) if saved is not None and str(saved).isdecimal() else None
-        decision = templates.template_decision(row, draft['choices']) if row['kind'] != 'message' else row['status']
+        # Board scans also contain explicit warning rows. They are review
+        # evidence, not bulk structure rows with a bulk_action contract.
+        decision = row['status'] if row['kind'] in ('message','warning') else templates.template_decision(row, draft['choices'])
         safe = sorted(str(candidate.id) for candidate in row.get('candidates', ()) if getattr(getattr(candidate, 'guild', None), 'id', guild.id) == guild.id)
         rows.append({'key': logical(row['key']), 'kind': row['kind'], 'status': row['status'],
                      'decision': decision, 'savedId': saved, 'resourceId': ident, 'candidates': safe,
