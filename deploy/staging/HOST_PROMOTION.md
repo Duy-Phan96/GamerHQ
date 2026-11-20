@@ -986,3 +986,36 @@ databases, running Host/Gateway and all Discord resources. Owner enrollment is
 still required because the restricted deployment key cannot replace root-owned
 observer sources. Only after its verified receipt, prepare a NEW protected
 read-only acceptance run; never dispatch the old observer as proof of this fix.
+
+### Platform safety versus customer template completion
+
+Collection44777476448 resolves the prior read instability: both guilds have
+matching inventory/preview/Skill/lifecycle fingerprints and no foreign or
+unresolved stored mappings. Primary has55 configured Core resources and a
+complete journal. Secondary has52 configured and10 missing Core resources,
+remaining10/no unresolved creation checkpoints, with verified zero-privilege
+Staff mapping. No unresolved creation checkpoint, review or parent-policy ambiguity explains those
+ten; they are the unexecuted remainder of its earlier confirmed partial setup.
+Do not apply them to make a platform acceptance aggregate green.
+
+The template is an optional customer choice. Its selected Core obligations stay
+visible and INCOMPLETE until separately confirmed setup completes. Keep the
+original collector FAIL receipt unchanged. The existing runtime flag gaps also
+remain UNVERIFIED; never infer running/stopped from enabled/healthy flags.
+
+The standard-library-only offline companion `tools/tenant_acceptance_scope.py`
+reads an already authenticated redacted receipt and exact expected cohort. It
+checks the existing raw pass commitments/comparison contract, tenant mapping
+and lifecycle evidence, live403 denials and in-memory ingress guard results.
+It reports `platformSafety` separately from per-guild `templateCompletion`,
+retaining original results, counts, missing keys, checkpoints and all coverage
+gaps. Tampered/unstable passes, foreign or unresolved mappings, lifecycle
+violations, cross-tenant HTTP success and write attempts cannot pass. No-template
+and intentionally partial-template customers can pass this bounded technical
+scope. The assessment itself cannot authorize merge, rollout or live setup.
+
+This is an offline reporting addition, not a new protected operation. The
+enrolled observer, source/client/workflow hashes, controller, worker, Host and
+both databases stay untouched; no VPS enrollment or repeat collection is needed
+solely to interpret the verified receipt. Keep derived assessments distinct
+from original signed/run artifacts. See the [scope and merge recommendation](../../docs/architecture/decisions/ADR-001-guild-tenancy.md#milestone-2-acceptance-scope--20-november-2026).

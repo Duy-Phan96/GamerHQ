@@ -734,3 +734,29 @@ def test_repeated_rate_limit_samples_are_bounded_without_losing_total_count():
                 await rest.request(Route('GET','/channels/{channel_id}/messages/{message_id}',channel_id=3,message_id=4))
     asyncio.run(run())
     assert len(rest.rate_limits)==8 and rest.rate_limit_count==9
+
+
+def test_real_tenant_snapshots_and_optional_partial_template_have_separate_acceptance(cohort):
+    from tools.tenant_acceptance_scope import assess
+    for guild in (1,2):
+        with cohort.scope(guild):
+            db.set_setting('private_staff_role:'+str(guild),str(guild*1000+2))
+    with cohort.scope(2):
+        db.set_setting(server_templates.progress_key(SimpleNamespace(id=2),server_templates.GAMERHQ),
+                       json.dumps({'state':'remaining','remaining':10,'pending_creates':[]}))
+    before={p:p.read_bytes() for p in (cohort.primary_database,cohort._tenant(2).database)}
+    async def load(guild):return model(guild,staff=True)
+    receipt=asyncio.run(acceptance.collect(cohort,100,load,AsyncMock(return_value=[skill()])))
+    # Synthetic transport attestations; live403 and ingress dispatch have their
+    # own existing integration regressions. Actual previews/SQL scopes above.
+    receipt['hostCrossTenantReadDenials']=[{'authorizedGuild':a,'requestedGuild':b,'status':'PASS','httpStatus':403}
+                                          for a,b in (('1','2'),('2','1'))]
+    receipt['isolationGuards']={'status':'PASS','liveMutatorsInvoked':False,
+        'mode':'IN_MEMORY_DISPATCH_WITH_VERIFIED_LIVE_BINDINGS',
+        'paths':dict.fromkeys(('command','component','modal','scheduler','skillLifecycle'),True)}
+    result=assess(receipt,guild_ids=(1,2))
+    assert result['platformSafety']=='PASS'
+    assert result['guilds'][0]['templateCompletion']['status']=='NOT_SELECTED'
+    assert result['guilds'][1]['templateCompletion']['status']=='INCOMPLETE'
+    assert result['guilds'][1]['templateCompletion']['counts']['Will create']>0
+    assert all(path.read_bytes()==content for path,content in before.items())
