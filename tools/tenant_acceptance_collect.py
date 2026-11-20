@@ -137,7 +137,8 @@ class ReadOnlyDiscord:
             for attempt in range(3):
                 pause=max(0,self._not_before-self._clock())
                 if not math.isfinite(pause) or pause>30.1 or self._waited+pause>60:
-                    raise AcceptanceReadError('DISCORD_RATE_LIMITED',429,operation=operation)
+                    # Local budget hold: no HTTP response was received here.
+                    raise AcceptanceReadError('DISCORD_RATE_LIMITED',operation=operation)
                 if pause:
                     self._waited+=pause
                     await self._sleep(pause)

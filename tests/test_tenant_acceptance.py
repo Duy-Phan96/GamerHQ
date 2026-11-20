@@ -397,7 +397,11 @@ def test_discord_failures_report_exact_status_operation_and_code_without_body(co
         await rest.request(Route('GET','/guilds/{guild_id}/channels',guild_id=guild))
     result=asyncio.run(acceptance.collect(cohort,100,load,AsyncMock(return_value=[skill()])))
     for row in result['guilds']:
-        assert row['reason']==reason and row['httpStatus']==status
+        assert row['reason']==reason
+        if status==429 and row['guildId']=='2':
+            # Invalid retry guidance held the observer before another HTTP call.
+            assert 'httpStatus' not in row
+        else:assert row['httpStatus']==status
         assert row['operation']=='GUILD_CHANNELS'
         if status in (403,404): assert row['discordCode']==code
     assert 'private-body' not in json.dumps(result) and 'private-token' not in json.dumps(result)
@@ -696,6 +700,7 @@ def test_zero_remaining_header_serializes_independent_reads_and_budget_fails_clo
         rest._waited=60
         with pytest.raises(ValueError,match='DISCORD_RATE_LIMITED'):await rest.request(route)
         assert len(sent)==3
+        assert rest.failures[-1]['httpStatus'] is None
     asyncio.run(run())
 
 
