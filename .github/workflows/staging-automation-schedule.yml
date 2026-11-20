@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   dispatch-main:
-    if: vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    if: github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: write
