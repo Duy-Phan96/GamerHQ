@@ -875,7 +875,7 @@ loaded. Live registry state remains UNVERIFIED and command-derived staff-guide
 rows are explicitly rejected. Configured Core guide histories/pins and stable
 preview IDs remain governed by the existing services and GET/SQL guards.
 
-The current source-only revision accepts only installed 9935969 and preserves
+The second source-only revision accepts only installed 9935969 and preserves
 the original d1eed91 enrollment and first source-transition audit bytes. Its
 separate `tenant-acceptance-source-transition-v2.json` is committed only after
 the same locked health/image/cohort/known-byte checks. Predecessor launcher
@@ -884,3 +884,59 @@ Initial, first-revision and current-revision contracts are rehearsed together.
 No old marker is cleared or overwritten to admit a retry. Default-branch
 migration is a separate reviewed GitHub setting operation; see
 [the audited migration](../../docs/development/MAIN_DEFAULT_MIGRATION.md).
+
+Run 44734287411 reached both independent previews but reported FAIL. Its
+recorded first-pass SHA-256 can be reconstructed exactly from the retained
+second pass by changing only the three message-inspection decisions and their
+aggregate counts. Primary first/second counts were 55/54 configured; secondary
+52/50 configured, with ten creations in both passes. The changed rows were
+primary `role_message:1567098041641738331:language` (1571894322700484690),
+secondary `role_message:1571908030532948129:gaming_content`
+(1573046182115287071) and `role_message:1571908030532948129:language`
+(1573046188536635423). EXACT_MATCH became AMBIGUOUS with the existing generic
+message-inspection-error reason. Ordering, inventories, lifecycle, journal and
+all other projected fields were identical. This is not evidence that messages
+were deleted. First-pass exact recognition verifies their saved identity,
+Host authorship and expected channel at that time; controls and pin status need
+their separate checks. It is not a raw
+historical HTTP trace. The underlying second-pass exception was not retained.
+
+The REST adapter contained a verified defect: one `StreamReader.read(n)` may
+return a partial body. JSON parsing can then fail despite HTTP 200. Read to EOF
+within the unchanged byte/time budget for Discord and loopback Host responses;
+do not assume each read is complete or retry mutations. A real aiohttp stream
+fixture reproduces fragmentation. This defect can explain intermittent board
+inspection; the historical exception itself remains unproven.
+
+Current receipts retain both full redacted passes, raw and semantic hashes,
+bounded changed paths/rows and component hashes. Semantic comparison excludes
+historical audit aggregates and HTTP diagnostic lists, and sorts ownership
+references as a multiset without deduplication. Raw differences remain visible.
+All decisions, reasons, IDs, permissions, lifecycle and current journal state
+remain significant. Do not normalize away an AMBIGUOUS result. Unresolved saved
+public boards get an additional exact-ID GET only after their authoritative
+channel/guild binding passes. Receipts expose status/code, access, existence,
+Host ownership, controls/content hashes and pin facts, never message content,
+private member identities, tokens or raw exceptions. A successful probe does
+not override the preview's review decision.
+
+Secondary Staff role 1573046089580421163 was verified with zero guild privileges.
+The remaining ten creation decisions are STAFF and SUPPORT TICKETS categories
+and eight STAFF children: bot-log, games-log, mod-commands, mod-log, server-log,
+staff-chat, staff-suggestions and ticket-logs. No dependency was blocked in this
+receipt. Journal remaining=10 records prior partial application, not a new
+collection-time action. Do not create them during acceptance. Both guilds had
+no foreign mappings and passed live cross-authorized-guild HTTP403 denials and
+the five in-memory ingress guards. Live callback registry, full member-role
+audit and mutation-path acceptance remain UNVERIFIED.
+
+The third source-only revision accepts only installed f944448 and seals
+`tenant-acceptance-source-transition-v3.json`. Explicitly fetch and verify all
+three immutable ancestor installers/COMMITTED markers; preserve their original
+bytes and hashes. Replay initial enrollment, both revisions, interrupted writes,
+held launchers, resume and repeated completion in root-owned disposable fixtures.
+Controller module/client/workflow bytes, active Host, private state, tenant
+bindings, both databases, Gateway and security gates remain unchanged. The
+restricted key cannot replace the root-owned collector source pin. Require one
+checksum-verified owner source revision, then queue one NEW protected read-only
+acceptance run; never re-label completed 44734287411 as pending approval.

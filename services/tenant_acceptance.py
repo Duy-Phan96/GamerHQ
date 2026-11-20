@@ -24,6 +24,54 @@ def logical(value):
     return value if re.fullmatch('[a-zA-Z0-9:_-]{1,120}', value) else 'hash:' + fingerprint(value)
 
 
+def comparison_value(value):
+    """Canonical current state; historical audit aggregates are diagnostic only.
+
+    Keep every decision/reason fingerprint/ID/ACL/lifecycle field. Ownership is
+    an unordered multiset: sort but never deduplicate conflicting references.
+    """
+    import copy
+    value = copy.deepcopy(value)
+    plan = value['preview']
+    plan['ownership'] = sorted(plan['ownership'], key=lambda row:(row['kind'],row['key'],row['id']))
+    plan['journal'].pop('audit', None)
+    if isinstance(plan.get('messageChecks'),dict):
+        plan['messageChecks'].pop('httpFailures',None)
+    return value
+
+
+def changed_paths(first, second, path=''):
+    if type(first) is not type(second):
+        return [path]
+    if isinstance(first, dict):
+        result=[]
+        for key in sorted(first.keys() | second.keys()):
+            current=path+'/'+str(key)
+            result.extend([current] if key not in first or key not in second else changed_paths(first[key],second[key],current))
+        return result
+    if isinstance(first,list):
+        if len(first)!=len(second):return [path+'/length']
+        return [item for index,(a,b) in enumerate(zip(first,second)) for item in changed_paths(a,b,path+'/'+str(index))]
+    return [] if first==second else [path]
+
+
+def compare_passes(first, second):
+    a,b=comparison_value(first),comparison_value(second)
+    paths=changed_paths(a,b)
+    raw=changed_paths(first,second)
+    before={row['key']:row for row in first['preview']['rows']}
+    after={row['key']:row for row in second['preview']['rows']}
+    rows=[{'key':key,'fields':changed_paths(before.get(key),after.get(key))}
+          for key in sorted(before.keys()|after.keys()) if before.get(key)!=after.get(key)]
+    return {'scope':'CURRENT_STATE_V2_AUDIT_DIAGNOSTIC_OWNERSHIP_MULTISET',
+            'semanticFingerprints':[fingerprint(a),fingerprint(b)],
+            'rawFingerprints':[fingerprint(first),fingerprint(second)],
+            'changedPaths':paths[:64], 'changesTruncated':len(paths)>64,
+            'rawChangedPaths':raw[:64], 'rawChangesTruncated':len(raw)>64,
+            'changedRows':rows[:32], 'rowChangesTruncated':len(rows)>32,
+            'components':{key:[fingerprint(a[key]),fingerprint(b[key])] for key in sorted(a)}}
+
+
 @contextmanager
 def readonly_snapshot(denied=None):
     """One fresh bounded in-memory snapshot, reused by existing SQL helpers.
@@ -98,6 +146,7 @@ def inventory(guild, application_id):
         if type(channel_type) is not int:
             raise ValueError('DISCORD_CHANNEL_TYPE_REJECTED')
         channels.append({'id': str(channel.id), 'type': channel_type,
+                         'nameFingerprint':fingerprint(channel.name), 'position':channel.position,
                          'parentId': str(parent) if parent else None,
                          'overwrites': overwrites(channel, application_id)})
     roles = []
@@ -105,6 +154,7 @@ def inventory(guild, application_id):
         if role.guild.id != guild.id:
             raise ValueError('FOREIGN_RESOURCE_REJECTED')
         roles.append({'id': str(role.id), 'permissions': str(role.permissions.value),
+                      'nameFingerprint':fingerprint(role.name),
                       'position': role.position, 'managed': role.managed,
                       'staffNameCandidate': role.name == staff_access.ROLE_NAME})
     return {'channels': sorted(channels, key=lambda row: row['id']),
@@ -172,7 +222,10 @@ def project_preview(guild, draft, application_id):
                      'decision': decision, 'savedId': saved, 'resourceId': ident, 'candidates': safe,
                      'parentKey': logical(row['parent']) if row.get('parent') else None,
                      'reason': reason_code(row, staff), 'reasonFingerprint': fingerprint(row.get('reason', '')),
-                     'private': row.get('private') is True})
+                     'private': row.get('private') is True,
+                     'channelId':str(channel.id) if channel is not None else None,
+                     'proposedOverwrites':overwrites(SimpleNamespace(overwrites=row['create_overwrites']), application_id)
+                          if 'create_overwrites' in row else None})
         if saved:
             ownership.append({'id': saved, 'kind': row['kind'], 'key': logical(row['key'])})
     record = draft['progress']
@@ -266,7 +319,7 @@ async def guard_probes(routes):
             'liveMutatorsInvoked': False}
 
 
-async def collect(store, application_id, load_guild, load_skills, *, preview=templates.preview):
+async def collect(store, application_id, load_guild, load_skills, *, preview=templates.preview, inspect_messages=None):
     """Two independent REST inventories/SQL snapshots and ephemeral preview plans.
 
     Every callback is scoped to the current tenant. The live runner enforces GET
@@ -292,6 +345,9 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                     draft = await preview(guild, actor, templates.GAMERHQ, bot)
                     stage = 'TEMPLATE_PROJECTION'
                     projection = project_preview(guild, draft, application_id)
+                    if inspect_messages is not None:
+                        stage = 'MAPPED_MESSAGE_PROBES'
+                        projection['messageChecks'] = await inspect_messages(guild,draft,application_id)
                     stage = 'HOST_SKILL_STATE'
                     skills = skill_projection(await load_skills(guild_id))
                     mismatches = []
@@ -304,7 +360,8 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                             mismatches.append(observed['id'])
                     passes.append({'inventory': snapshot, 'preview': projection, 'skills': skills,
                                    'lifecycleMismatches': mismatches})
-            stable = fingerprint(passes[0]) == fingerprint(passes[1])
+            comparison=compare_passes(passes[0],passes[1])
+            stable = comparison['semanticFingerprints'][0] == comparison['semanticFingerprints'][1]
             result = passes[-1]
             inventories[guild_id] = {row['id'] for group in ('channels', 'roles') for row in result['inventory'][group]}
             inventories[guild_id].update(row['resourceId'] for row in result['preview']['rows'] if row['kind'] == 'message' and row['resourceId'])
@@ -315,13 +372,15 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                       else 'UNVERIFIED' if not selected or any(row['runtime']['status'] == 'UNVERIFIED' for row in result['skills']) else 'PASS')
             receipts.append({'guildId': str(guild_id), 'status': status, 'previewStable': stable,
                              'templateAcceptance': {'status': template_status, 'selected': selected},
-                             'previewFingerprints': [fingerprint(value) for value in passes], **result})
+                             'previewFingerprints': comparison['semanticFingerprints'],
+                             'comparison':comparison,'firstPass':passes[0], **result})
         except Exception as error:
             known = {'FOREIGN_RESOURCE_REJECTED', 'UNVERIFIED_PARENT_REJECTED', 'GUILD_IDENTITY_REJECTED',
                      'DATABASE_INTEGRITY_REJECTED', 'SKILL_RESPONSE_REJECTED', 'READ_ONLY_REQUEST_REJECTED',
                      'DISCORD_RESPONSE_REJECTED', 'DISCORD_READ_REJECTED', 'ACCEPTANCE_BUDGET_EXCEEDED',
                      'DISCORD_CHANNEL_TYPE_REJECTED', 'DISCORD_RESPONSE_INVALID', 'DISCORD_MODEL_INVALID',
-                     'DISCORD_RATE_LIMITED', 'DISCORD_TRANSPORT_FAILED', 'READ_TIMEOUT', 'COMMAND_REGISTRY_UNAVAILABLE'}
+                     'DISCORD_RATE_LIMITED', 'DISCORD_TRANSPORT_FAILED', 'READ_TIMEOUT', 'COMMAND_REGISTRY_UNAVAILABLE',
+                     'DISCORD_MESSAGE_BINDING_REJECTED'}
             known.add('HOST_SKILL_READ_REJECTED')
             reason = error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in known else 'COLLECTION_UNAVAILABLE'
             if reason == 'COLLECTION_UNAVAILABLE':

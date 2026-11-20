@@ -26,6 +26,18 @@ from services.tenant_acceptance import collect, fingerprint, guard_probes
 MAX_BODY = 2 * 1024**2
 
 
+async def read_bounded(stream,limit):
+    """StreamReader.read(n) may return a fragment; require EOF within the cap."""
+    chunks=[]
+    total=0
+    while True:
+        chunk=await stream.read(min(65536,limit+1-total))
+        if not chunk:return b''.join(chunks)
+        total+=len(chunk)
+        if total>limit:raise ValueError('ACCEPTANCE_BUDGET_EXCEEDED')
+        chunks.append(chunk)
+
+
 def preview_client():
     """Model-only Host interface; no login, sync, cog load or Gateway.
 
@@ -55,6 +67,7 @@ class ReadOnlyDiscord:
         self.channels = set()
         self.requests = 0
         self.denied = 0
+        self.failures = []
 
     async def request(self, route, **kwargs):
         self.requests += 1
@@ -86,17 +99,32 @@ class ReadOnlyDiscord:
         if '/members/' in route.path:
             operation = 'HOST_MEMBER' if int(route.url.rsplit('/',1)[1]) == self.application else 'OWNER_MEMBER'
         try:
-            return await self._get(route.url, params, operation)
+            result = await self._get(route.url, params, operation)
+            if route.path == '/channels/{channel_id}/messages/{message_id}':
+                if (not isinstance(result,dict) or str(result.get('id'))!=route.url.rsplit('/',1)[1]
+                        or str(result.get('channel_id'))!=str(channel)):
+                    raise AcceptanceReadError('DISCORD_MESSAGE_BINDING_REJECTED', operation=operation)
+            return result
         except (TimeoutError, aiohttp.ClientConnectionError) as error:
             reason = 'READ_TIMEOUT' if isinstance(error, TimeoutError) else 'DISCORD_TRANSPORT_FAILED'
+            if len(self.failures)<24:self.failures.append({'operation':operation,'reason':reason,'channelId':str(channel) if channel else None})
             raise AcceptanceReadError(reason, operation=operation) from None
+        except (AcceptanceReadError,discord.HTTPException) as error:
+            if len(self.failures)<24:
+                self.failures.append({'operation':operation,'httpStatus':error.status,
+                    'reason':error.args[0] if isinstance(error,AcceptanceReadError) else 'DISCORD_HTTP_REJECTED',
+                    'discordCode':error.code if isinstance(error,discord.HTTPException) else None,
+                    'channelId':str(channel) if channel else None,
+                    'messageId':route.url.rsplit('/',1)[1] if route.path.endswith('/messages/{message_id}') else None})
+            raise
 
     async def _get(self, url, params, operation):
         async with self.session.get(url, params=params,
                                     headers={'Authorization': 'Bot ' + self.token}, allow_redirects=False) as response:
-            body = await response.content.read(MAX_BODY + 1)
-            if len(body) > MAX_BODY:
-                raise ValueError('ACCEPTANCE_BUDGET_EXCEEDED')
+            try:
+                body = await read_bounded(response.content,MAX_BODY)
+            except ValueError:
+                raise AcceptanceReadError('ACCEPTANCE_BUDGET_EXCEEDED',response.status,operation=operation) from None
             try:
                 value = json.loads(body)
             except (ValueError, UnicodeError):
@@ -111,6 +139,51 @@ class ReadOnlyDiscord:
                 raise AcceptanceReadError('DISCORD_RATE_LIMITED' if response.status == 429 else 'DISCORD_READ_REJECTED',
                                           response.status, operation=operation)
             return value
+
+
+async def inspect_mapped_messages(guild,draft,application):
+    """Probe only reviewed DB-mapped public boards, never discover replacements."""
+    from services import managed_message_service as managed, server_operations as ops
+    from services import message_reconciliation as messages
+    rows=[]
+    specs=managed.specs(guild)
+    for row in sorted(draft['boards']['rows'],key=lambda item:item['key']):
+        raw=row.get('raw')
+        if row['kind']!='message' or row['status']=='EXACT_MATCH' or not isinstance(raw,str) or not raw.isdecimal():continue
+        channel=row.get('channel');spec=specs.get(row['key'])
+        item={'key':row['key'],'messageId':raw,'channelId':str(channel.id) if channel else None}
+        if (channel is None or channel.guild.id!=guild.id or not spec
+                or db.get_setting(spec[1])!=str(channel.id)):
+            rows.append({**item,'status':'UNVERIFIED','reason':'AUTHORITATIVE_CHANNEL_BINDING_UNVERIFIED'})
+            continue
+        permissions=channel.permissions_for(guild.me)
+        item['access']={'viewChannel':permissions.view_channel,'readHistory':permissions.read_message_history}
+        try:
+            message=await channel.fetch_message(int(raw))
+            item.update(status='OBSERVED',httpStatus=200,exists=True,
+                        idMatches=str(message.id)==raw,channelMatches=message.channel.id==channel.id,
+                        guildMatches=message.guild.id==guild.id,authorIsHost=message.author.id==application,
+                        defaultType=message.type==discord.MessageType.default,pinned=message.pinned)
+            expected=ops.message_view(guild,row['key'])
+            controls=expected.to_components() if expected else []
+            state=managed.load(row['key'])
+            content=state['content'] if state and state.get('customized') else row['content']
+            item.update(
+                        canonicalContentMatches=messages.canonical_equal(message.content,content),
+                        contentFingerprint=fingerprint(message.content),
+                        controlsMatch=ops.component_payload_matches([c.to_dict() for c in message.components],controls),
+                        stateOwnershipMatches=managed.owns(state,channel,message) if state else None)
+        except discord.HTTPException as error:
+            item.update(status='UNVERIFIED',reason='MAPPED_MESSAGE_HTTP_REJECTED',httpStatus=error.status,
+                        discordCode=error.code)
+        except AcceptanceReadError as error:
+            item.update(status='UNVERIFIED',reason=error.args[0],httpStatus=error.status)
+        except (KeyError,TypeError,ValueError,AttributeError):
+            item.update(status='UNVERIFIED',reason='MAPPED_MESSAGE_RENDER_OR_STATE_REJECTED')
+        except TimeoutError:
+            item.update(status='UNVERIFIED',reason='MAPPED_MESSAGE_READ_TIMEOUT')
+        rows.append(item)
+    return rows
 
 
 async def gather(packet):
@@ -149,6 +222,7 @@ async def gather(packet):
 
         async def load_guild(guild_id):
             rest.guild_id, rest.channels, rest.owner_id = guild_id, set(), None
+            rest.failures=[]
             payload = await rest.request(Route('GET', '/guilds/{guild_id}', guild_id=guild_id))
             if payload.get('id') != str(guild_id):
                 raise ValueError('GUILD_IDENTITY_REJECTED')
@@ -177,9 +251,7 @@ async def gather(packet):
             url = 'http://127.0.0.1:8080/api/v1/servers/' + str(guild_id) + '/skills'
             async with session.get(url, headers={'Authorization': 'Bearer ' + api_token,
                                                  'X-GamerHQ-Authorized-Guild-Ids': str(authorized)}, allow_redirects=False) as response:
-                body = await response.content.read(262145)
-                if len(body) > 262144:
-                    raise ValueError('ACCEPTANCE_BUDGET_EXCEEDED')
+                body = await read_bounded(response.content,262144)
                 return response.status, json.loads(body)
 
         async def load_skills(guild_id):
@@ -188,7 +260,10 @@ async def gather(packet):
                 raise AcceptanceReadError('HOST_SKILL_READ_REJECTED', status)
             return body['skills']
 
-        result = await collect(store, application, load_guild, load_skills)
+        async def message_probes(guild,draft,application):
+            return {'lookups':await inspect_mapped_messages(guild,draft,application),
+                    'httpFailures':list(rest.failures)}
+        result = await collect(store, application, load_guild, load_skills, inspect_messages=message_probes)
         if len(guilds) == 2 and all(client.get_guild(guild) is not None for guild in guilds):
             routes = GuildRoutes(application_id=application, store=store, get_guild=client.get_guild)
             routes.verify(identity, membership)

@@ -204,7 +204,9 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
     class Response:
         def __init__(self, body, status=200):
             self.status, self.reason = status, 'fixture'
-            self.content = SimpleNamespace(read=AsyncMock(return_value=json.dumps(body).encode()))
+            data=json.dumps(body).encode()
+            chunks=[data[:7],data[7:]] if historical_failure is False else [data]
+            self.content = SimpleNamespace(read=AsyncMock(side_effect=[*chunks,b'']))
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
     class Session:
@@ -256,7 +258,11 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
         original=types.ModuleType('original_readonly_acceptance')
         body=subprocess.check_output(['git','show','d1eed91e3e1608176704407843243afbefc8fd7c:services/tenant_acceptance.py'])
         exec(compile(body,'original_readonly_acceptance.py','exec'),original.__dict__)
-        monkeypatch.setattr(adapter,'collect',original.collect)
+        async def historical_collect(*args,**kwargs):
+            # The historical core predates optional read-only probe injection.
+            kwargs.pop('inspect_messages',None)
+            return await original.collect(*args,**kwargs)
+        monkeypatch.setattr(adapter,'collect',historical_collect)
     elif historical_failure=='schema':
         import subprocess,types
         core=types.ModuleType('original_core');original=types.ModuleType('original_adapter')
@@ -382,7 +388,7 @@ def test_discord_failures_report_exact_status_operation_and_code_without_body(co
         reason='fixture'
         def __init__(self):
             self.status=status
-            self.content=SimpleNamespace(read=AsyncMock(return_value=json.dumps({'code':code,'message':'private-body'}).encode()))
+            self.content=SimpleNamespace(read=AsyncMock(side_effect=[json.dumps({'code':code,'message':'private-body'}).encode(),b'']))
         async def __aenter__(self): return self
         async def __aexit__(self,*_): pass
     rest=ReadOnlyDiscord(SimpleNamespace(get=lambda *a,**k:Response()),'private-token',100,(1,2))
@@ -400,7 +406,7 @@ def test_discord_failures_report_exact_status_operation_and_code_without_body(co
 def test_non_json_success_response_is_redacted_and_not_inventory_success(cohort):
     class Response:
         status=200
-        content=SimpleNamespace(read=AsyncMock(return_value=b'private non-json response'))
+        def __init__(self):self.content=SimpleNamespace(read=AsyncMock(side_effect=[b'private non-json response',b'']))
         async def __aenter__(self): return self
         async def __aexit__(self,*_): pass
     rest=ReadOnlyDiscord(SimpleNamespace(get=lambda *a,**k:Response()),'private-token',100,(1,2))
@@ -464,3 +470,115 @@ def test_native_board_warning_stays_review_evidence_not_bulk_schema_failure(coho
     assert result['rows'][0]['decision']=='AMBIGUOUS'
     assert result['rows'][0]['reason']=='RESOURCE_REVIEW_REQUIRED'
     assert 'private warning text' not in json.dumps(result)
+
+
+def test_real_stream_reader_fragment_is_not_a_complete_json_body():
+    import aiohttp
+    from tools.tenant_acceptance_collect import read_bounded
+    async def run():
+        def stream():
+            return aiohttp.StreamReader(SimpleNamespace(_reading_paused=False,connected=True,resume_reading=lambda **kwargs:None),limit=65536)
+        old=stream();old.feed_data(b'{"id":')
+        with pytest.raises(json.JSONDecodeError):json.loads(await old.read(100))
+        current=stream();current.feed_data(b'{"id":')
+        async def tail():
+            await asyncio.sleep(0)
+            current.feed_data(b'"123"}');current.feed_eof()
+        task=asyncio.create_task(tail())
+        assert json.loads(await read_bounded(current,100))=={'id':'123'}
+        await task
+        large=stream();large.feed_data(b'x'*11);large.feed_eof()
+        with pytest.raises(ValueError,match='ACCEPTANCE_BUDGET_EXCEEDED'):await read_bounded(large,10)
+    asyncio.run(run())
+
+
+def test_comparison_keeps_real_changes_and_separates_history_and_unordered_references(cohort):
+    result=asyncio.run(acceptance.collect(cohort,100,async_model,AsyncMock(return_value=[skill()])))
+    row=result['guilds'][0]
+    original=row['firstPass']
+    different=copy.deepcopy(original)
+    different['preview']['journal']['audit']=[{'action':'OTHER','count':1,'firstAt':1,'lastAt':2}]
+    different['preview']['ownership']=[{'key':'a','kind':'role','id':'2'},{'key':'b','kind':'role','id':'1'}]
+    original['preview']['ownership']=list(reversed(different['preview']['ownership']))
+    comparison=acceptance.compare_passes(original,different)
+    assert comparison['semanticFingerprints'][0]==comparison['semanticFingerprints'][1]
+    assert comparison['rawFingerprints'][0]!=comparison['rawFingerprints'][1]
+    for field in ('status','reasonFingerprint','savedId','parentKey','proposedOverwrites'):
+        changed=copy.deepcopy(different)
+        changed['preview']['rows'][0][field]='changed'
+        check=acceptance.compare_passes(different,changed)
+        assert check['semanticFingerprints'][0]!=check['semanticFingerprints'][1],field
+        assert check['changedRows'] and any(field in path for path in check['changedRows'][0]['fields'])
+
+
+@pytest.mark.parametrize('status,body,expected',[
+    (200,{'id':'4','channel_id':'3'},None),
+    (200,{'id':'5','channel_id':'3'},'DISCORD_MESSAGE_BINDING_REJECTED'),
+    (200,{'id':'4','channel_id':'999'},'DISCORD_MESSAGE_BINDING_REJECTED'),
+    (403,{'code':50001},'DISCORD_HTTP_REJECTED'),
+    (404,{'code':10008},'DISCORD_HTTP_REJECTED'),
+    (429,{'retry_after':2},'DISCORD_RATE_LIMITED'),
+])
+def test_exact_message_lookup_binding_and_redacted_http_failures(status,body,expected):
+    class Response:
+        reason='fixture'
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+    response=Response();response.status=status
+    data=json.dumps(body).encode()
+    response.content=SimpleNamespace(read=AsyncMock(side_effect=[data[:4],data[4:],b'']))
+    rest=ReadOnlyDiscord(SimpleNamespace(get=lambda *a,**k:response),'private-token',100,(1,2))
+    rest.guild_id,rest.channels=1,{3}
+    async def run():return await rest.request(Route('GET','/channels/{channel_id}/messages/{message_id}',channel_id=3,message_id=4))
+    if expected:
+        with pytest.raises((ValueError,discord.HTTPException)):asyncio.run(run())
+        assert rest.failures[0]['reason']==expected
+        assert rest.failures[0]['channelId']=='3' and rest.failures[0]['messageId']=='4'
+        assert 'private-' not in json.dumps(rest.failures)
+    else:
+        assert asyncio.run(run())==body
+        assert not rest.failures
+
+
+@pytest.mark.parametrize('case',['observed','missing','forbidden','wrong_mapping','render_error'])
+def test_mapped_board_probes_are_get_only_scoped_and_preserve_db(cohort,monkeypatch,case):
+    from services import managed_message_service as managed, server_operations as ops
+    from tools.tenant_acceptance_collect import inspect_mapped_messages
+    guild,_,_=model(1,populated=True)
+    channel=guild.get_channel(10011)
+    key='role_message:1:language'
+    message=SimpleNamespace(id=4,channel=channel,guild=guild,author=guild.me,type=discord.MessageType.default,
+                            pinned=True,content='private-message-body',components=[])
+    getter=AsyncMock(return_value=message)
+    if case in ('missing','forbidden'):
+        status=404 if case=='missing' else 403
+        getter.side_effect=(discord.NotFound if status==404 else discord.Forbidden)(
+            SimpleNamespace(status=status,reason='fixture'),{'code':10008 if status==404 else 50001,'message':'private-error'})
+    monkeypatch.setattr(discord.TextChannel,'fetch_message',getter)
+    monkeypatch.setattr(managed,'specs',lambda g:{key:('Language','managed_channel:1:choose-your-roles',[])})
+    def view(*a):
+        if case=='render_error':raise ValueError('private-render-error')
+        return None
+    monkeypatch.setattr(ops,'message_view',view)
+    with cohort.scope(1):db.set_setting('managed_channel:1:choose-your-roles',999 if case=='wrong_mapping' else channel.id)
+    before=cohort.primary_database.read_bytes()
+    draft={'boards':{'rows':[{'key':key,'kind':'message','status':'AMBIGUOUS','raw':'4','channel':channel,'content':message.content}]}}
+    async def run():
+        with cohort.scope(1),acceptance.readonly_snapshot():
+            return await inspect_mapped_messages(guild,draft,100)
+    row=asyncio.run(run())[0]
+    assert row['messageId']=='4' and row['channelId']=='10011'
+    if case=='observed':
+        assert row['status']=='OBSERVED' and row['httpStatus']==200
+        assert all(row[x] for x in ('exists','idMatches','channelMatches','guildMatches','authorIsHost','defaultType','pinned','canonicalContentMatches','controlsMatch'))
+    elif case=='wrong_mapping':
+        assert row['reason']=='AUTHORITATIVE_CHANNEL_BINDING_UNVERIFIED'
+        getter.assert_not_awaited()
+    elif case=='render_error':
+        assert row['reason']=='MAPPED_MESSAGE_RENDER_OR_STATE_REJECTED'
+        assert row['httpStatus']==200 and row['exists'] is True
+    else:
+        assert row['reason']=='MAPPED_MESSAGE_HTTP_REJECTED'
+        assert row['httpStatus']==(404 if case=='missing' else 403)
+    assert 'private-' not in json.dumps(row)
+    assert cohort.primary_database.read_bytes()==before
