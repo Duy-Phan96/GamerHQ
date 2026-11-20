@@ -143,6 +143,10 @@ def reason_code(row, staff):
 
 
 def project_preview(guild, draft, application_id):
+    # Never compare a command-generated guide against the collector's empty
+    # metadata tree. Current Core entry points do not contain staff guides.
+    if any(row['key'].startswith('server_staff_commands_message_id') for row in draft['boards']['rows']):
+        raise ValueError('COMMAND_REGISTRY_UNAVAILABLE')
     raw = db.get_setting(staff_access.key(guild))
     mapped = staff_access.mapped_role(guild)
     staff = {'mapping': raw if raw and raw.isdecimal() else None,
@@ -284,6 +288,7 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                     snapshot = inventory(guild, application_id)
                     stage = 'TEMPLATE_PREVIEW'
                     draft = await preview(guild, actor, templates.GAMERHQ, bot)
+                    stage = 'TEMPLATE_PROJECTION'
                     projection = project_preview(guild, draft, application_id)
                     stage = 'HOST_SKILL_STATE'
                     skills = skill_projection(await load_skills(guild_id))
@@ -314,7 +319,7 @@ async def collect(store, application_id, load_guild, load_skills, *, preview=tem
                      'DATABASE_INTEGRITY_REJECTED', 'SKILL_RESPONSE_REJECTED', 'READ_ONLY_REQUEST_REJECTED',
                      'DISCORD_RESPONSE_REJECTED', 'DISCORD_READ_REJECTED', 'ACCEPTANCE_BUDGET_EXCEEDED',
                      'DISCORD_CHANNEL_TYPE_REJECTED', 'DISCORD_RESPONSE_INVALID', 'DISCORD_MODEL_INVALID',
-                     'DISCORD_RATE_LIMITED', 'DISCORD_TRANSPORT_FAILED', 'READ_TIMEOUT'}
+                     'DISCORD_RATE_LIMITED', 'DISCORD_TRANSPORT_FAILED', 'READ_TIMEOUT', 'COMMAND_REGISTRY_UNAVAILABLE'}
             known.add('HOST_SKILL_READ_REJECTED')
             reason = error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in known else 'COLLECTION_UNAVAILABLE'
             if reason == 'COLLECTION_UNAVAILABLE':

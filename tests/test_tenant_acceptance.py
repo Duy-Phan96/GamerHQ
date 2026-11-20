@@ -195,8 +195,9 @@ def test_owner_installer_remains_system_python_39_compatible():
     ast.parse(Path('tools/enroll_staging_tenant_acceptance.py').read_text(), feature_version=(3,9))
 
 
-@pytest.mark.parametrize('historical_failure',[False,True])
-def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort, monkeypatch,historical_failure):
+@pytest.mark.parametrize('historical_failure',[False,True,'schema'])
+@pytest.mark.parametrize('configured',[False,True])
+def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort, monkeypatch,historical_failure,configured):
     from urllib.parse import urlsplit
     from tools import tenant_acceptance_collect as adapter
     requests = []
@@ -219,13 +220,22 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
             assert url.startswith('https://discord.com/api/v10/')
             if path.endswith('/users/@me/guilds'): return Response([{'id':'1'}, {'id':'2'}])
             if path.endswith('/users/@me'): return Response({'id':'100','username':'private-bot-name','discriminator':'0','avatar':None,'bot':True})
+            if '/channels/' in path:
+                if path.endswith('/pins'):return Response({'items':[],'has_more':False})
+                if path.endswith('/messages'):return Response([])
+                raise AssertionError('Unexpected message request')
             parts = path.split('/')
             guild_id = int(parts[4])
             guild, owner, _ = model(guild_id)
             if path.endswith('/roles'):
                 return Response([{'id':str(role.id),'name':role.name,'permissions':str(role.permissions.value),'position':role.position,
                                   'color':0,'managed':role.managed,'hoist':False} for role in guild.roles])
-            if path.endswith('/channels'): return Response(channel_payloads(guild_id))
+            if path.endswith('/channels'):
+                rows=channel_payloads(guild_id)
+                if configured:
+                    rows[0]['name']='COMMUNITY';rows[1]['name']='guide'
+                    for row in rows:row['permission_overwrites']=[]
+                return Response(rows)
             if '/members/' in path:
                 ident = int(parts[-1])
                 return Response({'user':{'id':str(ident),'username':'private-member-name','discriminator':'0','avatar':None,'bot':ident==100},
@@ -235,22 +245,37 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
     monkeypatch.setenv('DISCORD_TOKEN','private-test-token')
     monkeypatch.setenv('GAMERHQ_WEB_API_SECRET','private-api-credential')
     monkeypatch.setattr(adapter.aiohttp, 'ClientSession', lambda **kwargs: Session())
-    if historical_failure:
+    if configured:
+        for guild_id in (1,2):
+            with cohort.scope(guild_id):
+                db.set_setting(f'managed_category:{guild_id}:community',guild_id*10000+10)
+                db.set_setting(f'managed_channel:{guild_id}:guide',guild_id*10000+11)
+    run=gather
+    if historical_failure is True:
         import subprocess,types
         original=types.ModuleType('original_readonly_acceptance')
         body=subprocess.check_output(['git','show','d1eed91e3e1608176704407843243afbefc8fd7c:services/tenant_acceptance.py'])
         exec(compile(body,'original_readonly_acceptance.py','exec'),original.__dict__)
         monkeypatch.setattr(adapter,'collect',original.collect)
+    elif historical_failure=='schema':
+        import subprocess,types
+        core=types.ModuleType('original_core');original=types.ModuleType('original_adapter')
+        for module,path in [(core,'services/tenant_acceptance.py'),(original,'tools/tenant_acceptance_collect.py')]:
+            body=subprocess.check_output(['git','show','9935969d1039958e667420f9dac13dcef3e8a958:'+path])
+            exec(compile(body,path,'exec'),module.__dict__)
+        original.collect=core.collect
+        run=original.gather
     before = {path:path.read_bytes() for path in (cohort.primary_database, cohort._tenant(2).database)}
     packet = {'applicationId':'100','guildIds':['1','2'],'primaryGuildId':'1','database':str(cohort.primary_database)}
-    result = asyncio.run(gather(packet))
+    result = asyncio.run(run(packet))
     assert result['isolationGuards']['status'] == 'PASS', result
-    if historical_failure:
+    if historical_failure is True or historical_failure=='schema' and configured:
         # Reproduce the complete live signature with the exact installed code,
         # not just a synthetic TypeError: 2 identity reads + 5 per-guild reads,
         # cached admission models, no successful preview, and no mutation.
-        assert result['discordReads']==12
-        assert all(row['reason']=='COLLECTION_UNAVAILABLE' and row['stage']=='DISCORD_INVENTORY' and row['passCount']==0 for row in result['guilds'])
+        assert result['discordReads']==(12 if historical_failure is True else 22)
+        reason,stage=('COLLECTION_UNAVAILABLE','DISCORD_INVENTORY') if historical_failure is True else ('COLLECTION_SCHEMA_INVALID','TEMPLATE_PREVIEW')
+        assert all(row['reason']==reason and row['stage']==stage and row['passCount']==0 for row in result['guilds'])
         assert all(row['status']=='PASS' for row in result['hostCrossTenantReadDenials'])
         assert result['mutationsAttempted'] is False
         assert all(path.read_bytes()==body for path,body in before.items())
@@ -259,7 +284,8 @@ def test_full_rest_adapter_uses_real_discord_models_and_existing_previews(cohort
     for row in result['guilds']:
         assert sorted(item['type'] for item in row['inventory']['channels']) == [0,2,4]
         assert len(row['inventory']['channels']) == 3
-        assert all(len(item['overwrites']) == 3 for item in row['inventory']['channels'])
+        assert all(len(item['overwrites']) == (0 if configured else 3) for item in row['inventory']['channels'])
+        if configured:assert row['preview']['rows'] and any(item['kind']=='message' for item in row['preview']['rows'])
     assert all(row['status'] == 'PASS' for row in result['hostCrossTenantReadDenials'])
     assert result['mutationsAttempted'] is False
     assert len([url for url in requests if url.endswith('/channels')]) >= 4
@@ -384,3 +410,44 @@ def test_non_json_success_response_is_redacted_and_not_inventory_success(cohort)
     result=asyncio.run(acceptance.collect(cohort,100,load,AsyncMock(return_value=[skill()])))
     assert all(row['reason']=='DISCORD_RESPONSE_INVALID' and row['httpStatus']==200 and row['operation']=='GUILD_ROLES' for row in result['guilds'])
     assert 'private' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('legacy_client',[True,False])
+def test_configured_guide_preview_uses_real_bot_contract(cohort,monkeypatch,legacy_client):
+    async def run():
+        guild,owner,client=model(1,populated=True)
+        if not legacy_client:
+            client.tree=discord.app_commands.CommandTree(client)
+        payloads=channel_payloads(1)
+        payloads[0]['name']='COMMUNITY'
+        payloads[1]['name']='guide'
+        for item in payloads:item['permission_overwrites']=[]
+        client.http.get_all_guild_channels=AsyncMock(return_value=payloads)
+        native=client.http.request
+        async def reads(route,**kwargs):
+            if route.path.endswith('/pins'):return {'items':[],'has_more':False}
+            if route.path.endswith('/messages'):return []
+            return await native(route,**kwargs)
+        client.http.request=reads
+        guild._channels.clear()
+        for item in payloads:
+            factory,_=discord.channel._guild_channel_factory(item['type'])
+            current=factory(state=client._connection,guild=guild,data=item)
+            guild._channels[current.id]=current
+        with cohort.scope(1):
+            db.set_setting('managed_category:1:community','10010')
+            db.set_setting('managed_channel:1:guide','10011')
+            with acceptance.readonly_snapshot():
+                return await server_templates.preview(guild,owner,server_templates.GAMERHQ,client)
+    if legacy_client:
+        with pytest.raises(AttributeError,match='tree'):asyncio.run(run())
+    else:
+        draft=asyncio.run(run())
+        assert draft['boards']['rows']
+        assert all(not row['key'].startswith('server_staff_commands_message_id') for row in draft['boards']['rows'])
+
+
+def test_command_derived_guide_is_never_verified_from_empty_registry(cohort):
+    guild,_,_=model(1)
+    with pytest.raises(ValueError,match='COMMAND_REGISTRY_UNAVAILABLE'):
+        acceptance.project_preview(guild,{'boards':{'rows':[{'key':'server_staff_commands_message_id'}]}},100)

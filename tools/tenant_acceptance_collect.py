@@ -26,6 +26,19 @@ from services.tenant_acceptance import collect, fingerprint, guard_probes
 MAX_BODY = 2 * 1024**2
 
 
+def preview_client():
+    """Model-only Host interface; no login, sync, cog load or Gateway.
+
+    Shared renderers expect a tree even while building unrelated Core boards.
+    This empty local tree is NOT evidence of the running command registry.
+    Command-derived boards are rejected separately by the projection contract.
+    """
+    client = discord.Client(intents=discord.Intents.none())
+    client.tree = discord.app_commands.CommandTree(client)
+    client.get_cog = lambda _: None
+    return client
+
+
 class AcceptanceReadError(ValueError):
     def __init__(self, reason, status=None, *, operation=None):
         super().__init__(reason)
@@ -130,8 +143,7 @@ async def gather(packet):
         membership = await rest.request(Route('GET', '/users/@me/guilds'), params={'limit': 100})
         verify_membership(application, frozenset(guilds), identity, membership)
         # Client only supplies discord.py model deserialization, never login/start.
-        client = discord.Client(intents=discord.Intents.none())
-        client.get_cog = lambda _: None
+        client = preview_client()
         client.http.request = rest.request
         client._connection.user = discord.ClientUser(state=client._connection, data=identity)
 
@@ -193,6 +205,7 @@ async def gather(packet):
                                 'httpStatus': status, 'status': 'PASS' if status == 403 else 'FAIL'})
         result['hostCrossTenantReadDenials'] = denials
         result['roleMembershipAudit'] = {'status': 'UNVERIFIED', 'reason': 'ONLY_OWNER_AND_HOST_MEMBERS_FETCHED'}
+        result['commandRegistry'] = {'status': 'UNVERIFIED', 'reason': 'LIVE_COMMAND_CALLBACK_REGISTRY_NOT_LOADED'}
         result['discordReads'] = rest.requests
         result['mutationsAttempted'] |= rest.denied > 0
         if rest.denied or any(row['status'] == 'FAIL' for row in denials) or result.get('isolationGuards', {}).get('status') == 'FAIL':

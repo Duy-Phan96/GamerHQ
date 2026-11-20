@@ -430,6 +430,13 @@ def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(ac
     import types
     f=acceptance_installed
     mirror,_=source_mirror
+    initialfile=tmp_path/'initial-acceptance-installer.py'
+    initialfile.write_bytes(git(mirror,'show',f.installer.INITIAL_ACCEPTANCE+':tools/enroll_staging_tenant_acceptance.py'))
+    initial=types.ModuleType('initial_acceptance_installer');initial.__file__=str(initialfile)
+    exec(compile(initialfile.read_bytes(),str(initialfile),'exec'),initial.__dict__)
+    monkeypatch.setattr(initial,'ROOT',f.root);monkeypatch.setattr(initial,'CONTROL',f.policy.parent)
+    monkeypatch.setattr(initial,'REPOSITORY',mirror.as_uri())
+    initial.enroll(f.installer.INITIAL_ACCEPTANCE,initial.APPROVAL)
     # Install the exact originally enrolled d1eed91 script, not a permissive
     # stand-in for the existing root-owned entry/policy/transition contract.
     oldfile=tmp_path/'original-acceptance-installer.py'
@@ -438,8 +445,10 @@ def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(ac
     exec(compile(oldfile.read_bytes(),str(oldfile),'exec'),old.__dict__)
     monkeypatch.setattr(old,'ROOT',f.root);monkeypatch.setattr(old,'CONTROL',f.policy.parent)
     monkeypatch.setattr(old,'REPOSITORY',mirror.as_uri())
-    assert old.enroll(f.installer.REVISION_PREVIOUS,old.APPROVAL)['state']=='TENANT_ACCEPTANCE_ENROLLED'
+    assert old.enroll(f.installer.REVISION_PREVIOUS,old.REVISION_APPROVAL,revise=True)['state']=='TENANT_ACCEPTANCE_SOURCE_REVISED'
     original=f.marker.read_bytes()
+    source_parent=f.policy.parent/'tenant-acceptance-source-transition.json'
+    source_parent_bytes=source_parent.read_bytes()
     before_policy=json.loads(f.policy.read_bytes())
     prior=f.root/'automation-controller/revisions'/f.installer.REVISION_PREVIOUS
     prior_modules={p.name:p.read_bytes() for p in (prior/'staging_automation').iterdir()}
@@ -454,7 +463,8 @@ def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(ac
     result=f.installer.enroll(f.source,f.installer.REVISION_APPROVAL,revise=True)
     assert result['state']=='TENANT_ACCEPTANCE_SOURCE_REVISED'
     assert f.marker.read_bytes()==original
-    assert json.loads((f.policy.parent/'tenant-acceptance-source-transition.json').read_bytes())['phase']=='COMMITTED'
+    assert source_parent.read_bytes()==source_parent_bytes
+    assert json.loads((f.policy.parent/'tenant-acceptance-source-transition-v2.json').read_bytes())['phase']=='COMMITTED'
     after=json.loads(f.policy.read_bytes())
     assert {k:v for k,v in after.items() if k not in {'controllerCommit','tenantAcceptance'}}=={k:v for k,v in before_policy.items() if k not in {'controllerCommit','tenantAcceptance'}}
     assert after['tenantAcceptance']['workflowSha256']==before_policy['tenantAcceptance']['workflowSha256']

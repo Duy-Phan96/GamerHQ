@@ -864,3 +864,23 @@ new entry until reviewed same-source retry. Enrollment does not collect data.
 After its receipt, queue one NEW acceptance dispatch on main and retain the
 existing deployment-security review. Never rerun setup or cutover to diagnose
 a collector failure, and never reuse the completed 44624585597 as pending review.
+
+Run 44707410369 exposed the next configured-resource boundary: shared guide
+rendering expects Host `bot.tree`, absent on the original model-only Client.
+The new fixture replays both exact enrolled files and reproduces 22 reads /
+TEMPLATE_PREVIEW / COLLECTION_SCHEMA_INVALID. This is an adapter interface
+mismatch, not evidence of a missing SQLite column. The adapter now provides a
+local unregistered CommandTree; no cog, callback registry, sync or Gateway is
+loaded. Live registry state remains UNVERIFIED and command-derived staff-guide
+rows are explicitly rejected. Configured Core guide histories/pins and stable
+preview IDs remain governed by the existing services and GET/SQL guards.
+
+The current source-only revision accepts only installed 9935969 and preserves
+the original d1eed91 enrollment and first source-transition audit bytes. Its
+separate `tenant-acceptance-source-transition-v2.json` is committed only after
+the same locked health/image/cohort/known-byte checks. Predecessor launcher
+bytes are regenerated from that exact immutable predecessor, not guessed.
+Initial, first-revision and current-revision contracts are rehearsed together.
+No old marker is cleared or overwritten to admit a retry. Default-branch
+migration is a separate reviewed GitHub setting operation; see
+[the audited migration](../../docs/development/MAIN_DEFAULT_MIGRATION.md).

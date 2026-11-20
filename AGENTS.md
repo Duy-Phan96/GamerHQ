@@ -35,6 +35,8 @@ Apply this policy to Host, Skills, Web and future platform components. See
 
 ## Development lifecycle
 
+- `main` is the intended stable/default branch; `develop` remains feature integration. Explicitly target feature/fix PRs at `develop`; preserve existing PR bases. Never change repository default/protection/environment settings without owner approval. See [default-branch migration](docs/development/MAIN_DEFAULT_MIGRATION.md).
+
 - Start with the acceptance outcome and the evidence that will prove it. Check repository and read-only live evidence before asking for information.
 - Batch related changes around a complete, reviewable outcome. Run focused regressions first, then the required matrix on the candidate. Consolidate genuine owner decisions and approvals into one handoff.
 - Follow [docs/development/SDLC.md](docs/development/SDLC.md) for normal/architectural work.

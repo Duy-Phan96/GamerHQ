@@ -1,5 +1,9 @@
 ## Summary
 
+<!-- Feature/fix/integration PRs: choose base develop explicitly. Main is the
+stable/default branch; target main only for a reviewed release or scoped ops PR.
+Changing the default branch does not authorize retargeting existing PRs. -->
+
 <!-- What problem/requirement does this PR solve? -->
 
 Closes #
