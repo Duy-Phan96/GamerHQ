@@ -1,5 +1,6 @@
 """Explicit storage admission for guilds in an owner-reviewed cohort."""
 from contextlib import closing, contextmanager
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 import ctypes
@@ -21,6 +22,7 @@ class GuildTenant:
 @dataclass(slots=True)
 class _Binding:
     tenant: GuildTenant
+    validate: Callable[[], None] | None = None
     active: bool = True
 
 
@@ -33,6 +35,8 @@ def current():
         return None
     if not binding.active:
         raise PermissionError("Guild operation has expired.")
+    if binding.validate is not None:
+        binding.validate()
     return binding.tenant
 
 
@@ -43,7 +47,7 @@ def require_guild(guild_id):
 
 
 @contextmanager
-def _bind(tenant):
+def _bind(tenant, *, validate=None):
     from database import db
     from services.operation_context import read_scope
 
@@ -55,7 +59,7 @@ def _bind(tenant):
     if previous == tenant:
         yield tenant
         return
-    binding = _Binding(tenant)
+    binding = _Binding(tenant, validate)
     token = _current.set(binding)
     try:
         with read_scope():
@@ -177,9 +181,9 @@ class GuildTenantStore:
         return True
 
     @contextmanager
-    def scope(self, guild_id):
+    def scope(self, guild_id, *, validate=None):
         require_guild(guild_id)
         tenant = self._tenant(guild_id)
-        with _bind(tenant):
+        with _bind(tenant, validate=validate):
             self._verify(tenant, primary=guild_id == self.primary_guild)
             yield tenant

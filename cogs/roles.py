@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 
 from services.role_service import ROLE_GROUPS, configured_group
+from services.tenant_routing import add_shared_entry_view
 
 
 def _channel_alias(name: str) -> str:
@@ -273,11 +274,11 @@ class Roles(commands.Cog):
 
     async def cog_load(self):
         # Persistent custom IDs keep the buttons working after bot restarts.
-        self.bot.add_view(ChooseRolesHubView())
-        self.bot.add_view(OnboardingEntry())
+        add_shared_entry_view(self.bot, ChooseRolesHubView())
+        add_shared_entry_view(self.bot, OnboardingEntry())
         from services.role_panel_service import SECTIONS
         for _, group, _ in SECTIONS:
-            self.bot.add_view(RoleToggleView(group))
+            add_shared_entry_view(self.bot, RoleToggleView(group))
 
 
 async def setup(bot: commands.Bot):

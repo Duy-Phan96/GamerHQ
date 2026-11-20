@@ -9,6 +9,7 @@ from config import DB_PATH, SEED_PATH
 from database import tenants
 
 SCHEMA_VERSION = 1  # 0 is the historical additive-migration schema.
+tenant_scope_required = False
 _read_only = ContextVar('database_read_only', default=False)
 _read_session = ContextVar('database_read_session', default=None)
 
@@ -19,6 +20,8 @@ def in_read_only_scope():
 
 def current_path():
     tenant = tenants.current()
+    if tenant is None and tenant_scope_required:
+        raise PermissionError("Tenant storage requires a verified guild scope.")
     return tenant.database if tenant else DB_PATH
 
 
@@ -445,9 +448,21 @@ def connect():
     conn.row_factory = sqlite3.Row
     try:
         yield conn
+        tenants.current()
         conn.commit()
     finally:
         conn.close()
+
+
+def verify_pilot_schema():
+    """Require the installed schema during an owner-reviewed pilot startup."""
+    with read_only(), connect() as conn:
+        if conn.execute('PRAGMA user_version').fetchone()[0] != SCHEMA_VERSION:
+            raise ValueError('Pilot startup requires the current database schema.')
+        if conn.execute('PRAGMA quick_check').fetchall()[0][0] != 'ok':
+            raise ValueError('Pilot startup requires an intact database.')
+        conn.execute('SELECT installed, configured, enabled FROM skill_guild_state LIMIT 0')
+        conn.execute('SELECT revision, lease_token FROM skill_jobs LIMIT 0')
 
 
 def init_db():

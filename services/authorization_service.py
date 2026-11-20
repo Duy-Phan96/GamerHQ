@@ -6,4 +6,7 @@ def authorized(guild, user):
         return False
     # Re-read cached member state on every component/modal/save interaction.
     member = guild.get_member(user.id)
+    if member is None:
+        from services.tenant_routing import verified_actor
+        member = verified_actor(guild, user)
     return bool(member and (member.id == guild.owner_id or member.guild_permissions.administrator))

@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands, tasks
 
 from database import db
+from services.tenant_routing import add_shared_entry_view, tenant_cycle
 from services.onboarding_service import alias
 from services.response_service import SafeView
 from services.server_service import ServerMessageError
@@ -504,14 +505,15 @@ class OwnerChangeLog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        self.bot.add_view(Entry())
-        self.bot.add_view(ChangeNotice())
+        add_shared_entry_view(self.bot, Entry())
+        add_shared_entry_view(self.bot, ChangeNotice())
         self.feed_updates.start()
 
     def cog_unload(self):
         self.feed_updates.cancel()
 
     @tasks.loop(seconds=60)
+    @tenant_cycle
     async def feed_updates(self):
         for guild in self.bot.guilds:
             try:
@@ -522,6 +524,8 @@ class OwnerChangeLog(commands.Cog):
     @feed_updates.before_loop
     async def before_feed_updates(self):
         await self.bot.wait_until_ready()
+        if getattr(self.bot, 'guild_routes', None) is not None:
+            return  # Pilot startup performs no automatic board refresh.
         for guild in self.bot.guilds:
             try:
                 if destination(guild) is not None:

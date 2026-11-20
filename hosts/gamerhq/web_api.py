@@ -5,6 +5,8 @@ inside GamerHQWebPlatformService and the existing Skill Runtime.
 """
 from __future__ import annotations
 
+import asyncio
+from contextvars import Context
 import hmac
 import json
 from collections.abc import Iterable, Mapping
@@ -20,6 +22,7 @@ from skill_runtime.runtime.management_router import (
     SkillManagementConflictError,
     SkillManagementError,
 )
+from services.tenant_routing import GuildAdmissionError
 
 _AUTHORIZED_GUILDS_HEADER = "X-GamerHQ-Authorized-Guild-Ids"
 
@@ -70,7 +73,7 @@ async def _service_auth(request: web.Request, handler):
 async def _safe_errors(request: web.Request, handler):
     try:
         return await handler(request)
-    except WebPlatformAuthorizationError:
+    except (WebPlatformAuthorizationError, GuildAdmissionError):
         return _error(403, "guild_forbidden", "This server is not authorized for the current web session.")
     except (LookupError, KeyError):
         return _error(404, "not_found", "The requested GamerHQ resource was not found.")
@@ -92,6 +95,19 @@ def _authorized_guild_ids(request: web.Request) -> tuple[int, ...]:
 
 def _service(request: web.Request) -> GamerHQWebPlatformService:
     return request.app["platform_service"]
+
+
+@web.middleware
+async def _tenant_scope(request: web.Request, handler):
+    routes = getattr(getattr(_service(request), "bot", None), "guild_routes", None)
+    guild = request.match_info.get("guild_id")
+    if routes is None or guild is None:
+        return await handler(request)
+    guild_id = int(guild)
+    if not routes.accepting or guild_id not in _authorized_guild_ids(request):
+        raise WebPlatformAuthorizationError("Guild is not authorized for this web session.")
+    with routes.scope(guild_id):
+        return await handler(request)
 
 
 async def list_servers(request: web.Request) -> web.Response:
@@ -209,7 +225,7 @@ def create_web_api_app(
 ) -> web.Application:
     if not shared_secret:
         raise ValueError("shared_secret is required.")
-    app = web.Application(middlewares=[_safe_errors, _service_auth])
+    app = web.Application(middlewares=[_safe_errors, _service_auth, _tenant_scope])
     app["platform_service"] = platform_service
     app["shared_secret"] = shared_secret
     app.add_routes(
@@ -271,6 +287,11 @@ class GamerHQWebApiServer:
     async def start(self) -> None:
         if self._runner is not None:
             return
+        # The listener is a process-wide ingress. Its connection tasks must
+        # bind each authenticated request, never inherit setup_hook's tenant.
+        await asyncio.create_task(self._start_listener(), context=Context())
+
+    async def _start_listener(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
         await runner.setup()
         try:

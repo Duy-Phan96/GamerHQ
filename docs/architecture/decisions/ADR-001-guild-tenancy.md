@@ -1,6 +1,6 @@
 # ADR-001 Guild tenancy for the shared GamerHQ application
 
-Status: Proposed for implementation review
+Status: Protected two-guild pilot active; final Milestone 2 merge review pending
 
 Product direction: One public Discord application serves independent guilds.
 
@@ -109,3 +109,65 @@ separate from this operation.
    changes in Servertest need their own reviewed preview and approval.
 5. Hold public enrollment until removal/rejoin, stale callback rejection,
    backup coverage for every admitted database and retention controls pass.
+
+The [2026-11-19 primary-only recovery acceptance and next pilot plan](../../../deploy/staging/HOST_PROMOTION.md#primary-only-recovery-accepted-on-2026-11-19)
+records the active repaired Host/image, retained tenant state and required
+protected baseline-generation transition. Future pilot preparation starts from
+that accepted runtime after reconciling its policy binding.
+
+## Milestone 2 acceptance scope — 20 November 2026
+
+The pilot is active for the exact approved Staging/Servertest cohort. Platform
+safety and customer template completion are different acceptance scopes. A
+guild may choose no template, partially apply one, or leave all Skills disabled.
+None of those choices permits access to another guild's data or resources.
+Once Gaming Community is selected, its missing Core resources remain required
+for **that template's** completion; they are not reclassified as optional modules.
+
+Protected read-only collection [44777476448](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44777476448)
+has stable inventory, preview, Skill and lifecycle components in both passes,
+no foreign/unresolved mappings, both live cross-authorized Host reads denied403,
+and all five ingress guard fixtures passing with authenticated live bindings.
+Both tenant snapshots passed the existing read-only SQL/integrity contracts;
+secondary scope additionally verifies its private file and guild ownership seal.
+This is source-backed binding evidence, not a fresh exported UID/GID attestation.
+
+Primary template:55 configured,0 create/review/blocked, journal COMPLETE.
+Secondary template:52 configured,10 create,0 review/blocked, journal remaining10,
+no unresolved creation checkpoints. Both explicitly mapped Staff roles are
+verified with zero guild-wide privileges. The ten pending resources are STAFF,
+SUPPORT TICKETS and eight STAFF children: bot-log, games-log, mod-commands,
+mod-log, server-log, staff-chat, staff-suggestions and ticket-logs. This is an
+expected partial customer installation, not a tenant-routing defect. Completion
+still requires a fresh owner-reviewed preview and separate Apply confirmation.
+
+Primary Event Manager package0.1.2 is installed/configured/disabled; its stored
+lifecycle version0.1.1 remains unchanged. Secondary has the package available
+but no installation/configuration/enablement. Their lifecycle flags agree with
+their separate storage. Package availability does not install a Skill into a
+guild, and a disabled flag is not proof of a stopped runtime.
+
+The original collector result remains FAIL and primary guild result UNVERIFIED:
+the legacy aggregate combines incomplete customer setup with unavailable live
+Skill runtime flags. `tools/tenant_acceptance_scope.py` is an offline companion
+to the pinned report renderer. It verifies retained raw pass commitments and
+known semantic comparison fields, then reports bounded read-only platform
+safety separately from COMPLETE/INCOMPLETE/NOT_SELECTED template status. It
+preserves original statuses, counts, missing keys and evidence gaps. It has no
+SQL, Discord, credentials, deployment or configuration access and changes no
+enrolled collector/client/workflow pin. Verify run/artifact provenance before
+using this interpretation; it is not an admission, deployment or merge gate.
+
+Remaining coverage is explicit: live callback-registry inspection, full member
+role audit, live mutation-path tests and live Skill runtime-running flags are
+UNVERIFIED. This collection also does not refresh backups/restores, export OS
+file ownership, or accept public enrollment/Production readiness. Existing
+offline routing/revocation/persistence/restore/rollback regressions and protected
+cutover evidence are complementary, not replacements for those live checks.
+
+Recommendation: after final CI/review, PR317 may merge into **develop for the
+bounded two-guild Milestone 2 implementation**. Secondary template completion
+is not a prerequisite for that scope. Keep public enrollment, production
+deployment and further Discord writes separately gated. Keep the PR draft
+until the owner accepts this scope and final review; no automatic merge,
+template application, Skill activation or rollout follows this record.

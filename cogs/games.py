@@ -11,10 +11,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import DISPLAY_GROUP_ORDER, CHOOSE_GAMES_CHANNEL_ID
-from database import db
+from config import DISPLAY_GROUP_ORDER
+from database import db, tenants
+from services.tenant_routing import add_shared_entry_view
 from services.game_service import (
     GameStructureError,
+    choose_games_channel_id,
     create_game_structure_confirmed,
     format_plan,
     inspect_game_structure,
@@ -1082,6 +1084,13 @@ class ConfirmRenameView(discord.ui.View):
         if not await check_admin(interaction):
             return
 
+        if tenants.current() is not None:
+            await interaction.response.send_message(
+                "This legacy rename also edits the shared catalog seed and is unavailable in the tenant pilot.",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.edit_message(
             content="⏳ **Renaming game safely…**",
             embed=None,
@@ -1326,7 +1335,9 @@ async def resolve_or_adopt_game_role(guild: discord.Guild, game: dict, *, create
 class Games(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(ChooseGamesButtons(self))
+        add_shared_entry_view(self.bot, ChooseGamesButtons(self))
+        if getattr(bot, 'guild_routes', None) is not None:
+            return  # Pilot candidates are restored by their tenant and saved message ID.
         from cogs.game_channels import CandidateView
         with db.connect() as conn:
             candidates = conn.execute("SELECT DISTINCT game_id FROM game_channel_candidates WHERE status='PENDING'").fetchall()
@@ -1337,6 +1348,20 @@ class Games(commands.Cog):
         legacy_games = db.get_selectable_games()
         for offset in range(0, len(legacy_games), 25):
             self.bot.add_view(GameCategoryView(legacy_games[offset:offset+25]))
+
+    def restore_tenant_views(self, guild_id):
+        from cogs.game_channels import CandidateView
+
+        tenants.require_guild(guild_id)
+        with db.connect() as conn:
+            candidates = conn.execute("SELECT game_id, log_message_id FROM game_channel_candidates "
+                                      "WHERE guild_id=? AND status='PENDING' AND log_message_id IS NOT NULL", (guild_id,)).fetchall()
+        for row in candidates:
+            self.bot.add_view(CandidateView(row['game_id']), message_id=row['log_message_id'])
+        if guild_id == self.bot.guild_routes.store.primary_guild:
+            legacy_games = db.get_selectable_games()
+            for offset in range(0, len(legacy_games), 25):
+                self.bot.add_view(GameCategoryView(legacy_games[offset:offset+25]))
 
     game = app_commands.Group(
         name="game",
@@ -1414,8 +1439,7 @@ class Games(commands.Cog):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def database_info(self, interaction: discord.Interaction):
-        from config import DB_PATH
-
+        database_path = db.current_path()
         all_games = db.get_all_games(active_only=False)
         selectable = [g for g in all_games if g.get("selectable")]
         areas = [g for g in all_games if g.get("area_enabled")]
@@ -1428,8 +1452,8 @@ class Games(commands.Cog):
             "\n".join(
                 [
                     "🗄️ **GamerHQ Runtime Database**",
-                    f"Path: `{DB_PATH.resolve()}`",
-                    f"Exists: **{'Yes' if DB_PATH.exists() else 'No'}**",
+                    f"Path: `{database_path.resolve()}`",
+                    f"Exists: **{'Yes' if database_path.exists() else 'No'}**",
                     f"Game Library entries: **{len(all_games)}**",
                     f"Selectable games: **{len(selectable)}**",
                     f"DB-enabled areas: **{len(areas)}**",
@@ -2223,7 +2247,8 @@ class Games(commands.Cog):
             )
             return
 
-        channel = self.bot.get_channel(CHOOSE_GAMES_CHANNEL_ID)
+        guild = interaction.guild
+        channel = guild.get_channel(choose_games_channel_id(guild.id)) if guild else None
         if not isinstance(channel, discord.TextChannel):
             await interaction.response.send_message(
                 "❌ The configured choose-your-games channel could not be found. Nothing was changed.",

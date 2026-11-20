@@ -5,7 +5,8 @@ import sqlite3
 import discord
 from discord.ext import commands, tasks
 
-from database import db
+from database import db, tenants
+from services.tenant_routing import tenant_cycle
 from services import channel_change_service as changes
 from services import server_change_observer as observer
 from services.onboarding_service import alias, is_staff
@@ -108,10 +109,14 @@ class ServerChanges(commands.Cog):
         self._notification_locks = {}
 
     async def cog_load(self):
-        for record in changes.records():
+        if getattr(self.bot, 'guild_routes', None) is None:
+            self.restore_tenant_views(None)
+        self.maintenance.start()
+
+    def restore_tenant_views(self, guild_id):
+        for record in changes.records(guild_id):
             if record['status'] == 'pending' and record.get('message_id'):
                 self.bot.add_view(ChangeView(record, self.notify), message_id=record['message_id'])
-        self.maintenance.start()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -162,7 +167,7 @@ class ServerChanges(commands.Cog):
                 outcome = await structure.observe_channel_update(before, after, actor_id=actor_id)
                 # Preserve the established security-review/repair contract.
                 if isinstance(after, discord.TextChannel) and outcome.get('permissions_changed') and changes.identify(guild, after.id):
-                    await changes.detect(before, after, self.notify)
+                    await changes.detect(before, after, self.notify, routes=getattr(self.bot, 'guild_routes', None))
         finally:
             # Unmapped resources and fields missing from the legacy log are no longer lost.
             # Known bot writes suppressed by the legacy observer are recorded here too.
@@ -253,6 +258,7 @@ class ServerChanges(commands.Cog):
             log.exception('Managed change notification failed guild=%s', guild.id)
 
     @tasks.loop(seconds=60)
+    @tenant_cycle
     async def maintenance(self):
         try:
             await self._maintenance()
@@ -261,7 +267,8 @@ class ServerChanges(commands.Cog):
 
     async def _maintenance(self):
         changes.expire()
-        for record in changes.records():
+        tenant = tenants.current()
+        for record in changes.records(tenant.guild_id if tenant else None):
             guild = self.bot.get_guild(record['guild_id'])
             if guild and record['status'] == 'repair_failed':
                 channel = guild.get_channel(record['resource_id'])

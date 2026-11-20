@@ -15,11 +15,16 @@ PATTERNS = {
 ASSIGNMENT = re.compile(r'''(?im)^[ \t]*["']?([\w.-]*(?:token|password|passwd|secret|api_key|apikey|credential)[\w.-]*)["']?[ \t]*[:=][ \t]*["']?([^\s"'#,}\r\n]+)''')
 PLACEHOLDERS = {'', 'none','null','false','true','0','your_token_here','changeme','example','placeholder','test','test-secret','secrets.skill','fake','dummy'}
 PRIVATE_PARTS = {'runtime','backups','logs','transcripts','tickets','exports','uploads','storage','node_modules','.venv','venv','env','__pycache__','.pytest_cache','.mypy_cache','.ruff_cache','.idea','.vscode','htmlcov','dist','build'}
+# Exact non-secret lines in the published Staging diagnostic history.
+REVIEWED_ASSIGNMENTS = {
+    'tests/test_staging_pilot_activation.py': "secret = 'synthetic-value-for-health-check-12345'",
+    'tools/staging_pilot_cutover_diagnostics.py': "secret_prefix = 'GAMERHQ_WEB_API_SECRET='",
+}
 
 def git(*args):
     return subprocess.check_output(['git',*args],cwd=ROOT)
 
-def secret_findings(text):
+def secret_findings(text, *, repository_path=None):
     found=set()
     for label,pattern in PATTERNS.items():
         if pattern.search(text): found.add(label)
@@ -35,6 +40,7 @@ def secret_findings(text):
         if any(word in value.casefold() for word in ('placeholder','example','fake','dummy','your_','must-not-appear','must-not-render')):continue
         # Only assignments of literal secrets, not Python expressions/docs prose.
         line=text[match.start():text.find('\n',match.start()) if '\n' in text[match.start():] else len(text)]
+        if line.strip() == REVIEWED_ASSIGNMENTS.get(repository_path):continue
         rhs=re.split(r'[:=]',line,maxsplit=1)[-1].lstrip()
         if not rhs.startswith((chr(34),chr(39))) and not match.group(1).isupper():continue
         if '(' in value or '[' in value:continue
@@ -73,13 +79,13 @@ def main():
         if not path.is_file() or path.stat().st_size>2_000_000:continue
         raw=path.read_bytes()
         if b'\0' in raw:continue
-        for label in secret_findings(raw.decode('utf-8',errors='replace')):findings.append(('publish candidate',name,label))
+        for label in secret_findings(raw.decode('utf-8',errors='replace'),repository_path=name):findings.append(('publish candidate',name,label))
     # Inspect staged blobs separately: the index can differ from the working tree.
     for name in filter(None,git('diff','--cached','--name-only','--diff-filter=ACMR','-z').decode().split('\0')):
         if private_path(name):findings.append(('staged',name,'private/runtime artifact'))
         raw=git('show',':'+name)
         if b'\0' not in raw:
-            for label in secret_findings(raw.decode('utf-8',errors='replace')):findings.append(('staged',name,label))
+            for label in secret_findings(raw.decode('utf-8',errors='replace'),repository_path=name):findings.append(('staged',name,label))
     if args.local:
         import os
         candidates=set(names)
@@ -107,7 +113,7 @@ def main():
                 if private_path(name):findings.append(('history',name,'private/runtime artifact'))
                 raw=git('cat-file','blob',oid.decode())
                 if b'\0' in raw:continue
-                for label in secret_findings(raw.decode('utf-8',errors='replace')):findings.append(('history',name,label))
+                for label in secret_findings(raw.decode('utf-8',errors='replace'),repository_path=name):findings.append(('history',name,label))
         print(f'History: {len(seen)} unique file versions inspected.')
     for scope,name,label in sorted(set(findings)):print(f'{scope}: {name}: {label}')
     print(f'Publication candidates: {len(set(filter(None,names)))}; findings: {len(set(findings))}. Heuristic scan; manual review still required.')

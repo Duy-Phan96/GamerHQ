@@ -169,7 +169,7 @@ def verify_daemon(profile):
         raise ValueError("Docker daemon identity differs from the approved staging VPS.")
 
 
-def verify_docker(profile):
+def verify_docker(profile, *, probe_storage=True):
     verified_check('STAGING_DAEMON_REJECTED','daemon',lambda:verify_daemon(profile))
     if not IMAGE.fullmatch(profile["baseImage"]):
         raise VerificationFailure('STAGING_BASE_IMAGE_MISSING','base-image')
@@ -190,6 +190,8 @@ def verify_docker(profile):
     database, backups = Path(profile["database"]), Path(profile["backupRoot"])
     if not database.is_file() or not backups.is_dir():
         raise VerificationFailure('STAGING_STORAGE_MISSING','storage-probe')
+    if not probe_storage:
+        return
     run(["docker", "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
         "--user", "10001:10001", "--volume", f"{database.parent}:/staging-data:Z",
         "--volume", f"{backups}:/staging-backups:Z", "--entrypoint", "python", profile["baseImage"], "-c",
@@ -235,11 +237,19 @@ def category_permissions(guild_id, bot_id, member, roles, category):
     return permissions
 
 
-def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
+def verify_remote(profile, *, read=discord_read, fetch=fetch_release, approved_pilot=None, read_only_artifacts=False,
+                  probe_storage=True):
     validate_profile(profile)
+    if "tenantPilot" in profile and approved_pilot is None:
+        raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
     if platform.system() != "Linux":
         raise ValueError("Verify on the approved isolated Linux staging Host.")
-    verify_docker(profile)
+    if probe_storage:
+        verify_docker(profile)
+    else:
+        if approved_pilot is None or not read_only_artifacts:
+            raise ValueError('Pilot-only storage verification requires a separately inspected container.')
+        verify_docker(profile, probe_storage=False)
     ids = {key: str(profile.get(key, "0")) for key in ("stagingBotId", "stagingGuildId", "productionBotId", "productionGuildId", "categoryId", "voiceCategoryId")}
     if any(not value.isascii() or not value.isdigit() or int(value) <= 0 for value in ids.values()) or ids["stagingBotId"] == ids["productionBotId"] or ids["stagingGuildId"] == ids["productionGuildId"]:
         raise ValueError("Explicit distinct production/staging identities and staging categories are required.")
@@ -251,6 +261,8 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in values:
             raise ValueError("Invalid or duplicate staging environment key.")
         values[key] = value.strip().strip("\"'")
+    if "GAMERHQ_STAGING_TENANT_PILOT" in values:
+        raise ValueError("Staging pilot identity must come from the protected deployment controller.")
     if values.get("GUILD_ID") != ids["stagingGuildId"] or not values.get("DISCORD_TOKEN") or len(values.get("GAMERHQ_WEB_API_SECRET", "")) < 32:
         raise ValueError("Dedicated staging credentials are incomplete.")
     if not hmac.compare_digest(values["GAMERHQ_WEB_API_SECRET"].encode(), os.environ.get(profile["healthSecretEnv"], "").encode()):
@@ -270,17 +282,41 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
             raise VerificationFailure('DISCORD_NETWORK_REJECTED', step) from None
         except Exception:
             raise VerificationFailure('DISCORD_RESPONSE_REJECTED', step) from None
-    if read_step("/users/@me", 'bot-identity').get("id") != ids["stagingBotId"]:
+    identity = read_step("/users/@me", 'bot-identity')
+    if identity.get("id") != ids["stagingBotId"]:
         raise VerificationFailure('STAGING_BOT_IDENTITY_REJECTED', 'bot-identity')
     guilds = read_step("/users/@me/guilds?limit=200", 'guild-membership')
-    if not isinstance(guilds, list) or {str(row["id"]) for row in guilds} != {ids["stagingGuildId"]}:
-        raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
+    if approved_pilot is None:
+        if not isinstance(guilds, list) or len(guilds) != 1 or {str(row["id"]) for row in guilds} != {ids["stagingGuildId"]}:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
+    else:
+        from services.tenant_routing import GuildAdmissionError, verify_membership
+        expected = frozenset(approved_pilot)
+        if len(expected) != 2 or int(ids["stagingGuildId"]) not in expected or int(ids["productionGuildId"]) in expected:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership')
+        try:
+            verify_membership(int(ids["stagingBotId"]), expected, identity, guilds)
+        except GuildAdmissionError:
+            raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-membership') from None
+        secondary = str(next(iter(expected - {int(ids["stagingGuildId"])})))
     guild_id = ids["stagingGuildId"]
     guild = read_step("/guilds/" + guild_id, 'guild-identity')
     if str(guild.get("id")) != guild_id:
         raise VerificationFailure('STAGING_GUILD_IDENTITY_REJECTED', 'guild-identity')
     member = read_step(f"/guilds/{guild_id}/members/{ids['stagingBotId']}", 'bot-membership')
     roles = read_step(f"/guilds/{guild_id}/roles", 'guild-roles')
+    if approved_pilot is not None:
+        from services.tenant_routing import GuildCorePermissionsError, verify_guild_permissions
+        other_guild = read_step('/guilds/' + secondary, 'guild-identity')
+        other_member = read_step(f'/guilds/{secondary}/members/{ids["stagingBotId"]}', 'bot-membership')
+        other_roles = read_step(f'/guilds/{secondary}/roles', 'guild-roles')
+        for ident, info, host, grants in ((guild_id, guild, member, roles), (secondary, other_guild, other_member, other_roles)):
+            try:
+                verify_guild_permissions(int(ident), int(ids["stagingBotId"]), info, host, grants)
+            except GuildCorePermissionsError:
+                raise
+            except GuildAdmissionError:
+                raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', 'guild-roles') from None
     for kind, key in (("text", "categoryId"), ("voice", "voiceCategoryId")):
         category = read_step("/channels/" + ids[key], kind + '-category')
         if str(category.get("guild_id")) != guild_id or category.get("type") != 4:
@@ -290,12 +326,14 @@ def verify_remote(profile, *, read=discord_read, fetch=fetch_release):
         if category_permissions(guild_id, ids["stagingBotId"], member, roles, category) & required != required:
             raise VerificationFailure('STAGING_CATEGORY_PERMISSIONS_REJECTED', kind + '-category')
     release = json.loads(Path(profile["releaseFile"]).read_text(encoding="utf-8"))
-    verified_check('STAGING_RELEASE_REJECTED', 'skill-release', lambda: fetch(release, artifact_root=profile["artifactRoot"],
-        trusted_repositories=profile["trustedRepositories"], token=os.environ.get(profile["releaseTokenEnv"])))
+    if not read_only_artifacts:
+        verified_check('STAGING_RELEASE_REJECTED', 'skill-release', lambda: fetch(release, artifact_root=profile["artifactRoot"],
+            trusted_repositories=profile["trustedRepositories"], token=os.environ.get(profile["releaseTokenEnv"])))
     sdk = json.loads(Path(profile["sdkReleaseFile"]).read_text(encoding="utf-8"))
     if sdk.get("distribution") != "gamerhq-skill-sdk" or sdk.get("version") != profile["sdkVersion"] or sdk.get("sha256") != profile["sdkSha256"]:
         raise ValueError("SDK release differs from the reviewed staging profile.")
-    verified_check('STAGING_RELEASE_REJECTED', 'sdk-release', lambda: fetch(sdk, artifact_root=profile["artifactRoot"],
-        trusted_repositories=profile["trustedRepositories"], token=os.environ.get(profile["releaseTokenEnv"])))
+    if not read_only_artifacts:
+        verified_check('STAGING_RELEASE_REJECTED', 'sdk-release', lambda: fetch(sdk, artifact_root=profile["artifactRoot"],
+            trusted_repositories=profile["trustedRepositories"], token=os.environ.get(profile["releaseTokenEnv"])))
     verify_local_artifacts(profile)
     return {"schemaVersion": 1, "kind": "live", "verifiedAt": int(time.time()), "fingerprint": fingerprint(profile), "verified": True, "gatewayStarted": False}

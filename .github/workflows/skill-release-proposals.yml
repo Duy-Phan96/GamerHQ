@@ -10,12 +10,16 @@ concurrency:
   cancel-in-progress: false
 jobs:
   propose:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Proposals remain integration work even when main is the default.
+          ref: develop
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -26,7 +30,7 @@ jobs:
       - name: Open a draft Host review PR when the lock changes
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_BRANCH: develop
         shell: bash
         run: |
           if git diff --quiet -- requirements-skills.lock; then

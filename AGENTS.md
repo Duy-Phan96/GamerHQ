@@ -7,6 +7,8 @@
 - Avoid opportunistic refactors. Explain a larger refactor if required for the task.
 
 ## Invariants
+
+- GamerHQ acceptance uses repository tools, Discord/Host APIs and protected VPS workflows. Do not use Computer Use or control the owner's desktop unless the owner explicitly requests it.
 - Persisted SQLite/config is authoritative for managed resources where implemented. Prefer stored Discord IDs; names are fallback discovery, not proof of ownership.
 - Setup/sync/repair must be retryable and idempotent: no duplicate channels, roles, messages, overrides or records. Treat ambiguity as manual review.
 - Preserve private/Staff visibility and least privilege. Never make private state public through repair, migration or fallback.
@@ -32,6 +34,8 @@ Apply this policy to Host, Skills, Web and future platform components. See
 [development guidance](docs/development/PROGRESSIVE_ENHANCEMENT.md).
 
 ## Development lifecycle
+
+- `main` is the intended stable/default branch; `develop` remains feature integration. Explicitly target feature/fix PRs at `develop`; preserve existing PR bases. Never change repository default/protection/environment settings without owner approval. See [default-branch migration](docs/development/MAIN_DEFAULT_MIGRATION.md).
 
 - Start with the acceptance outcome and the evidence that will prove it. Check repository and read-only live evidence before asking for information.
 - Batch related changes around a complete, reviewable outcome. Run focused regressions first, then the required matrix on the candidate. Consolidate genuine owner decisions and approvals into one handoff.

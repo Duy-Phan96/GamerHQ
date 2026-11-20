@@ -1,5 +1,178 @@
 # Reviewed staging Host promotion
 
+## Two-guild pilot preparation
+
+The enrolled Staging controller can preview the approved pair. Its existing
+Host promotion path still expects exclusive membership in the original guild. Follow the
+[guild tenancy decision](../../docs/architecture/decisions/ADR-001-guild-tenancy.md)
+before preparing an immutable promotion candidate.
+
+1. Verify the original Staging baseline and owner-approved guild IDs. Pin the
+   exact Discord application and the complete two-guild set in the protected
+   profile. Reject incomplete, duplicate, and extra memberships before any
+   provisioning or registration. Treat a membership change as invalidating the
+   proof until a fresh authenticated Discord read.
+2. Review the pinned discord.py ingress inventory below. Enable a command
+   surface only after the global startup, Web, resource and feature-specific
+   permissions it depends on are scoped. Keep the shared application on one
+   process. Bind registration, Skill restore and scheduler to the verified
+   cohort. Keep the primary-only startup path when pilot routing is absent.
+3. The protected preview checks the current approved image and primary health,
+   revalidates Discord guild and Core role grants including Pin Messages,
+   then takes two consistent SQLite snapshots. It compares the restored
+   logical contents in disposable directories and rehearses primary-only
+   routing with the secondary copy retained. The batch receipt is anchored by
+   SHA-256 and workflow run ID in private controller state only after both
+   restores pass. The promotion lock excludes other controller operations.
+   A preview does not stop the running bot or give a simultaneous checkpoint
+   across databases. A later promotion must quiesce the one shared Host and
+   capture a new dual checkpoint. Incomplete batches are ineligible for recovery. The
+   controller stops at 14 retained batches, including incomplete batches, and
+   requires reviewed retention before taking another snapshot. Both tenants
+   must meet the existing Staging database size limit and leave at least 1 GiB
+   free after reserving space for the backup and restore.
+4. Preserve the installed Host, primary database and Event Manager authority
+   through rollback. Revoke additional admission before rollback, stop scoped
+   workers, and retain the secondary database and its verified backup for
+   reviewed recovery. Verify old Host health, the original primary data and
+   deployment gates before considering a retry.
+5. Only after the candidate and control policy pass review, use the existing
+   `deployment-security` owner gate. Live Servertest setup still needs a
+   separate owner confirmation against its actual inventory and permission
+   preview.
+
+| Entry point | Pilot routing boundary |
+| --- | --- |
+| Slash commands and autocomplete | The command tree binds the authenticated interaction before invoking command checks. A verified cohort registers guild commands only. |
+| Buttons, persistent views, modals and dynamic items | The Discord view store scopes the scheduled callback. Stateless entry points may share handlers. Persisted candidate and server-change views are restored by saved message ID in their tenant. Legacy unbound views remain primary-only. |
+| Gateway listeners | The dispatch allowlist covers member, voice, role, channel, message and raw message events with unique guild provenance. Guild-less and ambiguous callbacks are held. Membership changes invalidate the proof. |
+| Skill lifecycle and scheduling | Pilot Runtime calls require scope for both guilds. Each guild has its own scheduler pass. The legacy unbound compatibility path exists only when pilot routing is absent. |
+| Polls and retries | The reviewed cog loops run per verified scope. Channel change debounce reopens the same guild under the same proof. Proof invalidation cancels tracked work and blocks uncommitted SQLite writes. |
+| Game selector and legacy maintenance | The selector resolves managed links in the bound guild. The legacy catalog rename edits a shared seed and is unavailable in pilot mode. Public bot channel lookups reject channels outside the bound guild. |
+| Startup and setup permissions | The protected Compose override supplies the exact two guild IDs and bot ID. The Host checks authenticated Discord membership and both Core role masks before registering handlers. Confirmed setup rechecks Core permissions. |
+| Discord HTTP and Web API | Bot-token requests require a verified guild destination, including uncached channels. The authenticated Web API binds an authorized route guild before accessing the Skill Runtime. The pilot holds the process-wide Streamer watcher and legacy startup jobs. |
+
+### Controller enrollment and live approval
+
+Enroll the exact allowlist and preview workflow digest in the existing
+root-owned controller. The owner-confirmed Stage-only IDs are recorded in
+[the pilot binding](tenant-pilot-binding.json). The workflow checks the
+controller's binding digest before requesting the protected preview. The
+`tenant-pilot-preview` workflow is deliberately
+limited to `main` and `deployment-security`. The reviewed Host and controller
+source need independent immutable pins. A draft branch or a successful CI run
+does not enroll the controller.
+
+`tools/enroll_staging_tenant_preview.py` is the root-owned enrollment step.
+It checks the installed controller bytes, worker Git revision, promoted Host,
+existing controller policy, active image and recovery latch. It takes the
+same private `operation.lock` as the deployment bridge. Supply the published
+installer SHA-256 and the digest of the reviewed workflow registered on
+`main`. That workflow checks out the exact enrollment source commit. The
+enrollment adds an isolated source bundle for the preview and leaves the
+legacy worker, current profile and Host promotion pin in place.
+
+The secondary database must first be provisioned with `GuildTenantStore` as
+container UID 10001 under the reviewed Staging data mount. Rootless Docker
+maps that UID to a subordinate host UID. The controller backs up the `0600`
+file by executing a fixed SQLite reader as that UID in the already verified
+Staging container. The reader verifies ownership, guild identity and SQLite
+integrity, then streams at most 16 MiB directly to a new worker-owned `0600`
+snapshot. SQLite contents are excluded from receipts and logs. Larger files
+require a reviewed resource budget before the preview can pass. Verify this
+handoff on the actual rootless mapping during the protected preview. The
+primary database keeps its existing access policy. An absent, inaccessible,
+or unknown secondary file prevents a receipt. Provisioning and the protected
+preview do not authorize a Gateway startup. `tools.provision_staging_pilot_tenant`
+is the one-shot command inside the reviewed container. It requires the exact
+pilot binding, checks the primary file exists, and never replaces a tenant file.
+
+If the enrolled preview reports `PILOT_SECONDARY_BACKUP_REJECTED`, the generic
+code only locates the secondary capture step. Use the checksum-pinned
+`tools/recover_staging_pilot_secondary.py` under separate owner approval. It
+uses the existing operation lock and the already approved container. Its
+public receipt gives the missing, ownership, mode, access or SQLite check
+that stopped capture. It creates only a genuinely absent secondary file via
+the atomic provisioning contract and leaves existing files intact. A successful
+receipt includes both temporary restore probes and the primary-only routing
+rehearsal. The next protected preview still owns the retained checkpoint.
+
+The protected preview starts no Gateway and performs no Discord writes. It
+exercises database rollback in scratch directories. Container rollback needs
+separate deployment approval and a fresh dual checkpoint. Before restarting
+any older Host that assumes singleton membership, separately verify actual
+singleton Discord membership. Preserve the secondary database and its snapshots
+through the rollback. A Discord request accepted before revocation can still
+take effect. The preview receipt does not authorize activation or a live restore.
+
+### Activation preparation and cutover
+
+The `tenant-pilot-activation-prepare` operation requires a separately
+enrolled candidate commit, Linux CI run, archive checksum, and workflow digest.
+The existing enrollment installer takes `--activation-preparation` and the
+distinct preparation-only owner approval. It verifies the currently enrolled
+controller and both protected workflow files on `main`.
+
+One owner-approved run takes the operation lock and creates fresh preview
+evidence, including both backups and restore probes, before building. The
+operation never consumes a prior preview. It checks ownership,
+modes, and SHA-256 of the sealed receipt and both backups, then rechecks the
+exact Discord membership and Core permissions. The installed candidate
+dependencies and Event Manager wheel remain those of the approved baseline image.
+The image and exact startup override are checked offline in both pilot and
+primary-only configuration. A disposable networkless Compose service rehearses
+the same image stop, switch, and rollback commands with no mounts or credentials.
+The controller then rehashes both backups and confirms the original live
+container is healthy. Evidence must stay within the one-hour window.
+Preparation never starts the Gateway.
+
+Pilot startup verifies the two database schemas read-only, including the
+existing primary. Catalog seeding and schema migrations remain in the
+legacy startup path. Preparation readiness expires one hour after the live
+observation, even when its successful receipt is retained for audit. A fresh
+protected preparation is required after expiration.
+
+The quiesced checkpoint helper verifies the same pinned Host is stopped before
+copying either database and before sealing a receipt. A networkless helper
+reads the secondary file as the mapped container user through a read-only
+data mount, with container logging disabled so the streamed snapshot is never
+persisted to Docker logs. Where Docker supplies a private SELinux level, the
+reader uses that exact level without relabeling the data. A failed restore or
+restarted baseline leaves the batch unsealed.
+
+The older primary Host iterates connected guilds during startup. With both
+Discord memberships present, use a separately built and reviewed rollback
+image with the explicit primary-only binding. That binding verifies the exact
+two Discord memberships and admits only the primary tenant for commands,
+interactions, Skill restore and scheduling. It retains the secondary file.
+
+The cutover policy enrollment pins the existing baseline image, the separate
+primary-only fallback source and archive checksum, and the exact protected
+cutover workflow. Enrollment creates no containers. The existing preparation
+workflow then builds and probes both images, including primary-only admission
+with both guild memberships, and rehearses switching to the fallback.
+
+The protected cutover accepts fresh controller-retained proof only. It
+re-attests Discord and the immutable images, journals the stop intent under
+the operation lock, and stops the current container to quiesce both databases.
+It seals and reopens the dual checkpoint before either candidate or fallback
+can start. The journal records the start intent and verification stage before
+checking Gateway readiness, exact mode, Event Manager lifecycle and tenant
+integrity. No live database is restored over current data.
+
+A retry of a protected cutover run with an incomplete journal can only roll
+back. If the old container is still healthy before quiescence, it is left
+running. Otherwise the controller stops any known candidate, rechecks the
+checkpoint and starts the enrolled primary-only fallback. Unknown container
+identity, failed backup verification or unhealthy fallback requires recovery
+review. Routine single-database operations remain held while the journal is
+present. Preserve the journal, tenant files and sealed snapshots for review.
+
+After live activation is healthy, open `/server setup` in Servertest and use
+an owner-confirmed inventory preview. The owner can skip the template and
+choose a Skill instead. On repeat, verify zero duplicate channels, roles and
+managed entry points, with the original Staging resource IDs intact.
+
 ## Reviewing permission and ownership blockers
 
 Bulk structure creation omits explicit Manage Messages grants. Existing
@@ -321,3 +494,528 @@ authority/data retention and HOST_READY after application, then run scoped healt
 and smoke. The owner will manually test Discord and provide screenshots. Automated
 component snapshots and offline image probes do not establish live UX acceptance.
 Both legacy deployment gates and production remain unchanged.
+
+## Primary-only recovery accepted on 2026-11-19
+
+The controller completed the original transaction as `PILOT_ROLLED_BACK`, with
+`recoveryVerified=true`, `activationAuthorized=false` and
+`recoveryRequired=false`. Its recovery receipt is authoritative even though the
+GitHub client subsequently exited 1. That pinned client accepted only
+`PILOT_ACTIVE` as success. The reporting failure occurred after the successful
+controller operation. The completed historical GitHub run keeps its original
+conclusion. Further recovery execution is unnecessary for correcting that label.
+
+| Evidence | Verified result |
+| --- | --- |
+| [Recovery run 44484329551](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44484329551) | Controller PASS, terminal `PILOT_ROLLED_BACK`, recovery latch released |
+| [Independent health 44499169361](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44499169361) | `HOST_READY`, `gatewayChecked=true`, repaired Host commit confirmed |
+| [Fresh authenticated status 44503285618](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44503285618) | `PILOT_ROLLED_BACK`, `recoveryRequired=false`, controller `8d8e067463123f0b847d9daf7d5dd70a854a5930` |
+
+The accepted active Host is `8f450533ec0c9589b6fa375e34bd951f91dff419`,
+image `sha256:d308a43d80737c26b92a3aea2ef9d822f7aa2987fd701a56e354df722672818b`.
+It repairs the API listener's inherited bootstrap tenant context. The original
+fallback source was `ca6bc4ac5604987dcab9b5310b7af2b9c53cf652`.
+The immutable legacy worker remains
+`92db47042d58055cb0debdfd83f11f8508e19809`.
+
+The recovery retained both guild databases and Event Manager domain/resource
+state through the verified checkpoint. The package remains Event Manager 0.1.2.
+The preserved lifecycle baseline is installed/configured, stored version 0.1.1,
+enabled=false. Health accepts the disabled state. No lifecycle correction or
+database restore was part of this recovery. The historical 403 and failed-check
+fields remain in the journal as incident evidence. The terminal phase and clear
+latch describe the completed recovery. Production was unchanged.
+
+The corrected client accepts a recovery receipt only when the pre-operation
+status was held and journaled, the receipt verifies primary-only recovery with a
+clear latch, and a subsequent authenticated status confirms the same controller,
+same cohort, terminal journal and clear latch. A failed activation that returns
+to a healthy fallback still exits 1. Subprocess regressions exercise the actual
+client entry point and process exit codes.
+
+The active workflow still checks out client source
+`d18d0a2d696b30c36d6b971819b1950723ddf8a9` and retains enrolled workflow SHA256
+`f982aa0d7d2d76b4a9e8fe27e1a998535aa03fe61e27d9765eccf4348c7e9011`.
+The next policy enrollment must bind the corrected immutable client reference
+and its workflow digest together. Updating source in PR #317 does not update
+that installed trust policy.
+
+PR #317 prepares immutable client
+`1c8878e869674f57fd66d3cad61d388aec033c5d`, changing only
+`tools/staging_automation_client.py` against the currently selected client.
+Its client-file SHA256 is
+`13fa5917c49b5b0baf5c28a6a92e443f78c5e8c7b7b3d52e7343ec8d2b3f0633`.
+The proposed workflow SHA256 is
+`df965251158b07e4d5f544f91ec5ef3d6dcfa4000e9a8601dcb465014f35f1e4`.
+Its only change from the enrolled workflow is the immutable checkout reference.
+The protected environment, owner reviewer, concurrency and OIDC checks persist.
+Register it with the next reviewed policy generation before dispatching it.
+
+## Next two-guild pilot preparation
+
+The cohort remains application `1567098530525351976`, primary GamerHQ Staging
+`1567098041641738331` and secondary Servertest `1571908030532948129`.
+The accepted runtime admits only the primary guild. Secondary storage stays
+retained and inaccessible to primary-only runtime operations.
+
+1. Obtain owner approval to adopt the accepted Host/image above as the next
+   baseline. Verify its current primary-only binding, health, source, installed
+   Skill artifact, lifecycle, mounts and both existing database identities.
+   Current policy/profile metadata still names Host
+   `40c88fada10f7990ef3d2cddb81f30b6381fe73e`; it must be reconciled through a
+   reviewed protected baseline enrollment before another pilot preparation.
+2. Freeze the reviewed PR revision as a new immutable pilot candidate with the
+   API context fix and corrected client. Independently verify its Linux archive
+   checksum and compatibility with Event Manager 0.1.2. The old activation pin
+   `12e0053f3af479235f7281b6f67637e564b962fc` lacks the API fix and is ineligible.
+3. Extend the existing controller for the new baseline generation. Baseline and
+   fallback may now be the same accepted primary-only image. The old controller
+   requires three distinct images and builds checkpoint binding from an assumed
+   two-guild baseline. Review and test those assumptions against the actual
+   primary-only baseline. Image, admission configuration and transaction
+   generation must jointly identify every start, verification and rollback.
+4. Under the existing operation lock, preserve the completed journal, original
+   preparation and sealed backup receipts as immutable incident history. A
+   reviewed generation transition must remain recoverable if interrupted between
+   history retention, baseline/profile selection and new journal initialization.
+   Retain both tenant files and their identities. Create no replacement database.
+5. Batch the corrected client/workflow digest, accepted baseline/fallback,
+   candidate archive pin, exact cohort and history transition in one reviewed
+   protected policy enrollment. It may retire the completed repair-only selector
+   only after confirming the terminal journal, clear latch and healthy baseline.
+   Required owner review, rootless isolation and production boundaries persist.
+6. After structural preparation passes CI, obtain fresh live membership and Core
+   permission evidence for both guilds. Prepare the pinned candidate offline,
+   verify dual backups and scratch restores, and rehearse actual container rollback
+   and interrupted admission changes. Previous preparation is expired. At cutover,
+   require a fresh quiesced dual checkpoint and renewed health/resource checks.
+7. Queue one protected cutover only after the new preparation is eligible and stop
+   for deployment-security owner approval. Servertest template application and
+   repeated-setup acceptance require their separate reviewed Discord preview.
+
+This plan authorizes preparation evidence only. The next pilot remains blocked
+on the reviewed baseline/controller generation and a separate protected cutover.
+
+
+### Recovered-primary pilot generation (prepared, not enrolled)
+
+The owner review on 1899c6f requests one coherent new policy generation; it does
+not authorize another cutover. Authenticated status run
+[44514969499](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44514969499)
+again confirms the terminal original incident and clear recovery latch.
+
+`deploy/staging/tenant-pilot-generation.json` is the reviewed release manifest.
+The proposed activation Host is **1899c6f8cc498fefa0510d0e3f70453f6f1aa082**,
+archive SHA256 **b09ae812bf58fb79bf3b7df21a055d234ec7e4e8dbd5dc84b5cb9dc2bedfa23d**.
+Its complete Linux CI is 44504256668; the independent Linux archive check is in
+44504256756. This explicitly replaces the old 12e0053 candidate, which lacks the
+API listener context fix. The accepted baseline and primary-only fallback are
+both Host **8f450533ec0c9589b6fa375e34bd951f91dff419**, image
+**sha256:d308a43d80737c26b92a3aea2ef9d822f7aa2987fd701a56e354df722672818b**.
+The proposed immutable client is **2a2b08b8d3c8165d7a70ced3c667024ba219b0ac**;
+it retains the corrected recovery result and rejects a workflow-generation
+mismatch before requesting an operation challenge.
+
+The controller now distinguishes exactly two **authorized cohort members** from
+one **currently admitted primary**. A generation baseline is attested with its
+actual primary-only startup environment, not a hypothetical two-guild override.
+The candidate must remain a different image. Baseline/fallback image equality is
+allowed only for the exact reviewed recovered-primary generation; the old
+three-image rule still applies to historical policies. Fallback requires the
+same sealed checkpoint, both database checks, lifecycle retention, actual Host
+API readiness and primary-only admission as before.
+
+Owner enrollment uses `tools/enroll_staging_pilot_generation.py` and the existing
+operation lock, deployment identity, systemd sandbox and immutable revision
+layout. It requires matching registered main workflow bytes, exact archive pins,
+the installed 8d8e067 mixed source bundle, the completed original incident and a
+clear latch. It re-verifies the current healthy primary-only image, live bot and
+both guild identities/Core permissions, and fresh private dual backups with
+scratch restores. It changes only controller selection and deployment metadata;
+it does not start/stop a Gateway, write a tenant DB or mutate Discord.
+
+The original `worker/tenant-pilot-cutover.json` stays byte-for-byte intact. A
+root-owned incident archive also retains its original policy/profile/private
+state. The new journal is `worker/tenant-pilot-cutover-v2.json`, explicitly bound
+to `recovered-primary-v2`. Expired preparation, challenge and token replay cache
+are discarded during adoption; no old preview can authorize the new candidate.
+Routine single-database deployment operations are denied while this exact pilot
+generation is enrolled.
+
+The fsynced root transition contains original and desired bytes for entry,
+profile, private state and policy. Its entry guard is installed **before** any
+state/profile/policy changes and blocks execution until COMMITTED. A retry
+accepts only the recorded old/new bytes, re-proves live health and backups, then
+finishes the same transition. Unknown content, a held latch, a changed incident,
+a running new-generation transaction or a changed source/digest fails closed.
+Do not hand-edit the transition, incident or recovery latch. Preserve a pending
+transition and use the same immutable owner command for a reviewed retry.
+
+Registration and enrollment are not activation. Once enrollment has a verified
+public receipt, one protected preparation session must build/probe the exact new
+candidate, recheck fresh live permissions and dual restores, and rehearse actual
+container rollback. Only then queue cutover with deployment-security owner review.
+At execution require another fresh stopped-write dual checkpoint and restores.
+First Servertest template application remains a separate explicit confirmation.
+No new pilot run is ready or queued merely because source CI is green.
+
+Live preview and preparation storage access is verified inside the inspected,
+healthy owning container as UID/GID 10001:10001. The subsequent Discord/artifact
+checks retain daemon/config validation but suppress the temporary `:Z` storage
+probe: binding the same live data into another private SELinux container could
+relabel it. No visibility, mount access or storage permission check is removed.
+
+
+### Investigating the rejected b808b5b enrollment
+
+The owner received only the original installer's catch-all rejection sentence.
+At b808b5b, main discarded ValueError codes, filesystem errno and subprocess
+exit status. That sentence proves an exception reached the handler; it does not
+identify a check or prove that a protected transition exists.
+
+Authenticated read-only status
+[44526109875](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44526109875)
+confirms the old 8d8e067 controller is still selected, the original journal is
+PILOT_ROLLED_BACK, and recoveryRequired=false. This does not establish whether
+the root-owned generation transition is absent, PREPARED or COMMITTED. The old
+restricted operation set does not expose that file. Do not rerun enrollment or
+change its source pin, entry, marker or private state based on this sentence.
+
+The installer now reports an allowlisted stage, completed earlier stages, a
+specific safe rejection code, errno or exit status. It omits raw exceptions,
+commands, subprocess output, paths from errors, tokens and private plan bytes.
+The transition algorithm and all authorization/source-integrity checks remain
+unchanged. Reporting improvements are repository code, not live enrollment.
+
+`tools/staging_pilot_generation_diagnostics.py` is an ephemeral owner reader for
+the exact original b808b5b source. It takes the existing operation lock shared,
+observes protected metadata without reading unsafe-mode files, compares current
+bytes to sealed before/after hashes, and independently checks public workflow,
+archive, legacy-worker and mixed controller-source evidence. It never invokes
+enrollment, imports the old installer, writes protected files, opens tenant DBs,
+changes the latch, or starts/stops a Docker container. It retains partial receipt
+facts if public Git evidence is unavailable.
+
+The receipt also extracts only known systemd failure signals from the original
+generation units and reports configured protection on the existing user manager.
+With `--probe-user-sandbox`, two bounded read-only standard-library Python probes
+compare inherited protection with the exact generation namespace properties.
+They inspect access booleans only; they do not read Production files, credentials
+or SQLite, and cannot execute enrollment/Gateway code. The probes use distinct
+diagnostic unit names so their results cannot masquerade as the original failure.
+Do not infer a namespace defect from source review alone: require actual unit
+signals/probe results before changing any property or preparing a retry.
+
+Return only the public JSON receipt. Its transition phase and recognized/unknown
+byte states determine the reviewed next step. Preserve the original marker,
+incident archive, both tenant DBs and already staged source. A new diagnostic
+commit is not permission to retarget an existing immutable transition to it.
+
+
+Confirmed source defect: the b808 installer fetches source, 8d8e067, main,
+1899c6f and 8f450533 at depth one, then reads unchanged modules from the original
+87680529 controller without fetching that commit. Reproducing those exact five
+public fetches in a fresh repository returned Git exit 128 for
+`87680529:tools/staging_automation/__init__.py`; explicitly fetching 87680529 made
+the same read succeed (exit 0). This maps to INSTALLED_CONTROLLER, before target
+bundle staging or transition persistence. The corrected source fetch includes
+that exact immutable legacy dependency and verifies the helper still names it.
+No source-integrity comparison is skipped or weakened.
+
+This reproduction proves the missing-fetch defect, not the VPS marker phase or
+whether an earlier VPS prerequisite also failed. The read-only receipt repeats
+the original shallow-fetch contract on that VPS before fetching the missing
+revision for checksum comparison, so it can corroborate the exact rejection and
+still preserve the live transition. Capture the receipt before preparing any
+retry. Optional sandbox probes check later prerequisites without executing the
+enrollment. Original enrollment source b808 remains unchanged and immutable.
+
+### Reviewed retry after owner-confirmed missing historical source
+
+The subsequent owner read-only receipt reports GENERATION_ENROLLMENT_DIAGNOSTICS,
+transition ABSENT, a clear recovery latch, healthy recovered Host 8f450533/image
+d308a43d, and valid directory, lock, sandbox, archive and workflow contracts. Its
+original-fetch rehearsal failed at INSTALLED_CONTROLLER with Git exit 128 for
+876805290ef454523f9b36f1f9fbf90c3ec64a17; the same read passed after an explicit
+fetch. This confirms the missing shallow dependency as the actual rejection.
+No transition was created; no sandbox or permission relaxation is warranted.
+
+Before any Git source read the corrected installer explicitly fetches its own
+immutable revision, installed overlay revision 8d8e067, retained legacy revision
+87680529, and registered main. Each immutable FETCH_HEAD must resolve to the
+exact requested commit; main is captured once and its workflow bytes must still
+match the sealed digests. Candidate 1899c6f and recovered baseline 8f450533 are
+separately fetched and verified against their unchanged archive checksums.
+The legacy worker HEAD is independently checked in its installed checkout.
+Missing objects, failed fetches, wrong fetched identity or altered content abort
+without falling back to ancestry assumptions or disabling byte comparisons.
+
+The fresh owner retry uses `--require-absent-transition`. It reads the marker
+condition at admission and again under the existing exclusive operation lock,
+before deployment metadata writes. If a marker now exists, it returns
+EXISTING_TRANSITION_REQUIRES_REVIEW; preserve that marker and stop. Success
+records initialTransitionPhase=ABSENT and RECOVERED_PRIMARY_GENERATION_ENROLLED.
+An interrupted transition remains resumable only with the same immutable source
+and the reviewed retry path (without the fresh-only flag), known before/after
+bytes, original incident, and newly verified baseline/backup proof. Never remove
+or retarget its marker to get a fresh enrollment through.
+
+The Linux root fixture CI executes the actual installer against temporary Git,
+root-owned controller files, staging-owned private state, both synthetic tenant
+databases and sealed historical backups. It exercises power loss after each of
+the four fsynced metadata writes, held entry execution, source-preserving resume,
+idempotent completion, unknown-state refusal, source-content rejection and a
+marker appearing before lock acquisition. Only external systemd/Discord/Docker
+baseline attestation is substituted; Git archives, immutable comparisons,
+ownership/modes, locking, SQLite checks and transaction writes are real. This is
+offline regression evidence, not VPS enrollment or pilot activation acceptance.
+
+### Automated read-only tenant acceptance
+
+Acceptance uses protected VPS/API tooling. Computer Use and owner-desktop
+automation are prohibited unless explicitly requested by the owner.
+
+`services/tenant_acceptance.py` reuses the existing tenant store, read-only SQL
+helpers, template preview, Staff mapping and resource ownership services. The
+ephemeral `tools/tenant_acceptance_collect.py` REST adapter runs inside the
+already healthy Host container as UID/GID 10001:10001. It never logs in, starts
+a Gateway, loads cogs into the live bot, installs/enables Skills, applies setup,
+or creates/edits/moves/deletes a Discord resource/message. It fetches the
+existing bot identity/cohort and GET-only, guild-allowlisted inventory, roles,
+Host/owner members and managed-message reads. Redirects, unrecognized hosts,
+cross-guild targets, non-GET methods and request/size/time excess fail closed.
+The token stays in the existing container environment. No credential is copied
+to Actions, a browser or a receipt, and `.env` loading is disabled.
+
+Each of two passes loads fresh REST models and a separate SQLite read
+transaction using URI mode=ro, query_only and an independent SQL authorizer.
+The existing setup preview computes plans in memory, preserving setup journal,
+pending creation checkpoints, audit history, mappings and managed messages.
+Receipts compare inventory/decision/ID/lifecycle fingerprints across both
+passes; report explicit Staff mapping and permissions, parent dependencies,
+managed-entry identifiers, journal state and historical audit aggregates.
+Audit references are not treated as active ownership. Both API lifecycle
+projections are compared to their own tenant's DB rows; wrong authorized-guild
+headers must receive HTTP 403. Existing command/view/modal/scheduler/lifecycle
+dispatch guards also run against in-memory envelopes and non-mutating callbacks
+with independently verified live models. They are labeled in-memory evidence,
+never live mutating command or job execution.
+
+Public output excludes names, message bodies, configuration values, member
+records and arbitrary exception details. Member overwrite identities except
+the Host are hashed; role/channel/message IDs and permission masks remain
+available for owner review. Optional modules and Skill-owned decisions remain
+separate from Core blockers. Existing API versions without a running flag are
+UNVERIFIED for runtime-running state; enabled/healthy never substitutes for it.
+Only owner/Host members are fetched, so full role-membership auditing also
+remains UNVERIFIED. No collection receipt automatically declares live UX or
+template-apply acceptance, or authorizes a merge of PR #317.
+
+The additive `tenant-acceptance` operation uses the existing controller identity,
+exclusive operation lock, workload identity/OIDC, exact immutable workflow
+digest/client and deployment-security owner review. It is permitted only for
+an enabled, non-recovery, already active recovered-primary-v2 pilot and exact
+running candidate. It does not change approved images or old journals. Source
+injection is ephemeral in the child process, SHA256-bound to root-owned source;
+it creates no container/mount or SELinux relabel. Its structured output is
+bounded/compressed with verified length/SHA256 so the existing 64KiB SSH limit
+is retained. Actions renders a summary and uploads only the redacted receipt.
+FAIL means an acceptance criterion failed, not that recovery is required;
+UNVERIFIED is never silently promoted to PASS.
+
+Before first use, owner-reviewed `tools/enroll_staging_tenant_acceptance.py`
+must verify installed eff7cc1 mixed sources, legacy worker, exact cohort,
+COMMITTED original generation, active journal/preparation binding, current
+Host health/image, registered main/default workflow bytes and immutable client
+source. It stages only reviewed source and atomically selects entry/policy
+under the existing lock. Its separate fsynced before/after transition can
+resume only the same source and known bytes. The old generation/active journal,
+profile, private state, databases, credentials, SSH/sandbox and Gateway remain
+unchanged. Unknown contents or failed checks leave selection held for owner
+review. Enrollment itself does not execute the collector.
+
+After its verified receipt, dispatch `staging-tenant-acceptance.yml` on main
+and stop for required deployment-security owner review. This is the single
+read-only live collection; do not dispatch preparation, cutover or setup to
+gather acceptance data. Register the exact workflow on both main and default
+develop; develop manual dispatch must skip protected execution. First build
+and test with synthetic fixtures; source CI is not independent live evidence.
+
+The first live collection (44624585597) returned both guilds UNVERIFIED at
+DISCORD_INVENTORY after 12 reads and successful live-binding ingress probes.
+The populated-channel regression reproduces a deterministic local TypeError:
+discord.py ChannelType is an enum value, not an int-convertible object. Export
+its integer `.value`; never infer deletion, missing permissions or token failure
+from this projection error. Empty-guild fixtures alone do not cover inventory.
+Fixtures must include categories, text/voice channels, parents and overwrites.
+INVENTORY_PROJECTION is now distinct from the initial REST/model stage, with
+bounded reason codes for invalid types/schema, timeout, transport, HTTP status,
+rate limit and model construction. Never export raw exception text or bodies.
+
+Collector corrections do not alter the enrolled Host/image or workflow/client.
+The existing enrollment tool's owner-only `--revise` path is limited to the
+verified d1eed91 acceptance enrollment. It preserves all controller module
+bytes, workflow digest, original COMMITTED acceptance/generation markers,
+active pilot journal, cohort, profile and private state. Only root-owned entry
+selection, controller source identity and the two acceptance source hashes are
+advanced through a separate fsynced source-transition marker under the same
+lock. Unknown predecessor/source/content is rejected; interruption holds the
+new entry until reviewed same-source retry. Enrollment does not collect data.
+After its receipt, queue one NEW acceptance dispatch on main and retain the
+existing deployment-security review. Never rerun setup or cutover to diagnose
+a collector failure, and never reuse the completed 44624585597 as pending review.
+
+Run 44707410369 exposed the next configured-resource boundary: shared guide
+rendering expects Host `bot.tree`, absent on the original model-only Client.
+The new fixture replays both exact enrolled files and reproduces 22 reads /
+TEMPLATE_PREVIEW / COLLECTION_SCHEMA_INVALID. This is an adapter interface
+mismatch, not evidence of a missing SQLite column. The adapter now provides a
+local unregistered CommandTree; no cog, callback registry, sync or Gateway is
+loaded. Live registry state remains UNVERIFIED and command-derived staff-guide
+rows are explicitly rejected. Configured Core guide histories/pins and stable
+preview IDs remain governed by the existing services and GET/SQL guards.
+
+The second source-only revision accepts only installed 9935969 and preserves
+the original d1eed91 enrollment and first source-transition audit bytes. Its
+separate `tenant-acceptance-source-transition-v2.json` is committed only after
+the same locked health/image/cohort/known-byte checks. Predecessor launcher
+bytes are regenerated from that exact immutable predecessor, not guessed.
+Initial, first-revision and current-revision contracts are rehearsed together.
+No old marker is cleared or overwritten to admit a retry. Default-branch
+migration is a separate reviewed GitHub setting operation; see
+[the audited migration](../../docs/development/MAIN_DEFAULT_MIGRATION.md).
+
+Run 44734287411 reached both independent previews but reported FAIL. Its
+recorded first-pass SHA-256 can be reconstructed exactly from the retained
+second pass by changing only the three message-inspection decisions and their
+aggregate counts. Primary first/second counts were 55/54 configured; secondary
+52/50 configured, with ten creations in both passes. The changed rows were
+primary `role_message:1567098041641738331:language` (1571894322700484690),
+secondary `role_message:1571908030532948129:gaming_content`
+(1573046182115287071) and `role_message:1571908030532948129:language`
+(1573046188536635423). EXACT_MATCH became AMBIGUOUS with the existing generic
+message-inspection-error reason. Ordering, inventories, lifecycle, journal and
+all other projected fields were identical. This is not evidence that messages
+were deleted. First-pass exact recognition verifies their saved identity,
+Host authorship and expected channel at that time; controls and pin status need
+their separate checks. It is not a raw
+historical HTTP trace. The underlying second-pass exception was not retained.
+
+The REST adapter contained a verified defect: one `StreamReader.read(n)` may
+return a partial body. JSON parsing can then fail despite HTTP 200. Read to EOF
+within the unchanged byte/time budget for Discord and loopback Host responses;
+do not assume each read is complete or retry mutations. A real aiohttp stream
+fixture reproduces fragmentation. This defect can explain intermittent board
+inspection; the historical exception itself remains unproven.
+
+Current receipts retain both full redacted passes, raw and semantic hashes,
+bounded changed paths/rows and component hashes. Semantic comparison excludes
+historical audit aggregates and HTTP diagnostic lists, and sorts ownership
+references as a multiset without deduplication. Raw differences remain visible.
+All decisions, reasons, IDs, permissions, lifecycle and current journal state
+remain significant. Do not normalize away an AMBIGUOUS result. Unresolved saved
+public boards get an additional exact-ID GET only after their authoritative
+channel/guild binding passes. Receipts expose status/code, access, existence,
+Host ownership, controls/content hashes and pin facts, never message content,
+private member identities, tokens or raw exceptions. A successful probe does
+not override the preview's review decision.
+
+Secondary Staff role 1573046089580421163 was verified with zero guild privileges.
+The remaining ten creation decisions are STAFF and SUPPORT TICKETS categories
+and eight STAFF children: bot-log, games-log, mod-commands, mod-log, server-log,
+staff-chat, staff-suggestions and ticket-logs. No dependency was blocked in this
+receipt. Journal remaining=10 records prior partial application, not a new
+collection-time action. Do not create them during acceptance. Both guilds had
+no foreign mappings and passed live cross-authorized-guild HTTP403 denials and
+the five in-memory ingress guards. Live callback registry, full member-role
+audit and mutation-path acceptance remain UNVERIFIED.
+
+The third source-only revision accepts only installed f944448 and seals
+`tenant-acceptance-source-transition-v3.json`. Explicitly fetch and verify all
+three immutable ancestor installers/COMMITTED markers; preserve their original
+bytes and hashes. Replay initial enrollment, both revisions, interrupted writes,
+held launchers, resume and repeated completion in root-owned disposable fixtures.
+Controller module/client/workflow bytes, active Host, private state, tenant
+bindings, both databases, Gateway and security gates remain unchanged. The
+restricted key cannot replace the root-owned collector source pin. Require one
+checksum-verified owner source revision, then queue one NEW protected read-only
+acceptance run; never re-label completed 44734287411 as pending approval.
+
+Run 44746777950 supplies the previously missing decisive HTTP evidence:
+primary language1571894322700484690 and platform1571894329188818985, and
+secondary language1573046188536635423 changed only after HTTP429. Inventory,
+Skills and lifecycle mismatch fingerprints were stable. Primary language's
+additional exact-ID probe returned HTTP200 with matching Host author, guild,
+channel, body, controls, state ownership and pin; the other two probes still
+returned429. No404/moved-channel evidence exists for these three lookups.
+The previous response-fragment correction is retained, but is not the proven
+cause of this newer run. The adapter replaces discord.py's request handler and
+therefore also bypassed its normal rate-limit bucket/retry handling.
+
+The observer now serializes its GETs, honors exhausted-bucket reset-after and
+global/route429 retry_after guidance, and performs at most three attempts.
+The same cooldown survives both independent previews; successful messages are
+never cached across previews. Unknown or excessive delay guidance holds reads
+fail-closed. Per-response delay is capped at30 seconds, cumulative wait60
+seconds, and all attempts count against the existing500-request budget; outer
+time/body bounds are unchanged. No403/404 retry or permission expansion occurs.
+Retain bounded rate-limit events with operation/channel/message IDs and delay
+classification, never raw bodies/tokens. These diagnostic events are excluded
+only from semantic hashing; actual rows/IDs/permissions/reasons stay significant.
+Keep at most eight rate-limit samples per pass with a full count and explicit
+truncation flag, preserving the existing decoded/compressed receipt size limits
+even when both complete previews and retry evidence are retained.
+
+If a mapped-message read exhausts its budget, mark the collection UNVERIFIED /
+DISCORD_MESSAGE_READ_INCOMPLETE. Keep the last completed pass, the full
+incomplete pass and their observed comparison instead of promoting the failed
+read to a valid missing-resource decision or pretending the hashes match.
+A later successful diagnostic probe does not repair an incomplete preview.
+Expose destinationChannelId independently of channelId: the latter is the
+verified message resource's channel and becomes null when lookup fails; that
+null is not evidence that its known destination moved. Validate both bindings.
+Regression fixtures cover the exact primary-language/platform and
+secondary-language lookup shapes using synthetic IDs and existing Host message
+verification, plus header cooldown, concurrent reads, retry exhaustion and
+invalid/oversized guidance. Genuine403/404 and identity mismatches remain errors.
+
+The fourth source-only revision accepts only installed03d656b, preserves all
+four immutable COMMITTED ancestors, and seals a separatev4 source marker.
+It retains the same controller/client/workflow/security policy, both tenant
+databases, running Host/Gateway and all Discord resources. Owner enrollment is
+still required because the restricted deployment key cannot replace root-owned
+observer sources. Only after its verified receipt, prepare a NEW protected
+read-only acceptance run; never dispatch the old observer as proof of this fix.
+
+### Platform safety versus customer template completion
+
+Collection44777476448 resolves the prior read instability: both guilds have
+matching inventory/preview/Skill/lifecycle fingerprints and no foreign or
+unresolved stored mappings. Primary has55 configured Core resources and a
+complete journal. Secondary has52 configured and10 missing Core resources,
+remaining10/no unresolved creation checkpoints, with verified zero-privilege
+Staff mapping. No unresolved creation checkpoint, review or parent-policy ambiguity explains those
+ten; they are the unexecuted remainder of its earlier confirmed partial setup.
+Do not apply them to make a platform acceptance aggregate green.
+
+The template is an optional customer choice. Its selected Core obligations stay
+visible and INCOMPLETE until separately confirmed setup completes. Keep the
+original collector FAIL receipt unchanged. The existing runtime flag gaps also
+remain UNVERIFIED; never infer running/stopped from enabled/healthy flags.
+
+The standard-library-only offline companion `tools/tenant_acceptance_scope.py`
+reads an already authenticated redacted receipt and exact expected cohort. It
+checks the existing raw pass commitments/comparison contract, tenant mapping
+and lifecycle evidence, live403 denials and in-memory ingress guard results.
+It reports `platformSafety` separately from per-guild `templateCompletion`,
+retaining original results, counts, missing keys, checkpoints and all coverage
+gaps. Tampered/unstable passes, foreign or unresolved mappings, lifecycle
+violations, cross-tenant HTTP success and write attempts cannot pass. No-template
+and intentionally partial-template customers can pass this bounded technical
+scope. The assessment itself cannot authorize merge, rollout or live setup.
+
+This is an offline reporting addition, not a new protected operation. The
+enrolled observer, source/client/workflow hashes, controller, worker, Host and
+both databases stay untouched; no VPS enrollment or repeat collection is needed
+solely to interpret the verified receipt. Keep derived assessments distinct
+from original signed/run artifacts. See the [scope and merge recommendation](../../docs/architecture/decisions/ADR-001-guild-tenancy.md#milestone-2-acceptance-scope--20-november-2026).

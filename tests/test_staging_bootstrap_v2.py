@@ -129,18 +129,35 @@ def test_self_contained_operator_command_verifies_bytes_before_execution():
         run.assert_called_once()
 
 
-def test_watchdog_is_read_only_and_requires_gateway_and_enabled_skill_health():
+def test_watchdog_is_read_only_and_requires_gateway_and_enabled_skill_health(monkeypatch):
     from tools.staging_health import health
+    monkeypatch.setenv('STAGING_TEST_HEALTH_SECRET', 'synthetic')
+    live = {"workerEnabled": True, "stagingGuildId": "2", "healthSecretEnv": "STAGING_TEST_HEALTH_SECRET"}
     with patch("hosts.gamerhq.staging_rootless.verify_rootless"), patch("tools.staging_configuration.audit"), patch(
             "tools.skill_staging.host_request") as host, patch("tools.staging_health.subprocess.run") as docker:
         assert health({"workerEnabled": False})["status"] == "READY_OFFLINE"
         host.assert_not_called(); docker.assert_not_called()
         docker.return_value = SimpleNamespace(stdout="healthy")
         host.return_value = {"version": "0.1.0", "state": {"enabled": True, "healthy": False}}
-        with pytest.raises(RuntimeError): health({"workerEnabled": True, "stagingGuildId": "2"})
+        with pytest.raises(RuntimeError): health(live)
         host.return_value["state"]["healthy"] = True
-        assert health({"workerEnabled": True, "stagingGuildId": "2"})["status"] == "HOST_READY"
+        assert health(live)["status"] == "HOST_READY"
         assert all(call.args[0][1] == "inspect" for call in docker.call_args_list)
+
+
+@pytest.mark.parametrize('response,reason', [
+    ([], 'HEALTH_RESPONSE_REJECTED'),
+    ({'state': {}}, 'HEALTH_SKILL_VERSION_MISSING'),
+    ({'version': '0.1.2', 'missingCapabilities': ['fixture']}, 'HEALTH_SKILL_CAPABILITY_MISSING'),
+    ({'version': '0.1.2', 'state': {'enabled': True, 'healthy': False}}, 'HEALTH_ENABLED_SKILL_UNHEALTHY'),
+])
+def test_watchdog_classifies_skill_health_without_emitting_payload(monkeypatch, response, reason):
+    from tools.staging_health import HostHealthFailure, verified_skill_health
+    monkeypatch.setenv('STAGING_TEST_HEALTH_SECRET', 'synthetic')
+    profile = {'stagingGuildId': '2', 'healthSecretEnv': 'STAGING_TEST_HEALTH_SECRET'}
+    with pytest.raises(HostHealthFailure, match=f'^{reason}$') as error:
+        verified_skill_health(profile, lambda *_: response)
+    assert error.value.status is None
 
 
 def test_atomic_staging_records_recover_without_reusing_stale_temporary_files(tmp_path):

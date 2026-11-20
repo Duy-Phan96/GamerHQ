@@ -97,4 +97,13 @@ class RepositorySafetyTests(unittest.TestCase):
             self.assertIn('staged: synthetic_config.txt',output.getvalue())
             self.assertNotIn(value,output.getvalue())
 
+    def test_staging_audit_exceptions_only_match_reviewed_lines_and_paths(self):
+        from tools.repository_audit import REVIEWED_ASSIGNMENTS
+
+        for path, line in REVIEWED_ASSIGNMENTS.items():
+            self.assertFalse(secret_findings(line, repository_path=path))
+            self.assertTrue(secret_findings(line, repository_path='other.py'))
+            updated = line.split('=', 1)[0] + "= 'synthetic-unreviewed-assignment'"
+            self.assertTrue(secret_findings(updated, repository_path=path))
+
 if __name__=='__main__':unittest.main()

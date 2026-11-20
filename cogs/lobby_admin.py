@@ -12,6 +12,7 @@ import discord
 from discord.ext import commands, tasks
 
 from database import db
+from services.tenant_routing import tenant_cycle
 from services import lobby_service as rules
 from services.lobby_dashboard import event_lock, cleanup_ended
 from services.onboarding_service import alias
@@ -406,6 +407,7 @@ class LobbyAdmin(commands.Cog):
         self.refresh.cancel()
 
     @tasks.loop(seconds=60)
+    @tenant_cycle
     async def refresh(self):
         for guild in self.bot.guilds:
             from hosts.gamerhq.event_cutover import owns_events

@@ -7,7 +7,7 @@ import discord
 
 import config
 from config import CHOOSE_GAMES_CHANNEL_ID, DISPLAY_GROUP_ORDER
-from database import db
+from database import db, tenants
 from services.game_area_safety import coordinated_game_creation
 from services.music_bot_service import with_music_access, resolve_music_role, apply_music_access
 
@@ -208,7 +208,8 @@ def _managed_message_matches(message, content, view):
 
 def choose_games_channel_id(guild_id):
     """Retain an explicit legacy target; otherwise use this guild's managed link."""
-    if CHOOSE_GAMES_CHANNEL_ID:
+    tenants.require_guild(guild_id)
+    if CHOOSE_GAMES_CHANNEL_ID and (tenants.current() is None or guild_id == config.GUILD_ID):
         return CHOOSE_GAMES_CHANNEL_ID
     raw = db.get_setting(f'managed_channel:{guild_id}:choose-your-games')
     return int(raw) if raw and raw.isdecimal() else 0
@@ -216,12 +217,14 @@ def choose_games_channel_id(guild_id):
 
 async def refresh_choose_games_message(bot, view=None, intro_view=None):
     from services.managed_message_service import lock
-    channel_id = choose_games_channel_id(config.GUILD_ID)
+    tenant = tenants.current()
+    guild_id = tenant.guild_id if tenant else config.GUILD_ID
+    channel_id = choose_games_channel_id(guild_id)
     async with lock(f'choose_games_refresh:{channel_id}'):
-        return await _refresh_choose_games_message(bot, view, intro_view, channel_id=channel_id)
+        return await _refresh_choose_games_message(bot, view, intro_view, channel_id=channel_id, guild_id=guild_id)
 
 
-async def _refresh_choose_games_message(bot, view=None, intro_view=None, *, channel_id):
+async def _refresh_choose_games_message(bot, view=None, intro_view=None, *, channel_id, guild_id):
     """
     Maintain pinned, bot-managed Choose Your Games messages.
 
@@ -240,7 +243,7 @@ async def _refresh_choose_games_message(bot, view=None, intro_view=None, *, chan
 
     channel = bot.get_channel(channel_id)
     if (not isinstance(channel, discord.TextChannel)
-            or (config.GUILD_ID and channel.guild.id != config.GUILD_ID)):
+            or (guild_id and channel.guild.id != guild_id)):
         raise GameStructureError(
             "UPDATE CHOOSE-YOUR-GAMES",
             RuntimeError("Configured choose-your-games channel was not found."),
@@ -248,7 +251,7 @@ async def _refresh_choose_games_message(bot, view=None, intro_view=None, *, chan
 
     try:
         from services.server_operations import private
-        if not CHOOSE_GAMES_CHANNEL_ID and private(channel):
+        if (not CHOOSE_GAMES_CHANNEL_ID or guild_id != config.GUILD_ID) and private(channel):
             raise ValueError("The Choose Your Games destination is private; review its managed mapping.")
         bot_user = channel.guild.me
         bot_id = bot_user.id if bot_user else getattr(bot.user, "id", None)
@@ -376,17 +379,24 @@ async def rebuild_choose_games_message(bot, view=None, intro_view=None):
 
     User messages and messages from other bots are never deleted.
     """
-    if CHOOSE_GAMES_CHANNEL_ID == 0:
+    tenant = tenants.current()
+    guild_id = tenant.guild_id if tenant else config.GUILD_ID
+    channel_id = choose_games_channel_id(guild_id) if tenant else CHOOSE_GAMES_CHANNEL_ID
+    if channel_id == 0:
         return {"deleted": 0, "created": 0}
 
-    channel = bot.get_channel(CHOOSE_GAMES_CHANNEL_ID)
-    if not isinstance(channel, discord.TextChannel):
+    channel = bot.get_channel(channel_id)
+    if not isinstance(channel, discord.TextChannel) or (tenant and channel.guild.id != guild_id):
         raise GameStructureError(
             "REBUILD CHOOSE-YOUR-GAMES",
             RuntimeError("Configured choose-your-games channel was not found."),
         )
 
     try:
+        if tenant:
+            from services.server_operations import private
+            if private(channel):
+                raise ValueError("The Choose Your Games destination is private; review its managed mapping.")
         bot_user = channel.guild.me
         bot_id = bot_user.id if bot_user else getattr(bot.user, "id", None)
         if bot_id is None:

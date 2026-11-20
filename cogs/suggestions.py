@@ -9,6 +9,7 @@ from discord.ext import commands
 
 from database import db
 from services.staff_access import is_mapped
+from services.tenant_routing import add_shared_entry_view
 from services.onboarding_service import alias, is_staff, unique
 from services.server_service import ServerMessageError, upsert_fixed_message
 
@@ -181,8 +182,8 @@ class Suggestions(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        self.bot.add_view(SuggestionEntryView())
-        self.bot.add_view(StaffSuggestionView())
+        add_shared_entry_view(self.bot, SuggestionEntryView())
+        add_shared_entry_view(self.bot, StaffSuggestionView())
 
     @commands.Cog.listener()
     async def on_ready(self):

@@ -1,5 +1,40 @@
 # Discord setup
 
+## Install GamerHQ on your server
+
+Use the GamerHQ application’s **Add App** link. Choose **Add to Server**,
+select your server in Discord, and review the requested permissions. GamerHQ
+uses the server where you open its commands. You do not need to copy a server
+ID, create a bot token, or configure a database.
+
+1. Open **`/server setup`** in the server you selected. The setup panel shows
+   the available template and a separate **Manage Skills** action.
+2. For the **Gaming Community** starter layout, choose **Use Template** or
+   **Resume Setup**. Check the preview and Full Report, then choose **Apply
+   Template** to approve the listed changes. The completion summary shows
+   progress and any items that need review. Reopen the preview to continue.
+3. To keep your existing layout or start with an individual Skill, choose
+   **Manage Skills** instead. Select an available Skill, review its status and
+   choose **Review Enable**. Confirm to enable it for this server. Some Skills
+   need additional permissions or configuration before they can run.
+4. Return to **`/server manage`** for ongoing changes. **Optional Modules** has
+   separate previews. Returning owners can reopen their current setup or
+   manage Skills without applying a template.
+
+If a permission check fails, read the preview or Skill status. For missing
+server permissions, open **Server Settings → Roles**, select the GamerHQ
+bot role and grant the named permission. For hierarchy, move the bot role
+above the roles it manages. For channel overrides, review the affected channel
+or its parent first. Where the preview offers a repair, review its scope and
+confirm it. Reopen the preview or Skill status to recheck. Pin Messages is a
+Core permission. Administrator is excluded from the request.
+
+This customer path applies where the shared application is available. Staging
+pilot enrollment and deployment use the separate
+[operations runbook](../deploy/staging/HOST_PROMOTION.md).
+
+## Developer and self-hosted setup
+
 1. Create a separate application/bot for development in the [Discord Developer Portal](https://discord.com/developers/applications). Keep its token private in `.env`; an OAuth client secret is not used by GamerHQ.
 2. Enable **Server Members Intent** in the bot settings. The code uses default intents plus members and voice states; it does not enable privileged Presence or Message Content intents.
 3. Run `python -m tools.discord_install_link YOUR_APPLICATION_ID` and open the resulting Guild Install URL. This requests the reviewed Core permissions, including **Pin Messages**, and uses the bot and application-command scopes. Hosts that distribute the Developer Portal's default link should configure Guild Install with the same [Core permission list](PERMISSIONS.md#discord-install-and-capability-matrix). See [Discord bot authorization](https://docs.discord.com/developers/topics/oauth2#bot-authorization-flow).

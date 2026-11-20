@@ -9,6 +9,7 @@ import re
 import logging
 
 from database import db
+from services.tenant_routing import add_shared_entry_view
 from hosts.gamerhq.skill_resources import event_channel_identity
 from skill_runtime import ManagementConflictError
 from cogs.event_navigation import EventPicker, EventActions, ConfirmEventChange, session_open
@@ -389,5 +390,5 @@ class EventManager(commands.Cog):
 
 
 async def setup(bot):
-    bot.add_view(EventSkillHubView())
+    add_shared_entry_view(bot, EventSkillHubView())
     await bot.add_cog(EventManager(bot))

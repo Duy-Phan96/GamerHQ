@@ -71,6 +71,18 @@ def test_signed_routine_identity_and_immutable_subject(trust):
     assert verify(token(), policy, 'health', 'd' * 32, read=read, now=1001)
 
 
+def test_tenant_acceptance_requires_exact_workflow_main_and_owner_review(trust):
+    p,c,token,read,reviews,_ = trust
+    p['tenantAcceptance'] = {'workflowSha256':p['routineWorkflowSha256']}
+    security_claims(c)
+    c['workflow_ref'] = 'Duy-Phan96/GamerHQ/.github/workflows/staging-tenant-acceptance.yml@refs/heads/main'
+    assert verify(token(),p,'tenant-acceptance','d'*32,read=read,now=1001)
+    reviews.clear()
+    with pytest.raises(Denied): verify(token(),p,'tenant-acceptance','d'*32,read=read,now=1001)
+    c['ref'] = 'refs/heads/develop'
+    with pytest.raises(Denied): verify(token(),p,'tenant-acceptance','d'*32,read=read,now=1001)
+
+
 @pytest.mark.parametrize('key,value', [('iss', 'https://invalid'), ('aud', 'wrong'), ('repository_id', '1'), ('repository_owner_id', '1'),
     ('environment', 'production'), ('sub', 'repo:other:environment:staging-automation'), ('ref', 'refs/heads/develop'),
     ('runner_environment', 'self-hosted'), ('workflow_ref', 'unreviewed'), ('event_name', 'pull_request'), ('exp', 999), ('iat', 2000), ('nbf', 2000), ('jti', ''), ('workflow_sha', 'main')])
@@ -129,21 +141,27 @@ def test_web_workflow_cannot_deploy_with_routine_identity_or_without_owner_revie
         verify(token(), policy, 'web-rollback', 'd' * 32, read=read, now=1001)
 
 
-def test_catalog_preview_requires_protected_owner_review_and_its_exact_workflow(trust):
+@pytest.mark.parametrize(('operation', 'digest_key'), [
+    ('catalog-preview', 'catalogPreviewWorkflowSha256'),
+    ('tenant-pilot-preview', 'tenantPilotWorkflowSha256'),
+    ('tenant-pilot-activation-prepare', 'tenantPilotActivation'),
+])
+def test_staging_previews_require_protected_owner_review_and_exact_workflow(trust, operation, digest_key):
     policy, claims, token, read, reviews, _ = trust
-    policy['catalogPreviewWorkflowSha256'] = policy['routineWorkflowSha256']
-    workflow = 'Duy-Phan96/GamerHQ/.github/workflows/staging-catalog-preview.yml@refs/heads/main'
+    digest = policy['routineWorkflowSha256']
+    policy[digest_key] = {'workflowSha256': digest} if operation == 'tenant-pilot-activation-prepare' else digest
+    workflow = f'Duy-Phan96/GamerHQ/.github/workflows/staging-{operation}.yml@refs/heads/main'
     claims['workflow_ref'] = workflow
     with pytest.raises(Denied):
-        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+        verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
     security_claims(claims)
     with pytest.raises(Denied):
-        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+        verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
     claims['workflow_ref'] = workflow
-    assert verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+    assert verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
     reviews.clear()
     with pytest.raises(Denied):
-        verify(token(), policy, 'catalog-preview', 'd' * 32, read=read, now=1001)
+        verify(token(), policy, operation, 'd' * 32, read=read, now=1001)
 
 
 @pytest.mark.parametrize('operation', ['bootstrap', 'initial', 'credentials', 'release', 'revoke', 'shell', 'docker', 'apply', 'production'])

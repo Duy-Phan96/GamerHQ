@@ -1163,6 +1163,10 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
     scope = draft.get('scope')
     if (mode == 'setup' or scope == 'placement') and actor.id != guild.owner_id:
         raise ServerMessageError('Owner required.')
+    if mode == 'setup' and db.tenant_scope_required:
+        issue = await access.installation_issues(guild, access.CORE_INSTALL)
+        if issue:
+            raise ServerMessageError(issue)
     choices = choices or {}
     bulk = scope == 'bulk'
     if bulk and mode != 'setup':

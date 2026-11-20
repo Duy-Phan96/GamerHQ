@@ -12,13 +12,32 @@ from .policy import Denied, release_allowed
 from .oidc import github, owner_protected
 
 
+class HealthDockerDenied(Denied):
+    def __init__(self, code, reason):
+        super().__init__(code)
+        self.reason = reason
+        self.status = None
+
+
+def verify_live_storage(backend, container):
+    """Check access as the owning container UID without relabeling live mounts."""
+    if (container.get('State', {}).get('Running') is not True
+            or container['State'].get('Health', {}).get('Status') != 'healthy'):
+        raise Denied('HOST_NOT_HEALTHY')
+    backend.run(['docker', 'exec', '--user', '10001:10001', container['Id'], 'python', '-I', '-B', '-c',
+                 'import os,sys; sys.exit(not all(os.access(p,os.R_OK|os.W_OK) for p in sys.argv[1:]))',
+                 '/app/runtime/data', '/app/runtime/data/gamerhq.db', '/app/backups'])
+
+
 class HostBackend:
     def __init__(self, profile, policy):
         self.profile, self.policy = profile, policy
+        self.operation_lock = None
 
-    def run(self, args, timeout=30, *, stdin=None):
+    def run(self, args, timeout=30, *, stdin=None, pass_fds=()):
         try:
-            result = subprocess.run(args, input=stdin, capture_output=True, text=True, check=True, timeout=timeout)
+            result = subprocess.run(args, input=stdin, capture_output=True, text=True, check=True, timeout=timeout,
+                                    **({'pass_fds': pass_fds} if pass_fds else {}))
             if len(result.stdout.encode()) > 262144: raise ValueError()
             return result.stdout.strip()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:
@@ -42,12 +61,27 @@ class HostBackend:
 
     def health(self):
         from hosts.gamerhq.staging_rootless import verify_rootless
-        verify_rootless(self.profile)
-        found = self.run(['docker', 'ps', '--all', '--filter', 'name=^/gamerhq-staging-bot$', '--format', '{{.ID}}'])
+        from tools.staging_health import HostHealthFailure, health
+
+        try:
+            verify_rootless(self.profile)
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            raise HostHealthFailure('HEALTH_DAEMON_REJECTED') from None
+        try:
+            found = self.run(['docker', 'ps', '--all', '--filter', 'name=^/gamerhq-staging-bot$', '--format', '{{.ID}}'])
+        except Denied as error:
+            raise HealthDockerDenied(error.code, 'HEALTH_CONTAINER_LOOKUP_FAILED') from None
         if not found: return {'state': 'AWAITING_INITIAL_BOOTSTRAP', 'gatewayStarted': False}
-        c = self.inspect()
-        if not c['State'].get('Running') or c['State'].get('Health', {}).get('Status') != 'healthy': raise Denied('HOST_NOT_HEALTHY')
-        from tools.staging_health import health
+        try:
+            c = self.inspect()
+            state = c['State']
+            healthy = state.get('Running') is True and state.get('Health', {}).get('Status') == 'healthy'
+        except Denied as error:
+            raise HealthDockerDenied(error.code, 'HEALTH_CONTAINER_INSPECTION_REJECTED') from None
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise HostHealthFailure('HEALTH_CONTAINER_INSPECTION_REJECTED') from None
+        if not healthy:
+            raise HealthDockerDenied('HOST_NOT_HEALTHY', 'HEALTH_GATEWAY_HEARTBEAT_REJECTED')
         result = health(self.profile)
         return {'state': result['status'], 'gatewayChecked': result['gatewayChecked'],
             'hostCommit': c['Config'].get('Labels', {}).get('org.opencontainers.image.revision')}
@@ -55,8 +89,86 @@ class HostBackend:
     def fresh_verify(self):
         from hosts.gamerhq.skill_staging import verify_remote
         from tools.skill_staging import write_record
+        if 'tenantPilot' in self.profile:
+            # Routine deployment paths still snapshot only the primary database.
+            raise Denied('OPERATION_NOT_ALLOWED')
         proof = verify_remote(self.profile)
         write_record(self.profile['verificationFile'], proof)
+
+    def verify_tenant_pilot(self, *, expected_image):
+        """Check Discord without a Gateway and retain verified private snapshots."""
+        return self._pilot_source('preview', expected_image)
+
+    def prepare_tenant_pilot_activation(self, expected_image):
+        return self._pilot_source('prepare-activation', expected_image)
+
+    def cutover_tenant_pilot(self, expected_image, prepared, run_id, *, recovery_only=False):
+        if self.operation_lock is None:
+            raise Denied('CONCURRENT_OPERATION_REJECTED')
+        return self._pilot_source('cutover', expected_image, prepared=prepared, runId=run_id, lockFd=self.operation_lock,
+                                  recoveryOnly=recovery_only)
+
+    def _pilot_source(self, operation, expected_image, **evidence):
+        bundle = Path(__file__).resolve().parents[1] / 'pilot-source'
+        if bundle.is_dir():
+            python = '/opt/gamerhq-staging/deployment-worker/.venv/bin/python'
+            launch = 'import sys; sys.path.insert(0, sys.argv[1]); from tools.staging_tenant_preview_entry import main; main()'
+            inherited = {'pass_fds': (self.operation_lock,)} if operation == 'cutover' else {}
+            raw = self.run([python, '-I', '-B', '-c', launch, str(bundle)], timeout=420 if operation == 'preview' else 1000,
+                           stdin=json.dumps({'profile': self.profile, 'policy': self.policy, 'image': expected_image,
+                                             'operation': operation, **evidence}), **inherited)
+            result = json.loads(raw)
+            if 'denied' in result:
+                raise Denied(result['denied'])
+            return result
+        if operation == 'preview':
+            return self._verify_tenant_pilot(expected_image=expected_image)
+        if operation == 'cutover':
+            raise Denied('OPERATION_NOT_ALLOWED')
+        from .pilot_activation import prepare_session
+        return prepare_session(self, expected_image)
+
+    def _verify_tenant_pilot(self, *, expected_image):
+        from database.tenants import GuildTenantStore
+        from hosts.gamerhq.skill_staging import verify_remote
+        from services.tenant_routing import GuildCorePermissionsError
+        from tools.staging_tenant_rehearsal import approved_binding, capture_container_tenant, rehearsal_binding, retain
+        proof_profile = {**self.profile, 'tenantPilot': self.policy.get('tenantPilot')}
+        approved = approved_binding(proof_profile, self.policy)
+        if approved is None:
+            raise Denied('OPERATION_NOT_ALLOWED')
+        self.storage_budget()
+        container = self.inspect()
+        if container['Image'] != expected_image:
+            raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
+        if self.health()['state'] != 'HOST_READY':
+            raise Denied('HOST_NOT_READY')
+        verify_live_storage(self, container)
+        try:
+            proof = verify_remote(proof_profile, approved_pilot=approved, read_only_artifacts=True, probe_storage=False)
+        except GuildCorePermissionsError as error:
+            return {'state': 'PILOT_CORE_PERMISSIONS_REJECTED', 'guildId': str(error.guild_id),
+                    'missingPermissions': error.missing, 'gatewayStarted': False}
+        binding = rehearsal_binding(proof_profile, self.policy, container)
+        primary = int(self.profile['stagingGuildId'])
+        source = Path(self.profile['database']).resolve(strict=True)
+        tenant_directory = source.parent / 'tenants'
+        if tenant_directory.is_symlink():
+            raise Denied('PILOT_TENANT_PATH_REJECTED')
+        store = GuildTenantStore(primary_guild=primary, primary_database=source,
+                                 tenant_directory=tenant_directory,
+                                 additional_guilds=tuple(guild for guild in approved if guild != primary))
+        def capture(guild_id, destination):
+            try:
+                capture_container_tenant(container['Id'], guild_id, destination)
+            except (OSError, ValueError, subprocess.SubprocessError, sqlite3.Error):
+                raise Denied('PILOT_SECONDARY_BACKUP_REJECTED') from None
+
+        result = retain(store, self.profile['backupRoot'], self.profile['workRoot'], binding=binding, secondary_capture=capture)
+        current = self.inspect()
+        if (current['Id'], current['Image']) != (container['Id'], container['Image']):
+            raise Denied('UNKNOWN_IMAGE_REQUIRES_OWNER')
+        return {**proof, **binding, **result, 'state': 'PILOT_PREVIEW_VERIFIED'}
 
     def storage_budget(self):
         if shutil.disk_usage(self.profile['workRoot']).free < 1073741824: raise Denied('DISK_BUDGET_REQUIRES_OWNER')
