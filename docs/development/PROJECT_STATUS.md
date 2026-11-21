@@ -21,6 +21,12 @@ This is a **dated addendum**; the October 12 snapshot and qualitative ratings be
 - **Evidence bounds:** live callback/command registry, complete member-role audit, real mutation paths, Skill runtime flags, fresh OS ownership/backup attestation, public guild onboarding and Production readiness remain unverified or require independent review. Do not present Milestone 2 acceptance as proof of these.
 - **Owner reprioritization (2026-11-21):** No further test guilds are needed. The existing three-server setup is sufficient: **GamerHQ Staging and Servertest are the two testing guilds**, while Production is a separate live environment. The immediate goal is working, reliable GamerHQ features and a controlled Production release, **not** third-guild onboarding or a new tenant registry. Milestone 3 is divided into: (1) feature/UX inventory, (2) core member/admin workflow fixes and live acceptance, (3) optional template/Skill lifecycle checks, (4) resilience/backup/observability and (5) protected Production-release readiness. Existing acceptance gaps remain explicit. Canonical gates: [ADR-001](../architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-functional-acceptance-and-production-readiness).
 
+## Current owner priority — Community launch and functionality
+
+The current delivery focus is **GamerHQ as a functioning gaming community**, not more test servers or an open-ended multi-tenant expansion. Use GamerHQ Staging as the production-like **functional mirror** and Servertest as the independent **template/new-install testbed**. The remaining immediate Production tasks are a read-only audit of intended vs actual **games, game roles and per-game channels**, targeted bug fixes, the end-to-end member journey and a protected release candidate.
+
+Maintain separately owned long-term tracks: Skills/SDK, reusable server templates, TikTok video acquisition and (later) web/mobile. Full sequence, test gates and cross-repository ownership: [GamerHQ Product Roadmap](GAMERHQ_PRODUCT_ROADMAP.md). This status does not authorize Discord changes or Production deployment.
+
 ## Executive status
 
 GamerHQ is an **advanced beta** rather than a prototype.
