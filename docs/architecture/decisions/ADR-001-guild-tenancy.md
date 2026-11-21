@@ -1,6 +1,6 @@
 # ADR-001 Guild tenancy for the shared GamerHQ application
 
-Status: Protected two-guild pilot active; final Milestone 2 merge review pending
+Status: Milestone 2 protected two-guild Staging pilot active; PR #317 merged into develop (2026-11-20). Milestone 3 generalized enrollment is proposed, not active.
 
 Product direction: One public Discord application serves independent guilds.
 
@@ -171,3 +171,34 @@ is not a prerequisite for that scope. Keep public enrollment, production
 deployment and further Discord writes separately gated. Keep the PR draft
 until the owner accepts this scope and final review; no automatic merge,
 template application, Skill activation or rollout follows this record.
+
+## Milestone 3 — proposed generalized guild onboarding
+
+**State: design/implementation proposal; no public admission or Production authorization.** This phase extends the proven two-guild Staging implementation rather than creating another bot per customer or copying GamerHQ-specific resources. The exact approved Staging cohort remains the only live admission set until a separate protected, owner-reviewed expansion.
+
+### Boundaries and source of truth
+
+1. A versioned **admission registry** is authoritative for the application identity, each guild ID, eligibility, owner consent, admission generation and active/suspended/removal status. Never infer admission from Discord membership, supplied IDs, a role, template, or previous guild cache. Preserve the historical exact-cohort policy and incident journal as immutable audit evidence.
+2. **Tenant provisioning** creates one private, ownership-sealed SQLite database per new guild, reusing the current transactional/atomic no-replace path with idempotent resume. The original primary database must remain at its legacy path and must not be cloned to seed another customer. Per-tenant storage paths, scheduler claims, cache keys, locks and Discord resource mappings must be scoped to the bound guild.
+3. **Installation choice is separate from admission:** after verified owner authorization, a guild can choose (a) no template, (b) Gaming Community, or (c) Skills only. Template preview, per-resource permissions and confirm/Apply remain required before any Discord write. A Skill's package availability is not its installation, configuration or enabled state.
+4. All interaction ingress, Web APIs, component/modal callbacks and queued/scheduled work must revalidate actor, guild admission and current lifecycle generation. Expired or removed guilds fail closed; DMs and unknown guilds cannot fall through to the primary database. Discord is an integration/view, not the authority for saved application state.
+5. Admission must not silently grant Administrator, create Staff resources, enable Skills, send messages or deploy a new Host image. Sensitive changes require scoped permission checks, previews, audit records and explicit owner confirmation.
+
+### Proposed delivery slices and evidence gates
+
+| Slice | Implement only after | Acceptance evidence |
+| --- | --- | --- |
+| V3.1 Registry contract + migration plan | Audit current two-guild binding, existing state and recovery journal | Versioned schema, deterministic migration rehearsal, exact-cohort compatibility, negative unauthorized-admission tests; **no live admission change** |
+| V3.2 Provision/admit one disposable third Staging guild | Owner-reviewed deployment plan, permissions, dual-guild rollback preservation | Guild-specific DB seal, idempotent retries, command/Web/Skill/scheduler isolation, permission and negative cross-tenant tests |
+| V3.3 Self-service owner journey | V3.2 verified and independently authorized | Owner identity verification, no-template/Skill-only/template paths, dry-run/Preview/Confirm, stable repeated resource IDs and reports |
+| V3.4 Lifecycle and operational scaling | Rejoin/removal protocol and per-guild backup/restore contracts | Safe revoke/rejoin, stale callbacks and delayed tasks denied, scoped health and observable errors, backup/restore and failure-injection tests |
+| V3.5 Wider rollout readiness | Separate Production review and all earlier evidence | Load/rate-limit behavior, live command registry, member-role audit, Skill runtime flags, OS ownership, backup attestation, rollback, and release approval |
+
+Do not implement a hardcoded third-guild exception as a substitute for registry design. The existing `primaryOnly` recovery path remains available throughout the transition. Failures must preserve checkpoints, resource IDs, guild-specific journal state, original member data and the ability to return to the healthy two-guild baseline. No public enrollment or Production release is implied by passing offline tests.
+
+### Current known limitations and workflow ownership
+
+- Servertest's ten missing Gaming Community resources are an **incomplete customer template**, not a tenant-isolation defect. No automatic setup/repair is authorized here.
+- Milestone 2 scope-based read-only acceptance passed platform safety, but did not attest all live mutation paths, callback registry, full membership-role inventory, fresh OS ownership/backup status, public enrollment or Production suitability.
+- `main` is the stable default/release branch and `develop` is the feature integration branch. Both have PR requirements and required CI checks; review approvals are currently zero for solo maintenance. Environment-level owner approval and OIDC restrictions stay independent of branch protection.
+- Any planned change to admission policy, encrypted credentials, runtime deployments or Discord resources has its own protected review, rollback and audit trail; documentation or a GitHub PR merge does not authorize it.
