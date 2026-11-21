@@ -101,3 +101,7 @@ node_modules/
 
 # Local process guard; never publish runtime locks.
 *.instance.lock
+
+# Owner-private Games receipts and parity reports; never public artifacts.
+*.private-games.json
+games-audit-*.json

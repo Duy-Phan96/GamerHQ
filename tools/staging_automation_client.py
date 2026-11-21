@@ -136,7 +136,7 @@ def web_artifact(status):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check', 'web-health', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'])
+    parser.add_argument('operation', choices=['status', 'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history', 'activate', 'deactivate', 'host-promote', 'reconcile', 'identity-check', 'web-health', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'])
     args = parser.parse_args()
     recovery_complete = False
     if args.operation == 'identity-check':
@@ -155,7 +155,7 @@ def main():
         if status.get('state') != 'ACTIVE' or status.get('hostPromotionSupported') is not True or status.get('bootstrapVerified') is not True:
             raise Denied('HOST_PROMOTION_NOT_INSTALLED')
         result = perform('host-promote')
-    elif args.operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'):
+    elif args.operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'):
         pin = json.loads(Path('deploy/staging/tenant-pilot-binding.json').read_text(encoding='utf-8'))
         digest = hashlib.sha256(json.dumps(pin, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         status = exchange('status')
@@ -168,6 +168,8 @@ def main():
             raise Denied('PILOT_ENROLLMENT_REQUIRED')
         if args.operation == 'tenant-pilot-activation-prepare' and status.get('tenantPilotActivationPreparationEnrolled') is not True:
             raise Denied('PILOT_ENROLLMENT_REQUIRED')
+        if args.operation == 'games-audit' and (status.get('gamesAuditEnrolled') is not True or status.get('tenantPilotJournalStatus', {}).get('phase') != 'PILOT_ACTIVE'):
+            raise Denied('GAMES_AUDIT_NOT_ENROLLED')
         if args.operation == 'tenant-acceptance' and (status.get('tenantAcceptanceEnrolled') is not True or status.get('tenantPilotJournalStatus', {}).get('phase') != 'PILOT_ACTIVE'):
             raise Denied('PILOT_ENROLLMENT_REQUIRED')
         if args.operation == 'tenant-pilot-cutover':
@@ -204,7 +206,7 @@ def main():
         result = perform(args.operation, release)
     if args.operation == 'tenant-acceptance':
         from tools.staging_automation.tenant_acceptance import unpack_receipt
-        result = {**unpack_receipt(result), 'auditId': result.get('auditId'), 'operation': 'tenant-acceptance'}
+        result = {**unpack_receipt(result), 'auditId': result.get('auditId'), 'operation': args.operation}
     print(json.dumps(result))
     if args.operation == 'web-health' and result.get('state') == 'WEB_UNHEALTHY':
         raise SystemExit(1)

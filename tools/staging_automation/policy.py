@@ -4,7 +4,7 @@ import time
 
 ROUTINE = frozenset({'health', 'prepare', 'install', 'update', 'restart', 'recover', 'smoke', 'history'})
 WEB = frozenset({'web-health', 'web-deploy', 'web-rollback'})
-SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'})
+SECURITY = frozenset({'activate', 'deactivate', 'host-promote', 'web-deploy', 'web-rollback', 'catalog-preview', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'})
 PUBLIC = frozenset({'status', 'challenge'})
 OPERATIONS = ROUTINE | SECURITY | PUBLIC | WEB
 MUTATIONS = frozenset({'prepare', 'install', 'update', 'restart', 'recover', 'host-promote', 'web-deploy', 'web-rollback', 'tenant-pilot-cutover'})
@@ -23,6 +23,7 @@ ERROR_CODES |= frozenset({'CATALOG_PREVIEW_NOT_ENROLLED', 'CATALOG_STAGING_SOURC
 ERROR_CODES |= frozenset({'PILOT_TENANT_PATH_REJECTED', 'PILOT_ENROLLMENT_REQUIRED', 'PILOT_SECONDARY_BACKUP_REJECTED'})
 ERROR_CODES |= frozenset({'PILOT_ACTIVATION_PIN_REJECTED', 'PILOT_CHECKPOINT_REJECTED', 'PILOT_PREVIEW_EXPIRED', 'PILOT_BASELINE_CHANGED'})
 ERROR_CODES |= frozenset({'PILOT_BASELINE_NOT_QUIESCED'})
+ERROR_CODES |= frozenset({'GAMES_AUDIT_NOT_ENROLLED', 'GAMES_AUDIT_BASELINE_REJECTED', 'GAMES_AUDIT_SOURCE_REJECTED', 'GAMES_AUDIT_RESPONSE_REJECTED', 'GAMES_AUDIT_RECEIPT_LIMIT'})
 ERROR_CODES |= frozenset({'ACCEPTANCE_POLICY_REJECTED', 'ACCEPTANCE_BASELINE_REJECTED', 'ACCEPTANCE_SOURCE_REJECTED', 'ACCEPTANCE_RESPONSE_REJECTED'})
 
 
@@ -87,6 +88,9 @@ def validate_policy(value):
         validate_pin(value['tenantAcceptance'])
         if 'tenantPilotGeneration' not in value:
             raise Denied('ACCEPTANCE_POLICY_REJECTED')
+    if 'gamesAudit' in value:
+        from .games_audit import validate_pin
+        validate_pin(value['gamesAudit'])
     if 'webDeployment' in value:
         from .web import validate_pin
         validate_pin(value['webDeployment'])
@@ -121,7 +125,7 @@ def admit(operation, state):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
     if (operation in WEB or operation == 'catalog-preview') and (not state.get('enabled') or not state.get('bootstrapVerified')):
         raise Denied('AUTOMATION_NOT_ACTIVATED')
-    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'):
+    if operation in ('tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'):
         if state.get('recoveryRequired'):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if not state.get('enabled') or not state.get('bootstrapVerified'):

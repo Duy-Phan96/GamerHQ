@@ -331,6 +331,32 @@ def acceptance_installed(source_mirror, monkeypatch, tmp_path):
     account = pwd.getpwnam('gamerhq-staging-bridge')
     uid,gid = account.pw_uid,account.pw_gid
     mirror,source = source_mirror
+    # This historical acceptance installer permits reporting-source revisions,
+    # not replacing its enrolled shared client. Rehearse with that immutable
+    # client, even when the current PR adds a different scoped operation to it.
+    # The synthetic source exists only in this mirror; live pins are untouched.
+    workflow = installer.WORKFLOW
+    body = git(mirror, 'show', source + ':' + workflow)
+    import re
+    client = re.search(rb'          ref: ([0-9a-f]{40})\n', body).group(1).decode()
+    client_path = 'tools/staging_automation_client.py'
+    body = git(mirror, 'show', client + ':' + client_path)
+    for path in ('tools/staging_automation/tenant_acceptance.py', 'tools/tenant_acceptance_report.py'):
+        assert git(mirror, 'show', client + ':' + path) == git(mirror, 'show', source + ':' + path)
+    with tempfile.TemporaryDirectory(prefix='acceptance-registration-') as index_dir:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(index_dir) / 'index'))
+        def staged(*args, input=None):
+            return subprocess.run(['git', '-c', 'safe.directory=' + str(mirror),
+                                   '-c', 'user.name=Disposable rehearsal',
+                                   '-c', 'user.email=rehearsal@example.invalid',
+                                   '-C', str(mirror), *args], input=input, env=env,
+                                  capture_output=True, check=True, timeout=180).stdout.strip()
+        staged('read-tree', source)
+        blob = staged('hash-object', '-w', '--stdin', input=body).decode()
+        staged('update-index', '--add', '--cacheinfo', '100644', blob, client_path)
+        tree = staged('write-tree').decode()
+        source = staged('commit-tree', tree, '-p', source,
+                        input=b'Disposable historical acceptance client fixture\n').decode()
     saved_refs = {}
     for ref in ('refs/heads/main','refs/heads/develop'):
         try: saved_refs[ref] = git(mirror,'rev-parse','--verify',ref).strip().decode()
