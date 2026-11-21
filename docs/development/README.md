@@ -5,7 +5,7 @@ reusable platform work built around it.
 
 Start here:
 - [Current Project Status](PROJECT_STATUS.md)
-- [Guild Tenancy ADR: accepted two-guild pilot and proposed V3 admission gates](../architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-proposed-generalized-guild-onboarding)
+- [Guild Tenancy ADR: accepted two-guild pilot and functional Production-readiness gates](../architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-functional-acceptance-and-production-readiness)
 - [Main/default branch migration](MAIN_DEFAULT_MIGRATION.md) — historical migration runbook; check current branch settings before operational decisions.
 - [Core Beta Acceptance](CORE_BETA_ACCEPTANCE.md)
 - [Thin Host Inventory](THIN_HOST_INVENTORY.md)
