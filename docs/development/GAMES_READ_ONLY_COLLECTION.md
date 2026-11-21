@@ -124,6 +124,76 @@ Keep the receipt private. A rejected preflight reports a stable stage/reason and
 does not repair anything. This command does **not** enroll the Staging operation
 or authorize the subsequent full Production collection.
 
+### Legacy Production revision provenance — collection remains blocked
+
+The owner metadata preflight on 21 November 2026 returned a healthy non-root
+Production container but `hostCommit=null`, `buildCommit=null` and
+`hostRevisionVerified=false`. Full collection still fails with
+`HOST_REVISION_UNAVAILABLE`. These nulls alone do not prove that the marker file
+is absent: the existing inspector also returns null for `unknown` or malformed
+contents. No Production commit is established by this receipt.
+
+Repository and GitHub evidence reviewed for this blocker:
+
+- The Production Dockerfile never declares an OCI revision label. The label in
+  Staging overlays cannot be assumed on Production.
+- `f00c29227cfb4e7d822ff8c13105efd4af03bc8e` introduced `ARG VCS_REF=unknown`
+  and `/app/BUILD_COMMIT` on main's history. Its parent Dockerfile lacks both.
+  A newer manual build without the argument also yields an unknown revision.
+  Neither possibility proves which Dockerfile built the running container.
+- `scripts/update.sh` supplies Git HEAD through VCS_REF. CI's ordinary
+  `docker compose build` does not, and its local test image is not published as
+  a Production deployment artifact. No Host image publishing/attestation step
+  was found in the inspected workflows.
+- GitHub's release/tag listing contains the Skill SDK wheel release, not a Host
+  image-to-commit attestation. Queries for deployments in `production` and
+  `Production` returned zero records on 21 November. This does not prove that
+  an owner deployment never occurred outside GitHub.
+- The existing rollback guide leaves the checkout on main while restoring a
+  previous image. `/opt/gamerhq/previous-commit` and the mutable `:previous` tag
+  are recovery clues, not a cryptographically sealed running-image/commit pair.
+  The release snapshot document is a template, not a completed deployment record.
+
+**Smallest next read:** `tools/game_audit_provenance.py` extends the existing
+owner-operated inspection tooling with a source-only evidence command. It loads
+the existing owner inspector from the same immutable verified Git source, calls
+no configuration/DB probe and never imports application modules. Under the
+already configured non-root container identity it hashes only these public
+source scopes: top-level bot/config/release Python, VERSION/CHANGELOG and
+requirements; Python files in cogs/database/services/tools/skill_runtime/hosts/
+skills; the two repository seed/catalog JSON files. It classifies only the fixed
+BUILD_COMMIT marker as ABSENT, UNKNOWN_DEFAULT, VALID_HEX or INVALID.
+
+It does not read `.env`, environment values, SQLite files/sidecars, backups,
+messages, logs, member records or installed dependency packages. It never calls
+Docker run/start/stop/build, Compose, the Gateway or Discord. No Production
+receipt/file is written. Temporary downloaded public Git source is removed.
+
+The operation searches bounded, explicitly unshallowed public main/develop
+history as **candidate discovery**, not assumed deployment identity. It requires
+exact selected path-set/Git-blob equality and independent SHA256 verification
+of every matching file. Additional/missing/modified selected source files do not
+match; source mounts, symlinks, nonregular files and changed observations fail
+closed. Two independent source reads and before/after container inspection must
+agree on exact container ID, image ID, runtime user and mounts. The public receipt
+contains a SHA256 commitment to the exact container/image pair, the source
+manifest hash, counts, public candidate commits and discovery refs; no raw image,
+container, mount, source contents or per-file manifest is printed or uploaded.
+
+`SOURCE_EQUIVALENCE_ONLY` means exactly that. Even one selected-source match does
+not prove the original build commit, build recipe, complete image, dependency
+set, current in-memory code or clean build context. Multiple documentation-only
+commits can have identical selected sources. All matches remain visible; never
+choose the newest commit. Off-branch/deleted history and custom builds can yield
+NO_SOURCE_MATCH. No branch, tag, VERSION or matching source set is automatically
+promoted to an authoritative production commit.
+
+The receipt always retains `hostRevisionVerified=false`,
+`buildOriginVerified=false` and `collectionExecuted=false`. It cannot clear or
+satisfy the Games collector's revision gate. Review the evidence before choosing
+any subsequent provenance attestation procedure. A rebuild/restart solely to
+add metadata is outside this authorization. Do not run full Games collection.
+
 Full collection is a separately authorized operation requiring all of:
 
 1. Reviewed source commit and checksum-verified launcher; actual preflight
