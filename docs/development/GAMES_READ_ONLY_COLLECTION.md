@@ -97,10 +97,10 @@ policy or service. Keep this output private;
 do not paste raw Production metadata into public GitHub comments.
 
 Immutable prepared observer/client source:
-`8b9e4c5e267d7b9144f0e745069505d04f8ea505`.
+`b1f38fe19a86c6a8fa31f8273d2503d6e2649d11`.
 The proposed Staging workflow checks out that exact commit. The owner launcher
 at that revision has SHA256
-`a61d48a19222a1acef92e3e9ba46bd2d1a694007fe9d22f061b378201f39af41`.
+`bb84782fe9b53872ee85e7e286af553073797d32e35b2003fdbe5f17889f1f3d`.
 
 After PR/CI review and **separate owner approval of metadata preflight**, the
 following complete command is for the existing trusted root SSH session on the
@@ -113,9 +113,9 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/8b9e4c5e267d7b9144f0e745069505d04f8ea505/tools/game_audit_operator.py'
-printf '%s  %s\n' 'a61d48a19222a1acef92e3e9ba46bd2d1a694007fe9d22f061b378201f39af41' "$observer" | sha256sum --check --status
-/usr/bin/python3 "$observer" --source-commit 8b9e4c5e267d7b9144f0e745069505d04f8ea505 --environment production --container gamerhq-bot --preflight
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/b1f38fe19a86c6a8fa31f8273d2503d6e2649d11/tools/game_audit_operator.py'
+printf '%s  %s\n' 'bb84782fe9b53872ee85e7e286af553073797d32e35b2003fdbe5f17889f1f3d' "$observer" | sha256sum --check --status
+/usr/bin/python3 "$observer" --source-commit b1f38fe19a86c6a8fa31f8273d2503d6e2649d11 --environment production --container gamerhq-bot --preflight
 GAMERHQ_GAMES_METADATA_PREFLIGHT
 ```
 
