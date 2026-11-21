@@ -189,6 +189,42 @@ def bound_source(provenance, operator, git):
     return provenance.collect_source_evidence(operator,git,EQUIVALENT,{},run=run)
 
 
+
+def verified_context(git,manifest,operator,provenance):
+    """Fresh independent proof, shared by preflight and owner-confirmed observer."""
+    global STAGE
+    STAGE='PINNED_WHEEL_VERIFICATION';expected={}
+    for package in manifest['packages']:
+        expected[package['name']]={w['filename']:expected_files(download(w),w) for w in package['wheels']}
+    roots=sorted({p.split('/')[0] for candidates in expected.values() for files in candidates.values() for p in files})
+    STAGE='BOUND_SOURCE_VERIFICATION'
+    binding=bound_source(provenance,operator,git)
+    if binding['sourceEquivalentCommits']!=sorted(EQUIVALENT):raise ValueError('BASELINE_REJECTED')
+    meta=operator.inspect('gamerhq-bot')
+    # Package code must not be supplied by an unreviewed mounted overlay.
+    for mount in meta['mounts']:
+        target=mount.get('Destination','').rstrip('/') or '/'
+        lib='/usr/local/lib/python3.12/site-packages'
+        if target=='/' or target==lib or target.startswith(lib+'/') or lib.startswith(target+'/'):
+            raise ValueError('DEPENDENCY_MOUNT_REJECTED')
+    def probe():
+        raw=subprocess.run(['docker','exec','--interactive','--user',meta['user'],meta['id'],
+            'python','-I','-S','-B','-c',PROBE],input=json.dumps({'roots':roots}),capture_output=True,text=True,check=True,timeout=60).stdout
+        return validate_observed(raw,roots)
+    STAGE='INSTALLED_CORE_HASHES';first=probe();rows=compare(expected,first['files'])
+    if probe()!=first or operator.inspect('gamerhq-bot')!=meta:raise ValueError('DEPENDENCY_CHANGED')
+    STAGE='UNCHANGED_SOURCE_VERIFICATION'
+    final=bound_source(provenance,operator,git)
+    if final!=binding:raise ValueError('BASELINE_CHANGED')
+    files={}
+    if all(row['status']=='PASS' for row in rows):
+        for row in rows:
+            for path,digest in expected[row['package']][row['matchedWheels'][0]].items():
+                if path in files and files[path]!=digest:raise ValueError('LOCK_REJECTED')
+                files[path]=digest
+    return {'public':summary(rows,binding),'container':meta,'dependencyFiles':files}
+
+
 def main():
     global STAGE
     parser=argparse.ArgumentParser(description=__doc__)
@@ -214,30 +250,7 @@ def main():
             if git('rev-parse','FETCH_HEAD').strip().decode()!=commit:
                 raise ValueError('BASELINE_REJECTED')
             validate_manifest(manifest,git('show',commit+':requirements.lock'))
-        STAGE='PINNED_WHEEL_VERIFICATION';expected={}
-        for package in manifest['packages']:
-            expected[package['name']]={w['filename']:expected_files(download(w),w) for w in package['wheels']}
-        roots=sorted({p.split('/')[0] for candidates in expected.values() for files in candidates.values() for p in files})
-        STAGE='BOUND_SOURCE_VERIFICATION'
-        binding=bound_source(provenance,operator,git)
-        if binding['sourceEquivalentCommits']!=sorted(EQUIVALENT):raise ValueError('BASELINE_REJECTED')
-        meta=operator.inspect('gamerhq-bot')
-        # Package code must not be supplied by an unreviewed mounted overlay.
-        for mount in meta['mounts']:
-            target=mount.get('Destination','').rstrip('/') or '/'
-            lib='/usr/local/lib/python3.12/site-packages'
-            if target=='/' or target==lib or target.startswith(lib+'/') or lib.startswith(target+'/'):
-                raise ValueError('DEPENDENCY_MOUNT_REJECTED')
-        def probe():
-            raw=subprocess.run(['docker','exec','--interactive','--user',meta['user'],meta['id'],
-                'python','-I','-S','-B','-c',PROBE],input=json.dumps({'roots':roots}),capture_output=True,text=True,check=True,timeout=60).stdout
-            return validate_observed(raw,roots)
-        STAGE='INSTALLED_CORE_HASHES';first=probe();rows=compare(expected,first['files'])
-        if probe()!=first or operator.inspect('gamerhq-bot')!=meta:raise ValueError('DEPENDENCY_CHANGED')
-        STAGE='UNCHANGED_SOURCE_VERIFICATION'
-        final=bound_source(provenance,operator,git)
-        if final!=binding:raise ValueError('BASELINE_CHANGED')
-        print(json.dumps(summary(rows,binding),sort_keys=True))
+        print(json.dumps(verified_context(git,manifest,operator,provenance)['public'],sort_keys=True))
 
 
 if __name__=='__main__':
