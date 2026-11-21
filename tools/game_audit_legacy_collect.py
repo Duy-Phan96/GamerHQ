@@ -72,9 +72,19 @@ def digest(value):return hashlib.sha256(canonical(value)).hexdigest()
 
 def private_directory():
     import pwd
-    path=Path(pwd.getpwuid(0).pw_dir)
-    info=path.stat()
-    if path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode & 0o077:
+    home=Path(pwd.getpwuid(0).pw_dir)
+    info=home.lstat()
+    if (home.is_symlink() or str(home.resolve(strict=True))!=str(home)
+            or not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode & 0o022):
+        raise ValueError('PRIVATE_RECEIPT_DIRECTORY_REQUIRED')
+    # AlmaLinux may legitimately keep /root at 0550. Never chmod that parent;
+    # only this owner-private audit directory must exclude all group/other access.
+    path=home/'.gamerhq-games-readonly'
+    try:path.mkdir(mode=0o700)
+    except FileExistsError:pass
+    info=path.lstat()
+    if (path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid!=0
+            or stat.S_IMODE(info.st_mode)!=0o700):
         raise ValueError('PRIVATE_RECEIPT_DIRECTORY_REQUIRED')
     return path
 

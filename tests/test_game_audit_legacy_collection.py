@@ -90,6 +90,31 @@ def test_private_receipt_is_new_mode_0600_and_not_an_application_write(tmp_path)
     assert 'null' in path.read_text()
 
 
+@pytest.mark.skipif(os.name!='posix',reason='POSIX private audit directory contract')
+def test_private_audit_directory_does_not_require_changing_root_home_permissions(tmp_path,monkeypatch):
+    import pwd,stat
+    home=tmp_path/'root';home.mkdir(mode=0o750)
+    monkeypatch.setattr(pwd,'getpwuid',lambda _:SimpleNamespace(pw_dir=str(home)))
+    original=Path.lstat
+    def owned(path,*a,**kw):
+        info=original(path,*a,**kw)
+        return SimpleNamespace(st_mode=info.st_mode,st_uid=0)
+    monkeypatch.setattr(Path,'lstat',owned)
+    result=owner.private_directory()
+    assert result==home/'.gamerhq-games-readonly'
+    assert stat.S_IMODE(result.stat().st_mode)==0o700
+    assert stat.S_IMODE(home.stat().st_mode)==0o750
+    assert owner.private_directory()==result
+    result.chmod(0o750)
+    with pytest.raises(ValueError,match='PRIVATE_RECEIPT_DIRECTORY_REQUIRED'):owner.private_directory()
+    assert stat.S_IMODE(result.stat().st_mode)==0o750
+    result.rmdir();result.symlink_to(home,target_is_directory=True)
+    with pytest.raises(ValueError,match='PRIVATE_RECEIPT_DIRECTORY_REQUIRED'):owner.private_directory()
+    result.unlink();home.chmod(0o770)
+    with pytest.raises(ValueError,match='PRIVATE_RECEIPT_DIRECTORY_REQUIRED'):owner.private_directory()
+    assert not result.exists()
+
+
 @pytest.mark.skipif(os.name!='posix',reason='POSIX owner lock contract')
 def test_owner_metadata_lock_serializes_observers_without_touching_application(tmp_path):
     with owner.owner_lock(tmp_path):
