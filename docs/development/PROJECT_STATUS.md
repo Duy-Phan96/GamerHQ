@@ -10,6 +10,17 @@ The snapshot was prepared from the current repository, code, tests,
 documentation, Issues and pull requests. Important claims should continue to be
 verified against implementation because documentation may lag behind code.
 
+## Update — 21 November 2026: Multi-Guild Milestone 2
+
+This is a **dated addendum**; the October 12 snapshot and qualitative ratings below are historical and are not a substitute for fresh verification.
+
+- **Merged:** [PR #317](https://github.com/Duy-Phan96/GamerHQ/pull/317) into `develop` (2026-11-20). The exact two-guild Staging application (GamerHQ Staging and Servertest) reached `PILOT_ACTIVE`, `HOST_READY`, and a clear recovery latch. This is a bounded pilot, **not** public enrollment or a Production multi-guild rollout.
+- **Tenant separation:** private secondary SQLite ownership, scoped command/component/modal/Web/Skill/scheduler admission and cross-tenant denial were accepted within the documented scope. The primary template has 55 resources configured; Servertest has 52 configured and 10 Core resources remaining. A partly applied customer template does not invalidate isolation.
+- **Skill lifecycle:** Event Manager package 0.1.2 is installed but disabled in primary Staging; it is available but not installed for Servertest. The two statuses must not be conflated.
+- **CI and GitHub operations:** post-merge `develop` CI [#44828382610](https://github.com/Duy-Phan96/GamerHQ/actions/runs/44828382610) passed all five jobs. `main` became the default/stable branch; `develop` remains the feature integration target. Owner-reported branch protection API readback confirms PR requirements, up-to-date CI, resolved discussions, blocked force pushes/deletion and administrator enforcement for both, with **zero** required approving reviews until another trusted maintainer joins. `main` requires `test (3.12)` and `test (3.14)`; `develop` additionally requires `staging-rhel`, `staging-web`, `staging-access`.
+- **Evidence bounds:** live callback/command registry, complete member-role audit, real mutation paths, Skill runtime flags, fresh OS ownership/backup attestation, public guild onboarding and Production readiness remain unverified or require independent review. Do not present Milestone 2 acceptance as proof of these.
+- **Next:** Milestone 3 proposes a versioned guild admission registry, safe migration from exact-cohort admission, owner-confirmed setup with optional Gaming Community templates and independently installed Skills, new-tenant provisioning and lifecycle, per-tenant observation, and rehearsed rollback. Start with an **offline, non-deploying V3.1 contract and regression slice**; expanding the live cohort requires its own approval. Canonical technical gates: [ADR-001](../architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-proposed-generalized-guild-onboarding).
+
 ## Executive status
 
 GamerHQ is an **advanced beta** rather than a prototype.
