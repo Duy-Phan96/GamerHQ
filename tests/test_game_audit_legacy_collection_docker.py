@@ -50,7 +50,7 @@ def core(tmp_path_factory):
 
 @pytest.mark.parametrize('attack,expected',[
     ('none','GAMES_AUDIT_COLLECTED'),('write','READ_ONLY_WRITE_REJECTED'),
-    ('schema','DATABASE_ACCESS_REJECTED'),('skill','UNVERIFIED_IMPORT'),
+    ('schema','MUTATION_REJECTED'),('skill','UNVERIFIED_IMPORT'),
     ('hash','IMPORT_HASH_REJECTED'),('gateway','GATEWAY_REJECTED'),('post','IMPORT_NETWORK_REJECTED'),
 ])
 def test_guarded_legacy_observer_preserves_fixture_database(core,tmp_path,attack,expected):
