@@ -113,7 +113,8 @@ def install(guard):
 m.install_http=install
 try:result=m.collect(json.load(sys.stdin));print(json.dumps(result))
 except Exception as error:
- print(json.dumps({'state':'GAMES_AUDIT_UNAVAILABLE','reason':str(error) if isinstance(error,m.Rejected) else 'FIXTURE_UNAVAILABLE','type':type(error).__name__}))
+ print(json.dumps({'state':'GAMES_AUDIT_UNAVAILABLE','reason':str(error) if isinstance(error,m.Rejected) else 'FIXTURE_UNAVAILABLE',
+                   'module':getattr(error,'module',None),'type':type(error).__name__}))
 '''.replace('RUNTIME_SOURCE',repr(runtime_source))
     result=docker(source,data,fixture,json.dumps(packet))
     assert result.returncode==0,result.stderr
