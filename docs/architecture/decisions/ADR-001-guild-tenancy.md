@@ -1,6 +1,6 @@
 # ADR-001 Guild tenancy for the shared GamerHQ application
 
-Status: Milestone 2 protected two-guild Staging pilot active; PR #317 merged into develop (2026-11-20). Milestone 3 generalized enrollment is proposed, not active.
+Status: Milestone 2 protected two-guild Staging pilot active; PR #317 merged into develop (2026-11-20). Milestone 3 prioritizes functional acceptance and Production readiness; generalized enrollment is deferred.
 
 Product direction: One public Discord application serves independent guilds.
 
