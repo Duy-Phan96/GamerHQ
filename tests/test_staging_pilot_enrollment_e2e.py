@@ -331,6 +331,29 @@ def acceptance_installed(source_mirror, monkeypatch, tmp_path):
     account = pwd.getpwnam('gamerhq-staging-bridge')
     uid,gid = account.pw_uid,account.pw_gid
     mirror,source = source_mirror
+    # Rehearse a newly reviewed source registration, not an old workflow/client
+    # combination. Keep the real installer's byte-equality checks intact. This
+    # synthetic commit exists only in the disposable mirror; live pins are untouched.
+    workflow = installer.WORKFLOW
+    body = git(mirror, 'show', source + ':' + workflow)
+    import re
+    body, replacements = re.subn(rb'          ref: [0-9a-f]{40}\n',
+                                 b'          ref: ' + source.encode() + b'\n', body)
+    assert replacements == 1
+    with tempfile.TemporaryDirectory(prefix='acceptance-registration-') as index_dir:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(index_dir) / 'index'))
+        def staged(*args, input=None):
+            return subprocess.run(['git', '-c', 'safe.directory=' + str(mirror),
+                                   '-c', 'user.name=Disposable rehearsal',
+                                   '-c', 'user.email=rehearsal@example.invalid',
+                                   '-C', str(mirror), *args], input=input, env=env,
+                                  capture_output=True, check=True, timeout=180).stdout.strip()
+        staged('read-tree', source)
+        blob = staged('hash-object', '-w', '--stdin', input=body).decode()
+        staged('update-index', '--add', '--cacheinfo', '100644', blob, workflow)
+        tree = staged('write-tree').decode()
+        source = staged('commit-tree', tree, '-p', source,
+                        input=b'Disposable immutable acceptance registration\n').decode()
     saved_refs = {}
     for ref in ('refs/heads/main','refs/heads/develop'):
         try: saved_refs[ref] = git(mirror,'rev-parse','--verify',ref).strip().decode()
