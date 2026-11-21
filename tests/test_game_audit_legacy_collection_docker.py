@@ -12,6 +12,7 @@ import pytest
 from tools import game_audit_legacy_dependencies as deps
 from tools import game_audit_provenance as provenance
 from tools import game_audit_execution as execution
+from tools import game_audit_legacy_collect as owner
 from tools.game_catalog_import import name_key
 import inspect
 
@@ -44,7 +45,7 @@ def core(tmp_path_factory):
     observed=deps.validate_observed(result.stdout,roots)['files'];rows=deps.compare(expected,observed)
     assert all(r['status']=='PASS' for r in rows),rows
     verified={LIB+'/'+p:h for row in rows for p,h in expected[row['package']][row['matchedWheels'][0]].items()}
-    return root,source,verified
+    return root,source,verified,owner.supplement(deps,manifest)
 
 
 @pytest.mark.parametrize('attack,expected',[
@@ -54,7 +55,7 @@ def core(tmp_path_factory):
 ])
 def test_guarded_legacy_observer_preserves_fixture_database(core,tmp_path,attack,expected):
     import shutil
-    _,original,core_files=core
+    _,original,core_files,supplements=core
     tmp_path.chmod(0o755)
     source=tmp_path/'source';shutil.copytree(original,source);source.chmod(0o755)
     data=tmp_path/'data';data.mkdir();data.chmod(0o777)
@@ -77,11 +78,11 @@ def test_guarded_legacy_observer_preserves_fixture_database(core,tmp_path,attack
         target.write_text(target.read_text()+attacks[attack])
         if attack!='hash':verified['/app/services/authorization_service.py']=hashlib.sha256(target.read_bytes()).hexdigest()
     bind={'environment':'production','guildId':1,'applicationId':100,'database':'/app/runtime/data/fixture.db',
-        'runtimeUid':10001,'runtimeGid':10001,'databaseDevice':identity['device'],'databaseInode':identity['inode']}
+        'runtimeUid':10001,'runtimeGid':10001,'databaseDevice':identity['device'],'databaseInode':identity['inode'],'observerCommit':'a'*40}
     normalizer='import unicodedata\n'+inspect.getsource(name_key)
     sources={p:Path(p).read_text() for p in execution.FILES}
     packet={'binding':bind,'ownerApprovalSha256':hashlib.sha256(json.dumps(bind,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
-        'observerCommit':'a'*40,'verifiedFiles':verified,'normalizer':normalizer,
+        'observerCommit':'a'*40,'verifiedFiles':verified,'normalizer':normalizer,'supplements':supplements,
         'normalizerSha256':hashlib.sha256(normalizer.encode()).hexdigest(),'sources':sources,
         'hashes':{p:hashlib.sha256(v.encode()).hexdigest() for p,v in sources.items()}}
     # Models/real verified modules stay real; only REST responses are mocked.

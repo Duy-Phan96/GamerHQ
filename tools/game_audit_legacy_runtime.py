@@ -15,11 +15,14 @@ import sys
 import sysconfig
 import threading
 import types
+from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 LIB = '/usr/local/lib/python3.12/site-packages'
 DENIED_GUILDS = {1567098041641738331, 1571908030532948129}
 DENIED_APP = 1567098530525351976
+TYPING_SOURCE_SHA='433d11d170d3a24d2eb065ebc1bfe848cea7e3d7ce68567ab52bea2d4c2f7ed8'
+TYPING_WHEEL_SHA='f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548'
 FILES = ('tools/game_audit_execution.py','services/game_audit_context.py','services/game_launch_audit.py',
          'tools/game_launch_audit_collect.py','tools/game_launch_audit_report.py')
 
@@ -130,6 +133,27 @@ class VerifiedFinder:
         self.guard.reject('UNVERIFIED_IMPORT',fullname)
 
 
+def query_authorizer(guard, denied, sqlite):
+    # Other domains expose only channel-reference columns needed by the existing
+    # Games ownership checks, never their event/member/message payloads.
+    tables={'games':None,'settings':None,'game_legacy_hints':None,'game_channel_candidates':None,
+        'sqlite_master':None,'sqlite_schema':None,
+        'lfg_events':{'channel_id','dashboard_channel_id','private_channel_id','voice_channel_id',''},
+        'lfg_event_messages':{'channel_id',''},'temp_voice_channels':{'channel_id',''},'streamer_channels':{'channel_id',''}}
+    def authorize(action,first,second,*_):
+        allow=action in {sqlite.SQLITE_SELECT,sqlite.SQLITE_TRANSACTION,sqlite.SQLITE_RECURSIVE}
+        if action==sqlite.SQLITE_READ:
+            allow=first in tables and (tables[first] is None or second in tables[first])
+        if action==sqlite.SQLITE_FUNCTION:
+            allow=second in {'count','coalesce','ifnull','lower','upper','length','trim','like','glob','json_extract'}
+        if action==sqlite.SQLITE_PRAGMA:
+            allow=first in {'integrity_check','user_version','query_only'} and second is None
+        if not allow:
+            denied.append(action);guard.denied.append('DATABASE_QUERY_SCOPE_REJECTED')
+        return sqlite.SQLITE_OK if allow else sqlite.SQLITE_DENY
+    return authorize
+
+
 def limits():
     import resource
     os.nice(10)
@@ -146,6 +170,7 @@ def validate(packet):
             or binding['guildId'] in DENIED_GUILDS or binding['applicationId']==DENIED_APP
             or type(binding['applicationId']) is not int or binding['applicationId']<=0
             or packet.get('ownerApprovalSha256')!=approve_hash(binding)
+            or packet.get('observerCommit')!=binding.get('observerCommit')
             or os.geteuid()!=binding['runtimeUid'] or os.getegid()!=binding['runtimeGid']
             or binding['runtimeUid']<=0 or binding['runtimeGid']<=0
             or set(packet['sources'])!=set(FILES) or set(packet['hashes'])!=set(FILES)):
@@ -153,6 +178,12 @@ def validate(packet):
     for path,body in packet['sources'].items():
         if hashlib.sha256(body.encode()).hexdigest()!=packet['hashes'][path]:raise Rejected('OBSERVER_SOURCE_REJECTED')
     if hashlib.sha256(packet['normalizer'].encode()).hexdigest()!=packet['normalizerSha256']:
+        raise Rejected('OBSERVER_SOURCE_REJECTED')
+    if set(packet.get('supplements',{}))!={'typing_extensions'}:raise Rejected('OBSERVER_SOURCE_REJECTED')
+    extra=packet['supplements']['typing_extensions']
+    if (hashlib.sha256(extra['source'].encode()).hexdigest()!=extra['sha256']
+            or extra['sha256']!=TYPING_SOURCE_SHA or extra['wheelSha256']!=TYPING_WHEEL_SHA
+            or extra['wheel']!='typing_extensions-4.15.0-py3-none-any.whl'):
         raise Rejected('OBSERVER_SOURCE_REJECTED')
     if (not isinstance(packet['verifiedFiles'],dict) or len(packet['verifiedFiles'])>6000
             or not {'/app/database/db.py','/app/config.py'}<=set(packet['verifiedFiles'])):
@@ -193,6 +224,12 @@ def collect(packet):
         if guard.importing:guard.reject('IMPORT_THREAD_REJECTED')
         return old_start(thread,*a,**kw)
     threading.Thread.start=start
+    for name,entry in packet['supplements'].items():
+        module=types.ModuleType(name);module.__file__='<verified-observer-wheel:'+entry['wheel']+'>'
+        module.__spec__=importlib.util.spec_from_loader(name,loader=None,origin=module.__file__)
+        sys.modules[name]=module
+        exec(compile(entry['source'],module.__file__,'exec'),module.__dict__)
+        guard.imports[name]='verified-observer-supplement'
     import dotenv
     dotenv.load_dotenv=lambda *a,**kw:False
     import discord
@@ -219,6 +256,14 @@ def collect(packet):
         finally:guard.transport=None
     observer.GamesDiscord.request=request
     projection=sys.modules['services.game_launch_audit']
+    original_snapshot=projection.snapshot
+    @contextmanager
+    def snapshot(database, denied, **kwargs):
+        import sqlite3
+        with original_snapshot(database,denied,**kwargs) as memory:
+            memory.set_authorizer(query_authorizer(guard,denied,sqlite3))
+            yield memory
+    projection.snapshot=snapshot
     original_collect=projection.collect
     async def read(*a,**kw):
         guard.database_phase=True
@@ -233,7 +278,8 @@ def collect(packet):
                   evidenceMode='LEGACY_VERIFIED_SOURCE_AND_CORE_FILES',hostCommit=None,
                   hostRevisionVerified=False,buildOriginVerified=False,wholeImageIntegrityVerified=False,
                   importEvidence={'nonStdlibModules':guard.imports,'externalSkillImports':False,
-                                  'stdlibAssurance':'EXISTING_OPERATIONAL_TRUST_BASE'})
+                                  'stdlibAssurance':'EXISTING_OPERATIONAL_TRUST_BASE',
+                                  'observerSupplements':{k:v['wheelSha256'] for k,v in packet['supplements'].items()}})
     return result
 
 

@@ -16,6 +16,8 @@ import sys
 import tempfile
 import types
 import uuid
+import io
+import zipfile
 
 REPOSITORY='https://github.com/Duy-Phan96/GamerHQ.git'
 SELF='tools/game_audit_legacy_collect.py'
@@ -99,7 +101,19 @@ def metadata(meta):
     return value
 
 
-def packet(git,source,context,provenance,binding,approval):
+def supplement(deps, manifest):
+    entries=manifest.get('observerSupplements',[])
+    if len(entries)!=1 or entries[0]['module']!='typing_extensions' or entries[0]['version']!='4.15.0':
+        raise ValueError('OBSERVER_SOURCE_REJECTED')
+    item=entries[0];body=deps.download(item['wheel']);files=deps.expected_files(body,item['wheel'])
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:code=archive.read('typing_extensions.py')
+    if hashlib.sha256(code).hexdigest()!=item['moduleSha256'] or files['typing_extensions.py']!=item['moduleSha256']:
+        raise ValueError('OBSERVER_SOURCE_REJECTED')
+    return {'typing_extensions':{'source':code.decode(),'sha256':item['moduleSha256'],
+                                 'wheel':item['wheel']['filename'],'wheelSha256':item['wheel']['sha256']}}
+
+
+def packet(git,source,context,provenance,binding,approval,supplements):
     execution=types.ModuleType('verified_execution')
     exec(compile(git('show',source+':tools/game_audit_execution.py'),'<verified-execution>','exec'),execution.__dict__)
     sources={p:git('show',source+':'+p).decode() for p in execution.FILES}
@@ -116,7 +130,8 @@ def packet(git,source,context,provenance,binding,approval):
     for path,h in context['dependencyFiles'].items():verified['/usr/local/lib/python3.12/site-packages/'+path]=h
     value={'binding':binding,'ownerApprovalSha256':approval,'observerCommit':source,
            'sources':sources,'hashes':{p:hashlib.sha256(v.encode()).hexdigest() for p,v in sources.items()},
-           'verifiedFiles':verified,'normalizer':normalizer,'normalizerSha256':hashlib.sha256(normalizer.encode()).hexdigest()}
+           'verifiedFiles':verified,'normalizer':normalizer,'normalizerSha256':hashlib.sha256(normalizer.encode()).hexdigest(),
+           'supplements':supplements}
     if len(canonical(value))>2*1024**2:raise ValueError('OBSERVER_BUDGET_EXCEEDED')
     return value
 
@@ -159,6 +174,7 @@ def main():
             context=deps.verified_context(git,manifest,operator,provenance)
             if not context['public']['lockedCoreDependenciesMatch']:raise ValueError('CORE_INTEGRITY_REJECTED')
             evidence=context['public']['sourceEvidence'];meta=context['container']
+            supplements=supplement(deps,manifest)
             if meta['hostCommit'] is not None or evidence['buildMarkerState']=='VALID_HEX':raise ValueError('NORMAL_ATTESTED_ROUTE_REQUIRED')
             STAGE='PRIVATE_BINDING'
             config=metadata(meta);operator.database_mount(meta,config['database'],'production')
@@ -169,11 +185,13 @@ def main():
             if identity.get('guildId')!=config['guildId'] or not isinstance(identity.get('guildName'),str):raise ValueError('PRODUCTION_BINDING_REJECTED')
             binding={**config,'environment':'production','applicationId':app,'guildName':identity['guildName'],'containerId':meta['id'],'imageId':meta['image'],
                      'sourceManifestSha256':evidence['sourceManifestSha256'],
-                     'coreFilesSha256':digest(context['dependencyFiles']),'observerCommit':args.source_commit}
+                     'coreFilesSha256':digest(context['dependencyFiles']),
+                     'observerSupplementsSha256':digest({k:v['wheelSha256'] for k,v in supplements.items()}),
+                     'observerCommit':args.source_commit}
             STAGE='OWNER_CONFIRMATION';approval=confirm(tty,binding)
             if operator.inspect('gamerhq-bot')!=meta or metadata(meta)!=config:raise ValueError('BINDING_CHANGED')
             context['provenanceModule']=provenance
-            sealed=packet(git,args.source_commit,context,evidence,binding,approval)
+            sealed=packet(git,args.source_commit,context,evidence,binding,approval,supplements)
             runtime=git('show',args.source_commit+':tools/game_audit_legacy_runtime.py').decode()
             STAGE='READ_ONLY_GAMES_COLLECTION'
             COLLECTION_ATTEMPTED=True
@@ -199,6 +217,7 @@ def main():
             if result['state']=='GAMES_AUDIT_UNAVAILABLE':
                 safe={'UNVERIFIED_IMPORT','IMPORT_HASH_REJECTED','GATEWAY_REJECTED','MUTATION_REJECTED',
                       'DATABASE_ACCESS_REJECTED','READ_ONLY_WRITE_REJECTED','IMPORT_NETWORK_REJECTED',
+                      'DATABASE_QUERY_SCOPE_REJECTED',
                       'DISCORD_REQUEST_REJECTED','IMPORT_THREAD_REJECTED','NETWORK_TARGET_REJECTED',
                       'OBSERVER_BUDGET_EXCEEDED','LEGACY_OBSERVER_UNAVAILABLE','ISOLATED_RUNTIME_REQUIRED'}
                 reason=result.get('reason') if result.get('reason') in safe else 'LEGACY_COLLECTION_UNVERIFIED'

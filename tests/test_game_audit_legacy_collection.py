@@ -1,6 +1,7 @@
 """Owner approval and read-only capabilities; no live Docker/Discord/SQLite."""
 import io
 import hashlib
+import sqlite3
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from tools import game_audit_legacy_runtime as runtime
 def binding(tmp_path):
     return {'environment':'production','guildId':1,'applicationId':100,
             'database':str(tmp_path/'fixture.db'),'runtimeUid':10001,'runtimeGid':10001,
-            'containerId':'a'*64,'imageId':'sha256:'+'b'*64}
+            'containerId':'a'*64,'imageId':'sha256:'+'b'*64,'observerCommit':'a'*40}
 
 
 class TTY(io.StringIO):
@@ -103,10 +104,27 @@ def test_verified_skill_runtime_source_is_distinct_from_runtime_database(tmp_pat
     monkeypatch.setattr(os,'geteuid',lambda:10001,raising=False)
     monkeypatch.setattr(os,'getegid',lambda:10001,raising=False)
     b=binding(tmp_path);sources={p:'pass\n' for p in runtime.FILES}
-    packet={'binding':b,'ownerApprovalSha256':runtime.approve_hash(b),'sources':sources,
+    monkeypatch.setattr(runtime,'TYPING_SOURCE_SHA',hashlib.sha256(b'pass').hexdigest())
+    packet={'binding':b,'ownerApprovalSha256':runtime.approve_hash(b),'sources':sources,'observerCommit':'a'*40,
         'hashes':{p:hashlib.sha256(v.encode()).hexdigest() for p,v in sources.items()},
         'normalizer':'pass','normalizerSha256':hashlib.sha256(b'pass').hexdigest(),
+        'supplements':{'typing_extensions':{'source':'pass','sha256':runtime.TYPING_SOURCE_SHA,
+            'wheel':'typing_extensions-4.15.0-py3-none-any.whl','wheelSha256':runtime.TYPING_WHEEL_SHA}},
         'verifiedFiles':{p:'a'*64 for p in ('/app/database/db.py','/app/config.py','/app/skill_runtime/runtime/registry.py')}}
     runtime.validate(packet)
     packet['verifiedFiles']['/app/runtime/data/gamerhq.db']='a'*64
     with pytest.raises(runtime.Rejected,match='OBSERVER_SOURCE_REJECTED'):runtime.validate(packet)
+
+
+def test_query_scope_preserves_channel_dependency_checks_without_member_payloads(tmp_path):
+    gate=guard(tmp_path);denied=[]
+    with sqlite3.connect(':memory:') as memory:
+        memory.executescript('CREATE TABLE games(name TEXT);CREATE TABLE lfg_events(channel_id INTEGER,owner_id INTEGER,description TEXT);'
+            'CREATE TABLE members(user_id INTEGER);INSERT INTO lfg_events VALUES(1,2,"private event");')
+        memory.set_authorizer(runtime.query_authorizer(gate,denied,sqlite3))
+        assert memory.execute('SELECT 1 FROM lfg_events WHERE channel_id=1').fetchone()==(1,)
+        assert memory.execute('PRAGMA integrity_check').fetchone()==('ok',)
+        for query in ('SELECT owner_id FROM lfg_events','SELECT description FROM lfg_events',
+                      'SELECT * FROM members','INSERT INTO games VALUES("unapproved")'):
+            with pytest.raises(sqlite3.DatabaseError):memory.execute(query)
+    assert denied and gate.denied
