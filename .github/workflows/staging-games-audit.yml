@@ -1,0 +1,62 @@
+name: Protected primary Staging Games read-only audit
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/staging-games-audit.yml']
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && 'host-staging-automation' || format('games-audit-registration-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: false
+jobs:
+  registration-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Registration only; no VPS, Discord or database access.'
+  collect:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.GAMERHQ_STAGING_AUTOMATION_ENROLLED == 'true'
+    runs-on: ubuntu-latest
+    environment: deployment-security
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 941098707f3968c724e2a914187ecb586d8ea3e8
+          persist-credentials: false
+      - name: Collect aggregate evidence through the enrolled primary-only controller
+        env:
+          GAMERHQ_STAGING_PILOT_GENERATION: recovered-primary-v2
+          GAMERHQ_STAGING_SSH_HOST: ${{ vars.GAMERHQ_STAGING_SSH_HOST }}
+          GAMERHQ_STAGING_SSH_PORT: ${{ vars.GAMERHQ_STAGING_SSH_PORT }}
+          GAMERHQ_STAGING_SSH_KNOWN_HOSTS: ${{ vars.GAMERHQ_STAGING_SSH_KNOWN_HOSTS }}
+          GAMERHQ_STAGING_AUTOMATION_SSH_KEY: ${{ secrets.GAMERHQ_STAGING_AUTOMATION_SSH_KEY }}
+        run: |
+          umask 077
+          python3 -m tools.staging_automation_client games-audit > "$RUNNER_TEMP/games-audit-public-summary.json"
+      - name: Publish aggregate summary only
+        if: always()
+        run: |
+          python3 - "$RUNNER_TEMP/games-audit-public-summary.json" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json,pathlib,sys
+          source,output=map(pathlib.Path,sys.argv[1:])
+          if not source.is_file() or not source.stat().st_size:
+              output.write_text('Games audit UNVERIFIED: no receipt returned. No setup or repair attempted.\n')
+              raise SystemExit(1)
+          value=json.loads(source.read_text())
+          state=value.get('state')
+          counts=value.get('counts',{})
+          allowed={'READY','NOT_SET_UP','HIDDEN','SETUP_NEEDED','REVIEW','UNVERIFIED'}
+          if not isinstance(counts,dict) or set(counts)-allowed or any(type(v) is not int or v<0 for v in counts.values()):
+              raise SystemExit('Public summary schema rejected')
+          complete=state=='GAMES_AUDIT_COLLECTED' and value.get('privateReceiptStored') is True
+          output.write_text('Games inventory collection: '+('COLLECTED' if complete else 'UNVERIFIED')+'\n\n'
+                            +'Counts: '+json.dumps(counts,sort_keys=True)+'\n\n'
+                            +'Detailed evidence remains private on the Host. No public artifact. '
+                            +'Collection is not template acceptance or authorization to repair.\n')
+          raise SystemExit(0 if complete else 1)
+          PY

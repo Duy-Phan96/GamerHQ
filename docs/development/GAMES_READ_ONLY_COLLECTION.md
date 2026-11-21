@@ -90,6 +90,34 @@ Discord API, opens no SQLite connection, imports no app/config and changes no
 policy or service. Keep this output private;
 do not paste raw Production metadata into public GitHub comments.
 
+Immutable prepared observer/client source:
+`941098707f3968c724e2a914187ecb586d8ea3e8`.
+The proposed Staging workflow checks out that exact commit. The owner launcher
+at that revision has SHA256
+`ccee3ea59a3f9f3638999fac7307eaef4a57b0087f8298f9de878c1740e442f3`.
+
+After PR/CI review and **separate owner approval of metadata preflight**, the
+following complete command is for the existing trusted root SSH session on the
+existing VPS. It is provided for owner review, not executed by Codex:
+
+```bash
+bash <<'GAMERHQ_GAMES_METADATA_PREFLIGHT'
+set -euo pipefail
+[[ "$(id -u)" == 0 ]] || exit 1
+umask 077
+observer=$(mktemp)
+trap 'rm -f -- "$observer"' EXIT
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/941098707f3968c724e2a914187ecb586d8ea3e8/tools/game_audit_operator.py'
+printf '%s  %s\n' 'ccee3ea59a3f9f3638999fac7307eaef4a57b0087f8298f9de878c1740e442f3' "$observer" | sha256sum --check --status
+/usr/bin/python3 "$observer" --source-commit 941098707f3968c724e2a914187ecb586d8ea3e8 --environment production --container gamerhq-bot --preflight
+GAMERHQ_GAMES_METADATA_PREFLIGHT
+```
+
+Expected success state: `GAMES_OWNER_PREFLIGHT`, `collectionExecuted=false`.
+Keep the receipt private. A rejected preflight reports a stable stage/reason and
+does not repair anything. This command does **not** enroll the Staging operation
+or authorize the subsequent full Production collection.
+
 Full collection is a separately authorized operation requiring all of:
 
 1. Reviewed source commit and checksum-verified launcher; actual preflight
