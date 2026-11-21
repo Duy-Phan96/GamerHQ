@@ -22,6 +22,14 @@ GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with
 
 **Repository workflow:** `main` is the stable/default branch; `develop` receives feature PRs. Both require PRs, branch-specific passing CI and resolved review conversations, with no required approving reviewer for the current solo-maintainer workflow. Deployment requires its own protected owner approval; merging code does not deploy it. See [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
 
+## GamerHQ Community — launch priorities and project boundaries
+
+**First priority:** finish the existing GamerHQ Production server so it is reliable and ready for community promotion. The two test guilds have different purposes: **GamerHQ Staging** mirrors the **intended Production configuration and behavior** (using separate IDs, databases and safe test content) for functionality updates, while **Servertest** is for templates, first-time installations, permissions and partial setup states. Neither replaces Production or authorizes copying private data.
+
+The first concrete work is to verify the **game catalog, roles and per-game channels**, fix any missing links/channels through the existing confirmed Games management flow, and finish member-facing bug fixes and release acceptance. **No additional test servers are required.** Other product tracks — portable Skills, server-template product, TikTok content/Discord acquisition, future website and mobile app — have separate backlogs and release boundaries. They should not delay getting this community server ready to promote.
+
+See the [GamerHQ Community launch and growth roadmap](docs/development/GAMERHQ_PRODUCT_ROADMAP.md) for phases, evidence gates, exact environment responsibilities and the separate TikTok workstream.
+
 ## Features
 
 ### Gaming & LFG
