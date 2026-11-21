@@ -112,8 +112,9 @@ SQL or ignore-revision argument exists. Normal Hosts still use
 Attested Hosts are rejected by this legacy route.
 
 1. Require root in the existing trusted SSH session, a real private TTY, a
-   root-private existing home directory and a nonblocking exclusive observer
-   lock. Fetch exact source commits and independently verify launcher/helper
+   verified non-writable root home, a dedicated mode-0700 audit directory and
+   a nonblocking exclusive observer lock. Create only that audit directory when
+   absent; never chmod the parent or an existing unsafe directory. Fetch exact source commits and independently verify launcher/helper
    bytes, both source-equivalent trees and all 15 Core packages. No app import,
    DB opening or Discord Games collection occurs during these checks.
 2. The cold Docker rehearsal exposed an unpinned transitive import:
@@ -153,7 +154,8 @@ Attested Hosts are rejected by this legacy route.
    separate size, checksum and timeout bounds; they are not Discord calls.
 8. Recheck exact container/image/config and all source/Core integrity after the
    observer. Exclusive-create/fsync a private mode-0600 JSON receipt under the
-   existing root-private home. Detailed IDs/maps/import names stay private;
+   owner-private `/root/.gamerhq-games-readonly` directory (resolved from the
+   root account home). Detailed IDs/maps/import names stay private;
    stdout contains only safe state/counts/opaque receipt ID. No public Actions
    artifact contains Production evidence.
 
@@ -177,9 +179,9 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/0271dfe4c63dda061676a722ac0ab2e133afae27/tools/game_audit_legacy_collect.py'
-printf '%s  %s\n' '8a9da18aea9ae695e73b7964a34b23b8941059265835e3b9e486f772401c0054' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit 0271dfe4c63dda061676a722ac0ab2e133afae27
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/a68829aa51e3769c60327be586432b44672e88f0/tools/game_audit_legacy_collect.py'
+printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
+/usr/bin/python3 -I -S -B "$observer" --source-commit a68829aa51e3769c60327be586432b44672e88f0
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
@@ -199,7 +201,7 @@ available. Never resolve a failure with pip install, broader privileges, databas
 repair, a bot restart or skipped validation. Stop the ephemeral observer on its
 bound timeout; remove only public scratch downloads. No DB restore, image rollback,
 Gateway manipulation or Discord compensation is necessary because the operation
-performs no application writes. Root-private receipt and zero-byte observer lock
+performs no application writes. Root-private audit directory, receipt and zero-byte observer lock
 are audit metadata only.
 
 ### Verification evidence
