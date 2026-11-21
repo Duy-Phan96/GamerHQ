@@ -1,6 +1,6 @@
 # GamerHQ Project Status
 
-_Last reviewed: 2026-10-12_
+_Discord readiness baseline verified 2026-11-09. Historical assessment retained below._
 
 This document is a concise strategic snapshot of the GamerHQ repository. It is
 not a second operational backlog and does not replace GitHub Issues, pull
@@ -9,6 +9,35 @@ requests, the changelog, release snapshots or feature-specific documentation.
 The snapshot was prepared from the current repository, code, tests,
 documentation, Issues and pull requests. Important claims should continue to be
 verified against implementation because documentation may lag behind code.
+
+## Current execution and release evidence
+
+**GamerHQ Discord is the immediate priority. GamerHQ Web is frozen.** Only the
+owner can resume Web work. Web features, deployment and staging activation
+are paused while the platform brand and commercial domain are undecided.
+Preserve existing Web work and public API compatibility. GamerHQ is the
+first customer of the generic Host and Runtime. Each external Skill owns its
+domain, contracts and release.
+
+| Surface | Evidence and next gap |
+| --- | --- |
+| Staging | [Live smoke](https://github.com/Duy-Phan96/GamerHQ/actions/runs/42602882154) confirmed Host `29ecf575f3d865b0f32a9d82adf1b06d7969cdc9` and Event Manager `0.1.2`. The Discord sidebar showed the general channels, event test category, private event chats and event voice category. The visible sidebar did not contain the community game and onboarding boards. Review a staging-only setup preview before using this guild for the full member journey. |
+| Production | `main` identifies `1.0.0-beta.2-rc2`. GitHub has no production deployment receipt for this audit. Read-only Discord inspection confirmed the visible welcome, rules, games, roles, LFG, guide, support and private game-channel entry points. The public Games board still shows legacy Game Buttons and LFG Notifications. Verify the installed runtime and review an in-place board update through existing management. Role membership and effective permissions were not tested. [Release PR #150](https://github.com/Duy-Phan96/GamerHQ/pull/150) is open. |
+| Setup and staff operations | The repository has read-only Server Check, preview/confirm setup, repair and reconciliation, managed messages, and a private owner change log with bounded Undo. Existing permission, mapping, stale-plan and retry tests apply. Live resource drift and recovery evidence are still required. |
+| Member entry | Profile panels, optional age bands (Under 18, 18–20, 21–22, 23–24, 25+), platform/preferences and a personal game selector exist. The native Discord onboarding question editor stores Host-side desired state and shows a preview. Native publishing and option lifecycle are separate gaps. Preserve existing age/profile role IDs. |
+| Games and LFG | The public game board leads to the private selector. Role assignments use the reviewed game mapping, and the Games structure allows optional role-gated text channels. Temporary LFG retains its own capacity, invitation, privacy and recovery paths. Confirm the new-member and private-LFG paths in the isolated guild. |
+| Event Manager | Installed external Skill `0.1.2` is healthy in staging. Discord V2.1 manual acceptance remains postponed in [#208](https://github.com/Duy-Phan96/GamerHQ/issues/208). The [separate #226](https://github.com/Duy-Phan96/GamerHQ/pull/226) tracks newer staging work. |
+| Progression and Recurring Posts | Progression `0.2.0` is source-pinned and the Host emits trusted signals through `progression.record-signal.v1`. Recurring Posts `1.2.3` remains source-pinned although `1.4.0` is published. Verify compatible wheels, each guild's enablement and private notification configuration independently. See the [Skill handoffs](../skills/platform-customer-readiness.md). |
+
+The first Host candidate for this workstream fixes a stuck personal game
+selector after Discord acknowledgement failure and flags unsafe or shared
+game-role mappings in Server Check. It requires no data migration or
+external Skill upgrade. Before staging apply, review an exact immutable Host
+pin against the installed Event Manager `0.1.2`, verify a fresh backup and
+restore probe, and use the existing protected Host promotion. A staging
+member should then open the public Games board, add and remove one game in
+the private selector, and verify the matching role and channel access.
+Staff should check **Games** in `/server health` without applying a repair.
 
 ## Executive status
 

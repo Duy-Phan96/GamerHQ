@@ -111,6 +111,26 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         await view.children[0].callback(self.interaction())
         self.assertIn(self.game['id'], view.selected)
 
+    async def test_failed_acknowledgement_releases_selector_without_changing_roles(self):
+        view = GameSelectionSession(self.member, [self.game])
+        interaction = self.interaction()
+        interaction.response.defer.side_effect = discord.NotFound(SimpleNamespace(status=404, reason='Not Found'), 'Expired')
+        with self.assertRaises(discord.NotFound):
+            await view.toggle(interaction, self.game['id'])
+        self.assertFalse(view.busy)
+        self.member.add_roles.assert_not_awaited()
+        await view.toggle(self.interaction(), self.game['id'])
+        self.assertIn(self.game['id'], view.selected)
+
+    async def test_old_selector_cannot_assign_an_inactive_game_role(self):
+        view = GameSelectionSession(self.member, [self.game])
+        with db.connect() as conn:
+            conn.execute('UPDATE games SET active=0 WHERE id=?', (self.game['id'],))
+        interaction = self.interaction()
+        await view.toggle(interaction, self.game['id'])
+        self.member.add_roles.assert_not_awaited()
+        interaction.followup.send.assert_awaited_once_with('This game is temporarily unavailable.', ephemeral=True)
+
     async def test_empty_library_distinguishes_broken_role_mappings(self):
         from cogs.games import ChooseGamesButtons
         for rows, expected in [([], 'No games are currently available for selection.'),

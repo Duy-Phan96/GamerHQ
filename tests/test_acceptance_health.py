@@ -100,6 +100,25 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(f.name=='Game role' and f.state=='MANUAL_REVIEW' for f in findings))
         self.assertIn(unknown,self.guild.categories)
 
+    async def test_game_selector_health_identifies_unsafe_and_shared_roles(self):
+        game = db.upsert_custom_game('Unassignable Game', '🎮', 'Test')
+        db.set_game_selectable(game['id'], True)
+        role = await self.guild.create_role(name='Unassignable')
+        db.set_game_role(game['id'], role.id)
+        role.permissions = discord.Permissions(administrator=True)
+        findings = await health.scan(self.guild, messages=False)
+        self.assertTrue(any(f.name == 'Game role' and 'permissions and hierarchy' in f.detail for f in findings))
+        self.assertEqual(next(f.state for f in findings if f.name == 'Game selector roles'), 'MANUAL_REVIEW')
+
+        role.permissions = discord.Permissions.none()
+        alias = db.upsert_custom_game('Hidden Alias', '🎮', 'Test')
+        db.set_game_role(alias['id'], role.id)
+        findings = await health.scan(self.guild, messages=False)
+        self.assertTrue(any(f.name == 'Game role' and 'shared' in f.detail for f in findings))
+        db.set_game_role(alias['id'], None)
+        findings = await health.scan(self.guild, messages=False)
+        self.assertEqual(next(f.state for f in findings if f.name == 'Game selector roles'), 'PASS')
+
     async def test_health_and_details_deny_normal_user(self):
         actor=SimpleNamespace(id=20,guild_permissions=discord.Permissions())
         interaction=SimpleNamespace(guild=self.guild,user=actor,response=SimpleNamespace(send_message=AsyncMock()))
