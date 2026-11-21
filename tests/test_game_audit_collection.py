@@ -230,6 +230,27 @@ def test_operator_does_not_read_docker_environment_or_accept_root_user():
     with pytest.raises(ValueError): operator.inspect('gamerhq-bot; other-command', run=run)
 
 
+def test_production_dockerfile_named_user_and_build_commit_are_supported_without_labels():
+    # The real repository Dockerfile uses USER gamerhq and /app/BUILD_COMMIT;
+    # OCI revision labels/numeric Config.User are Staging overlays, not assumed.
+    meta = {'id': 'a'*64, 'image': 'sha256:'+'b'*64, 'user': 'gamerhq', 'workingDir': '/app',
+            'running': True, 'health': 'healthy', 'hostCommit': None, 'mounts': []}
+    actual = operator.inspect('gamerhq-bot', run=lambda *a, **k: SimpleNamespace(stdout=json.dumps(meta)))
+    configured = {'configuredGuildId': 1, 'database': '/app/runtime/data/gamerhq.db',
+                  'mode': '0o660', 'uid': 10001, 'gid': 10001, 'readable': True,
+                  'runtimeUid': 10001, 'runtimeGid': 10001, 'buildCommit': 'c'*40}
+    def run(*args, **kwargs):
+        assert args[0][0:2] == ['docker','exec'] and args[0][3] == 'gamerhq'
+        assert 'DISCORD_TOKEN' not in args[0][-1] and 'sqlite3' not in args[0][-1]
+        return SimpleNamespace(stdout=json.dumps(configured))
+    assert operator.configured_metadata(actual, run=run)['buildCommit'] == 'c'*40
+    configured['runtimeUid'] = 0
+    with pytest.raises(ValueError, match='RUNTIME_USER_UNVERIFIED'): operator.configured_metadata(actual, run=run)
+    configured['runtimeUid'] = 10001
+    actual['hostCommit'] = 'd'*40
+    with pytest.raises(ValueError, match='HOST_REVISION_CONFLICT'): operator.configured_metadata(actual, run=run)
+
+
 def test_cold_source_sealed_launch_uses_installed_db_read_only_without_gateway(runtime):
     sources = {name: Path(name).read_text(encoding='utf-8') for name in execution.FILES}
     hashes = {name: hashlib.sha256(body.encode()).hexdigest() for name, body in sources.items()}
