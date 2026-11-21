@@ -14,7 +14,7 @@ from tools import game_audit_legacy_runtime as runtime
 def binding(tmp_path):
     return {'environment':'production','guildId':1,'applicationId':100,
             'database':str(tmp_path/'fixture.db'),'runtimeUid':10001,'runtimeGid':10001,
-            'containerId':'a'*64,'imageId':'sha256:'+'b'*64,'observerCommit':'a'*40}
+            'containerId':'a'*64,'imageId':'sha256:'+'b'*64,'observerCommit':'a'*40,'approvalNonce':'e'*32}
 
 
 class TTY(io.StringIO):
@@ -88,6 +88,15 @@ def test_private_receipt_is_new_mode_0600_and_not_an_application_write(tmp_path)
     assert path.parent==tmp_path and path.name=='games-production-'+ident+'.private-games.json'
     assert path.stat().st_mode & 0o777 == 0o600
     assert 'null' in path.read_text()
+
+
+@pytest.mark.skipif(os.name!='posix',reason='POSIX owner lock contract')
+def test_owner_metadata_lock_serializes_observers_without_touching_application(tmp_path):
+    with owner.owner_lock(tmp_path):
+        with pytest.raises(BlockingIOError):
+            with owner.owner_lock(tmp_path):pass
+    with owner.owner_lock(tmp_path):pass
+    assert (tmp_path/'.gamerhq-games-readonly.lock').read_bytes()==b''
 
 
 def test_normal_attested_enforcement_is_unchanged_and_no_cli_bypass_exists():

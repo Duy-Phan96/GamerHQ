@@ -171,6 +171,8 @@ def validate(packet):
             or type(binding['applicationId']) is not int or binding['applicationId']<=0
             or packet.get('ownerApprovalSha256')!=approve_hash(binding)
             or packet.get('observerCommit')!=binding.get('observerCommit')
+            or not isinstance(binding.get('approvalNonce'),str) or len(binding['approvalNonce'])!=32
+            or any(c not in '0123456789abcdef' for c in binding['approvalNonce'])
             or os.geteuid()!=binding['runtimeUid'] or os.getegid()!=binding['runtimeGid']
             or binding['runtimeUid']<=0 or binding['runtimeGid']<=0
             or set(packet['sources'])!=set(FILES) or set(packet['hashes'])!=set(FILES)):

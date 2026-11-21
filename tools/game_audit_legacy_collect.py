@@ -18,6 +18,7 @@ import types
 import uuid
 import io
 import zipfile
+from contextlib import contextmanager
 
 REPOSITORY='https://github.com/Duy-Phan96/GamerHQ.git'
 SELF='tools/game_audit_legacy_collect.py'
@@ -76,6 +77,18 @@ def private_directory():
     if path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode & 0o077:
         raise ValueError('PRIVATE_RECEIPT_DIRECTORY_REQUIRED')
     return path
+
+
+@contextmanager
+def owner_lock(directory):
+    import fcntl
+    fd=os.open(directory/'.gamerhq-games-readonly.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'rb') as stream:
+        info=os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_nlink!=1 or stat.S_IMODE(info.st_mode)!=0o600:
+            raise ValueError('OWNER_LOCK_REJECTED')
+        fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        yield
 
 
 def confirm(tty,binding):
@@ -155,7 +168,7 @@ def main():
         tty=types.SimpleNamespace(fileno=reader.fileno,write=writer.write,flush=writer.flush,readline=reader.readline)
         if not os.isatty(tty.fileno()):raise ValueError('OWNER_TTY_REQUIRED')
         output_directory=private_directory()
-        with tempfile.TemporaryDirectory(prefix='gamerhq-legacy-games-') as scratch:
+        with owner_lock(output_directory), tempfile.TemporaryDirectory(prefix='gamerhq-legacy-games-') as scratch:
             env={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','GIT_CONFIG_GLOBAL':'/dev/null','GIT_CONFIG_NOSYSTEM':'1','GIT_TERMINAL_PROMPT':'0'}
             def git(*a):return subprocess.run(['git','-C',scratch,*a],env=env,capture_output=True,check=True,timeout=120).stdout
             STAGE='SOURCE_VERIFICATION';git('init','--quiet');git('fetch','--quiet','--depth=1',REPOSITORY,args.source_commit)
@@ -187,6 +200,7 @@ def main():
                      'sourceManifestSha256':evidence['sourceManifestSha256'],
                      'coreFilesSha256':digest(context['dependencyFiles']),
                      'observerSupplementsSha256':digest({k:v['wheelSha256'] for k,v in supplements.items()}),
+                     'approvalNonce':uuid.uuid4().hex,
                      'observerCommit':args.source_commit}
             STAGE='OWNER_CONFIRMATION';approval=confirm(tty,binding)
             if operator.inspect('gamerhq-bot')!=meta or metadata(meta)!=config:raise ValueError('BINDING_CHANGED')
@@ -237,6 +251,7 @@ if __name__=='__main__':
     try:main()
     except Exception as error:
         allowed={'OWNER_SOURCE_REQUIRED','OWNER_TTY_REQUIRED','OWNER_CANCELLED','PRIVATE_RECEIPT_DIRECTORY_REQUIRED',
+            'OWNER_LOCK_REJECTED',
             'SOURCE_REJECTED','CORE_INTEGRITY_REJECTED','NORMAL_ATTESTED_ROUTE_REQUIRED','PRODUCTION_BINDING_REJECTED',
             'BOT_IDENTITY_REJECTED','OBSERVER_SOURCE_REJECTED','OBSERVER_BUDGET_EXCEEDED','BINDING_CHANGED',
             'OBSERVER_RESPONSE_REJECTED','LEGACY_COLLECTION_UNVERIFIED'}
