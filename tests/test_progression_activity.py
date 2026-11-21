@@ -179,6 +179,87 @@ class ProgressionMemberSignalTests(unittest.IsolatedAsyncioTestCase):
         second = runtime.call_management.await_args_list[1].kwargs["payload"]
         self.assertEqual(first["dedupeKey"], second["dedupeKey"])
 
+    async def test_staff_award_notice_posts_only_for_achievement_or_reward(self):
+        guild = SimpleNamespace(id=123, get_member=lambda member_id: SimpleNamespace(display_name="Tester"))
+        payload = {
+            "memberId": 42,
+            "provider": "profile",
+            "signal": "first_game_added",
+            "dedupeKey": "profile:first_game_added:123:42",
+        }
+        response = {
+            "memberId": 42,
+            "level": 1,
+            "totalXp": 25,
+            "unlockedAchievements": (
+                {"id": "first-game", "name": "First Game", "xp": 25},
+            ),
+            "rewardEvents": (),
+        }
+
+        with patch("services.server_log_service.emit", new=AsyncMock(return_value=True)) as emit:
+            sent = await progression.emit_progression_award_notice(guild, payload, response)
+
+        self.assertTrue(sent)
+        args = emit.await_args
+        self.assertEqual(args.args[1], "progression-award:profile:first_game_added:123:42")
+        self.assertEqual(args.args[2], "🏆 Progression Award")
+        self.assertIn("First Game", args.args[3])
+        self.assertIn("+25 XP", args.args[3])
+        self.assertIn("profile/first_game_added", args.args[3])
+
+    async def test_staff_award_notice_skips_plain_xp_activity(self):
+        guild = SimpleNamespace(id=123, get_member=lambda member_id: None)
+        with patch("services.server_log_service.emit", new=AsyncMock()) as emit:
+            sent = await progression.emit_progression_award_notice(
+                guild,
+                {"memberId": 42, "source": "chat"},
+                {
+                    "memberId": 42,
+                    "awardedXp": 3,
+                    "unlockedAchievements": (),
+                    "rewardEvents": (),
+                },
+            )
+        self.assertFalse(sent)
+        emit.assert_not_awaited()
+
+    async def test_signal_delivery_writes_staff_award_notice(self):
+        runtime = SimpleNamespace(
+            status=AsyncMock(return_value=SimpleNamespace(enabled=True)),
+            call_management=AsyncMock(return_value={
+                "memberId": 42,
+                "level": 1,
+                "totalXp": 25,
+                "unlockedAchievements": (
+                    {"id": "first-game", "name": "First Game", "xp": 25},
+                ),
+                "rewardEvents": (),
+            }),
+        )
+        guild = SimpleNamespace(
+            id=123,
+            get_member=lambda member_id: SimpleNamespace(display_name="Tester"),
+        )
+        bot = SimpleNamespace(skill_runtime=runtime, get_guild=lambda guild_id: guild)
+        payload = {
+            "memberId": 42,
+            "provider": "profile",
+            "signal": "first_game_added",
+            "dedupeKey": "profile:first_game_added:123:42",
+        }
+
+        with patch.object(
+            progression,
+            "emit_progression_award_notice",
+            new=AsyncMock(return_value=True),
+        ) as notice:
+            delivered = await progression.emit_progression_signal(bot, 123, payload)
+
+        self.assertTrue(delivered)
+        notice.assert_awaited_once()
+        self.assertEqual(notice.await_args.args[1]["dedupeKey"], payload["dedupeKey"])
+
     async def test_missing_or_disabled_progression_fails_safe(self):
         self.assertFalse(
             await progression.emit_progression_signal(
