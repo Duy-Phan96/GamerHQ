@@ -35,6 +35,8 @@ A mirror means **functional/configuration parity**, not identical Discord snowfl
 
 ### P0.1 — Baseline functional inventory and release scope
 
+**Tracked execution:** [Issue #329 — Production vs Staging Games/Channels read-only audit](https://github.com/Duy-Phan96/GamerHQ/issues/329). Existing member-journey acceptance is [Issue #134](https://github.com/Duy-Phan96/GamerHQ/issues/134). Do not open duplicate Games readiness work when the existing services already cover it.
+
 **Outcome:** one verified, dated matrix comparing Production vs GamerHQ Staging, with actual resource IDs/permissions, deployed Host/Skill pins, feature status and owner-visible discrepancies.
 
 - Use authenticated **read-only** bot/Host inventory and existing `/server health`, Games administration, setup/permissions and release-snapshot tools; prefer automation and redacted evidence to Computer Use.
