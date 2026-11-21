@@ -290,6 +290,35 @@ Even a fully matching dependency preflight returns `legacyCollectionEligible=fal
 `hostRevisionVerified=false`, `wholeImageIntegrityVerified=false` and
 `collectionExecuted=false`. Production game readiness remains UNVERIFIED.
 
+After PR/CI review, the **one next owner action** is to run this dependency-only
+check in the existing trusted root SSH session and return its structured summary.
+The previous source-equivalence command already succeeded; do not repeat that
+standalone step. This batch freshly rechecks the existing source binding itself.
+It authorizes no Games collection, app imports, SQLite/Discord access, service
+changes or installation. It writes only temporary public Git scratch outside
+the Production application and removes it on exit.
+
+```bash
+bash <<'GAMERHQ_CORE_DEPENDENCY_EVIDENCE'
+set -euo pipefail
+[[ "$(id -u)" == 0 ]] || exit 1
+umask 077
+observer=$(mktemp)
+trap 'rm -f -- "$observer"' EXIT
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/69ef27cc20ffc0e59cfc220ca7f231d39c53768f/tools/game_audit_legacy_dependencies.py'
+printf '%s  %s\n' '8a4253e57eb17f6a483864a7fb7a8243ceda51c2abfc273b51ed7a69f5546c16' "$observer" | sha256sum --check --status
+/usr/bin/python3 -I -S -B "$observer" --source-commit 69ef27cc20ffc0e59cfc220ca7f231d39c53768f
+GAMERHQ_CORE_DEPENDENCY_EVIDENCE
+```
+
+Expected state: `GAMES_LEGACY_DEPENDENCY_PREFLIGHT`; examine
+`lockedCoreDependenciesMatch` and per-package PASS/UNVERIFIED. Mismatches expose
+only package names, pinned public wheel filenames and missing/extra/changed
+counts, never installed file paths/content. Failures carry bounded stage/reason
+codes. `legacyCollectionEligible=false` and `collectionExecuted=false` remain
+mandatory even if every Core dependency matches. Do not chain a collection or
+repair command after this check.
+
 #### Conditions for a separately reviewed legacy collection
 
 Before preparing a live legacy collector, require the dependency receipt and a
