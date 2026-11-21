@@ -8,6 +8,7 @@ import sys
 import os
 import tarfile
 import inspect
+from types import SimpleNamespace
 import zipfile
 from pathlib import Path
 
@@ -76,6 +77,24 @@ def test_successful_dependency_evidence_never_authorizes_games_or_claims_provena
                  'wholeImageIntegrityVerified','collectionExecuted','databaseAccessed','discordAccessed'):
         assert result[name] is False
     assert audit.summary([],{})['lockedCoreDependenciesMatch'] is False
+
+
+@pytest.mark.parametrize('foreign',[False,True])
+def test_source_binding_also_disables_site_before_dependency_verification(monkeypatch,foreign):
+    calls=[]
+    def run(command,**kwargs):calls.append(command);return SimpleNamespace(stdout='fixture')
+    monkeypatch.setattr(audit.subprocess,'run',run)
+    def collect(operator,git,commits,refs,run):
+        command=['docker','exec','--user','gamerhq','fixed-container','python','-I','-B','-c',
+                 'foreign code' if foreign else 'fixed-source-probe']
+        return run(command,capture_output=True,text=True).stdout
+    helper=SimpleNamespace(PROBE='fixed-source-probe',collect_source_evidence=collect)
+    if foreign:
+        with pytest.raises(ValueError,match='PROBE_REJECTED'):audit.bound_source(helper,None,None)
+        assert not calls
+    else:
+        assert audit.bound_source(helper,None,None)=='fixture'
+        assert calls[0][5:10]==['python','-I','-S','-B','-c']
 
 
 @pytest.mark.parametrize('path',['../gamerhq.db','/app/config.py','example/../../.env','foreign/a.py'])

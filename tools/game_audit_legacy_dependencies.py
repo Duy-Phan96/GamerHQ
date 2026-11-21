@@ -177,6 +177,18 @@ def summary(rows, binding):
             'collectionExecuted':False,'databaseAccessed':False,'discordAccessed':False,'productionChanged':False}
 
 
+def bound_source(provenance, operator, git):
+    # The historical source inspector predates this dependency gate. Its fixed
+    # stdlib probe needs no site packages; suppress .pth/sitecustomize there too,
+    # including before installed dependencies have been verified.
+    def run(command, **kwargs):
+        if (len(command)!=10 or command[:3]!=['docker','exec','--user']
+                or command[5:9]!=['python','-I','-B','-c'] or command[9]!=provenance.PROBE):
+            raise ValueError('PROBE_REJECTED')
+        return subprocess.run(command[:7]+['-S']+command[7:],**kwargs)
+    return provenance.collect_source_evidence(operator,git,EQUIVALENT,{},run=run)
+
+
 def main():
     global STAGE
     parser=argparse.ArgumentParser(description=__doc__)
@@ -207,7 +219,7 @@ def main():
             expected[package['name']]={w['filename']:expected_files(download(w),w) for w in package['wheels']}
         roots=sorted({p.split('/')[0] for candidates in expected.values() for files in candidates.values() for p in files})
         STAGE='BOUND_SOURCE_VERIFICATION'
-        binding=provenance.collect_source_evidence(operator,git,EQUIVALENT,{})
+        binding=bound_source(provenance,operator,git)
         if binding['sourceEquivalentCommits']!=sorted(EQUIVALENT):raise ValueError('BASELINE_REJECTED')
         meta=operator.inspect('gamerhq-bot')
         # Package code must not be supplied by an unreviewed mounted overlay.
@@ -223,7 +235,7 @@ def main():
         STAGE='INSTALLED_CORE_HASHES';first=probe();rows=compare(expected,first['files'])
         if probe()!=first or operator.inspect('gamerhq-bot')!=meta:raise ValueError('DEPENDENCY_CHANGED')
         STAGE='UNCHANGED_SOURCE_VERIFICATION'
-        final=provenance.collect_source_evidence(operator,git,EQUIVALENT,{})
+        final=bound_source(provenance,operator,git)
         if final!=binding:raise ValueError('BASELINE_CHANGED')
         print(json.dumps(summary(rows,binding),sort_keys=True))
 
