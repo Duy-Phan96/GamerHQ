@@ -80,6 +80,12 @@ No new SSH identity, Docker/root grant or copy of the Production token is propos
 owner launcher for the existing Docker administrative context. It verifies its
 own bytes against the explicitly selected immutable Git commit before proceeding.
 Its Production target is the existing documented `gamerhq-bot` container.
+Production's Dockerfile uses `USER gamerhq` and `/app/BUILD_COMMIT`, while Staging
+overlays also supply OCI labels. The metadata probe verifies the actual non-root
+UID/GID and reads only that regular, non-symlink build marker. Label/marker
+disagreement is rejected. Missing valid revision evidence is explicit
+`hostRevisionVerified=false` and prevents full collection; no image rebuild or
+deployment is attempted to supply missing metadata.
 
 The first owner step is **metadata preflight only**: inspect filtered container
 identity, running/health state, revision/image, non-root user, workdir and mounts.
@@ -91,10 +97,10 @@ policy or service. Keep this output private;
 do not paste raw Production metadata into public GitHub comments.
 
 Immutable prepared observer/client source:
-`941098707f3968c724e2a914187ecb586d8ea3e8`.
+`8b9e4c5e267d7b9144f0e745069505d04f8ea505`.
 The proposed Staging workflow checks out that exact commit. The owner launcher
 at that revision has SHA256
-`ccee3ea59a3f9f3638999fac7307eaef4a57b0087f8298f9de878c1740e442f3`.
+`a61d48a19222a1acef92e3e9ba46bd2d1a694007fe9d22f061b378201f39af41`.
 
 After PR/CI review and **separate owner approval of metadata preflight**, the
 following complete command is for the existing trusted root SSH session on the
@@ -107,9 +113,9 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/941098707f3968c724e2a914187ecb586d8ea3e8/tools/game_audit_operator.py'
-printf '%s  %s\n' 'ccee3ea59a3f9f3638999fac7307eaef4a57b0087f8298f9de878c1740e442f3' "$observer" | sha256sum --check --status
-/usr/bin/python3 "$observer" --source-commit 941098707f3968c724e2a914187ecb586d8ea3e8 --environment production --container gamerhq-bot --preflight
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/8b9e4c5e267d7b9144f0e745069505d04f8ea505/tools/game_audit_operator.py'
+printf '%s  %s\n' 'a61d48a19222a1acef92e3e9ba46bd2d1a694007fe9d22f061b378201f39af41' "$observer" | sha256sum --check --status
+/usr/bin/python3 "$observer" --source-commit 8b9e4c5e267d7b9144f0e745069505d04f8ea505 --environment production --container gamerhq-bot --preflight
 GAMERHQ_GAMES_METADATA_PREFLIGHT
 ```
 
