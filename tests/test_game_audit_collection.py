@@ -251,6 +251,14 @@ def test_production_dockerfile_named_user_and_build_commit_are_supported_without
     with pytest.raises(ValueError, match='HOST_REVISION_CONFLICT'): operator.configured_metadata(actual, run=run)
 
 
+def test_owner_launcher_cannot_route_staging_or_servertest(monkeypatch):
+    monkeypatch.setattr(sys, 'argv', ['game_audit_operator', '--source-commit', 'a'*40,
+                                    '--environment', 'staging', '--container', 'synthetic-test-container', '--preflight'])
+    with pytest.raises(SystemExit) as error:
+        operator.main()
+    assert error.value.code == 2  # Argument rejection precedes Docker, Git and data access.
+
+
 def test_cold_source_sealed_launch_uses_installed_db_read_only_without_gateway(runtime):
     sources = {name: Path(name).read_text(encoding='utf-8') for name in execution.FILES}
     hashes = {name: hashlib.sha256(body.encode()).hexdigest() for name, body in sources.items()}

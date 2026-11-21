@@ -104,7 +104,8 @@ def main():
     global STAGE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-commit', required=True)
-    parser.add_argument('--environment', choices=['production', 'staging'], required=True)
+    # Staging must use its existing forced controller, never this root path.
+    parser.add_argument('--environment', choices=['production'], required=True)
     parser.add_argument('--container', required=True)
     parser.add_argument('--preflight', action='store_true')
     parser.add_argument('--approval')
