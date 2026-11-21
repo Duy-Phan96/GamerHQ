@@ -1,6 +1,6 @@
 # ADR-001 Guild tenancy for the shared GamerHQ application
 
-Status: Protected two-guild pilot active; final Milestone 2 merge review pending
+Status: Milestone 2 protected two-guild Staging pilot active; PR #317 merged into develop (2026-11-20). Milestone 3 prioritizes functional acceptance and Production readiness; generalized enrollment is deferred.
 
 Product direction: One public Discord application serves independent guilds.
 
@@ -171,3 +171,32 @@ is not a prerequisite for that scope. Keep public enrollment, production
 deployment and further Discord writes separately gated. Keep the PR draft
 until the owner accepts this scope and final review; no automatic merge,
 template application, Skill activation or rollout follows this record.
+
+## Milestone 3 — functional acceptance and Production readiness
+
+**Owner direction (21 November 2026): strengthen GamerHQ functionality and make the existing product production-ready.** The current **three-server arrangement is sufficient**: use the two existing test guilds, GamerHQ Staging and Servertest, for verification and preserve the separate live/Production environment. Do **not** create or request another testing guild. Public enrollment, generalized tenant registry/self-service onboarding and arbitrary-guild scaling are deferred product possibilities, not Milestone 3 deliverables.
+
+Milestone 2 already proved the bounded two-guild admission architecture. Keep its exact-cohort admission and independently owned storage unchanged while testing the functional product on the existing guilds. Server functionality and practical operational confidence now take precedence over onboarding new guilds.
+
+### Delivery slices and acceptance gates
+
+| Slice | Functional scope on existing guilds | Evidence needed before advancing |
+| --- | --- | --- |
+| M3.1 Functional inventory + priority triage | Audit member onboarding/profile/game selection, LFG/events, managed voice, tickets, moderation, setup/repair, per-guild Skills and admin navigation | Explicit supported/partial/broken status and owner-visible UX gaps; prioritized acceptance matrix and regression owners |
+| M3.2 Member and admin workflow reliability | Fix high-impact bugs and confusing flows; verify permissions, inputs, repeated actions, saved IDs, role assignment, event and Skill lifecycle on both test guilds | Deterministic tests plus controlled live acceptance for each agreed workflow; no cross-guild state leak or implicit write |
+| M3.3 Template and Skill experience | Verify primary setup idempotence; validate Servertest's intentionally incomplete ten-resource template state and optional apply UX; independent Skill install/enable/disable/configuration paths | Per-guild preview/confirm checks, resource ownership, rollback/restore, per-guild state and restart persistence; **no automatic Servertest Apply** |
+| M3.4 Operational readiness | Validate scheduled work, logs, alarms, permissions, backup/restore, stale-callback denial, migration/restart/rollback and protected releases | Fresh evidence from existing test guilds, failure injection and recovery rehearsal, credible runbooks and audit records |
+| M3.5 Production release gate | Review exactly which tested functionality should reach the existing live server | Required CI, security review, data backup, migration rehearsal, protected owner approval, canary/smoke and documented rollback; **no automatic deployment** |
+
+### Rules of engagement
+
+1. The two existing test guilds remain the only approved Multi-Guild Staging cohort. An invited or guessed guild remains unauthorized. No additional server is needed for this plan.
+2. **DB/application state is the source of truth**; Discord is an integration/view. Every callback, command, scheduled job, resource and Skill change must validate tenant scope, permissions and current lifecycle at use time.
+3. Choose targeted fixes and small reviewable PRs instead of another architectural rewrite. Do not conflate a partially applied template with a platform-safety failure. Servertest's missing STAFF, SUPPORT TICKETS and eight staff children remain operational setup work, requiring separate owner confirmation before any creation.
+4. Keep automated acceptance read-only by default. A write-capable live test must be explicitly scoped, previewed and owner-approved. Never use Computer Use or control the owner's local Discord application.
+5. Keep Production, live user history, existing resources, archived recovery evidence, protected Staging workflows, and two-guild bindings intact until the appropriate review and authorization. A merge into `develop` is not a Production release.
+6. Maintain `main` as stable/default and `develop` as the integration branch, with required CI and review-conversation gates. Document known unverified areas without converting them to fabricated PASS states.
+
+### Deferred architectural expansion
+
+A versioned generalized admission registry, automatic onboarding of arbitrary Discord guilds, public Skill marketplace enrollment, tenant scaling and new test cohorts remain possible **future** platform work. Revisit only after the owner prioritizes them and the existing GamerHQ server has proven functional and operational readiness. Do not use a new test guild as a prerequisite to shipping or validating existing features.

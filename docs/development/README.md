@@ -5,6 +5,9 @@ reusable platform work built around it.
 
 Start here:
 - [Current Project Status](PROJECT_STATUS.md)
+- [GamerHQ Community product launch, Staging/Servertest roles and TikTok roadmap](GAMERHQ_PRODUCT_ROADMAP.md)
+- [Guild Tenancy ADR: accepted two-guild pilot and functional Production-readiness gates](../architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-functional-acceptance-and-production-readiness)
+- [Main/default branch migration](MAIN_DEFAULT_MIGRATION.md) — historical migration runbook; check current branch settings before operational decisions.
 - [Core Beta Acceptance](CORE_BETA_ACCEPTANCE.md)
 - [Thin Host Inventory](THIN_HOST_INVENTORY.md)
 - [Software Development Lifecycle](SDLC.md)

@@ -6,6 +6,26 @@
 - Keep changes task-scoped. Reuse existing services, DB helpers, config and UI patterns; do not add a parallel subsystem.
 - Avoid opportunistic refactors. Explain a larger refactor if required for the task.
 
+## Product ownership and environment roles (owner decision: 2026-11-21)
+
+**Immediate priority: make the owner's existing GamerHQ Production gaming community fully functional and ready to promote.** Do not prioritize onboarding more guilds, creating extra test servers or a generic marketplace at the expense of game channels, user workflows, bug fixes and safe release acceptance. Production is largely configured; first verify the remaining gaps instead of rebuilding its structure.
+
+Treat these as **distinct workstreams with separate backlogs, release gates and ownership** even when they share Runtime/SDK contracts:
+- **GamerHQ Community / Production server (P0 now):** owner-operated gaming server; game catalog, role selector, per-game channels, LFG/events, voice, onboarding, support, moderation, bug fixing, member UX, launch readiness. This repository owns the Host adapters and the GamerHQ customer-specific integration.
+- **Portable Skills (later/parallel):** independently versioned, installable packages and the generic Host SDK/runtime; Skill domain implementations remain in their owning repositories. GamerHQ consumes reviewed immutable versions; it does not silently duplicate or modify Skill-private code.
+- **Server templates / installer (separate workstream):** onboarding, fresh installation, optional Gaming Community structures, idempotent preview/confirm/repair and resource ownership; use Servertest for destructive/fresh-install acceptance only with explicit owner approval.
+- **Website and future app:** separate future product surfaces with their own repository, release and acceptance lifecycle; no website/mobile implementation is implied by a Discord change.
+- **TikTok/community growth:** separate content/acquisition track to attract gamers to the Production server; content planning, original short-form videos, Discord join/onboarding funnel and measurement. Never publish or post automatically without owner approval.
+
+**Exactly three existing Discord environments are sufficient for present work:**
+1. **GamerHQ Production** — actual community destination. Stable real member data, messages and channels. Apply *only* accepted releases through existing Production release/backup/owner-approval gates. Do not use as a disposable test guild.
+2. **GamerHQ Staging** — *production-like functional acceptance*, a controlled mirror of Production's **intended server structure, channel/role policy, game configuration and enabled feature behavior** for testing and upgrading fixes before Production. First compare actual inventories, versions and mappings; drift is a finding, not permission to overwrite. Keep distinct Discord IDs, databases, tokens, private content and test membership; reproduce production configuration using approved/sanitized fixtures or idempotent templates, **never copy production secrets or private user data**.
+3. **Servertest** — independent clean/partial-install and template/first-time setup acceptance: preview, idempotence, role/channel permissions, missing-resource repair, uninstall/rejoin and permission failure paths. It is **not** required to mirror Production; its intentionally incomplete template is not a bug in the live community. No extra test guild is needed.
+
+**Required delivery path:** inspect Production read-only and compare against Staging; implement/validate in `develop` and tests; verify functional changes on Staging with relevant evidence; separately test fresh-install/template effects on Servertest when applicable; freeze a candidate and pass backups, rollback, privacy and owner-acceptance gates; only then request a protected release to `main` / GamerHQ Production. Never synchronize Production databases, Discord IDs or member-private resources into Staging.
+
+**Next concrete product priority:** verify Games → role selector → game visibility → game-specific channels in Production and Staging. Reuse `docs/GAME_SYSTEM.md`, the existing Games management/Show Game preview, and persisted game/channel ownership. Plan any missing channels by verified role/game inventory; only create/move with explicit scoped confirmation, preserve IDs/history, and run member-permission and duplicate-prevention checks. Follow with the existing LFG/events, voice, onboarding, permissions and bug backlog. Use [GamerHQ product roadmap](docs/development/GAMERHQ_PRODUCT_ROADMAP.md) as the canonical ordered backlog for this initiative.
+
 ## Invariants
 
 - GamerHQ acceptance uses repository tools, Discord/Host APIs and protected VPS workflows. Do not use Computer Use or control the owner's desktop unless the owner explicitly requests it.
@@ -80,6 +100,7 @@ Start with the relevant row; do not load every document or historical report.
 | Visibility and overwrites | [Permissions](docs/PERMISSIONS.md) |
 | Managed pins and editor | [Managed messages](docs/MANAGED_MESSAGES.md) |
 | Game library / optional areas | [Game system](docs/GAME_SYSTEM.md) |
+| Product launch priorities, environments and TikTok growth | [GamerHQ product roadmap](docs/development/GAMERHQ_PRODUCT_ROADMAP.md) |
 | Lobbies, invites and event lifecycle | [LFG/events](docs/LFG_EVENTS.md) |
 | External bots/services | [Integrations](docs/INTEGRATIONS.md) |
 | Commands / operations | [Commands](docs/COMMANDS.md), [deployment](DEPLOY.md), [release checklist](RELEASE_CHECKLIST.md) |

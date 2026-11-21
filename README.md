@@ -8,6 +8,28 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 
 GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with GamerHQ as its first reference customer/host. The long-term direction includes third-party Skill development and an AI-ready capability layer while keeping today's Discord server stable and maintainable. See the [Engineering Vision](docs/VISION.md), [Skill Runtime documentation](docs/skills/README.md), [Skill Developer Guide](docs/skills/developer-guide.md), and the [Software Development Lifecycle](docs/development/SDLC.md).
 
+## Multi-guild platform status (November 2026)
+
+**One shared Discord application, independently managed guilds** is the platform direction; GamerHQ is the first reference customer, not a required template for other customers. The **protected two-guild Staging pilot** (GamerHQ Staging and Servertest) is active and its bounded tenant-safety acceptance passed. [Milestone 2 PR #317](https://github.com/Duy-Phan96/GamerHQ/pull/317) was merged into `develop` on 20 November 2026. This **does not mean public/self-service enrollment or Production multi-guild rollout is available**.
+
+- Admission is presently restricted to the reviewed **exact two-guild Staging cohort**. An invitation by itself does not grant access.
+- Guild-scoped storage, management, command/component/modal handling, background work and Skill lifecycle are guarded by verified tenant identity. The original guild retains its legacy DB; the secondary uses a separately owned SQLite DB.
+- The **Gaming Community** structure is **optional**. A guild may select a template, use Skills only, or leave its configuration empty. Core template completion is assessed separately from platform safety.
+- Primary template: **55 configured, complete**. Servertest: **52 configured, 10 resources still missing**, intentionally not auto-created. The external Event Manager is installed but disabled on the primary; its package is available but **not installed** on Servertest.
+- Live-read-only checks, two-pass preview stability, cross-tenant API denial and offline regressions support the bounded Staging acceptance. Live callback registration, full member-role audits, mutation-path tests, runtime flags, fresh backup/OS attestation, public onboarding and Production readiness remain separately unverified.
+
+**Next: functional quality and Production readiness, using existing environments.** The existing three-server arrangement is sufficient: the two test guilds **GamerHQ Staging and Servertest** are for controlled testing, while the separate live/Production environment is only changed through reviewed release procedures. **No third test guild, public onboarding, generalized admission-registry rollout or new Discord server is planned for this milestone.** Priorities are reliable member and owner workflows, per-guild Skill/setup behavior, automated integration/regression acceptance, restart/recovery/backup checks, permission and UX fixes, and a gated Production release. Servertest's incomplete template is tracked separately; do not apply it merely to satisfy platform safety metrics. See the [functionality and release-readiness plan](docs/architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-functional-acceptance-and-production-readiness) and [project status](docs/development/PROJECT_STATUS.md).
+
+**Repository workflow:** `main` is the stable/default branch; `develop` receives feature PRs. Both require PRs, branch-specific passing CI and resolved review conversations, with no required approving reviewer for the current solo-maintainer workflow. Deployment requires its own protected owner approval; merging code does not deploy it. See [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
+
+## GamerHQ Community — launch priorities and project boundaries
+
+**First priority:** finish the existing GamerHQ Production server so it is reliable and ready for community promotion. The two test guilds have different purposes: **GamerHQ Staging** mirrors the **intended Production configuration and behavior** (using separate IDs, databases and safe test content) for functionality updates, while **Servertest** is for templates, first-time installations, permissions and partial setup states. Neither replaces Production or authorizes copying private data.
+
+The first concrete work is to verify the **game catalog, roles and per-game channels**, fix any missing links/channels through the existing confirmed Games management flow, and finish member-facing bug fixes and release acceptance. **No additional test servers are required.** Other product tracks — portable Skills, server-template product, TikTok content/Discord acquisition, future website and mobile app — have separate backlogs and release boundaries. They should not delay getting this community server ready to promote.
+
+See the [GamerHQ Community launch and growth roadmap](docs/development/GAMERHQ_PRODUCT_ROADMAP.md) for phases, evidence gates, exact environment responsibilities and the separate TikTok workstream.
+
 ## Features
 
 ### Gaming & LFG
