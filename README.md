@@ -8,6 +8,20 @@ GamerHQ is a Discord-based gaming community hub for finding players, organizing 
 
 GamerHQ is being evolved toward a modular, portable **Skill Runtime / SDK** with GamerHQ as its first reference customer/host. The long-term direction includes third-party Skill development and an AI-ready capability layer while keeping today's Discord server stable and maintainable. See the [Engineering Vision](docs/VISION.md), [Skill Runtime documentation](docs/skills/README.md), [Skill Developer Guide](docs/skills/developer-guide.md), and the [Software Development Lifecycle](docs/development/SDLC.md).
 
+## Multi-guild platform status (November 2026)
+
+**One shared Discord application, independently managed guilds** is the platform direction; GamerHQ is the first reference customer, not a required template for other customers. The **protected two-guild Staging pilot** (GamerHQ Staging and Servertest) is active and its bounded tenant-safety acceptance passed. [Milestone 2 PR #317](https://github.com/Duy-Phan96/GamerHQ/pull/317) was merged into `develop` on 20 November 2026. This **does not mean public/self-service enrollment or Production multi-guild rollout is available**.
+
+- Admission is presently restricted to the reviewed **exact two-guild Staging cohort**. An invitation by itself does not grant access.
+- Guild-scoped storage, management, command/component/modal handling, background work and Skill lifecycle are guarded by verified tenant identity. The original guild retains its legacy DB; the secondary uses a separately owned SQLite DB.
+- The **Gaming Community** structure is **optional**. A guild may select a template, use Skills only, or leave its configuration empty. Core template completion is assessed separately from platform safety.
+- Primary template: **55 configured, complete**. Servertest: **52 configured, 10 resources still missing**, intentionally not auto-created. The external Event Manager is installed but disabled on the primary; its package is available but **not installed** on Servertest.
+- Live-read-only checks, two-pass preview stability, cross-tenant API denial and offline regressions support the bounded Staging acceptance. Live callback registration, full member-role audits, mutation-path tests, runtime flags, fresh backup/OS attestation, public onboarding and Production readiness remain separately unverified.
+
+**Next: Multi-Guild V3 — controlled onboarding beyond the fixed cohort.** Work starts with a versioned admission/tenant registry and a reversible migration from the pilot binding, followed by owner-authorized guild enrollment, private DB provisioning, optional template/Skill setup, per-guild health and observability, and removal/rejoin recovery. New tenants must fail closed; the current pilot and Production remain unchanged until separate approval and evidence. See [Guild tenancy ADR and V3 gates](docs/architecture/decisions/ADR-001-guild-tenancy.md#milestone-3-proposed-generalized-guild-onboarding) and [project status](docs/development/PROJECT_STATUS.md).
+
+**Repository workflow:** `main` is the stable/default branch; `develop` receives feature PRs. Both require PRs, branch-specific passing CI and resolved review conversations, with no required approving reviewer for the current solo-maintainer workflow. Deployment requires its own protected owner approval; merging code does not deploy it. See [development workflow](docs/DEVELOPMENT_WORKFLOW.md).
+
 ## Features
 
 ### Gaming & LFG
