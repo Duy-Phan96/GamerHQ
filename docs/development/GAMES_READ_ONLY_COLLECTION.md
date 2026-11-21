@@ -1,4 +1,4 @@
-# Games-only read-only collection — Issue #329
+# Games-only read-only collection â€” Issue #329
 
 This prepares collection, not a deployment, repair or permission grant. No
 collector has run against Production or Staging under this change. The existing
@@ -124,7 +124,7 @@ Keep the receipt private. A rejected preflight reports a stable stage/reason and
 does not repair anything. This command does **not** enroll the Staging operation
 or authorize the subsequent full Production collection.
 
-### Legacy Production revision provenance — collection remains blocked
+### Legacy Production revision provenance â€” collection remains blocked
 
 The owner metadata preflight on 21 November 2026 returned a healthy non-root
 Production container but `hostCommit=null`, `buildCommit=null` and
@@ -246,7 +246,7 @@ the existing legacy readiness/visibility services then complete six fixture
 GETs with unchanged SQLite bytes. This is evidence for a narrowly scoped,
 in-memory observer adapter, **not an installed Host patch or ready live path**.
 
-#### Independent dependency check — the next approval boundary
+#### Independent dependency check â€” the next approval boundary
 
 `tools/game_audit_legacy_dependencies.py` is preparation for an owner-operated,
 dependency-only preflight. It cannot collect Games: there is no collection,
@@ -274,6 +274,9 @@ directories and the four non-executable installer metadata filenames RECORD,
 INSTALLER, REQUESTED and direct_url.json; unexpected covered package files,
 modified binaries, missing files, source/package mounts or symlinks fail closed.
 Two independent installed-file reads must agree. No dependency module is imported.
+All fixed source-check probes also run with `-S`, including those performed
+before dependency hashes have been verified; site startup is never used by
+this new preflight.
 
 See the authoritative [installed-project specification](https://packaging.python.org/en/latest/specifications/recording-installed-packages/)
 and [wheel installation format](https://packaging.python.org/en/latest/specifications/binary-distribution-format/):
@@ -305,9 +308,9 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/69ef27cc20ffc0e59cfc220ca7f231d39c53768f/tools/game_audit_legacy_dependencies.py'
-printf '%s  %s\n' '8a4253e57eb17f6a483864a7fb7a8243ceda51c2abfc273b51ed7a69f5546c16' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit 69ef27cc20ffc0e59cfc220ca7f231d39c53768f
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/d365994596df89d005c34af7e7d7a02d89f255c2/tools/game_audit_legacy_dependencies.py'
+printf '%s  %s\n' '0d6d79d6e7c0badc290caff3cc562707d228003d9b83912c5c01da9bc3a0e482' "$observer" | sha256sum --check --status
+/usr/bin/python3 -I -S -B "$observer" --source-commit d365994596df89d005c34af7e7d7a02d89f255c2
 GAMERHQ_CORE_DEPENDENCY_EVIDENCE
 ```
 
