@@ -24,7 +24,10 @@ FILES = ('tools/game_audit_execution.py','services/game_audit_context.py','servi
          'tools/game_launch_audit_collect.py','tools/game_launch_audit_report.py')
 
 
-class Rejected(RuntimeError): pass
+class Rejected(RuntimeError):
+    def __init__(self, reason, module=None):
+        super().__init__(reason)
+        self.module=module if isinstance(module,str) and len(module)<=200 and all(c.isalnum() or c in '._' for c in module) else None
 
 
 def canonical(value):
@@ -41,11 +44,12 @@ class Guard:
         self.database_phase=False;self.transport=None
         self.importing=True
         self.files=packet['verifiedFiles']
+        self.imports={}
         self.uri=Path(self.binding['database']).as_uri()+'?mode=ro'
 
-    def reject(self, reason):
+    def reject(self, reason, module=None):
         self.denied.append(reason)
-        raise Rejected(reason)
+        raise Rejected(reason,module)
 
     def audit(self, event, args):
         if event=='open':
@@ -65,12 +69,12 @@ class Guard:
             if event=='socket.getaddrinfo' and (args[0]!='discord.com' or args[1]!=443):
                 self.reject('NETWORK_TARGET_REJECTED')
 
-    def bytes(self, path):
+    def bytes(self, path, module=None):
         resolved=str(Path(path).resolve(strict=True))
-        if resolved!=path or path not in self.files:self.reject('UNVERIFIED_IMPORT')
+        if resolved!=path or path not in self.files:self.reject('UNVERIFIED_IMPORT',module)
         with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK),'rb') as stream:
             body=stream.read(32*1024**2+1)
-        if hashlib.sha256(body).hexdigest()!=self.files[path]:self.reject('IMPORT_HASH_REJECTED')
+        if hashlib.sha256(body).hexdigest()!=self.files[path]:self.reject('IMPORT_HASH_REJECTED',module)
         return body
 
     def http(self, method, url, options):
@@ -92,7 +96,7 @@ class VerifiedSource(importlib.machinery.SourceFileLoader):
         super().__init__(name,path);self.guard=guard
     def get_code(self, fullname):
         # Compile verified source directly; never consume or create cached pyc.
-        return compile(self.guard.bytes(self.path),self.path,'exec',dont_inherit=True)
+        return compile(self.guard.bytes(self.path,fullname),self.path,'exec',dont_inherit=True)
     def get_data(self, path):return self.guard.bytes(path)
     def exec_module(self, module):
         previous=self.guard.importing;self.guard.importing=True
@@ -104,25 +108,26 @@ class VerifiedFinder:
     def __init__(self, guard):self.guard=guard
     def find_spec(self, fullname, path=None, target=None):
         if fullname in {'site','sitecustomize','usercustomize','pip'} or fullname.startswith('gamerhq_skill_'):
-            self.guard.reject('UNVERIFIED_IMPORT')
+            self.guard.reject('UNVERIFIED_IMPORT',fullname)
         spec=importlib.machinery.PathFinder.find_spec(fullname,path)
         if spec is None:return None  # built-in/frozen importers retain standard behavior
         if spec.origin is None:
             for directory in spec.submodule_search_locations or ():
                 prefix=str(Path(directory).resolve())+'/'
-                if not any(p.startswith(prefix) for p in self.guard.files):self.guard.reject('UNVERIFIED_IMPORT')
+                if not any(p.startswith(prefix) for p in self.guard.files):self.guard.reject('UNVERIFIED_IMPORT',fullname)
             return spec
         origin=str(Path(spec.origin).resolve())
         if origin in self.guard.files:
-            self.guard.bytes(origin)
+            self.guard.bytes(origin,fullname)
+            self.guard.imports[fullname]='verified-source' if origin.endswith('.py') else 'verified-core-native'
             if origin.endswith('.py'):spec.loader=VerifiedSource(fullname,origin,self.guard)
             elif not any(origin.endswith(s) for s in importlib.machinery.EXTENSION_SUFFIXES):
-                self.guard.reject('UNVERIFIED_IMPORT')
+                self.guard.reject('UNVERIFIED_IMPORT',fullname)
             return spec
         # stdlib/native interpreter support remains the explicitly accepted TCB.
         stdlib=str(Path(sysconfig.get_path('stdlib')).resolve())+'/'
         if origin.startswith(stdlib) and not origin.startswith(LIB+'/'):return spec
-        self.guard.reject('UNVERIFIED_IMPORT')
+        self.guard.reject('UNVERIFIED_IMPORT',fullname)
 
 
 def limits():
@@ -226,7 +231,9 @@ def collect(packet):
     if guard.denied:raise Rejected(guard.denied[0])
     result.update(observerCommit=packet['observerCommit'],observerSourceSha256=packet['hashes'],
                   evidenceMode='LEGACY_VERIFIED_SOURCE_AND_CORE_FILES',hostCommit=None,
-                  hostRevisionVerified=False,buildOriginVerified=False,wholeImageIntegrityVerified=False)
+                  hostRevisionVerified=False,buildOriginVerified=False,wholeImageIntegrityVerified=False,
+                  importEvidence={'nonStdlibModules':guard.imports,'externalSkillImports':False,
+                                  'stdlibAssurance':'EXISTING_OPERATIONAL_TRUST_BASE'})
     return result
 
 
@@ -238,5 +245,6 @@ if __name__=='__main__':
     except Exception as error:
         reason=str(error) if isinstance(error,Rejected) else 'LEGACY_OBSERVER_UNAVAILABLE'
         print(json.dumps({'state':'GAMES_AUDIT_UNAVAILABLE','schemaVersion':1,'status':'UNVERIFIED',
-            'reason':reason,'databaseChanged':False,'discordResourcesChanged':False,'gatewayRestarted':False,
+            'reason':reason,'privateImportModule':error.module if isinstance(error,Rejected) else None,
+            'databaseChanged':False,'discordResourcesChanged':False,'gatewayRestarted':False,
             'hostRevisionVerified':False,'buildOriginVerified':False}))
