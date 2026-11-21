@@ -25,6 +25,11 @@ MANIFEST = 'deploy/production/games-legacy-dependencies.json'
 EQUIVALENT = ['6f38ddc80b4a6a3a982c16441d3c7ca3db79790d', 'e45c62117b324ff270db2067dbe30167b41cdeb4']
 GENERATED = {'RECORD', 'INSTALLER', 'REQUESTED', 'direct_url.json'}
 STAGE = 'OWNER_CHECK'
+REASONS = {'OWNER_SOURCE_REQUIRED','SOURCE_REJECTED','LOCK_REJECTED','BASELINE_REJECTED',
+    'BASELINE_CHANGED','DEPENDENCY_CHANGED','DEPENDENCY_MOUNT_REJECTED','DEPENDENCY_SYMLINK',
+    'UNSUPPORTED_INTERPRETER','UNSUPPORTED_LAYOUT','PROBE_REJECTED','WHEEL_SOURCE_REJECTED',
+    'WHEEL_CHECKSUM_REJECTED','WHEEL_BUDGET_REJECTED','WHEEL_LAYOUT_REJECTED',
+    'SOURCE_CHANGED','SOURCE_MOUNT_REJECTED','PUBLIC_SOURCE_REJECTED','CONTAINER_CHANGED'}
 
 PROBE = r'''
 import hashlib,json,os,platform,stat,sys,sysconfig
@@ -118,8 +123,13 @@ def compare(expected, observed):
         actual={p:h for p,h in observed.items() if p.split('/')[0] in roots}
         for filename, files in candidates.items():
             if files==actual:matches.append(filename)
+        differences=[{'wheel':name,'missing':len(set(files)-set(actual)),
+            'unexpected':len(set(actual)-set(files)),
+            'changed':sum(actual[p]!=h for p,h in files.items() if p in actual)}
+            for name,files in candidates.items()] if not matches else []
         results.append({'package':package,'status':'PASS' if matches else 'UNVERIFIED',
-                        'matchedWheels':sorted(matches)})
+                        'reason':None if matches else 'PACKAGE_MISSING' if not actual else 'INSTALLED_CORE_FILES_DIFFER',
+                        'matchedWheels':sorted(matches),'candidateDifferences':differences})
     return results
 
 
@@ -221,7 +231,11 @@ def main():
 if __name__=='__main__':
     sys.dont_write_bytecode=True
     try:main()
-    except Exception:
+    except Exception as error:
         # No paths, package contents, subprocess output, environment or tokens.
+        reason=error.args[0] if error.args and isinstance(error.args[0],str) and error.args[0] in REASONS else 'DEPENDENCY_PREFLIGHT_UNAVAILABLE'
+        if isinstance(error,subprocess.CalledProcessError):
+            match=re.search(r'ValueError: ([A-Z_]+)\s*$',str(error.stderr or ''))
+            if match and match.group(1) in REASONS:reason=match.group(1)
         raise SystemExit(json.dumps({'state':'GAMES_LEGACY_DEPENDENCY_UNAVAILABLE','stage':STAGE,
-                                    'collectionExecuted':False,'legacyCollectionEligible':False})) from None
+                                    'reason':reason,'collectionExecuted':False,'legacyCollectionEligible':False})) from None
