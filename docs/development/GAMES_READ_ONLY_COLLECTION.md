@@ -194,6 +194,33 @@ satisfy the Games collector's revision gate. Review the evidence before choosing
 any subsequent provenance attestation procedure. A rebuild/restart solely to
 add metadata is outside this authorization. Do not run full Games collection.
 
+After PR/CI review, the **one next owner action** is this source-only evidence
+command in the existing trusted root SSH session. The earlier metadata command
+has already completed; do not repeat it to resolve this provenance blocker.
+Immutable source `c270dbb9a330cd84ddb2b7a80d38c13dd852f3b8`, launcher SHA256
+`d2d6450981342b3e0569922c2049aa969cbac788487647efdfcc6412dcaff525`:
+
+```bash
+bash <<'GAMERHQ_SOURCE_PROVENANCE'
+set -euo pipefail
+[[ "$(id -u)" == 0 ]] || exit 1
+umask 077
+observer=$(mktemp)
+trap 'rm -f -- "$observer"' EXIT
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/c270dbb9a330cd84ddb2b7a80d38c13dd852f3b8/tools/game_audit_provenance.py'
+printf '%s  %s\n' 'd2d6450981342b3e0569922c2049aa969cbac788487647efdfcc6412dcaff525' "$observer" | sha256sum --check --status
+/usr/bin/python3 -I -B "$observer" --source-commit c270dbb9a330cd84ddb2b7a80d38c13dd852f3b8
+GAMERHQ_SOURCE_PROVENANCE
+```
+
+Return only its structured summary. Expected collection state is
+`GAMES_SOURCE_PROVENANCE_EVIDENCE`, with SOURCE_EQUIVALENCE_ONLY or NO_SOURCE_MATCH,
+`hostRevisionVerified=false`, `collectionExecuted=false`,
+`databaseAccessed=false`, `discordAccessed=false`. A failure is redacted by stable
+stage/reason and performs no repair. Do not forward unrelated terminal history
+or raw Docker/Git/Production records. This action gathers the missing evidence;
+it does not authorize an assertion of build origin or full Games collection.
+
 Full collection is a separately authorized operation requiring all of:
 
 1. Reviewed source commit and checksum-verified launcher; actual preflight
