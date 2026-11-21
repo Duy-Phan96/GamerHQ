@@ -1,5 +1,6 @@
 """Owner approval and read-only capabilities; no live Docker/Discord/SQLite."""
 import io
+import hashlib
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -96,3 +97,16 @@ def test_normal_attested_enforcement_is_unchanged_and_no_cli_bypass_exists():
     assert 'NORMAL_ATTESTED_ROUTE_REQUIRED' in source
     assert "open('/dev/tty','r'" in source
     assert '--approval' not in source and '--ignore-revision' not in source
+
+
+def test_verified_skill_runtime_source_is_distinct_from_runtime_database(tmp_path,monkeypatch):
+    monkeypatch.setattr(os,'geteuid',lambda:10001,raising=False)
+    monkeypatch.setattr(os,'getegid',lambda:10001,raising=False)
+    b=binding(tmp_path);sources={p:'pass\n' for p in runtime.FILES}
+    packet={'binding':b,'ownerApprovalSha256':runtime.approve_hash(b),'sources':sources,
+        'hashes':{p:hashlib.sha256(v.encode()).hexdigest() for p,v in sources.items()},
+        'normalizer':'pass','normalizerSha256':hashlib.sha256(b'pass').hexdigest(),
+        'verifiedFiles':{p:'a'*64 for p in ('/app/database/db.py','/app/config.py','/app/skill_runtime/runtime/registry.py')}}
+    runtime.validate(packet)
+    packet['verifiedFiles']['/app/runtime/data/gamerhq.db']='a'*64
+    with pytest.raises(runtime.Rejected,match='OBSERVER_SOURCE_REJECTED'):runtime.validate(packet)

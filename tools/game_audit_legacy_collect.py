@@ -44,15 +44,22 @@ token=os.environ.get('DISCORD_TOKEN') or os.environ.get('BOT_TOKEN')
 if not token:raise ValueError('CREDENTIAL_UNAVAILABLE')
 class NoRedirect(urllib.request.HTTPRedirectHandler):
  def redirect_request(self,*a,**kw):return None
+guild=os.environ.get('GUILD_ID','')
+if not guild.isdecimal() or int(guild) in {1567098041641738331,1571908030532948129}:raise ValueError('PRODUCTION_BINDING_REJECTED')
 opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
-request=urllib.request.Request('https://discord.com/api/v10/users/@me',headers={'Authorization':'Bot '+token,'User-Agent':'GamerHQ-readonly-identity'},method='GET')
-with opener.open(request,timeout=15) as reply:
- if reply.status!=200:raise ValueError('BOT_IDENTITY_REJECTED')
- raw=reply.read(65537)
- if len(raw)>65536:raise ValueError('BOT_IDENTITY_REJECTED')
- value=json.loads(raw)
+def get(path):
+ request=urllib.request.Request('https://discord.com/api/v10'+path,headers={'Authorization':'Bot '+token,'User-Agent':'GamerHQ-readonly-identity'},method='GET')
+ with opener.open(request,timeout=15) as reply:
+  if reply.status!=200:raise ValueError('BOT_IDENTITY_REJECTED')
+  raw=reply.read(65537)
+  if len(raw)>65536:raise ValueError('BOT_IDENTITY_REJECTED')
+  return json.loads(raw)
+value=get('/users/@me')
 if value.get('bot') is not True or not str(value.get('id','')).isdecimal():raise ValueError('BOT_IDENTITY_REJECTED')
-print(json.dumps({'applicationId':int(value['id'])}))
+if int(value['id'])==1567098530525351976:raise ValueError('PRODUCTION_BINDING_REJECTED')
+server=get('/guilds/'+guild)
+if server.get('id')!=guild or not isinstance(server.get('name'),str):raise ValueError('PRODUCTION_BINDING_REJECTED')
+print(json.dumps({'applicationId':int(value['id']),'guildId':int(guild),'guildName':server['name']}))
 '''
 
 
@@ -75,6 +82,7 @@ def confirm(tty,binding):
     tty.write('\nPRIVATE Production binding — do not post this preview publicly:\n'+json.dumps(binding,indent=2,sort_keys=True))
     tty.write('\nCore/source verification passed. Confirm only if these are your intended Production resources.\n')
     tty.write('This performs only Games SQLite reads and bounded Discord GETs; original build provenance remains unverified.\n')
+    tty.write('The existing Python/stdlib, OS and Docker remain the operational trust base; whole-image integrity is not attested.\n')
     tty.write('Type exactly: '+expected+'\n> ');tty.flush()
     if tty.readline(256).strip()!=expected:raise ValueError('OWNER_CANCELLED')
     return digest(binding)
@@ -154,11 +162,12 @@ def main():
             if meta['hostCommit'] is not None or evidence['buildMarkerState']=='VALID_HEX':raise ValueError('NORMAL_ATTESTED_ROUTE_REQUIRED')
             STAGE='PRIVATE_BINDING'
             config=metadata(meta);operator.database_mount(meta,config['database'],'production')
-            identity=subprocess.run(['docker','exec','--user',meta['user'],meta['id'],'python','-I','-S','-B','-c',IDENTITY],capture_output=True,text=True,check=True,timeout=20).stdout
-            if len(identity)>1024:raise ValueError('BOT_IDENTITY_REJECTED')
-            app=json.loads(identity)['applicationId']
+            identity=subprocess.run(['docker','exec','--user',meta['user'],meta['id'],'python','-I','-S','-B','-c',IDENTITY],capture_output=True,text=True,check=True,timeout=35).stdout
+            if len(identity)>2048:raise ValueError('BOT_IDENTITY_REJECTED')
+            identity=json.loads(identity);app=identity['applicationId']
             if type(app) is not int or app<=0 or app==DENIED_APP:raise ValueError('BOT_IDENTITY_REJECTED')
-            binding={**config,'environment':'production','applicationId':app,'containerId':meta['id'],'imageId':meta['image'],
+            if identity.get('guildId')!=config['guildId'] or not isinstance(identity.get('guildName'),str):raise ValueError('PRODUCTION_BINDING_REJECTED')
+            binding={**config,'environment':'production','applicationId':app,'guildName':identity['guildName'],'containerId':meta['id'],'imageId':meta['image'],
                      'sourceManifestSha256':evidence['sourceManifestSha256'],
                      'coreFilesSha256':digest(context['dependencyFiles']),'observerCommit':args.source_commit}
             STAGE='OWNER_CONFIRMATION';approval=confirm(tty,binding)
@@ -184,7 +193,7 @@ def main():
             final=deps.verified_context(git,manifest,operator,provenance)
             if final['public']!=context['public'] or final['container']!=meta:raise ValueError('BINDING_CHANGED')
             result.update(privateBinding=binding,ownerApprovalSha256=approval,sourceEquivalentCommits=deps.EQUIVALENT,
-                          coreIntegrity=context['public'],runtimeSha256=hashlib.sha256(runtime.encode()).hexdigest())
+                          coreIntegrity=context['public'],identityPrecheckReads=2,runtimeSha256=hashlib.sha256(runtime.encode()).hexdigest())
             STAGE='PRIVATE_RECEIPT';identifier,target=receipt(output_directory,result)
             tty.write('\nPrivate receipt: '+str(target)+'\n');tty.flush()
             if result['state']=='GAMES_AUDIT_UNAVAILABLE':

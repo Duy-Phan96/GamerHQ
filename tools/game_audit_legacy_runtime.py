@@ -127,6 +127,7 @@ class VerifiedFinder:
 
 def limits():
     import resource
+    os.nice(10)
     resource.setrlimit(resource.RLIMIT_CPU,(45,45))
     resource.setrlimit(resource.RLIMIT_AS,(512*1024**2,512*1024**2))
     resource.setrlimit(resource.RLIMIT_NOFILE,(128,128))
@@ -153,7 +154,7 @@ def validate(packet):
         raise Rejected('OBSERVER_SOURCE_REJECTED')
     for path,digest in packet['verifiedFiles'].items():
         if (not (path.startswith('/app/') or path.startswith(LIB+'/')) or '/..' in path
-                or '/.env' in path or '/runtime/' in path or len(digest)!=64
+                or '/.env' in path or path.startswith('/app/runtime/') or len(digest)!=64
                 or any(c not in '0123456789abcdef' for c in digest)):
             raise Rejected('OBSERVER_SOURCE_REJECTED')
 
