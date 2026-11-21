@@ -1,5 +1,35 @@
 # Games launch audit — Issue #329
 
+## Current decision — 2026-11-21 legacy Production preparation
+
+PR [#330](https://github.com/Duy-Phan96/GamerHQ/pull/330) now contains the bounded
+owner-confirmed legacy observer. The earlier investigation below is historical;
+its statements about no PR/commit/ready procedure describe that earlier audit.
+
+Owner evidence confirms 150 source files and all 15 Core dependency packages.
+Original build commit/image provenance remains unavailable; the two equivalent
+commits are not identified as the original build. No Games collection has run.
+Production and Staging Games inventories remain UNVERIFIED.
+
+**GO for separate owner-authorized read-only collection once candidate CI passes.**
+The single procedure refreshes source/core integrity, privately verifies and
+requires approval of exact application/guild/container/image/DB binding, and runs
+existing Games services through the isolated GET-only/RO-SQL observer. It does not
+weaken normal revision checks or grant remote access. Existing Python/stdlib/OS/
+Docker remain an explicit operational trust assumption; whole-image integrity is
+not claimed. The cold rehearsal found `typing_extensions` outside the 15-package
+lock: an independently checksum-verified observer-only wheel is loaded in memory,
+not installed and not trusted from the Production filesystem.
+
+The [collection runbook](GAMES_READ_ONLY_COLLECTION.md) contains one complete
+checksum-verified owner command, receipt/abort rules and privacy requirements.
+No repeated standalone metadata/dependency preflight is needed. Stop on any
+integrity/import/binding failure; do not install packages or deploy to bypass it.
+Normal Production release, Staging enrollment and all Discord/database mutations
+retain their separate approval boundaries. PR #330 remains draft.
+
+## Historical initial audit
+
 Date: 21 November 2026, Europe/Berlin. **Audit incomplete; no live correction
 authorized or performed.** Production is the community; GamerHQ Staging is its
 functional mirror. Servertest is excluded. No Computer Use.

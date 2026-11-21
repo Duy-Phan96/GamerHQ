@@ -69,313 +69,149 @@ stable sanitized errors and an opaque receipt ID. No public artifact uploads.
 An owner with existing authorized VPS access can compare the private receipts;
 the agent's restricted key does not gain arbitrary file access.
 
-## Production: existing owner administrative boundary
+## Production: one owner-confirmed legacy collection
 
-**Exact missing capability:** this Codex session has no authenticated Production
-Games endpoint or permission-scoped Production command/SSH identity. Staging
-credentials, environment secrets and the Staging policy cannot authorize it.
-No new SSH identity, Docker/root grant or copy of the Production token is proposed.
+**Decision: GO for a separately owner-authorized read-only execution after the
+linked candidate CI passes. No live collection has been executed.** Production
+Games readiness remains UNVERIFIED until a successful private collection receipt
+exists. This is compatibility evidence, not original build provenance.
 
-`tools/game_audit_operator.py` is a standalone system-Python-3.9-compatible
-owner launcher for the existing Docker administrative context. It verifies its
-own bytes against the explicitly selected immutable Git commit before proceeding.
-Its Production target is the existing documented `gamerhq-bot` container.
-Production's Dockerfile uses `USER gamerhq` and `/app/BUILD_COMMIT`, while Staging
-overlays also supply OCI labels. The metadata probe verifies the actual non-root
-UID/GID and reads only that regular, non-symlink build marker. Label/marker
-disagreement is rejected. Missing valid revision evidence is explicit
-`hostRevisionVerified=false` and prevents full collection; no image rebuild or
-deployment is attempted to supply missing metadata.
+### Evidence and remaining trust boundary
 
-The first owner step is **metadata preflight only**: inspect filtered container
-identity, running/health state, revision/image, non-root user, workdir and mounts.
-It does not read `.Config.Env`. A fixed standard-library-only metadata probe
-runs under the container's existing non-root user and reads only `GUILD_ID`,
-`GAMERHQ_DB_PATH` and the configured file's stat (not contents). It calls no
-Discord API, opens no SQLite connection, imports no app/config and changes no
-policy or service. Keep this output private;
-do not paste raw Production metadata into public GitHub comments.
-
-Immutable prepared observer/client source:
-`b1f38fe19a86c6a8fa31f8273d2503d6e2649d11`.
-The proposed Staging workflow checks out that exact commit. The owner launcher
-at that revision has SHA256
-`bb84782fe9b53872ee85e7e286af553073797d32e35b2003fdbe5f17889f1f3d`.
-
-After PR/CI review and **separate owner approval of metadata preflight**, the
-following complete command is for the existing trusted root SSH session on the
-existing VPS. It is provided for owner review, not executed by Codex:
-
-```bash
-bash <<'GAMERHQ_GAMES_METADATA_PREFLIGHT'
-set -euo pipefail
-[[ "$(id -u)" == 0 ]] || exit 1
-umask 077
-observer=$(mktemp)
-trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/b1f38fe19a86c6a8fa31f8273d2503d6e2649d11/tools/game_audit_operator.py'
-printf '%s  %s\n' 'bb84782fe9b53872ee85e7e286af553073797d32e35b2003fdbe5f17889f1f3d' "$observer" | sha256sum --check --status
-/usr/bin/python3 "$observer" --source-commit b1f38fe19a86c6a8fa31f8273d2503d6e2649d11 --environment production --container gamerhq-bot --preflight
-GAMERHQ_GAMES_METADATA_PREFLIGHT
-```
-
-Expected success state: `GAMES_OWNER_PREFLIGHT`, `collectionExecuted=false`.
-Keep the receipt private. A rejected preflight reports a stable stage/reason and
-does not repair anything. This command does **not** enroll the Staging operation
-or authorize the subsequent full Production collection.
-
-### Legacy Production revision provenance â€” collection remains blocked
-
-The owner metadata preflight on 21 November 2026 returned a healthy non-root
-Production container but `hostCommit=null`, `buildCommit=null` and
-`hostRevisionVerified=false`. Full collection still fails with
-`HOST_REVISION_UNAVAILABLE`. These nulls alone do not prove that the marker file
-is absent: the existing inspector also returns null for `unknown` or malformed
-contents. No Production commit is established by this receipt.
-
-Repository and GitHub evidence reviewed for this blocker:
-
-- The Production Dockerfile never declares an OCI revision label. The label in
-  Staging overlays cannot be assumed on Production.
-- `f00c29227cfb4e7d822ff8c13105efd4af03bc8e` introduced `ARG VCS_REF=unknown`
-  and `/app/BUILD_COMMIT` on main's history. Its parent Dockerfile lacks both.
-  A newer manual build without the argument also yields an unknown revision.
-  Neither possibility proves which Dockerfile built the running container.
-- `scripts/update.sh` supplies Git HEAD through VCS_REF. CI's ordinary
-  `docker compose build` does not, and its local test image is not published as
-  a Production deployment artifact. No Host image publishing/attestation step
-  was found in the inspected workflows.
-- GitHub's release/tag listing contains the Skill SDK wheel release, not a Host
-  image-to-commit attestation. Queries for deployments in `production` and
-  `Production` returned zero records on 21 November. This does not prove that
-  an owner deployment never occurred outside GitHub.
-- The existing rollback guide leaves the checkout on main while restoring a
-  previous image. `/opt/gamerhq/previous-commit` and the mutable `:previous` tag
-  are recovery clues, not a cryptographically sealed running-image/commit pair.
-  The release snapshot document is a template, not a completed deployment record.
-
-**Smallest next read:** `tools/game_audit_provenance.py` extends the existing
-owner-operated inspection tooling with a source-only evidence command. It loads
-the existing owner inspector from the same immutable verified Git source, calls
-no configuration/DB probe and never imports application modules. Under the
-already configured non-root container identity it hashes only these public
-source scopes: top-level bot/config/release Python, VERSION/CHANGELOG and
-requirements; Python files in cogs/database/services/tools/skill_runtime/hosts/
-skills; the two repository seed/catalog JSON files. It classifies only the fixed
-BUILD_COMMIT marker as ABSENT, UNKNOWN_DEFAULT, VALID_HEX or INVALID.
-
-It does not read `.env`, environment values, SQLite files/sidecars, backups,
-messages, logs, member records or installed dependency packages. It never calls
-Docker run/start/stop/build, Compose, the Gateway or Discord. No Production
-receipt/file is written. Temporary downloaded public Git source is removed.
-
-The operation searches bounded, explicitly unshallowed public main/develop
-history as **candidate discovery**, not assumed deployment identity. It requires
-exact selected path-set/Git-blob equality and independent SHA256 verification
-of every matching file. Additional/missing/modified selected source files do not
-match; source mounts, symlinks, nonregular files and changed observations fail
-closed. Two independent source reads and before/after container inspection must
-agree on exact container ID, image ID, runtime user and mounts. The public receipt
-contains a SHA256 commitment to the exact container/image pair, the source
-manifest hash, counts, public candidate commits and discovery refs; no raw image,
-container, mount, source contents or per-file manifest is printed or uploaded.
-
-`SOURCE_EQUIVALENCE_ONLY` means exactly that. Even one selected-source match does
-not prove the original build commit, build recipe, complete image, dependency
-set, current in-memory code or clean build context. Multiple documentation-only
-commits can have identical selected sources. All matches remain visible; never
-choose the newest commit. Off-branch/deleted history and custom builds can yield
-NO_SOURCE_MATCH. No branch, tag, VERSION or matching source set is automatically
-promoted to an authoritative production commit.
-
-The receipt always retains `hostRevisionVerified=false`,
-`buildOriginVerified=false` and `collectionExecuted=false`. It cannot clear or
-satisfy the Games collector's revision gate. Review the evidence before choosing
-any subsequent provenance attestation procedure. A rebuild/restart solely to
-add metadata is outside this authorization. Do not run full Games collection.
-
-After PR/CI review, the **one next owner action** is this source-only evidence
-command in the existing trusted root SSH session. The earlier metadata command
-has already completed; do not repeat it to resolve this provenance blocker.
-Immutable source `c270dbb9a330cd84ddb2b7a80d38c13dd852f3b8`, launcher SHA256
-`d2d6450981342b3e0569922c2049aa969cbac788487647efdfcc6412dcaff525`:
-
-```bash
-bash <<'GAMERHQ_SOURCE_PROVENANCE'
-set -euo pipefail
-[[ "$(id -u)" == 0 ]] || exit 1
-umask 077
-observer=$(mktemp)
-trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/c270dbb9a330cd84ddb2b7a80d38c13dd852f3b8/tools/game_audit_provenance.py'
-printf '%s  %s\n' 'd2d6450981342b3e0569922c2049aa969cbac788487647efdfcc6412dcaff525' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -B "$observer" --source-commit c270dbb9a330cd84ddb2b7a80d38c13dd852f3b8
-GAMERHQ_SOURCE_PROVENANCE
-```
-
-Return only its structured summary. Expected collection state is
-`GAMES_SOURCE_PROVENANCE_EVIDENCE`, with SOURCE_EQUIVALENCE_ONLY or NO_SOURCE_MATCH,
-`hostRevisionVerified=false`, `collectionExecuted=false`,
-`databaseAccessed=false`, `discordAccessed=false`. A failure is redacted by stable
-stage/reason and performs no repair. Do not forward unrelated terminal history
-or raw Docker/Git/Production records. This action gathers the missing evidence;
-it does not authorize an assertion of build origin or full Games collection.
-
-### Decision on the owner's source-equivalence result
-
-Owner evidence on 21 November confirms 150 selected source files equivalent to
+The owner verified the healthy existing container identity, non-root DB binding,
+150 matching source files, and all 15 pinned Core packages against independent
+published wheel bytes. Two commits are source-equivalent:
 `6f38ddc80b4a6a3a982c16441d3c7ca3db79790d` and
-`e45c62117b324ff270db2067dbe30167b41cdeb4`. Their Git diff contains only two
-Event Manager documentation files. This is a reviewed **source equivalence
-class**, not proof of either original build commit. The owner's excerpt does
-not include the private image/container values; do not invent those values.
+`e45c62117b324ff270db2067dbe30167b41cdeb4`. Neither is asserted to be the actual
+build commit. Missing OCI revision/BUILD_COMMIT data cannot be reconstructed
+from source equality. `hostRevisionVerified`, `buildOriginVerified` and
+`wholeImageIntegrityVerified` remain false.
 
-**Decision: a separate legacy read-only observer is conditionally viable, but
-not yet eligible or authorized.** Source equivalence plus exact image/container
-identity can bind an observer to a reviewed application source generation. It
-does not establish the code imported from installed third-party packages, the
-interpreter/stdlib, OS libraries, build recipe or the running process's memory.
-Do not add `--ignore-revision`, treat either equivalent commit as attested, or
-change the existing normal collector's `HOST_REVISION_UNAVAILABLE` guard.
+The material remaining requirements are enforced together in the single launcher:
+refreshed source/dependency integrity, an allowlisted cold import closure, exact
+private resource identity, owner consent for that binding, and read-only execution.
+The prior dependency-only receipt is **not** collection authorization. Do not
+repeat the old metadata/source/dependency commands as separate prerequisites.
 
-The exact legacy generation also lacks `tools/game_catalog_import.py`, which
-the current observer imports for `name_key`. A cold disposable-source rehearsal
-reproduces that failure before collection/DB creation. A positive rehearsal
-injects only the exact reviewed normalizer function into the observer process;
-the existing legacy readiness/visibility services then complete six fixture
-GETs with unchanged SQLite bytes. This is evidence for a narrowly scoped,
-in-memory observer adapter, **not an installed Host patch or ready live path**.
+The existing CPython interpreter/stdlib, OS, dynamic libraries, Docker and the
+owner's trusted administrative session remain the operational trust base. This
+procedure does not attest the entire image or sandbox malicious native code.
+Authenticated Core native modules are permitted; unknown app/package modules and
+external Skill implementations are not. If the owner cannot accept that existing
+operational trust base, the decision is BLOCKED: retain UNVERIFIED and use a
+separately reviewed external observer over an owner-approved immutable snapshot
+and GET-only inventory. Do not deploy merely to supply missing build metadata.
 
-#### Independent dependency check â€” the next approval boundary
+### Exact execution boundary
 
-`tools/game_audit_legacy_dependencies.py` is preparation for an owner-operated,
-dependency-only preflight. It cannot collect Games: there is no collection,
-arbitrary path/package, output-file or execution switch. It reuses the existing
-inspector and source-evidence checks, freshly verifies the exact two equivalent
-sources, and binds both ends of the check to the same container/image and source
-fingerprint. It loads no application code and reads no DB, config environment,
-Discord, logs, member data or external Skill packages.
+`tools/game_audit_legacy_collect.py` is an owner-operated system-Python launcher,
+not a service/controller replacement and not an unrestricted remote-agent grant.
+It accepts only its immutable source commit; no arbitrary code, guild, database,
+SQL or ignore-revision argument exists. Normal Hosts still use
+`game_audit_operator.py` and fail closed with `HOST_REVISION_UNAVAILABLE`.
+Attested Hosts are rejected by this legacy route.
 
-`deploy/production/games-legacy-dependencies.json` pins the 15 Core requirements
-for that source generation, 24 independently published CPython 3.12/Linux x86_64
-or compatible ABI3/pure-Python wheel variants, their files.pythonhosted.org URLs,
-archive SHA256 values and sizes. The requirements file's SHA256 and exact
-package/version set must match both source-equivalent commits. The Python 3.13+
-audioop marker is excluded only for the explicit 3.12 target.
+1. Require root in the existing trusted SSH session, a real private TTY, a
+   root-private existing home directory and a nonblocking exclusive observer
+   lock. Fetch exact source commits and independently verify launcher/helper
+   bytes, both source-equivalent trees and all 15 Core packages. No app import,
+   DB opening or Discord Games collection occurs during these checks.
+2. The cold Docker rehearsal exposed an unpinned transitive import:
+   `aiohttp` requires `typing_extensions` on Python 3.12. Never trust the installed
+   extra package. Download the exact reviewed `typing_extensions` 4.15.0 wheel,
+   verify its archive and module SHA256, and load only that verified Python source
+   in observer memory. No pip install or Host filesystem change. The separate
+   observer supplement is recorded in the manifest/private receipt.
+3. Inspect only the fixed existing `gamerhq-bot` container. Verify running/healthy
+   identity, exact image ID, non-root UID/GID, source/dependency mounts and the
+   existing `/opt/gamerhq/data` binding. Resolve the configured DB with symlink,
+   ownership and device/inode checks. Two bounded identity GETs verify the actual
+   bot and configured guild. Staging/Servertest IDs and the shared Staging bot
+   are explicitly denied.
+4. Display the exact application, guild/name, container/image, database identity,
+   observer/source/core/supplement fingerprints and a per-session nonce **only on
+   the private TTY**. Require the displayed `COLLECT LEGACY GAMES READ ONLY <hash>`
+   phrase. Cancel or any mismatch aborts. No unattended/env/CLI consent exists.
+5. Recheck the approved binding and execute an ephemeral non-root process using
+   `python -I -S -B`. Source/hash allowlists compile verified source directly,
+   exclude pyc/site hooks/unknown packages/external Skills, and suppress dotenv.
+   The legacy adapter reuses the installed Games services and DB module; the
+   reviewed catalog name normalizer is supplied in memory. No Host module file
+   is replaced.
+6. Audit guards deny file writes, schema initialization, subprocesses, Gateway
+   login/connect/start, listeners and import-time network/database access.
+   Only the exact `mode=ro` DB URI and bounded in-memory snapshot are allowed.
+   Snapshot reads use query_only plus a SQL authorizer: Games/settings/catalog
+   metadata and channel-reference columns needed by existing dependency checks;
+   no member lists, event descriptions or private message payload queries.
+   The snapshot contains SQLite pages in memory only and is never exported.
+7. Use only the fixed single-guild GET allowlist. No message/history lookup,
+   member enumeration, other guild, redirect, proxy or HTTP mutation. At most 24
+   inventory attempts/90 seconds, 2 MiB per HTTP body, 32 MiB SQLite snapshot,
+   45 CPU seconds, 512 MiB address space, 128 descriptors, 120-second observer
+   alarm and 150-second parent timeout. Public reference artifact fetches have
+   separate size, checksum and timeout bounds; they are not Discord calls.
+8. Recheck exact container/image/config and all source/Core integrity after the
+   observer. Exclusive-create/fsync a private mode-0600 JSON receipt under the
+   existing root-private home. Detailed IDs/maps/import names stay private;
+   stdout contains only safe state/counts/opaque receipt ID. No public Actions
+   artifact contains Production evidence.
 
-The owner tool downloads only pinned public artifacts into bounded memory,
-verifies archive SHA256 before ZIP parsing and independently derives file
-SHA256 values. It does not install or extract packages on Production. Installed
-files are hashed by fixed stdlib-only `python -I -S -B` code under the already
-configured non-root user; `-S` prevents site initialization/.pth execution.
-Installed versions, pip check and the installed RECORD file are **not proof**.
-The wheel itself is the independent reference. Ignore only generated bytecode
-directories and the four non-executable installer metadata filenames RECORD,
-INSTALLER, REQUESTED and direct_url.json; unexpected covered package files,
-modified binaries, missing files, source/package mounts or symlinks fail closed.
-Two independent installed-file reads must agree. No dependency module is imported.
-All fixed source-check probes also run with `-S`, including those performed
-before dependency hashes have been verified; site startup is never used by
-this new preflight.
+A live bot may continue its normal independent writes while the observer reads;
+this procedure neither freezes the bot nor claims the whole live DB is globally
+unchanged. The observer opens it read-only and exports only the Games projection.
 
-See the authoritative [installed-project specification](https://packaging.python.org/en/latest/specifications/recording-installed-packages/)
-and [wheel installation format](https://packaging.python.org/en/latest/specifications/binary-distribution-format/):
-installer metadata/RECORD can change at installation, so verifying that file
-against itself is not independent integrity evidence.
+### One owner action
 
-A matching result proves only **the pinned Core wheel files**. It does not prove
-the complete environment, external Skills, native interpreter/stdlib/OS or build
-origin. Python/stdlib, the kernel and owner-operated Docker remain the existing
-operational trust base; if that trust base is disputed, stop and investigate it
-separately. Package authenticity also does not establish absence of vulnerabilities.
-
-Even a fully matching dependency preflight returns `legacyCollectionEligible=false`,
-`hostRevisionVerified=false`, `wholeImageIntegrityVerified=false` and
-`collectionExecuted=false`. Production game readiness remains UNVERIFIED.
-
-After PR/CI review, the **one next owner action** is to run this dependency-only
-check in the existing trusted root SSH session and return its structured summary.
-The previous source-equivalence command already succeeded; do not repeat that
-standalone step. This batch freshly rechecks the existing source binding itself.
-It authorizes no Games collection, app imports, SQLite/Discord access, service
-changes or installation. It writes only temporary public Git scratch outside
-the Production application and removes it on exit.
+After reviewing the linked CI and accepting the trust boundary above, run the
+following in the **existing trusted root SSH session**. This is the sole new
+collection approval boundary. Inspect the private binding and type its exact
+one-session phrase only if it identifies the intended Production guild, app,
+image and DB. No additional root enrollment, deployment or standalone preflight
+is required. Do not paste the private preview/receipt into GitHub or chat.
 
 ```bash
-bash <<'GAMERHQ_CORE_DEPENDENCY_EVIDENCE'
+bash <<'GAMERHQ_LEGACY_GAMES_READONLY'
 set -euo pipefail
 [[ "$(id -u)" == 0 ]] || exit 1
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 32768 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/d365994596df89d005c34af7e7d7a02d89f255c2/tools/game_audit_legacy_dependencies.py'
-printf '%s  %s\n' '0d6d79d6e7c0badc290caff3cc562707d228003d9b83912c5c01da9bc3a0e482' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit d365994596df89d005c34af7e7d7a02d89f255c2
-GAMERHQ_CORE_DEPENDENCY_EVIDENCE
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/0271dfe4c63dda061676a722ac0ab2e133afae27/tools/game_audit_legacy_collect.py'
+printf '%s  %s\n' '8a9da18aea9ae695e73b7964a34b23b8941059265835e3b9e486f772401c0054' "$observer" | sha256sum --check --status
+/usr/bin/python3 -I -S -B "$observer" --source-commit 0271dfe4c63dda061676a722ac0ab2e133afae27
+GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-Expected state: `GAMES_LEGACY_DEPENDENCY_PREFLIGHT`; examine
-`lockedCoreDependenciesMatch` and per-package PASS/UNVERIFIED. Mismatches expose
-only package names, pinned public wheel filenames and missing/extra/changed
-counts, never installed file paths/content. Failures carry bounded stage/reason
-codes. `legacyCollectionEligible=false` and `collectionExecuted=false` remain
-mandatory even if every Core dependency matches. Do not chain a collection or
-repair command after this check.
+Expected successful public state: `GAMES_LEGACY_COLLECTION_COMPLETE`, aggregate
+`READY/NOT_SET_UP/HIDDEN/SETUP_NEEDED/REVIEW/UNVERIFIED` counts, opaque
+`privateReceiptId`, `collectionExecuted=true`, and all change flags false.
+Original Host revision/build provenance stay false. A successful collection may
+still report individual games UNVERIFIED/REVIEW; that is not permission to repair.
 
-#### Conditions for a separately reviewed legacy collection
+### Abort and compensation
 
-Before preparing a live legacy collector, require the dependency receipt and a
-reviewed observer adapter with a positive cold rehearsal against the exact
-equivalence class. Bind approval to the actual private container ID, image ID,
-source/dependency fingerprints, exact Production application/guild and configured
-database path. Refresh all integrity/binding checks inside the eventual operation;
-an old receipt or equivalent source commit must not independently authorize it.
+Abort on a stale/changed binding, source/package mismatch, unsupported CPython
+3.12 Linux x86_64 layout, unknown import, unsafe DB identity, owner cancellation,
+quota/rate/response/schema failure, read-only guard violation or failed postcheck.
+Keep inventory UNVERIFIED; the private receipt retains bounded diagnostics when
+available. Never resolve a failure with pip install, broader privileges, database
+repair, a bot restart or skipped validation. Stop the ephemeral observer on its
+bound timeout; remove only public scratch downloads. No DB restore, image rollback,
+Gateway manipulation or Discord compensation is necessary because the operation
+performs no application writes. Root-private receipt and zero-byte observer lock
+are audit metadata only.
 
-Use an isolated `-I -S` observer with explicit verified import paths, no startup
-hooks/bytecode substitution or external Skill loading, the existing Games
-readiness semantics and read-only SQLite snapshot/authorizer, owner authorization,
-and the fixed single-guild GET allowlist. Preserve the legacy schema; no migrations
-or DB/module replacement. Detailed receipts stay private and exclusive-create;
-public output is aggregate only. Normal attested Hosts keep the existing route
-and exact revision enforcement. No compatibility-enabled live executor is added
-by this dependency-preflight change.
+### Verification evidence
 
-Abort before collection on any unsupported platform/layout, non-root identity
-failure, unknown/mismatched artifact, missing/extra/modified package file, source
-or dependency mount, changed observation, source/API incompatibility, uncertain
-tenant ownership, failed read-only gate or unexpected import. Never fall back
-to unverified installed modules or resolve a failure by pip install, restart,
-rebuild, schema repair or broader privileges.
-
-**Rollback/abort:** these evidence operations mutate no application state; stop
-the ephemeral observer and discard scratch public artifacts. There is nothing
-to restore, migrate, redeploy or reconcile. Never roll back a DB or manipulate
-the Gateway to make an evidence check pass. If compatibility cannot satisfy the
-above conditions, retain UNVERIFIED and prepare a separately reviewed isolated
-observer/import solution; a Production deployment is not authorized or currently
-required merely to investigate this inventory.
-
-Full collection is a separately authorized operation requiring all of:
-
-1. Reviewed source commit and checksum-verified launcher; actual preflight
-   metadata, not paths/images assumed from Staging.
-2. Exact expected Host commit/image, guild/application identities and DB path
-   approved privately by the owner. The DB must reside on the existing verified
-   `/opt/gamerhq/data` bind mount. Unsupported layouts stop for review.
-3. Explicit phrase `COLLECT GAMES READ ONLY`, and a new output file in an existing
-   owner-private directory (root-owned, no group/other access). No overwrite.
-4. Source equality for the installed DB/Services/config against the immutable
-   declared Host commit; no deployment or runtime source replacement to make it
-   pass. Unknown/dirty sources or absent readiness capabilities stay UNVERIFIED.
-5. The sealed observer running through `docker exec` under the existing configured
-   non-root user. Before/after container/image/mount identity must agree. DB
-   integrity is checked on the in-memory snapshot; no migration/init/restore.
-
-The private receipt is created mode 0600 only after validation. Public stdout is
-limited to success/unavailable metadata; subprocess output, API responses and
-arbitrary exception text are never forwarded. Unknown errors include a stable
-execution stage. If no compatible running Host is verified, stop; no fallback
-container, new guild or expanded access is permitted.
+The disposable Docker rehearsal uses exact archived legacy source and authentic
+Core dependency files, real DB/Games services, synthetic DB/Discord fixtures,
+a read-only filesystem and disabled container networking. Tests cover a positive
+collection plus write-on-import, schema initialization, external Skill import,
+source tampering, Gateway startup and HTTP POST rejection. Unit regressions cover
+wrong/absent TTY approval, one-session serialized consent, private receipts,
+foreign DB/guild, query column scope, redirects, role/channel readiness and normal
+revision enforcement. A fixture rehearsal is not live Production acceptance.
 
 ## Offline comparison and privacy
 
