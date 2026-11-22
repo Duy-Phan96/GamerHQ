@@ -58,8 +58,14 @@ def access(resource, guild, role=None):
             'gameRoleReadHistory': selected.read_message_history if selected else None}
 
 
-async def collect(guild, actor, *, environment, guild_id, application_id, legacy_primary=False):
+async def collect(guild, actor, *, environment, guild_id, application_id, legacy_primary=False, diagnostic=None):
     """Inspect every catalog row against one inventory and one in-memory DB copy."""
+    def phase(value):
+        # Fixed, non-sensitive stage names only; never persist a traceback or row.
+        if diagnostic is not None:
+            diagnostic['stage'] = value
+
+    phase('GAMES_AUTHORIZATION')
     def verify():
         if legacy_primary:
             import config
@@ -78,16 +84,20 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
 
     verify()
     denied = []
+    phase('DATABASE_SNAPSHOT')
     with snapshot(db, denied, legacy_primary=legacy_primary):
+        phase('DATABASE_SCHEMA')
         with db.connect() as conn:
             if conn.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise ValueError('GAMES_AUDIT_DATABASE_REJECTED')
             schema = conn.execute('PRAGMA user_version').fetchone()[0]
             if schema != db.SCHEMA_VERSION:
                 raise ValueError('GAMES_AUDIT_SCHEMA_REJECTED')
+        phase('GAME_CATALOG')
         catalog = db.get_all_games()  # Include inactive imported entries, unlike the admin selector.
         duplicates = Counter(name_key(game['name']) for game in catalog)
         fresh, failure = None, None
+        phase('GAMES_READINESS_INVENTORY')
         try:
             fresh = await visibility._snapshot(guild)
             if getattr(guild, 'unavailable', False):
@@ -99,8 +109,10 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
             failure = {'reason': 'DISCORD_INVENTORY_HTTP_REJECTED', 'httpStatus': error.status}
         except TimeoutError:
             failure = {'reason': 'DISCORD_INVENTORY_TIMEOUT'}
+        phase('GAMES_AUTHORIZATION_RECHECK')
         verify()  # Revalidate tenant/admission/owner after awaits, before exposing DB metadata.
         rows = []
+        phase('GAMES_ROW_EVALUATION')
         for game in catalog:
             observed = readiness.unverified(failure['reason']) if failure else readiness.inspect_one(fresh, actor, game)
             status = readiness.REVIEW if observed['code'] == readiness.PENDING else observed['code']
@@ -149,6 +161,7 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
                          'channelCreationState': pending(db.get_setting(f'game_channel_creation:{guild_id}:{game["id"]}')),
                          'roleCreationState': pending(db.get_setting(f'game_visibility_role_creation:{guild_id}:{game["id"]}')),
                          'channelIntent': 'UNVERIFIED_OWNER_LAUNCH_SELECTION_REQUIRED'})
+        phase('GAMES_CATEGORY_EVALUATION')
         category = {'state': 'UNVERIFIED'}
         if fresh:
             try:
@@ -160,6 +173,7 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
                             'hostCanManage': parent.permissions_for(guild.me).manage_channels if parent else None}
             except ValueError:
                 category = {'state': 'REVIEW', 'reason': 'GAMES_CATEGORY_MAPPING_REQUIRES_REVIEW'}
+        phase('GAMES_FINAL_GUARDS')
         if denied:
             raise PermissionError('GAMES_AUDIT_WRITE_ATTEMPTED')
         return {'schemaVersion': 1, 'environment': environment, 'guildId': guild_id,
