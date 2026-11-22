@@ -71,10 +71,11 @@ the agent's restricted key does not gain arbitrary file access.
 
 ## Production: one owner-confirmed legacy collection
 
-**Decision: GO for a separately owner-authorized read-only execution after the
-linked candidate CI passes. No live collection has been executed.** Production
-Games readiness remains UNVERIFIED until a successful private collection receipt
-exists. This is compatibility evidence, not original build provenance.
+**Decision: the previously owner-authorized attempt ran but returned
+`GAMES_AUDIT_UNAVAILABLE / RUNTIME_OR_SCHEMA_UNAVAILABLE`; Games readiness is still
+UNVERIFIED.** Its private receipt did not identify a specific failure phase. A
+subsequent owner-approved attempt must use the new immutable diagnostic observer,
+after exact-source CI review, and remains subject to the same private confirmation. This is compatibility evidence, not original build provenance.
 
 ### Evidence and remaining trust boundary
 
@@ -179,11 +180,20 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/a68829aa51e3769c60327be586432b44672e88f0/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/d9645fd801cf1b61ee4c4339580fa0dc4a323aa0/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit a68829aa51e3769c60327be586432b44672e88f0
+/usr/bin/python3 -I -S -B "$observer" --source-commit d9645fd801cf1b61ee4c4339580fa0dc4a323aa0
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
+
+This command uses reviewed immutable merge commit `d9645fd801cf1b61ee4c4339580fa0dc4a323aa0` which includes the
+fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
+unchanged from the previously verified byte hash. Independently verify the
+checksum before use and treat this as **prepared documentation**, not owner
+approval to perform another live collection. Before execution, confirm required
+CI for the exact observer source and inspect the private Production binding anew.
+If unavailable, the private receipt includes a `diagnosticStage`; do not paste
+private bindings or raw receipts into public issues or chat.
 
 Expected successful public state: `GAMES_LEGACY_COLLECTION_COMPLETE`, aggregate
 `READY/NOT_SET_UP/HIDDEN/SETUP_NEEDED/REVIEW/UNVERIFIED` counts, opaque
