@@ -176,7 +176,8 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=No
                 model._add_member(discord.Member(data=member, guild=model, state=client._connection))
             phase('GAMES_PROJECTION')
             result = await projection.collect(model, model.get_member(rest.owner), environment=packet['environment'],
-                        guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy)
+                        guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy,
+                        diagnostic=diagnostic)
             phase('REPORT_ASSEMBLY')
             return {**result, 'state': 'GAMES_AUDIT_COLLECTED', 'collectedAt': datetime.now(timezone.utc).isoformat(),
                     'discordReads': rest.reads, 'mutationsAttempted': False, 'gatewayRestarted': False}
