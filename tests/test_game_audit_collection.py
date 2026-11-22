@@ -74,6 +74,112 @@ def run_collection(runtime):
     return result, session
 
 
+def test_unexpected_projection_failure_reports_safe_phase_without_private_details(runtime, monkeypatch):
+    packet, bodies = runtime
+    real_gather = collector.gather
+
+    async def with_fixture(packet, *, diagnostic):
+        return await real_gather(packet, session_factory=lambda **kwargs: Session(bodies),
+                                 diagnostic=diagnostic)
+
+    async def fail_projection(*args, **kwargs):
+        raise RuntimeError('private token, database row and traceback must never be shown')
+
+    monkeypatch.setattr(collector, 'gather', with_fixture)
+    monkeypatch.setattr(projection, 'collect', fail_projection)
+    result = collector.main(packet)
+
+    assert result['state'] == 'GAMES_AUDIT_UNAVAILABLE'
+    assert result['status'] == 'UNVERIFIED'
+    assert result['reason'] == 'RUNTIME_OR_SCHEMA_UNAVAILABLE'
+    assert result['diagnosticStage'] == 'GAMES_PROJECTION'
+    assert result['databaseChanged'] is False
+    assert result['discordResourcesChanged'] is False
+    assert result['gatewayRestarted'] is False
+    assert 'private token' not in json.dumps(result)
+    assert 'traceback' not in json.dumps(result)
+
+
+def test_unexpected_model_construction_failure_is_distinct_from_games_projection(runtime, monkeypatch):
+    packet, bodies = runtime
+    real_gather = collector.gather
+
+    async def with_fixture(packet, *, diagnostic):
+        return await real_gather(packet, session_factory=lambda **kwargs: Session(bodies),
+                                 diagnostic=diagnostic)
+
+    def invalid_model(*args, **kwargs):
+        raise ValueError('private discord user and role payload')
+
+    monkeypatch.setattr(collector, 'gather', with_fixture)
+    monkeypatch.setattr(collector.discord, 'Guild', invalid_model)
+    result = collector.main(packet)
+
+    assert result['state'] == 'GAMES_AUDIT_UNAVAILABLE'
+    assert result['reason'] == 'RUNTIME_OR_SCHEMA_UNAVAILABLE'
+    assert result['diagnosticStage'] == 'DISCORD_MODEL'
+    assert 'private discord' not in json.dumps(result)
+
+
+def test_allowlisted_schema_failure_keeps_exact_reason_and_phase(runtime, monkeypatch):
+    packet, bodies = runtime
+    real_gather = collector.gather
+
+    async def with_fixture(packet, *, diagnostic):
+        return await real_gather(packet, session_factory=lambda **kwargs: Session(bodies),
+                                 diagnostic=diagnostic)
+
+    async def schema_rejected(*args, **kwargs):
+        raise ValueError('GAMES_AUDIT_SCHEMA_REJECTED')
+
+    monkeypatch.setattr(collector, 'gather', with_fixture)
+    monkeypatch.setattr(projection, 'collect', schema_rejected)
+    result = collector.main(packet)
+
+    assert result['reason'] == 'GAMES_AUDIT_SCHEMA_REJECTED'
+    assert result['diagnosticStage'] == 'GAMES_PROJECTION'
+    assert result['databaseChanged'] is False
+
+
+def test_real_projection_schema_gate_reports_database_schema_phase(runtime, monkeypatch):
+    packet, bodies = runtime
+    real_gather = collector.gather
+
+    async def with_fixture(packet, *, diagnostic):
+        return await real_gather(packet, session_factory=lambda **kwargs: Session(bodies),
+                                 diagnostic=diagnostic)
+
+    monkeypatch.setattr(collector, 'gather', with_fixture)
+    monkeypatch.setattr(db, 'SCHEMA_VERSION', db.SCHEMA_VERSION + 1)
+    result = collector.main(packet)
+
+    assert result['reason'] == 'GAMES_AUDIT_SCHEMA_REJECTED'
+    assert result['diagnosticStage'] == 'DATABASE_SCHEMA'
+    assert result['databaseChanged'] is False
+    assert result['discordResourcesChanged'] is False
+
+
+def test_real_catalog_failure_is_scoped_and_never_leaks_exception(runtime, monkeypatch):
+    packet, bodies = runtime
+    real_gather = collector.gather
+
+    async def with_fixture(packet, *, diagnostic):
+        return await real_gather(packet, session_factory=lambda **kwargs: Session(bodies),
+                                 diagnostic=diagnostic)
+
+    def bad_catalog(*args, **kwargs):
+        raise RuntimeError('private games and hidden database details')
+
+    monkeypatch.setattr(collector, 'gather', with_fixture)
+    monkeypatch.setattr(db, 'get_all_games', bad_catalog)
+    result = collector.main(packet)
+
+    assert result['reason'] == 'RUNTIME_OR_SCHEMA_UNAVAILABLE'
+    assert result['diagnosticStage'] == 'GAME_CATALOG'
+    assert 'private games' not in json.dumps(result)
+    assert result['databaseChanged'] is False
+
+
 def test_one_guild_collection_uses_six_gets_and_never_enumerates_other_guilds(runtime):
     before = db.DB_PATH.read_bytes()
     result, session = run_collection(runtime)

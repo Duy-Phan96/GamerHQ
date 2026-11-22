@@ -107,15 +107,22 @@ class GamesDiscord:
                 raise AuditUnavailable('DISCORD_TRANSPORT_UNAVAILABLE') from None
 
 
-async def gather(packet, *, session_factory=aiohttp.ClientSession):
+async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=None):
+    # Private, fixed-vocabulary phase marker. Never store exception text or Discord payloads.
+    def phase(value):
+        if diagnostic is not None:
+            diagnostic['stage'] = value
+    phase('BINDING')
     packet = binding(packet)
     token = os.environ.get('DISCORD_TOKEN') or os.environ.get('BOT_TOKEN')
     if not token:
         raise AuditUnavailable('CREDENTIAL_UNAVAILABLE')
     # Imports occur after the source-verified launcher has suppressed dotenv.
+    phase('RUNTIME_IMPORT')
     from database import db
     from services import game_launch_audit as projection
     import config
+    phase('DATABASE_BINDING')
     database = Path(packet['database'])
     if database.is_symlink() or not database.is_file():
         raise AuditUnavailable('DATABASE_IDENTITY_REJECTED')
@@ -132,9 +139,11 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession):
         # Bind only the already configured primary file; never admit/provision Servertest.
         scope = tenants._bind(tenants.GuildTenant(packet['guildId'], database.resolve()))
     with scope:
+        phase('DISCORD_SESSION')
         async with session_factory(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as session:
             rest = GamesDiscord(session, token, packet)
             from discord.http import Route
+            phase('DISCORD_INVENTORY')
             identity = await rest.request(Route('GET', '/users/@me'))
             if not isinstance(identity, dict) or identity.get('id') != str(packet['applicationId']) or identity.get('bot') is not True:
                 raise AuditUnavailable('BOT_IDENTITY_REJECTED')
@@ -158,27 +167,34 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession):
                 if not isinstance(member, dict) or member.get('user', {}).get('id') != str(user):
                     raise AuditUnavailable('GUILD_MEMBERSHIP_REJECTED')
                 members.append(member)
+            phase('DISCORD_MODEL')
             client = discord.Client(intents=discord.Intents.none())  # Models only, never login/start.
             client.http.request = rest.request
             client._connection.user = discord.ClientUser(state=client._connection, data=identity)
             model = discord.Guild(data={**payload, 'roles': roles, 'channels': channels, 'members': members}, state=client._connection)
             for member in members:
                 model._add_member(discord.Member(data=member, guild=model, state=client._connection))
+            phase('GAMES_PROJECTION')
             result = await projection.collect(model, model.get_member(rest.owner), environment=packet['environment'],
-                        guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy)
+                        guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy,
+                        diagnostic=diagnostic)
+            phase('REPORT_ASSEMBLY')
             return {**result, 'state': 'GAMES_AUDIT_COLLECTED', 'collectedAt': datetime.now(timezone.utc).isoformat(),
                     'discordReads': rest.reads, 'mutationsAttempted': False, 'gatewayRestarted': False}
 
 
 def main(packet):
+    diagnostic = {'stage': 'BINDING'}
     try:
-        return asyncio.run(gather(packet))
+        return asyncio.run(gather(packet, diagnostic=diagnostic))
     except AuditUnavailable as error:
         return {'schemaVersion': 1, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
                 'reason': error.reason, 'httpStatus': error.http_status,
+                'diagnosticStage': diagnostic['stage'],
                 'databaseChanged': False, 'discordResourcesChanged': False, 'gatewayRestarted': False}
     except Exception as error:
         # No token, private response, SQL or filesystem exception is forwarded.
         return {'schemaVersion': 1, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
-                'reason': error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in REASONS else 'RUNTIME_OR_SCHEMA_UNAVAILABLE', 'databaseChanged': False,
+                'reason': error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in REASONS else 'RUNTIME_OR_SCHEMA_UNAVAILABLE',
+                'diagnosticStage': diagnostic['stage'], 'databaseChanged': False,
                 'discordResourcesChanged': False, 'gatewayRestarted': False}

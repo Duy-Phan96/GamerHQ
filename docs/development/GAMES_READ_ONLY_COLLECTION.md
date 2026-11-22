@@ -191,6 +191,36 @@ Expected successful public state: `GAMES_LEGACY_COLLECTION_COMPLETE`, aggregate
 Original Host revision/build provenance stay false. A successful collection may
 still report individual games UNVERIFIED/REVIEW; that is not permission to repair.
 
+### Failure-stage diagnostics (Issue #329)
+
+The first owner-confirmed legacy Production attempt returned `GAMES_AUDIT_UNAVAILABLE`,
+`RUNTIME_OR_SCHEMA_UNAVAILABLE` without a verified Games inventory. That is a
+**generic unexpected-exception category**, not evidence of a corrupt database or
+an absent Discord game channel. No Production Games readiness counts were collected.
+
+The diagnostic patch under review adds an allowlisted `diagnosticStage` to
+unavailable receipts. The stage is a fixed non-sensitive string, not the
+exception, private row, role/channel ID, response body, SQL statement or traceback.
+It distinguishes `BINDING`, `RUNTIME_IMPORT`, `DATABASE_BINDING`,
+`DISCORD_SESSION`, `DISCORD_INVENTORY`, `DISCORD_MODEL`,
+`GAMES_AUTHORIZATION`, `DATABASE_SNAPSHOT`, `DATABASE_SCHEMA`,
+`GAME_CATALOG`, `GAMES_READINESS_INVENTORY`,
+`GAMES_AUTHORIZATION_RECHECK`, `GAMES_ROW_EVALUATION`,
+`GAMES_CATEGORY_EVALUATION`, `GAMES_FINAL_GUARDS` and
+`REPORT_ASSEMBLY`. Existing allowlisted security/validation error codes take
+precedence over the generic category. An error in the projection can now be
+attributed to its last known phase without weakening write guards, admission
+checks, immutable source verification or GET restrictions.
+
+**Evidence boundary:** This new observer code is not installed in Production by
+a documentation or source PR. The earlier private failure receipt cannot
+retroactively acquire a stage. Before requesting another protected live
+collection, verify the exact committed observer source/hash, successful Linux
+and container-security regressions, and a reviewed owner launcher that explicitly
+uses the new sealed source. Do not reuse the old immutable owner command and
+assume it contains the diagnostic change. A retry still requires separate owner
+approval and no setup/repair rights.
+
 ### Abort and compensation
 
 Abort on a stale/changed binding, source/package mismatch, unsupported CPython
