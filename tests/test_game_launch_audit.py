@@ -49,6 +49,23 @@ class LaunchAuditTests(unittest.IsolatedAsyncioTestCase):
                                     guild_id=self.guild.id, application_id=self.guild.me.id,
                                     diagnostic=diagnostic)
         self.assertEqual(diagnostic['stage'], 'GAMES_CHANNELS_FETCH')
+        self.assertEqual(diagnostic['channelFetchFailureClass'], 'OTHER')
+        self.assertNotIn('private Discord payload', json.dumps(diagnostic))
+        self.guild.fetch_roles.assert_not_awaited()
+        self.assertEqual(before, self.snapshot())
+
+    async def test_channel_inventory_model_failure_is_classified_without_leaking(self):
+        before = self.snapshot()
+        self.guild.fetch_channels.side_effect = KeyError('private channel payload')
+        diagnostic = {}
+        with self.assertRaises(KeyError):
+            with self.binding():
+                await audit.collect(self.guild, self.actor, environment='staging',
+                                    guild_id=self.guild.id, application_id=self.guild.me.id,
+                                    diagnostic=diagnostic)
+        self.assertEqual(diagnostic['stage'], 'GAMES_CHANNELS_FETCH')
+        self.assertEqual(diagnostic['channelFetchFailureClass'], 'MODEL_KEY')
+        self.assertNotIn('private channel payload', json.dumps(diagnostic))
         self.guild.fetch_roles.assert_not_awaited()
         self.assertEqual(before, self.snapshot())
 
