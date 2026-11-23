@@ -231,6 +231,30 @@ uses the new sealed source. Do not reuse the old immutable owner command and
 assume it contains the diagnostic change. A retry still requires separate owner
 approval and no setup/repair rights.
 
+### Readiness-inventory failure isolation (follow-up to the private Production receipt)
+
+A separately owner-approved Production attempt using the first diagnostic observer
+returned `GAMES_AUDIT_UNAVAILABLE` with `reason=RUNTIME_OR_SCHEMA_UNAVAILABLE`
+and `diagnosticStage=GAMES_READINESS_INVENTORY`. This indicates that the
+existing `visibility._snapshot` call, or its immediately following inventory
+checks, failed unexpectedly. It is **not proof** of an invalid DB schema, a
+missing game channel, a permission defect or a particular Discord exception.
+
+The follow-up patch keeps the same fresh `guild.fetch_channels()`,
+`guild.fetch_roles()` and `GuildSnapshot` implementation but explicitly
+separates the phases into `GAMES_CHANNELS_FETCH`, `GAMES_ROLES_FETCH`,
+`GAMES_SNAPSHOT_BUILD` and `GAMES_INVENTORY_VALIDATE`. It never substitutes
+the potentially stale Gateway cache, a partial inventory, a less-restricted
+query or an extra Discord endpoint. Errors stay fail-closed and private; the
+public launcher still emits only a generic safe summary.
+
+The owner command above remains pinned to the **previous** diagnostic source
+until this patch passes exact source-integrity, Linux and cold Docker checks.
+Do not reuse that command expecting these new subphases. Integrating code into
+`develop` is not a Production deployment or authorization to retry the
+collection. A later owner-approved runbook must independently pin the reviewed
+new observer commit and match its verified owner launcher SHA256.
+
 ### Abort and compensation
 
 Abort on a stale/changed binding, source/package mismatch, unsupported CPython
