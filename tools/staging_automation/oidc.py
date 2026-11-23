@@ -65,7 +65,10 @@ def verify(token, policy, operation, challenge, *, read=read_url, now=None):
         if not now - 600 <= claims['iat'] <= now + 30 or claims['nbf'] > now + 30 or not now < claims['exp'] <= claims['iat'] + 600: raise ValueError()
         if not re.fullmatch('[A-Za-z0-9_-]{8,128}', claims.get('jti', '')): raise ValueError()
         if not re.fullmatch('[0-9a-f]{40}', claims.get('workflow_sha', '')) or not re.fullmatch('[1-9][0-9]{0,19}', claims.get('run_id', '')): raise ValueError()
-        if operation == 'tenant-acceptance':
+        if operation == 'games-audit':
+            filename = 'staging-games-audit.yml'
+            digest = policy['gamesAudit']['workflowSha256']
+        elif operation == 'tenant-acceptance':
             filename = 'staging-tenant-acceptance.yml'
             digest = policy['tenantAcceptance']['workflowSha256']
         elif operation == 'catalog-preview':

@@ -41,6 +41,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
                 'hostPromotionCommit': policy.get('hostPromotion', {}).get('commit'),
                 'tenantPilotGeneration': policy.get('tenantPilotGeneration', {}).get('id'),
                 'tenantAcceptanceEnrolled': 'tenantAcceptance' in policy,
+                'gamesAuditEnrolled': 'gamesAudit' in policy,
                 'webArtifactId': policy.get('webDeployment', {}).get('artifactId'),
                 'webRunId': policy.get('webDeployment', {}).get('runId'),
                 'webCommit': policy.get('webDeployment', {}).get('commit'),
@@ -50,7 +51,7 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             raise Denied('PAYLOAD_REJECTED')
         request({'version': 1, 'phase': 'automation', 'operation': payload['operation']})
         if 'tenantPilotGeneration' in policy and payload['operation'] not in {
-                'health', 'smoke', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'}:
+                'health', 'smoke', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'}:
             raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] == 'catalog-preview' and 'catalogPreviewWorkflowSha256' not in policy:
             raise Denied('CATALOG_PREVIEW_NOT_ENROLLED')
@@ -60,9 +61,11 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] == 'tenant-pilot-cutover' and not cutover:
             raise Denied('OPERATION_NOT_ALLOWED')
+        if payload['operation'] == 'games-audit' and 'gamesAudit' not in policy:
+            raise Denied('GAMES_AUDIT_NOT_ENROLLED')
         if payload['operation'] == 'tenant-acceptance' and 'tenantAcceptance' not in policy:
             raise Denied('ACCEPTANCE_POLICY_REJECTED')
-        if journal and payload['operation'] not in ('health', 'smoke', 'tenant-pilot-cutover', 'tenant-acceptance'):
+        if journal and payload['operation'] not in ('health', 'smoke', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'):
             raise Denied('OPERATION_NOT_ALLOWED')
         if payload['operation'] in WEB and 'webDeployment' not in policy:
             raise Denied('WEB_NOT_ENROLLED')
@@ -76,12 +79,12 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
     if challenge.get('nonce') != payload['challenge'] or challenge.get('operation') != operation or challenge.get('expires', 0) <= now: raise Denied('CHALLENGE_REJECTED')
     claims = verifier(payload['token'], policy, operation, payload['challenge'], now=now)
     if 'tenantPilotGeneration' in policy and operation not in {
-            'health', 'smoke', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance'}:
+            'health', 'smoke', 'tenant-pilot-preview', 'tenant-pilot-activation-prepare', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'}:
         raise Denied('OPERATION_NOT_ALLOWED')
     seen = {k: exp for k, exp in state.get('usedTokens', {}).items() if exp > now}
     if claims['jti'] in seen or len(seen) >= 256: raise Denied('OIDC_REPLAY_REJECTED')
     seen[claims['jti']] = claims['exp']; state['usedTokens'] = seen; state.pop('challenge', None); save(state)
-    if journal and operation not in ('health', 'smoke', 'tenant-pilot-cutover', 'tenant-acceptance'):
+    if journal and operation not in ('health', 'smoke', 'tenant-pilot-cutover', 'tenant-acceptance', 'games-audit'):
         raise Denied('OPERATION_NOT_ALLOWED')
     if operation == 'activate':
         image = backend.activate(state.get('approvedImage') if state.get('bootstrapVerified') else None)
@@ -96,6 +99,9 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         admit(operation, state)
     if state.get('enabled'): backend.policy_integrity()
     try:
+        if operation == 'games-audit':
+            from .games_audit import run
+            return run(backend)
         if operation == 'tenant-acceptance':
             from .tenant_acceptance import run
             return run(backend)

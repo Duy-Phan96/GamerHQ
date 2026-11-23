@@ -1,0 +1,37 @@
+name: Offline legacy Games observer security rehearsal
+on:
+  pull_request:
+    paths:
+      - 'tools/game_audit_*.py'
+      - 'tools/game_launch_audit_*.py'
+      - 'services/game_*.py'
+      - 'database/db.py'
+      - 'config.py'
+      - 'requirements*.lock'
+      - 'deploy/production/games-legacy-dependencies.json'
+      - 'tests/test_game_audit_*.py'
+      - '.github/workflows/games-legacy-rehearsal.yml'
+permissions:
+  contents: read
+concurrency:
+  group: legacy-games-offline-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  legacy-games-observer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.lock -r requirements-dev.txt
+      - name: Build fixture dependencies without starting a bot
+        run: docker build --tag gamerhq-bot:local .
+      - name: Verify imports, SQL and HTTP guards on disposable networkless containers
+        env:
+          GAMERHQ_LEGACY_GAMES_DOCKER_CI: 'true'
+        run: python -m pytest -q tests/test_game_audit_legacy_collection_docker.py
