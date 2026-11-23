@@ -191,10 +191,13 @@ def main(packet):
         return {'schemaVersion': 1, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
                 'reason': error.reason, 'httpStatus': error.http_status,
                 'diagnosticStage': diagnostic['stage'],
+                'channelFetchFailureClass': diagnostic.get('channelFetchFailureClass'),
                 'databaseChanged': False, 'discordResourcesChanged': False, 'gatewayRestarted': False}
     except Exception as error:
         # No token, private response, SQL or filesystem exception is forwarded.
         return {'schemaVersion': 1, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
                 'reason': error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in REASONS else 'RUNTIME_OR_SCHEMA_UNAVAILABLE',
-                'diagnosticStage': diagnostic['stage'], 'databaseChanged': False,
+                'diagnosticStage': diagnostic['stage'],
+                'channelFetchFailureClass': diagnostic.get('channelFetchFailureClass'),
+                'databaseChanged': False,
                 'discordResourcesChanged': False, 'gatewayRestarted': False}
