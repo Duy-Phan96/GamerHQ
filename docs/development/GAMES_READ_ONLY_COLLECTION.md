@@ -180,13 +180,13 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/d9645fd801cf1b61ee4c4339580fa0dc4a323aa0/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/8e87b1553c7e5ea6e89a00bdca39a3d6f9c0dbfe/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit d9645fd801cf1b61ee4c4339580fa0dc4a323aa0
+/usr/bin/python3 -I -S -B "$observer" --source-commit 8e87b1553c7e5ea6e89a00bdca39a3d6f9c0dbfe
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-This command uses reviewed immutable merge commit `d9645fd801cf1b61ee4c4339580fa0dc4a323aa0` which includes the
+This command uses reviewed immutable merge commit `8e87b1553c7e5ea6e89a00bdca39a3d6f9c0dbfe` which includes the
 fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
 unchanged from the previously verified byte hash. Independently verify the
 checksum before use and treat this as **prepared documentation**, not owner
@@ -248,12 +248,13 @@ the potentially stale Gateway cache, a partial inventory, a less-restricted
 query or an extra Discord endpoint. Errors stay fail-closed and private; the
 public launcher still emits only a generic safe summary.
 
-The owner command above remains pinned to the **previous** diagnostic source
-until this patch passes exact source-integrity, Linux and cold Docker checks.
-Do not reuse that command expecting these new subphases. Integrating code into
-`develop` is not a Production deployment or authorization to retry the
-collection. A later owner-approved runbook must independently pin the reviewed
-new observer commit and match its verified owner launcher SHA256.
+The owner command above is now prepared with the **new immutable diagnostic source**
+after successful exact-head Linux and cold Docker checks for PR #332. Its
+launcher Git blob is identical to the earlier reviewed launcher, and the
+checksum-verified launcher still requires fresh private TTY owner approval.
+Merging this runbook into `develop` is not a Production deployment or
+authorization to repeat collection. Confirm the private Production binding
+again before any separately approved retry.
 
 ### Abort and compensation
 
