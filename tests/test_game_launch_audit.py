@@ -39,6 +39,47 @@ class LaunchAuditTests(unittest.IsolatedAsyncioTestCase):
         with db.connect() as conn:
             return '\n'.join(conn.iterdump())
 
+    async def test_channel_inventory_failure_has_narrow_safe_phase(self):
+        before = self.snapshot()
+        self.guild.fetch_channels.side_effect = RuntimeError('private Discord payload')
+        diagnostic = {}
+        with self.assertRaisesRegex(RuntimeError, 'private Discord payload'):
+            with self.binding():
+                await audit.collect(self.guild, self.actor, environment='staging',
+                                    guild_id=self.guild.id, application_id=self.guild.me.id,
+                                    diagnostic=diagnostic)
+        self.assertEqual(diagnostic['stage'], 'GAMES_CHANNELS_FETCH')
+        self.guild.fetch_roles.assert_not_awaited()
+        self.assertEqual(before, self.snapshot())
+
+    async def test_roles_inventory_failure_has_narrow_safe_phase(self):
+        before = self.snapshot()
+        self.guild.fetch_roles.side_effect = RuntimeError('private role payload')
+        diagnostic = {}
+        with self.assertRaisesRegex(RuntimeError, 'private role payload'):
+            with self.binding():
+                await audit.collect(self.guild, self.actor, environment='staging',
+                                    guild_id=self.guild.id, application_id=self.guild.me.id,
+                                    diagnostic=diagnostic)
+        self.assertEqual(diagnostic['stage'], 'GAMES_ROLES_FETCH')
+        self.guild.fetch_channels.assert_awaited_once()
+        self.assertEqual(before, self.snapshot())
+
+    async def test_snapshot_construction_failure_has_narrow_safe_phase(self):
+        before = self.snapshot()
+        diagnostic = {}
+        with patch.object(audit.visibility, 'GuildSnapshot',
+                          side_effect=RuntimeError('private channel model')):
+            with self.assertRaises(RuntimeError):
+                with self.binding():
+                    await audit.collect(self.guild, self.actor, environment='staging',
+                                        guild_id=self.guild.id, application_id=self.guild.me.id,
+                                        diagnostic=diagnostic)
+        self.assertEqual(diagnostic['stage'], 'GAMES_SNAPSHOT_BUILD')
+        self.guild.fetch_channels.assert_awaited_once()
+        self.guild.fetch_roles.assert_awaited_once()
+        self.assertEqual(before, self.snapshot())
+
     async def test_full_catalog_includes_inactive_entries_without_writes(self):
         with db.connect() as conn:
             conn.execute('UPDATE games SET active=0,selectable=0 WHERE id=?', (self.game['id'],))

@@ -99,7 +99,15 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
         fresh, failure = None, None
         phase('GAMES_READINESS_INVENTORY')
         try:
-            fresh = await visibility._snapshot(guild)
+            # Equivalent to visibility._snapshot, with explicit, safe failure stages.
+            # Never substitute cached Gateway channels or a partial inventory.
+            phase('GAMES_CHANNELS_FETCH')
+            fresh_channels = await guild.fetch_channels()
+            phase('GAMES_ROLES_FETCH')
+            fresh_roles = await guild.fetch_roles()
+            phase('GAMES_SNAPSHOT_BUILD')
+            fresh = visibility.GuildSnapshot(guild, fresh_channels, fresh_roles)
+            phase('GAMES_INVENTORY_VALIDATE')
             if getattr(guild, 'unavailable', False):
                 raise ValueError('GUILD_UNAVAILABLE')
             if any(getattr(getattr(resource, 'guild', None), 'id', None) != guild_id
