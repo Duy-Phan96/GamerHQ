@@ -107,13 +107,14 @@ class GamesDiscord:
                 raise AuditUnavailable('DISCORD_TRANSPORT_UNAVAILABLE') from None
 
 
-def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None):
+def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None, allow_opaque_type20=False):
     """Check exact REST/model coverage; report only bounded type counts privately.
 
     No IDs, names, parent references, overwrites or original channel payloads
     are included in the exception or diagnostic.
     """
     channels, roles = list(guild.channels), list(guild.roles)
+    opaque_type20_count = 0
     for raw, models, reason in (
         (raw_channels, channels, 'DISCORD_CHANNEL_MODEL_INCOMPLETE'),
         (raw_roles, roles, 'DISCORD_ROLE_MODEL_INCOMPLETE'),
@@ -124,6 +125,21 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None):
                       or any(getattr(getattr(item, 'guild', None), 'id', None) != guild.id
                              for item in models))
         if incomplete:
+            if reason == 'DISCORD_CHANNEL_MODEL_INCOMPLETE' and allow_opaque_type20:
+                missing = expected - actual
+                opaque = [item for item in raw if int(item['id']) in missing]
+                # Only the exact known 92:91 compatibility shape is accepted:
+                # one opaque channel of type 20, with all modeled resources
+                # accounted for. Unknown objects are never constructed or
+                # made available to any readiness/permission decision.
+                if (len(missing) == 1 and len(opaque) == 1
+                        and type(opaque[0].get('type')) is int
+                        and opaque[0]['type'] == 20
+                        and len(raw) == len(models) + 1 and not (actual - expected)
+                        and all(getattr(getattr(item, 'guild', None), 'id', None) == guild.id
+                                for item in models)):
+                    opaque_type20_count = 1
+                    continue
             if reason == 'DISCORD_CHANNEL_MODEL_INCOMPLETE' and diagnostic is not None:
                 missing = expected - actual
                 by_type = {}
@@ -143,6 +159,10 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None):
                     'extraModelCount': len(actual - expected),
                 }
             raise AuditUnavailable(reason)
+    if opaque_type20_count:
+        # Third tuple element is a fixed flag, not a resource model or ID.
+        # The projection must mark every Games result UNVERIFIED.
+        return channels, roles, 'OPAQUE_TYPE20_UNVERIFIED'
     return channels, roles
 
 
@@ -214,7 +234,8 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=No
             for member in members:
                 model._add_member(discord.Member(data=member, guild=model, state=client._connection))
             phase('GAMES_REST_MODEL_COVERAGE')
-            inventory = verified_rest_inventory(model, channels, roles, diagnostic=diagnostic)
+            inventory = verified_rest_inventory(model, channels, roles, diagnostic=diagnostic,
+                                                allow_opaque_type20=True)
             phase('GAMES_PROJECTION')
             result = await projection.collect(model, model.get_member(rest.owner), environment=packet['environment'],
                         guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy,
