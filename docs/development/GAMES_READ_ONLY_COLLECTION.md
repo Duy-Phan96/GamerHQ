@@ -180,13 +180,13 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/c0c072557941b066fe7f734aaeb2df231772582a/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/c43bc0cc27b04eab542a3df26eed2df90f7be649/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit c0c072557941b066fe7f734aaeb2df231772582a
+/usr/bin/python3 -I -S -B "$observer" --source-commit c43bc0cc27b04eab542a3df26eed2df90f7be649
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-This command uses reviewed immutable merge commit `c0c072557941b066fe7f734aaeb2df231772582a` which includes the
+This command uses reviewed immutable merge commit `c43bc0cc27b04eab542a3df26eed2df90f7be649` which includes the
 fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
 unchanged from the previously verified byte hash. Independently verify the
 checksum before use and treat this as **prepared documentation**, not owner
@@ -267,7 +267,7 @@ optional fixed-vocabulary private `channelFetchFailureClass` field: `HTTP`,
 `MODEL_ATTRIBUTE`, or `OTHER`. Exception text, response payloads and IDs
 remain private and are not serialized into this diagnostic.
 
-The command above is pinned to immutable merged source `c0c072557941b066fe7f734aaeb2df231772582a` after
+The command above is pinned to immutable merged source `c43bc0cc27b04eab542a3df26eed2df90f7be649` after
 successful Python 3.12 / 3.14 offline tests and isolated legacy observer
 security rehearsal; the protected Staging Games workflow registration check
 passed without executing its collector. The owner launcher Git blob remains
@@ -281,7 +281,7 @@ shared for follow-up diagnosis. Do not post private receipts or IDs.
 
 ### Verified single REST inventory (PR #336)
 
-The next prepared observer uses reviewed immutable source `c0c072557941b066fe7f734aaeb2df231772582a` and
+The next prepared observer uses reviewed immutable source `c43bc0cc27b04eab542a3df26eed2df90f7be649` and
 reuses the initial single-guild REST channel/role collections after verifying
 **complete ID correspondence** with the constructed discord.py Guild model.
 The projection does not perform a second `guild.fetch_channels()` or
@@ -310,7 +310,7 @@ This confirms a mismatch between the fresh REST channel list and the
 isolated discord.py Guild model, not a verified Games readiness result.
 It does not yet establish which Discord channel type(s) are omitted.
 
-The collector in immutable source `c0c072557941b066fe7f734aaeb2df231772582a` adds an optional
+The collector in immutable source `c43bc0cc27b04eab542a3df26eed2df90f7be649` adds an optional
 `channelModelCoverage` object to the private failed receipt with only:
 `rawCount`, `modeledCount`, `missingCount`, `missingByType`, and
 `extraModelCount`. The histogram keys are numeric Discord protocol type
@@ -327,6 +327,32 @@ opaque receipt identifier or any other private data. The reviewed launcher
 blob `d79e94d8fc48d528091ef26116f180e071afcdf2` and its independent
 SHA256 check are unchanged. This updated source pin is only preparation,
 not approval for a new Production read.
+
+### Opaque type-20 partial-evidence behavior (merged PR #342)
+
+The latest reviewed observer source (`c43bc0cc27b04eab542a3df26eed2df90f7be649`) contains a
+narrow compatibility path for exactly **one** otherwise unmodeled REST channel
+of protocol type 20, with all other channel and role IDs and Guild ownership
+matching. That unmodeled resource is represented as an **opaque flag**, never
+as a fabricated discord.py channel or permission object.
+
+If that condition is met, the collector may read the normal constrained
+in-memory database snapshot and Games catalog, but bypasses every per-game
+readiness check, channel/role permission calculation and Games-category
+classification. All Games and their category remain `UNVERIFIED`.
+The owner-private final state is `GAMES_AUDIT_UNAVAILABLE` with reason
+`DISCORD_OPAQUE_CHANNEL_TYPE20` and stage `GAMES_OPAQUE_TYPE20`;
+the outer launcher still reports `GAMES_LEGACY_COLLECTION_UNAVAILABLE`.
+**A partial inventory must never be reported as COMPLETE or compared against
+Staging as verified Games parity.**
+
+This is not an upstream Discord type-20 compatibility implementation.
+Running another owner-approved Production audit at this stage is **not
+recommended solely to obtain Games readiness**: the known unmodeled type is
+still expected to prevent a verified inventory. The revised immutable source
+pin documents provenance for a future, separately justified read; it does not
+issue owner consent. A future runtime change must first prove full channel
+semantics or a strictly sufficient scoped inventory, and pass isolated tests.
 
 ### Abort and compensation
 
