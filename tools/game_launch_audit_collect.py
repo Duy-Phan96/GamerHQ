@@ -159,10 +159,17 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None, 
                     'extraModelCount': len(actual - expected),
                 }
             raise AuditUnavailable(reason)
-    if opaque_type20_count:
-        # Third tuple element is a fixed flag, not a resource model or ID.
-        # The projection must mark every Games result UNVERIFIED.
-        return channels, roles, 'OPAQUE_TYPE20_UNVERIFIED'
+    # A future discord.py PartialChannel fallback may achieve exact REST/model
+    # ID parity for type 20 without providing established Games semantics.
+    # Therefore exact coverage alone must NOT silently promote this inventory
+    # to VERIFIED as the library changes. The opaque path stays UNVERIFIED.
+    if allow_opaque_type20:
+        type20_count = sum(type(item.get('type')) is int and item['type'] == 20
+                           for item in raw_channels)
+        if type20_count > 1:
+            raise AuditUnavailable('DISCORD_CHANNEL_MODEL_INCOMPLETE')
+        if opaque_type20_count or type20_count:
+            return channels, roles, 'OPAQUE_TYPE20_UNVERIFIED'
     return channels, roles
 
 
