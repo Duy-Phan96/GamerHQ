@@ -51,3 +51,10 @@ class DiscordGuildModelCoverageTests(unittest.TestCase):
         })
         self.assertNotIn('SYNTHETIC_PRIVATE', repr(diagnostic))
         self.assertNotIn('333', repr(diagnostic))
+        # Explicitly opaque mode keeps the real discord.py model unchanged.
+        accepted = verified_rest_inventory(
+            guild, raw_channels, roles, allow_opaque_type20=True)
+        self.assertEqual(accepted[2], 'OPAQUE_TYPE20_UNVERIFIED')
+        self.assertEqual(len(accepted[0]), 1)
+        self.assertIsNone(guild.get_channel(333))
+

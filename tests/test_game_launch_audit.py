@@ -85,6 +85,42 @@ class LaunchAuditTests(unittest.IsolatedAsyncioTestCase):
         self.guild.fetch_roles.assert_not_awaited()
         self.assertEqual(before, self.snapshot())
 
+    async def test_opaque_type20_preserves_db_evidence_but_never_claims_ready(self):
+        """Opaque inventory cannot run visibility policy on an incomplete model."""
+        before = self.snapshot()
+        with patch.object(audit.readiness, 'inspect_one',
+                          side_effect=AssertionError('partial channels used for readiness')):
+            with patch.object(audit.visibility, 'GuildSnapshot',
+                              side_effect=AssertionError('partial inventory constructed')):
+                with self.binding():
+                    result = await audit.collect(
+                        self.guild, self.actor, environment='staging',
+                        guild_id=self.guild.id, application_id=self.guild.me.id,
+                        verified_rest_inventory=([], [], 'OPAQUE_TYPE20_UNVERIFIED'))
+        self.assertEqual(result['inventory'], {
+            'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20',
+        })
+        self.assertTrue(result['games'])
+        self.assertTrue(all(row['status'] == 'UNVERIFIED' for row in result['games']))
+        self.assertTrue(all(row['roleVerified'] is None
+                            and row['canonicalChannelVerified'] is None
+                            and row['effectiveAccess'] is None
+                            and row['channelPolicy'] is None
+                            for row in result['games']))
+        self.assertEqual(result['gamesCategory'], {'state': 'UNVERIFIED'})
+        self.assertEqual(result['databaseIntegrity'], 'PASS')
+        self.assertEqual(before, self.snapshot())
+        self.guild.fetch_channels.assert_not_awaited()
+        self.guild.fetch_roles.assert_not_awaited()
+
+    async def test_opaque_inventory_flag_cannot_be_forged(self):
+        with self.assertRaisesRegex(ValueError, 'GAMES_AUDIT_INVENTORY_REJECTED'):
+            with self.binding():
+                await audit.collect(
+                    self.guild, self.actor, environment='staging',
+                    guild_id=self.guild.id, application_id=self.guild.me.id,
+                    verified_rest_inventory=([], [], 'NOT_A_REVIEWED_FLAG'))
+
     async def test_roles_inventory_failure_has_narrow_safe_phase(self):
         before = self.snapshot()
         self.guild.fetch_roles.side_effect = RuntimeError('private role payload')

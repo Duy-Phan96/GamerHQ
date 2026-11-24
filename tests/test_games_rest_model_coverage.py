@@ -2,7 +2,7 @@
 import unittest
 from types import SimpleNamespace
 
-from tools.game_launch_audit_collect import AuditUnavailable, verified_rest_inventory
+from tools.game_launch_audit_collect import AuditUnavailable, finalize_projection, verified_rest_inventory
 
 
 class VerifiedRestInventoryTests(unittest.TestCase):
@@ -75,6 +75,58 @@ class VerifiedRestInventoryTests(unittest.TestCase):
         raw = self.channels + [{'id': '999999', 'type': 20}]
         with self.assertRaises(AuditUnavailable):
             verified_rest_inventory(self.guild, raw, self.roles)
+
+    def test_single_type20_returns_opaque_flag_only_when_explicitly_allowed(self):
+        diagnostic = {}
+        raw = self.channels + [{'id': '444', 'type': 20,
+                                'name': 'PRIVATE_NAME', 'permission_overwrites': []}]
+        result = verified_rest_inventory(
+            self.guild, raw, self.roles, diagnostic=diagnostic, allow_opaque_type20=True)
+        self.assertEqual(result[:2], ([self.channel], [self.role]))
+        self.assertEqual(result[2], 'OPAQUE_TYPE20_UNVERIFIED')
+        self.assertEqual(diagnostic, {})
+        self.assertNotIn('444', repr(result))
+        self.assertNotIn('PRIVATE_NAME', repr(result))
+
+    def test_type20_exception_requires_exactly_one_model_gap(self):
+        cases = [
+            self.channels + [{'id': '444', 'type': 20}, {'id': '445', 'type': 20}],
+            self.channels + [{'id': '444', 'type': 21}],
+            self.channels + [{'id': '444', 'type': 20}, {'id': '445', 'type': 0}],
+        ]
+        for raw in cases:
+            with self.subTest(types=[row.get('type') for row in raw]):
+                with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+                    verified_rest_inventory(self.guild, raw, self.roles,
+                                            allow_opaque_type20=True)
+
+    def test_type20_exception_never_masks_role_or_foreign_model_gaps(self):
+        raw = self.channels + [{'id': '444', 'type': 20}]
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles + [{'id': '555'}],
+                                    allow_opaque_type20=True)
+        self.channel.guild = SimpleNamespace(id=999)
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles,
+                                    allow_opaque_type20=True)
+
+    def test_opaque_projection_never_gets_public_complete_status(self):
+        partial = {
+            'inventory': {'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'},
+            'counts': {'UNVERIFIED': 3},
+            'games': [{'status': 'UNVERIFIED'}] * 3,
+            'databaseIntegrity': 'PASS',
+        }
+        result = finalize_projection(partial, 5)
+        self.assertEqual(result['state'], 'GAMES_AUDIT_UNAVAILABLE')
+        self.assertEqual(result['status'], 'UNVERIFIED')
+        self.assertEqual(result['reason'], 'DISCORD_OPAQUE_CHANNEL_TYPE20')
+        self.assertEqual(result['diagnosticStage'], 'GAMES_OPAQUE_TYPE20')
+        self.assertFalse(result['mutationsAttempted'])
+        self.assertFalse(result['gatewayRestarted'])
+        self.assertEqual(result['counts'], {'UNVERIFIED': 3})
+        full = finalize_projection({'inventory': {'state': 'VERIFIED'}}, 5)
+        self.assertEqual(full['state'], 'GAMES_AUDIT_COLLECTED')
 
     def test_unmodeled_role_is_explicit_failure(self):
         with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
