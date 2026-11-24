@@ -246,3 +246,30 @@ The new synthetic test reproduces the exact 92:91 mismatch and confirms that
 the diagnostic exposes only aggregate counts and protocol type, not the unknown
 channel's private ID, name, parent or overwrite payload. Fixture success is
 not Production readiness verification.
+
+## Opaque-type-20 read-only partial catalog projection (offline implementation candidate)
+
+This candidate introduces an explicitly opt-in collector compatibility branch **only**
+for exactly one REST channel of protocol type 20 missing from otherwise exact
+and guild-bound discord.py channel models. Any additional missing type, duplicate,
+extra/foreign model, or incomplete role inventory still fails immediately.
+
+The unknown channel is never converted into a TextChannel/CategoryChannel or
+inserted into the Guild cache. Rather than using the partial Guild to determine
+visibility, placement, name collisions or permissions, the projection disables
+all Games readiness evaluation, treats every catalog row as **UNVERIFIED**,
+sets the Games category to **UNVERIFIED**, and suppresses access/ACL assertions.
+The existing read-only database snapshot and catalog integrity checks can still
+produce owner-private evidence. The private projection is finalized as
+`GAMES_AUDIT_UNAVAILABLE` with `DISCORD_OPAQUE_CHANNEL_TYPE20` and
+`GAMES_OPAQUE_TYPE20`; **never** `GAMES_AUDIT_COLLECTED` or public
+`GAMES_LEGACY_COLLECTION_COMPLETE`. This is not Games readiness clearance.
+
+This is narrowly targeted to the sanitized 92:91 case, not general support for
+new Discord channel types. No new REST endpoints, permissions, tenant scope,
+data writes, deployment or owner approvals are provided. The observer requires
+the same source attestation, offline Python CI, legacy security rehearsal, and
+a **separately authorized** root-TTY Production read before a live outcome is
+known. Future matching against staging still requires a fully verified
+inventory on both sides; the comparison validator intentionally rejects
+partial receipts.
