@@ -180,13 +180,13 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/8e87b1553c7e5ea6e89a00bdca39a3d6f9c0dbfe/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/130ab1c635cd8326a7b4d515d3d5b48b0ae5718e/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit 8e87b1553c7e5ea6e89a00bdca39a3d6f9c0dbfe
+/usr/bin/python3 -I -S -B "$observer" --source-commit 130ab1c635cd8326a7b4d515d3d5b48b0ae5718e
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-This command uses reviewed immutable merge commit `8e87b1553c7e5ea6e89a00bdca39a3d6f9c0dbfe` which includes the
+This command uses reviewed immutable merge commit `130ab1c635cd8326a7b4d515d3d5b48b0ae5718e` which includes the
 fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
 unchanged from the previously verified byte hash. Independently verify the
 checksum before use and treat this as **prepared documentation**, not owner
@@ -255,6 +255,29 @@ checksum-verified launcher still requires fresh private TTY owner approval.
 Merging this runbook into `develop` is not a Production deployment or
 authorization to repeat collection. Confirm the private Production binding
 again before any separately approved retry.
+
+### Channel-fetch failure classification (PR #334)
+
+The owner-approved Production collection after PR #333 returned
+`GAMES_AUDIT_UNAVAILABLE / RUNTIME_OR_SCHEMA_UNAVAILABLE` at
+`diagnosticStage=GAMES_CHANNELS_FETCH`. This identifies the failing phase,
+not an underlying Discord response or missing game channel. PR #334 adds an
+optional fixed-vocabulary private `channelFetchFailureClass` field: `HTTP`,
+`TIMEOUT`, `MODEL_KEY`, `MODEL_TYPE`, `MODEL_VALUE`,
+`MODEL_ATTRIBUTE`, or `OTHER`. Exception text, response payloads and IDs
+remain private and are not serialized into this diagnostic.
+
+The command above is pinned to immutable merged source `130ab1c635cd8326a7b4d515d3d5b48b0ae5718e` after
+successful Python 3.12 / 3.14 offline tests and isolated legacy observer
+security rehearsal; the protected Staging Games workflow registration check
+passed without executing its collector. The owner launcher Git blob remains
+`d79e94d8fc48d528091ef26116f180e071afcdf2` and its exact byte
+checksum guard remains unchanged. This runbook is **prepared only**: any fresh
+Production observation requires new owner approval and private binding review
+in the existing trusted root TTY. The prior receipt remains immutable and
+Games counts remain UNVERIFIED. Only the allowlisted fields `state`, `status`,
+`reason`, `diagnosticStage`, and `channelFetchFailureClass` may be
+shared for follow-up diagnosis. Do not post private receipts or IDs.
 
 ### Abort and compensation
 
