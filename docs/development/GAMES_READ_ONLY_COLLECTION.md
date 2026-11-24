@@ -180,13 +180,13 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/130ab1c635cd8326a7b4d515d3d5b48b0ae5718e/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/38b84c8504d4354aaabdbea40913f1fed6572a64/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit 130ab1c635cd8326a7b4d515d3d5b48b0ae5718e
+/usr/bin/python3 -I -S -B "$observer" --source-commit 38b84c8504d4354aaabdbea40913f1fed6572a64
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-This command uses reviewed immutable merge commit `130ab1c635cd8326a7b4d515d3d5b48b0ae5718e` which includes the
+This command uses reviewed immutable merge commit `38b84c8504d4354aaabdbea40913f1fed6572a64` which includes the
 fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
 unchanged from the previously verified byte hash. Independently verify the
 checksum before use and treat this as **prepared documentation**, not owner
@@ -267,7 +267,7 @@ optional fixed-vocabulary private `channelFetchFailureClass` field: `HTTP`,
 `MODEL_ATTRIBUTE`, or `OTHER`. Exception text, response payloads and IDs
 remain private and are not serialized into this diagnostic.
 
-The command above is pinned to immutable merged source `130ab1c635cd8326a7b4d515d3d5b48b0ae5718e` after
+The command above is pinned to immutable merged source `38b84c8504d4354aaabdbea40913f1fed6572a64` after
 successful Python 3.12 / 3.14 offline tests and isolated legacy observer
 security rehearsal; the protected Staging Games workflow registration check
 passed without executing its collector. The owner launcher Git blob remains
@@ -278,6 +278,29 @@ in the existing trusted root TTY. The prior receipt remains immutable and
 Games counts remain UNVERIFIED. Only the allowlisted fields `state`, `status`,
 `reason`, `diagnosticStage`, and `channelFetchFailureClass` may be
 shared for follow-up diagnosis. Do not post private receipts or IDs.
+
+### Verified single REST inventory (PR #336)
+
+The next prepared observer uses reviewed immutable source `38b84c8504d4354aaabdbea40913f1fed6572a64` and
+reuses the initial single-guild REST channel/role collections after verifying
+**complete ID correspondence** with the constructed discord.py Guild model.
+The projection does not perform a second `guild.fetch_channels()` or
+`guild.fetch_roles()` during the sealed owner audit. No Gateway cache, partial
+inventory, new endpoint or permission bypass is used. Unsupported, absent,
+duplicated or foreign models fail closed as `DISCORD_CHANNEL_MODEL_INCOMPLETE`
+or `DISCORD_ROLE_MODEL_INCOMPLETE`; no false READY / NOT_SET_UP inference is
+permitted. Other callers retain the existing fresh inventory implementation.
+
+The prior owner-approved Production read returned the fixed private signals
+`GAMES_CHANNELS_FETCH` and `channelFetchFailureClass=OTHER`. These indicate
+failure location but not proven exception type or root cause. Successful
+synthetic Python 3.12/3.14, Staging and isolated legacy Docker safety checks
+validate this source path **offline only**. The sealed root launcher blob stays
+`d79e94d8fc48d528091ef26116f180e071afcdf2` and the pinned SHA256
+check is unchanged. Merging this documentation is not Owner approval and does
+not permit a Production retry, deployment or resource mutation. A fresh private
+TTY confirmation of exact Production app/guild/container/database is required
+for any subsequent one-time read.
 
 ### Abort and compensation
 
