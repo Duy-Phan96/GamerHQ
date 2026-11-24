@@ -210,3 +210,39 @@ no PR was opened and no observer was enrolled. Existing unrelated branch-
 protection documentation/evidence was preserved separately in the checkout.
 Progress was recorded in
 [Issue #329 comment 7062826075](https://github.com/Duy-Phan96/GamerHQ/issues/329#issuecomment-7062826075).
+
+## Opaque Discord channel type 20: audited isolation decision (2026-11-24)
+
+The latest owner-approved **private, sanitized** Production result has **92** raw
+guild channels and **91** modeled channels, with one unmodeled channel of
+protocol type **20**. The collector correctly aborts at
+`GAMES_REST_MODEL_COVERAGE` with `DISCORD_CHANNEL_MODEL_INCOMPLETE`.
+This is evidence of a discord.py model-compatibility boundary, not proof
+that any Games resource is absent or a Database migration is needed.
+
+**Guardrails for a future compatibility design (not implemented by this test PR):**
+
+1. Keep the unknown REST resource opaque. Its ID may only be used privately
+   for exact-set coverage and dependency intersection. Never construct a
+   `TextChannel`, `CategoryChannel`, or a made-up permission model for type 20.
+2. Check canonical and legacy Games channel references, Games-category mapping,
+   parent relationships, collision candidates, associated managed settings and
+   other channel dependencies in the existing read-only/tenant-bound snapshot.
+3. Guard against missing resources influencing category/global capacity,
+   parent-child inventories, same-name adoption, role/grant calculations or
+   visibility. A type-20 channel is **not** a valid confirmed game chat or
+   Games category.
+4. Require a strict offline proof that **each** existing Games readiness outcome
+   would be identical with the opaque resource included in a complete,
+   lossless inventory. If any part cannot be demonstrated, retain global
+   `UNVERIFIED`; never mark a game `READY`, `NOT_SET_UP` or `HIDDEN`
+   based on a partial inventory.
+5. Preserve the existing owner-only launcher, bounded GET transport, fixed
+   tenant binding, SQLite read-only authorizer and private receipt policy.
+   No Production/Discord writes or runtime dependency upgrades are permitted
+   by this work.
+
+The new synthetic test reproduces the exact 92:91 mismatch and confirms that
+the diagnostic exposes only aggregate counts and protocol type, not the unknown
+channel's private ID, name, parent or overwrite payload. Fixture success is
+not Production readiness verification.
