@@ -180,13 +180,13 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/38b84c8504d4354aaabdbea40913f1fed6572a64/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/c0c072557941b066fe7f734aaeb2df231772582a/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit 38b84c8504d4354aaabdbea40913f1fed6572a64
+/usr/bin/python3 -I -S -B "$observer" --source-commit c0c072557941b066fe7f734aaeb2df231772582a
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-This command uses reviewed immutable merge commit `38b84c8504d4354aaabdbea40913f1fed6572a64` which includes the
+This command uses reviewed immutable merge commit `c0c072557941b066fe7f734aaeb2df231772582a` which includes the
 fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
 unchanged from the previously verified byte hash. Independently verify the
 checksum before use and treat this as **prepared documentation**, not owner
@@ -267,7 +267,7 @@ optional fixed-vocabulary private `channelFetchFailureClass` field: `HTTP`,
 `MODEL_ATTRIBUTE`, or `OTHER`. Exception text, response payloads and IDs
 remain private and are not serialized into this diagnostic.
 
-The command above is pinned to immutable merged source `38b84c8504d4354aaabdbea40913f1fed6572a64` after
+The command above is pinned to immutable merged source `c0c072557941b066fe7f734aaeb2df231772582a` after
 successful Python 3.12 / 3.14 offline tests and isolated legacy observer
 security rehearsal; the protected Staging Games workflow registration check
 passed without executing its collector. The owner launcher Git blob remains
@@ -281,7 +281,7 @@ shared for follow-up diagnosis. Do not post private receipts or IDs.
 
 ### Verified single REST inventory (PR #336)
 
-The next prepared observer uses reviewed immutable source `38b84c8504d4354aaabdbea40913f1fed6572a64` and
+The next prepared observer uses reviewed immutable source `c0c072557941b066fe7f734aaeb2df231772582a` and
 reuses the initial single-guild REST channel/role collections after verifying
 **complete ID correspondence** with the constructed discord.py Guild model.
 The projection does not perform a second `guild.fetch_channels()` or
@@ -301,6 +301,32 @@ check is unchanged. Merging this documentation is not Owner approval and does
 not permit a Production retry, deployment or resource mutation. A fresh private
 TTY confirmation of exact Production app/guild/container/database is required
 for any subsequent one-time read.
+
+### Privacy-bounded channel-model mismatch diagnostic (PR #338)
+
+The last separately owner-approved Production read failed closed at
+`GAMES_REST_MODEL_COVERAGE` with `DISCORD_CHANNEL_MODEL_INCOMPLETE`.
+This confirms a mismatch between the fresh REST channel list and the
+isolated discord.py Guild model, not a verified Games readiness result.
+It does not yet establish which Discord channel type(s) are omitted.
+
+The collector in immutable source `c0c072557941b066fe7f734aaeb2df231772582a` adds an optional
+`channelModelCoverage` object to the private failed receipt with only:
+`rawCount`, `modeledCount`, `missingCount`, `missingByType`, and
+`extraModelCount`. The histogram keys are numeric Discord protocol type
+codes between 0 and 31, with all other types bucketed into `OTHER`.
+No channel IDs, names, parents, permission overwrites, exception text or
+raw Discord payloads are written to this diagnostic. A mismatch **still
+aborts** collection; aggregate counts cannot authorize Games setup or repair.
+
+If a separately approved collection fails with this reason, inspect **only**
+the fixed sanitized private fields `state`, `status`, `reason`,
+`diagnosticStage`, and `channelModelCoverage`. The receipt remains private
+under the existing root-owned directory. Do not publish its pathname,
+opaque receipt identifier or any other private data. The reviewed launcher
+blob `d79e94d8fc48d528091ef26116f180e071afcdf2` and its independent
+SHA256 check are unchanged. This updated source pin is only preparation,
+not approval for a new Production read.
 
 ### Abort and compensation
 
