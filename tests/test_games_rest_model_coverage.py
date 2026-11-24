@@ -76,6 +76,40 @@ class VerifiedRestInventoryTests(unittest.TestCase):
         with self.assertRaises(AuditUnavailable):
             verified_rest_inventory(self.guild, raw, self.roles)
 
+    def test_single_type20_returns_opaque_flag_only_when_explicitly_allowed(self):
+        diagnostic = {}
+        raw = self.channels + [{'id': '444', 'type': 20,
+                                'name': 'PRIVATE_NAME', 'permission_overwrites': []}]
+        result = verified_rest_inventory(
+            self.guild, raw, self.roles, diagnostic=diagnostic, allow_opaque_type20=True)
+        self.assertEqual(result[:2], ([self.channel], [self.role]))
+        self.assertEqual(result[2], 'OPAQUE_TYPE20_UNVERIFIED')
+        self.assertEqual(diagnostic, {})
+        self.assertNotIn('444', repr(result))
+        self.assertNotIn('PRIVATE_NAME', repr(result))
+
+    def test_type20_exception_requires_exactly_one_model_gap(self):
+        cases = [
+            self.channels + [{'id': '444', 'type': 20}, {'id': '445', 'type': 20}],
+            self.channels + [{'id': '444', 'type': 21}],
+            self.channels + [{'id': '444', 'type': 20}, {'id': '445', 'type': 0}],
+        ]
+        for raw in cases:
+            with self.subTest(types=[row.get('type') for row in raw]):
+                with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+                    verified_rest_inventory(self.guild, raw, self.roles,
+                                            allow_opaque_type20=True)
+
+    def test_type20_exception_never_masks_role_or_foreign_model_gaps(self):
+        raw = self.channels + [{'id': '444', 'type': 20}]
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles + [{'id': '555'}],
+                                    allow_opaque_type20=True)
+        self.channel.guild = SimpleNamespace(id=999)
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles,
+                                    allow_opaque_type20=True)
+
     def test_unmodeled_role_is_explicit_failure(self):
         with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
             verified_rest_inventory(self.guild, self.channels,
