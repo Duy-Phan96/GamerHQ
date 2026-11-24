@@ -107,6 +107,26 @@ class GamesDiscord:
                 raise AuditUnavailable('DISCORD_TRANSPORT_UNAVAILABLE') from None
 
 
+def verified_rest_inventory(guild, raw_channels, raw_roles):
+    """Reject missing/unsupported models rather than silently dropping REST resources.
+
+    The Guild was constructed once from the immediately preceding bounded
+    single-guild REST response, never from a Gateway cache.
+    """
+    channels, roles = list(guild.channels), list(guild.roles)
+    for raw, models, reason in (
+        (raw_channels, channels, 'DISCORD_CHANNEL_MODEL_INCOMPLETE'),
+        (raw_roles, roles, 'DISCORD_ROLE_MODEL_INCOMPLETE'),
+    ):
+        expected = {int(item['id']) for item in raw}
+        actual = {item.id for item in models}
+        if (len(raw) != len(models) or expected != actual
+                or any(getattr(getattr(item, 'guild', None), 'id', None) != guild.id
+                       for item in models)):
+            raise AuditUnavailable(reason)
+    return channels, roles
+
+
 async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=None):
     # Private, fixed-vocabulary phase marker. Never store exception text or Discord payloads.
     def phase(value):
@@ -174,10 +194,12 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=No
             model = discord.Guild(data={**payload, 'roles': roles, 'channels': channels, 'members': members}, state=client._connection)
             for member in members:
                 model._add_member(discord.Member(data=member, guild=model, state=client._connection))
+            phase('GAMES_REST_MODEL_COVERAGE')
+            inventory = verified_rest_inventory(model, channels, roles)
             phase('GAMES_PROJECTION')
             result = await projection.collect(model, model.get_member(rest.owner), environment=packet['environment'],
                         guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy,
-                        diagnostic=diagnostic)
+                        diagnostic=diagnostic, verified_rest_inventory=inventory)
             phase('REPORT_ASSEMBLY')
             return {**result, 'state': 'GAMES_AUDIT_COLLECTED', 'collectedAt': datetime.now(timezone.utc).isoformat(),
                     'discordReads': rest.reads, 'mutationsAttempted': False, 'gatewayRestarted': False}

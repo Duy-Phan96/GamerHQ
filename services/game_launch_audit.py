@@ -58,7 +58,8 @@ def access(resource, guild, role=None):
             'gameRoleReadHistory': selected.read_message_history if selected else None}
 
 
-async def collect(guild, actor, *, environment, guild_id, application_id, legacy_primary=False, diagnostic=None):
+async def collect(guild, actor, *, environment, guild_id, application_id, legacy_primary=False, diagnostic=None,
+                  verified_rest_inventory=None):
     """Inspect every catalog row against one inventory and one in-memory DB copy."""
     def phase(value):
         # Fixed, non-sensitive stage names only; never persist a traceback or row.
@@ -101,25 +102,30 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
         try:
             # Equivalent to visibility._snapshot, with explicit, safe failure stages.
             # Never substitute cached Gateway channels or a partial inventory.
-            phase('GAMES_CHANNELS_FETCH')
-            try:
-                fresh_channels = await guild.fetch_channels()
-            except Exception as error:
-                # Only a fixed classification is retained in the private receipt.
-                # Never persist exception text, response bodies or resource IDs.
-                if diagnostic is not None:
-                    diagnostic['channelFetchFailureClass'] = (
-                        'HTTP' if isinstance(error, discord.HTTPException) else
-                        'TIMEOUT' if isinstance(error, TimeoutError) else
-                        'MODEL_KEY' if isinstance(error, KeyError) else
-                        'MODEL_TYPE' if isinstance(error, TypeError) else
-                        'MODEL_VALUE' if isinstance(error, ValueError) else
-                        'MODEL_ATTRIBUTE' if isinstance(error, AttributeError) else
-                        'OTHER'
-                    )
-                raise
-            phase('GAMES_ROLES_FETCH')
-            fresh_roles = await guild.fetch_roles()
+            if verified_rest_inventory is not None:
+                # The sealed collector already fetched both REST inventories and
+                # checked exact model ID coverage. No second model conversion or GET.
+                phase('GAMES_VERIFIED_REST_INVENTORY')
+                fresh_channels, fresh_roles = verified_rest_inventory
+            else:
+                phase('GAMES_CHANNELS_FETCH')
+                try:
+                    fresh_channels = await guild.fetch_channels()
+                except Exception as error:
+                    # Fixed type labels only; no exception text or resource IDs.
+                    if diagnostic is not None:
+                        diagnostic['channelFetchFailureClass'] = (
+                            'HTTP' if isinstance(error, discord.HTTPException) else
+                            'TIMEOUT' if isinstance(error, TimeoutError) else
+                            'MODEL_KEY' if isinstance(error, KeyError) else
+                            'MODEL_TYPE' if isinstance(error, TypeError) else
+                            'MODEL_VALUE' if isinstance(error, ValueError) else
+                            'MODEL_ATTRIBUTE' if isinstance(error, AttributeError) else
+                            'OTHER'
+                        )
+                    raise
+                phase('GAMES_ROLES_FETCH')
+                fresh_roles = await guild.fetch_roles()
             phase('GAMES_SNAPSHOT_BUILD')
             fresh = visibility.GuildSnapshot(guild, fresh_channels, fresh_roles)
             phase('GAMES_INVENTORY_VALIDATE')

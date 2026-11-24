@@ -69,6 +69,22 @@ class LaunchAuditTests(unittest.IsolatedAsyncioTestCase):
         self.guild.fetch_roles.assert_not_awaited()
         self.assertEqual(before, self.snapshot())
 
+    async def test_verified_rest_inventory_reuses_complete_models_without_refetch(self):
+        before = self.snapshot()
+        channels = self.guild.fetch_channels.return_value
+        roles = self.guild.fetch_roles.return_value
+        diagnostic = {}
+        with self.binding():
+            result = await audit.collect(
+                self.guild, self.actor, environment='staging',
+                guild_id=self.guild.id, application_id=self.guild.me.id,
+                diagnostic=diagnostic, verified_rest_inventory=(channels, roles))
+        self.assertEqual(diagnostic['stage'], 'GAMES_FINAL_GUARDS')
+        self.assertEqual(result['inventory'], {'state': 'VERIFIED'})
+        self.guild.fetch_channels.assert_not_awaited()
+        self.guild.fetch_roles.assert_not_awaited()
+        self.assertEqual(before, self.snapshot())
+
     async def test_roles_inventory_failure_has_narrow_safe_phase(self):
         before = self.snapshot()
         self.guild.fetch_roles.side_effect = RuntimeError('private role payload')
