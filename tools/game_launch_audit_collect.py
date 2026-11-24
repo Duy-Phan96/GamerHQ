@@ -166,6 +166,18 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None, 
     return channels, roles
 
 
+def finalize_projection(result, discord_reads):
+    """Only a fully modeled inventory may produce the public COMPLETE path."""
+    common = {**result, 'collectedAt': datetime.now(timezone.utc).isoformat(),
+              'discordReads': discord_reads, 'mutationsAttempted': False,
+              'gatewayRestarted': False}
+    if result.get('inventory') == {'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'}:
+        return {**common, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
+                'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20',
+                'diagnosticStage': 'GAMES_OPAQUE_TYPE20'}
+    return {**common, 'state': 'GAMES_AUDIT_COLLECTED'}
+
+
 async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=None):
     # Private, fixed-vocabulary phase marker. Never store exception text or Discord payloads.
     def phase(value):
@@ -241,18 +253,7 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=No
                         guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy,
                         diagnostic=diagnostic, verified_rest_inventory=inventory)
             phase('REPORT_ASSEMBLY')
-            if result.get('inventory') == {'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'}:
-                # Keep detailed catalog evidence in the owner-private failed
-                # receipt, but NEVER publish a COMPLETE state, even if all DB
-                # metadata was inspected successfully.
-                return {**result, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
-                        'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20',
-                        'diagnosticStage': 'GAMES_OPAQUE_TYPE20',
-                        'collectedAt': datetime.now(timezone.utc).isoformat(),
-                        'discordReads': rest.reads, 'mutationsAttempted': False,
-                        'gatewayRestarted': False}
-            return {**result, 'state': 'GAMES_AUDIT_COLLECTED', 'collectedAt': datetime.now(timezone.utc).isoformat(),
-                    'discordReads': rest.reads, 'mutationsAttempted': False, 'gatewayRestarted': False}
+            return finalize_projection(result, rest.reads)
 
 
 def main(packet):
