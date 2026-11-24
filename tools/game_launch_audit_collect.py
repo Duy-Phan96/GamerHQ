@@ -107,11 +107,11 @@ class GamesDiscord:
                 raise AuditUnavailable('DISCORD_TRANSPORT_UNAVAILABLE') from None
 
 
-def verified_rest_inventory(guild, raw_channels, raw_roles):
-    """Reject missing/unsupported models rather than silently dropping REST resources.
+def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None):
+    """Check exact REST/model coverage; report only bounded type counts privately.
 
-    The Guild was constructed once from the immediately preceding bounded
-    single-guild REST response, never from a Gateway cache.
+    No IDs, names, parent references, overwrites or original channel payloads
+    are included in the exception or diagnostic.
     """
     channels, roles = list(guild.channels), list(guild.roles)
     for raw, models, reason in (
@@ -120,9 +120,28 @@ def verified_rest_inventory(guild, raw_channels, raw_roles):
     ):
         expected = {int(item['id']) for item in raw}
         actual = {item.id for item in models}
-        if (len(raw) != len(models) or expected != actual
-                or any(getattr(getattr(item, 'guild', None), 'id', None) != guild.id
-                       for item in models)):
+        incomplete = (len(raw) != len(models) or expected != actual
+                      or any(getattr(getattr(item, 'guild', None), 'id', None) != guild.id
+                             for item in models))
+        if incomplete:
+            if reason == 'DISCORD_CHANNEL_MODEL_INCOMPLETE' and diagnostic is not None:
+                missing = expected - actual
+                by_type = {}
+                for item in raw:
+                    if int(item['id']) not in missing:
+                        continue
+                    # Discord's channel type is a public protocol enum, but
+                    # unknown/unbounded values must never be printed verbatim.
+                    kind = item.get('type')
+                    label = str(kind) if type(kind) is int and 0 <= kind <= 31 else 'OTHER'
+                    by_type[label] = by_type.get(label, 0) + 1
+                diagnostic['channelModelCoverage'] = {
+                    'rawCount': len(raw),
+                    'modeledCount': len(models),
+                    'missingCount': len(missing),
+                    'missingByType': dict(sorted(by_type.items())),
+                    'extraModelCount': len(actual - expected),
+                }
             raise AuditUnavailable(reason)
     return channels, roles
 
@@ -195,7 +214,7 @@ async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=No
             for member in members:
                 model._add_member(discord.Member(data=member, guild=model, state=client._connection))
             phase('GAMES_REST_MODEL_COVERAGE')
-            inventory = verified_rest_inventory(model, channels, roles)
+            inventory = verified_rest_inventory(model, channels, roles, diagnostic=diagnostic)
             phase('GAMES_PROJECTION')
             result = await projection.collect(model, model.get_member(rest.owner), environment=packet['environment'],
                         guild_id=gid, application_id=packet['applicationId'], legacy_primary=legacy,
@@ -214,6 +233,7 @@ def main(packet):
                 'reason': error.reason, 'httpStatus': error.http_status,
                 'diagnosticStage': diagnostic['stage'],
                 'channelFetchFailureClass': diagnostic.get('channelFetchFailureClass'),
+                'channelModelCoverage': diagnostic.get('channelModelCoverage'),
                 'databaseChanged': False, 'discordResourcesChanged': False, 'gatewayRestarted': False}
     except Exception as error:
         # No token, private response, SQL or filesystem exception is forwarded.
@@ -221,5 +241,6 @@ def main(packet):
                 'reason': error.args[0] if error.args and isinstance(error.args[0], str) and error.args[0] in REASONS else 'RUNTIME_OR_SCHEMA_UNAVAILABLE',
                 'diagnosticStage': diagnostic['stage'],
                 'channelFetchFailureClass': diagnostic.get('channelFetchFailureClass'),
+                'channelModelCoverage': diagnostic.get('channelModelCoverage'),
                 'databaseChanged': False,
                 'discordResourcesChanged': False, 'gatewayRestarted': False}
