@@ -103,10 +103,19 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
             # Equivalent to visibility._snapshot, with explicit, safe failure stages.
             # Never substitute cached Gateway channels or a partial inventory.
             if verified_rest_inventory is not None:
-                # The sealed collector already fetched both REST inventories and
-                # checked exact model ID coverage. No second model conversion or GET.
+                # The sealed collector already fetched the bounded REST inventories.
+                # An accepted opaque type-20 model is not a verified inventory:
+                # preserve the DB/catalog evidence, but forbid every READY/HIDDEN/
+                # NOT_SET_UP/SETUP_NEEDED decision and all access calculations.
                 phase('GAMES_VERIFIED_REST_INVENTORY')
-                fresh_channels, fresh_roles = verified_rest_inventory
+                if (len(verified_rest_inventory) == 3
+                        and verified_rest_inventory[2] == 'OPAQUE_TYPE20_UNVERIFIED'):
+                    failure = {'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'}
+                    fresh_channels = fresh_roles = None
+                elif len(verified_rest_inventory) == 2:
+                    fresh_channels, fresh_roles = verified_rest_inventory
+                else:
+                    raise ValueError('GAMES_AUDIT_INVENTORY_REJECTED')
             else:
                 phase('GAMES_CHANNELS_FETCH')
                 try:
@@ -126,14 +135,15 @@ async def collect(guild, actor, *, environment, guild_id, application_id, legacy
                     raise
                 phase('GAMES_ROLES_FETCH')
                 fresh_roles = await guild.fetch_roles()
-            phase('GAMES_SNAPSHOT_BUILD')
-            fresh = visibility.GuildSnapshot(guild, fresh_channels, fresh_roles)
-            phase('GAMES_INVENTORY_VALIDATE')
-            if getattr(guild, 'unavailable', False):
-                raise ValueError('GUILD_UNAVAILABLE')
-            if any(getattr(getattr(resource, 'guild', None), 'id', None) != guild_id
-                   for resource in (*fresh.channels, *fresh.roles)):
-                raise ValueError('FOREIGN_INVENTORY_REJECTED')
+            if failure is None:
+                phase('GAMES_SNAPSHOT_BUILD')
+                fresh = visibility.GuildSnapshot(guild, fresh_channels, fresh_roles)
+                phase('GAMES_INVENTORY_VALIDATE')
+                if getattr(guild, 'unavailable', False):
+                    raise ValueError('GUILD_UNAVAILABLE')
+                if any(getattr(getattr(resource, 'guild', None), 'id', None) != guild_id
+                       for resource in (*fresh.channels, *fresh.roles)):
+                    raise ValueError('FOREIGN_INVENTORY_REJECTED')
         except discord.HTTPException as error:
             failure = {'reason': 'DISCORD_INVENTORY_HTTP_REJECTED', 'httpStatus': error.status}
         except TimeoutError:
