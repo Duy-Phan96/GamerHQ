@@ -26,6 +26,43 @@ class VerifiedRestInventoryTests(unittest.TestCase):
                                     self.channels + [{'id': '444', 'type': 999}],
                                     self.roles)
 
+    def test_missing_channel_types_are_aggregate_only(self):
+        diagnostic = {}
+        raw = self.channels + [
+            {'id': '444', 'type': 16, 'name': 'SECRET_PRIVATE_NAME'},
+            {'id': '445', 'type': 16, 'name': 'SECRET_PRIVATE_NAME'},
+            {'id': '446', 'type': 9999, 'name': 'SECRET_PRIVATE_NAME'},
+        ]
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, self.channels,
+                                    self.roles + [{'id': '555'}])
+
+    def test_foreign_model_is_explicit_failure(self):
+        self.channel.guild = SimpleNamespace(id=999)
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, self.channels, self.roles)
+
+    def test_duplicate_model_id_is_explicit_failure(self):
+        self.guild.channels.append(SimpleNamespace(id=222, guild=self.guild))
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, self.channels, self.roles)
+):
+            verified_rest_inventory(self.guild, raw, self.roles, diagnostic=diagnostic)
+        self.assertEqual(diagnostic['channelModelCoverage'], {
+            'rawCount': 4, 'modeledCount': 1, 'missingCount': 3,
+            'missingByType': {'16': 2, 'OTHER': 1}, 'extraModelCount': 0,
+        })
+        import json
+        serialized = json.dumps(diagnostic)
+        for private in ('444', '445', '446', '9999', 'SECRET_PRIVATE_NAME'):
+            self.assertNotIn(private, serialized)
+
+    def test_no_diagnostic_on_success(self):
+        diagnostic = {}
+        verified_rest_inventory(self.guild, self.channels, self.roles, diagnostic=diagnostic)
+        self.assertEqual(diagnostic, {})
+
     def test_unmodeled_role_is_explicit_failure(self):
         with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
             verified_rest_inventory(self.guild, self.channels,
