@@ -321,3 +321,22 @@ malformed inventory, alongside verified and opaque results. No additional
 Discord calls, service startup, channel semantics assumptions or Production
 changes are introduced. This remains an **offline candidate** until CI and
 isolated security rehearsal pass; no owner audit is requested.
+
+## REST/model unique-ID integrity (2026-11-25)
+
+The source-sealed Games collector now explicitly checks that **every** REST
+channel, modeled channel, REST role and modeled role ID is unique. Comparing
+set equality and list lengths alone is insufficient: two duplicate rows
+on both sides could otherwise report exact coverage despite ambiguous
+resource identities.
+
+The type-20 opaque exception also requires uniqueness of all modeled and
+raw IDs before it can return the special `OPAQUE_TYPE20_UNVERIFIED` marker.
+Any duplicate remains `DISCORD_CHANNEL_MODEL_INCOMPLETE` or
+`DISCORD_ROLE_MODEL_INCOMPLETE` and cannot mark Games as READY or COLLECTED.
+Synthetic fixtures verify matched duplicates on both sides and the type-20
+intersection; private IDs and names never appear in diagnostics.
+
+This is a bounded offline inventory-correctness safeguard and does not
+change channel APIs, readiness semantics, Production configuration or
+runtime package versions.
