@@ -125,3 +125,46 @@ class ServerHomeContractTests(unittest.TestCase):
         inventory = verified_rest_inventory(
             self.guild, self.raw, self.raw_roles, allow_opaque_type20=True)
         self.assertEqual(inventory[2], 'OPAQUE_TYPE20_UNVERIFIED')
+
+    def test_opaque_serverhome_changes_global_channel_capacity_accounting(self):
+        # _plan in game_visibility_service uses len(guild.channels) to check
+        # SERVER_CHANNEL_LIMIT. Omission can create an off-by-one false slot.
+        from services.game_visibility_service import SERVER_CHANNEL_LIMIT
+        modeled = [SimpleNamespace(id=1000 + i, guild=self.guild)
+                   for i in range(SERVER_CHANNEL_LIMIT - 1)]
+        raw = [{'id': str(c.id), 'type': 0} for c in modeled]
+        raw.append({'id': '999999', 'type': 20,
+                    'name': 'SYNTHETIC_PRIVATE_SERVERHOME'})
+        self.guild.channels = modeled
+        self.guild.roles = self.roles
+        self.assertLess(len(self.guild.channels), SERVER_CHANNEL_LIMIT)
+        self.assertEqual(len(raw), SERVER_CHANNEL_LIMIT)
+        inventory = verified_rest_inventory(
+            self.guild, raw, self.raw_roles, allow_opaque_type20=True)
+        self.assertEqual(inventory[2], 'OPAQUE_TYPE20_UNVERIFIED')
+        receipt = finalize_projection(
+            {'inventory': {'state': 'UNVERIFIED',
+                           'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'}}, 3)
+        self.assertEqual(receipt['state'], 'GAMES_AUDIT_UNAVAILABLE')
+
+    def test_opaque_serverhome_parent_affects_games_category_occupancy(self):
+        # _plan also relies on parent.channels and CATEGORY_LIMIT. REST parent_id
+        # of an opaque resource cannot be safely ignored as category capacity.
+        from services.game_visibility_service import CATEGORY_LIMIT
+        parent_id = 555
+        modeled_children = [SimpleNamespace(id=1000 + i, guild=self.guild,
+                                            category_id=parent_id)
+                            for i in range(CATEGORY_LIMIT - 1)]
+        raw = [{'id': str(c.id), 'type': 0,
+                'parent_id': str(parent_id)} for c in modeled_children]
+        raw.append({'id': '999999', 'type': 20,
+                    'parent_id': str(parent_id),
+                    'name': 'SYNTHETIC_PRIVATE_SERVERHOME'})
+        self.guild.channels = modeled_children
+        self.guild.roles = self.roles
+        self.assertEqual(len(modeled_children), CATEGORY_LIMIT - 1)
+        self.assertEqual(sum(row.get('parent_id') == str(parent_id)
+                             for row in raw), CATEGORY_LIMIT)
+        inventory = verified_rest_inventory(
+            self.guild, raw, self.raw_roles, allow_opaque_type20=True)
+        self.assertEqual(inventory[2], 'OPAQUE_TYPE20_UNVERIFIED')
