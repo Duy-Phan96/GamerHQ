@@ -121,7 +121,10 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None, 
     ):
         expected = {int(item['id']) for item in raw}
         actual = {item.id for item in models}
+        # Set equality alone misses duplicate IDs if REST and models contain
+        # the same repeated ID. Every listed resource must have one identity.
         incomplete = (len(raw) != len(models) or expected != actual
+                      or len(expected) != len(raw) or len(actual) != len(models)
                       or any(getattr(getattr(item, 'guild', None), 'id', None) != guild.id
                              for item in models))
         if incomplete:
@@ -133,6 +136,7 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None, 
                 # accounted for. Unknown objects are never constructed or
                 # made available to any readiness/permission decision.
                 if (len(missing) == 1 and len(opaque) == 1
+                        and len(expected) == len(raw) and len(actual) == len(models)
                         and type(opaque[0].get('type')) is int
                         and opaque[0]['type'] == 20
                         and len(raw) == len(models) + 1 and not (actual - expected)
