@@ -359,3 +359,26 @@ until reviewed, version-pinned upstream support and separate owner approval.
 The new offline regression uses a synthetic model that returns all permissions
 as enabled to prove a plausible inherited method cannot promote `READY`.
 No upstream PR is installed and Production is untouched.
+
+## Why a global ServerHome exclusion cannot prove Games readiness (2026-11-25)
+
+The current Games visibility planner uses both `len(guild.channels)` with
+`SERVER_CHANNEL_LIMIT=500` and `len(parent.channels)` with
+`CATEGORY_LIMIT=50` to determine whether a new game channel can be placed.
+An unmodeled REST type-20 channel can change either count. Even if it is not a
+Games text channel, filtering it from the Guild model can make the planner
+believe capacity remains when the REST inventory already reaches a limit.
+
+Synthetic offline counterexamples cover (a) 500 raw resources vs 499 modeled
+resources and (b) 50 raw resources claiming the same Games parent while only
+49 appear among modeled children. They intentionally preserve
+`OPAQUE_TYPE20_UNVERIFIED` and `GAMES_AUDIT_UNAVAILABLE` rather than claiming
+a complete live Discord interpretation. A REST `parent_id` alone is not proof
+that Discord treats ServerHome as a normal category child.
+
+**Decision:** Do not globally subtract/ignore ServerHome or promote the Games
+audit to `VERIFIED` based only on matching known game chat IDs, generic
+permissions, or inferred independence. Any scoped future exception must
+separately prove the actual capacity, category membership, collision and
+permission semantics of the reviewed/version-pinned library implementation.
+Owner-only Production authorization remains a separate gate.
