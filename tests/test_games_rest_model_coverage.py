@@ -186,6 +186,33 @@ class VerifiedRestInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
             verified_rest_inventory(self.guild, self.channels, self.roles)
 
+    def test_matching_duplicate_rest_and_model_channel_ids_are_rejected(self):
+        # Counts and ID sets agree, but neither side is a one-to-one inventory.
+        self.guild.channels.append(SimpleNamespace(id=222, guild=self.guild))
+        raw = self.channels + [{'id': '222', 'type': 0}]
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles)
+
+    def test_matching_duplicate_rest_and_model_role_ids_are_rejected(self):
+        self.guild.roles.append(SimpleNamespace(id=333, guild=self.guild))
+        raw_roles = self.roles + [{'id': '333'}]
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, self.channels, raw_roles)
+
+    def test_type20_opaque_exception_never_makes_duplicate_other_ids_acceptable(self):
+        self.guild.channels.append(SimpleNamespace(id=222, guild=self.guild))
+        raw = self.channels + [
+            {'id': '222', 'type': 0},
+            {'id': '444', 'type': 20, 'name': 'SYNTHETIC_PRIVATE'},
+        ]
+        diagnostic = {}
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles, diagnostic=diagnostic,
+                                    allow_opaque_type20=True)
+        self.assertEqual(diagnostic['channelModelCoverage']['missingByType'], {'20': 1})
+        self.assertNotIn('SYNTHETIC_PRIVATE', repr(diagnostic))
+        self.assertNotIn('444', repr(diagnostic))
+
     def test_duplicate_model_id_is_explicit_failure(self):
         self.guild.channels.append(SimpleNamespace(id=222, guild=self.guild))
         with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
