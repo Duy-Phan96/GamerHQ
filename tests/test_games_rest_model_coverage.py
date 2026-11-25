@@ -88,6 +88,31 @@ class VerifiedRestInventoryTests(unittest.TestCase):
         self.assertNotIn('444', repr(result))
         self.assertNotIn('PRIVATE_NAME', repr(result))
 
+    def test_modeled_type20_fallback_still_disables_readiness(self):
+        # A future upstream PartialChannel can make REST and model counts equal.
+        # That alone is not proof of safe Games channel/permission semantics.
+        self.guild.channels.append(SimpleNamespace(id=444, guild=self.guild))
+        raw = self.channels + [{'id': '444', 'type': 20, 'name': 'PRIVATE_NAME'}]
+        result = verified_rest_inventory(
+            self.guild, raw, self.roles, allow_opaque_type20=True)
+        self.assertEqual(result[2], 'OPAQUE_TYPE20_UNVERIFIED')
+        self.assertNotIn('PRIVATE_NAME', repr(result))
+
+    def test_multiple_modeled_type20_channels_are_not_automatically_accepted(self):
+        self.guild.channels.extend((
+            SimpleNamespace(id=444, guild=self.guild),
+            SimpleNamespace(id=445, guild=self.guild),
+        ))
+        raw = self.channels + [{'id': '444', 'type': 20}, {'id': '445', 'type': 20}]
+        with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_CHANNEL_MODEL_INCOMPLETE$'):
+            verified_rest_inventory(self.guild, raw, self.roles, allow_opaque_type20=True)
+
+    def test_modeled_type20_remains_strict_without_opaque_opt_in(self):
+        self.guild.channels.append(SimpleNamespace(id=444, guild=self.guild))
+        raw = self.channels + [{'id': '444', 'type': 20}]
+        result = verified_rest_inventory(self.guild, raw, self.roles)
+        self.assertEqual(len(result), 2)
+
     def test_type20_exception_requires_exactly_one_model_gap(self):
         cases = [
             self.channels + [{'id': '444', 'type': 20}, {'id': '445', 'type': 20}],

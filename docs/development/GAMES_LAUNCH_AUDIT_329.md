@@ -273,3 +273,28 @@ a **separately authorized** root-TTY Production read before a live outcome is
 known. Future matching against staging still requires a fully verified
 inventory on both sides; the comparison validator intentionally rejects
 partial receipts.
+
+## Upstream ServerHome/PartialChannel compatibility gate (2026-11-25)
+
+[discord.py PR #10553](https://github.com/Rapptz/discord.py/pull/10553)
+(open as checked) identifies Discord channel **type 20** as `ServerHome`,
+and proposes a generic `PartialChannel` fallback for unrecognized guild
+channel types. GamerHQ currently pins `discord.py==2.7.1`; the proposed
+upstream change has **not** been shipped by that pin.
+
+Importantly, a future library release could return a generic partial
+model for type 20, causing the REST IDs and modeled IDs to match.
+**Exact ID coverage is necessary but not sufficient to prove full
+permission/channel semantics.** The protected collector therefore retains
+`OPAQUE_TYPE20_UNVERIFIED` for one type-20 channel even if a future model
+reports the same ID. Multiple type-20 channels still reject pending
+separate review. Synthetic tests cover both a missing model and
+a modeled fallback. The collector never hot-patches `discord.py`,
+installs an upstream pull-request branch or changes Production dependencies.
+No owner Production approval or audit is implied.
+
+Before any promotion to `VERIFIED`, validate the actual upstream release,
+constrained package upgrade, channel behavior/permissions, Games ancestry,
+channel limits and compatibility with the source-sealed observer through
+offline tests and protected owner review. Full Games readiness is not
+currently established.
