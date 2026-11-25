@@ -174,15 +174,20 @@ def verified_rest_inventory(guild, raw_channels, raw_roles, *, diagnostic=None, 
 
 
 def finalize_projection(result, discord_reads):
-    """Only a fully modeled inventory may produce the public COMPLETE path."""
+    """Never report COLLECTED unless the Games inventory is explicitly verified."""
     common = {**result, 'collectedAt': datetime.now(timezone.utc).isoformat(),
               'discordReads': discord_reads, 'mutationsAttempted': False,
               'gatewayRestarted': False}
-    if result.get('inventory') == {'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'}:
-        return {**common, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
-                'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20',
-                'diagnosticStage': 'GAMES_OPAQUE_TYPE20'}
-    return {**common, 'state': 'GAMES_AUDIT_COLLECTED'}
+    inventory = result.get('inventory')
+    if inventory == {'state': 'VERIFIED'}:
+        return {**common, 'state': 'GAMES_AUDIT_COLLECTED'}
+    # The operator-private report may retain bounded read-only catalog evidence
+    # but the launcher MUST NOT report COMPLETE for HTTP failures, opaque
+    # channels, missing or malformed inventory statuses.
+    opaque = inventory == {'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'}
+    return {**common, 'state': 'GAMES_AUDIT_UNAVAILABLE', 'status': 'UNVERIFIED',
+            'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20' if opaque else 'GAMES_INVENTORY_UNVERIFIED',
+            'diagnosticStage': 'GAMES_OPAQUE_TYPE20' if opaque else 'GAMES_FINAL_INVENTORY_GATE'}
 
 
 async def gather(packet, *, session_factory=aiohttp.ClientSession, diagnostic=None):

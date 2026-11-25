@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 0284a619efddfc0e86ee561b547d2d5df551a343
+          ref: a02d583b97a78a297aee1248ffc7dc54a252df17
           persist-credentials: false
       - name: Collect aggregate evidence through the enrolled primary-only controller
         env:

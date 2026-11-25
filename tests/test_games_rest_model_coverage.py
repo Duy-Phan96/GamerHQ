@@ -153,6 +153,29 @@ class VerifiedRestInventoryTests(unittest.TestCase):
         full = finalize_projection({'inventory': {'state': 'VERIFIED'}}, 5)
         self.assertEqual(full['state'], 'GAMES_AUDIT_COLLECTED')
 
+    def test_finalizer_blocks_every_nonverified_inventory(self):
+        from tools.game_launch_audit_collect import finalize_projection
+        cases = [
+            {'reason': 'DISCORD_INVENTORY_HTTP_REJECTED', 'httpStatus': 403},
+            {'state': 'UNVERIFIED'},
+            {'state': 'REVIEW'},
+            {'state': 'VERIFIED', 'unexpected': True},
+            None,
+            {},
+        ]
+        for inventory in cases:
+            with self.subTest(inventory=inventory):
+                result = finalize_projection(
+                    {'inventory': inventory, 'counts': {'UNVERIFIED': 1}}, 4)
+                self.assertEqual(result['state'], 'GAMES_AUDIT_UNAVAILABLE')
+                self.assertEqual(result['status'], 'UNVERIFIED')
+                self.assertEqual(result['reason'], 'GAMES_INVENTORY_UNVERIFIED')
+                self.assertEqual(result['diagnosticStage'], 'GAMES_FINAL_INVENTORY_GATE')
+                self.assertFalse(result['mutationsAttempted'])
+                self.assertFalse(result['gatewayRestarted'])
+        self.assertEqual(finalize_projection(
+            {'inventory': {'state': 'VERIFIED'}}, 4)['state'], 'GAMES_AUDIT_COLLECTED')
+
     def test_unmodeled_role_is_explicit_failure(self):
         with self.assertRaisesRegex(AuditUnavailable, '^DISCORD_ROLE_MODEL_INCOMPLETE$'):
             verified_rest_inventory(self.guild, self.channels,
