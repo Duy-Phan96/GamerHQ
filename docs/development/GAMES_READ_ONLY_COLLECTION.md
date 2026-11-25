@@ -1,5 +1,12 @@
 # Games-only read-only collection â€” Issue #329
 
+> **Current status (2026-11-25, Issue #329):** The latest reviewed
+> read-only Games observer is immutable commit `e2f998521bf2f684976b2da1e95c4144bb57c9ab`.
+> This pin is for provenance only. No new Production collection has been
+> approved, and a new run is **not warranted merely to seek READY** while
+> Discord ServerHome/type 20 still forces `UNVERIFIED`. Earlier source pins
+> in the historical sections below describe prior test/receipt milestones.
+
 This prepares collection, not a deployment, repair or permission grant. No
 collector has run against Production or Staging under this change. The existing
 Games setup/Show/Hide flows remain the only correction mechanism. Servertest is
@@ -180,14 +187,14 @@ set -euo pipefail
 umask 077
 observer=$(mktemp)
 trap 'rm -f -- "$observer"' EXIT
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/c43bc0cc27b04eab542a3df26eed2df90f7be649/tools/game_audit_legacy_collect.py'
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 60 --max-filesize 65536 --output "$observer" 'https://raw.githubusercontent.com/Duy-Phan96/GamerHQ/e2f998521bf2f684976b2da1e95c4144bb57c9ab/tools/game_audit_legacy_collect.py'
 printf '%s  %s\n' '36f2a7d9bdf4671e4361c696e9290f1872bf164408a969b682c271cbf86fba52' "$observer" | sha256sum --check --status
-/usr/bin/python3 -I -S -B "$observer" --source-commit c43bc0cc27b04eab542a3df26eed2df90f7be649
+/usr/bin/python3 -I -S -B "$observer" --source-commit e2f998521bf2f684976b2da1e95c4144bb57c9ab
 GAMERHQ_LEGACY_GAMES_READONLY
 ```
 
-This command uses reviewed immutable merge commit `c43bc0cc27b04eab542a3df26eed2df90f7be649` which includes the
-fixed-vocabulary diagnostic stages from PR #331; the owner launcher itself is
+This prepared command references immutable merge commit `e2f998521bf2f684976b2da1e95c4144bb57c9ab` and includes
+all reviewed Games inventory integrity guards through PR #347; the owner launcher itself is
 unchanged from the previously verified byte hash. Independently verify the
 checksum before use and treat this as **prepared documentation**, not owner
 approval to perform another live collection. Before execution, confirm required
@@ -195,7 +202,9 @@ CI for the exact observer source and inspect the private Production binding anew
 If unavailable, the private receipt includes a `diagnosticStage`; do not paste
 private bindings or raw receipts into public issues or chat.
 
-Expected successful public state: `GAMES_LEGACY_COLLECTION_COMPLETE`, aggregate
+A fully verified inventory (which is **not** expected while the type-20
+ServerHome remains opaque) may return the successful public state
+`GAMES_LEGACY_COLLECTION_COMPLETE` with aggregate
 `READY/NOT_SET_UP/HIDDEN/SETUP_NEEDED/REVIEW/UNVERIFIED` counts, opaque
 `privateReceiptId`, `collectionExecuted=true`, and all change flags false.
 Original Host revision/build provenance stay false. A successful collection may
@@ -330,7 +339,7 @@ not approval for a new Production read.
 
 ### Opaque type-20 partial-evidence behavior (merged PR #342)
 
-The latest reviewed observer source (`c43bc0cc27b04eab542a3df26eed2df90f7be649`) contains a
+The latest source at the time of PR #342 (`c43bc0cc27b04eab542a3df26eed2df90f7be649`) contains a
 narrow compatibility path for exactly **one** otherwise unmodeled REST channel
 of protocol type 20, with all other channel and role IDs and Guild ownership
 matching. That unmodeled resource is represented as an **opaque flag**, never
