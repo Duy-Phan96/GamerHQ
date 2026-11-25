@@ -29,6 +29,13 @@ class PartialChannelLike:
         raise AssertionError("Opaque ServerHome permissions are not verified")
 
 
+class PartialChannelWithPlausiblePermissions(PartialChannelLike):
+    """Simulate an upstream GuildChannel-inherited permissions_for method."""
+
+    def permissions_for(self, _):
+        return discord.Permissions.all()
+
+
 class ServerHomeContractTests(unittest.TestCase):
     def setUp(self):
         self.guild = SimpleNamespace(id=111)
@@ -64,6 +71,28 @@ class ServerHomeContractTests(unittest.TestCase):
                 self.assertEqual(receipt['state'], 'GAMES_AUDIT_UNAVAILABLE')
                 self.assertEqual(receipt['reason'], 'DISCORD_OPAQUE_CHANNEL_TYPE20')
                 self.assertEqual(receipt['games'][0]['status'], 'UNVERIFIED')
+
+    def test_inherited_permissions_are_not_proof_of_games_readiness(self):
+        # Upstream PR #10553 inherits discord.abc.GuildChannel. That can supply
+        # permissions_for even while the type-20 channel is only a fallback.
+        self.guild.channels = [
+            self.text, PartialChannelWithPlausiblePermissions(self.guild, 333)]
+        self.guild.roles = self.roles
+        fallback = self.guild.channels[-1]
+        self.assertTrue(fallback.permissions_for(None).manage_channels)
+        self.assertNotIsInstance(fallback, discord.TextChannel)
+        self.assertNotIsInstance(fallback, discord.CategoryChannel)
+        inventory = verified_rest_inventory(
+            self.guild, self.raw, self.raw_roles, allow_opaque_type20=True)
+        self.assertEqual(inventory[2], 'OPAQUE_TYPE20_UNVERIFIED')
+        receipt = finalize_projection({
+            'inventory': {
+                'state': 'UNVERIFIED', 'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'},
+            'games': [{'status': 'UNVERIFIED', 'effectiveAccess': None}],
+            'gamesCategory': {'state': 'UNVERIFIED'}}, 3)
+        self.assertEqual(receipt['state'], 'GAMES_AUDIT_UNAVAILABLE')
+        self.assertEqual(receipt['games'][0]['status'], 'UNVERIFIED')
+        self.assertIsNone(receipt['games'][0]['effectiveAccess'])
 
     def test_unknown_serverhome_duplicate_models_or_extra_resources_fail_closed(self):
         self.guild.channels = [self.text, PartialChannelLike(self.guild, 333)]
