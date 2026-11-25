@@ -7,6 +7,8 @@ installing or monkey-patching its unreleased source. No live API calls.
 import unittest
 from types import SimpleNamespace
 
+import discord
+
 from tools.game_launch_audit_collect import (
     AuditUnavailable, finalize_projection, verified_rest_inventory,
 )
@@ -51,10 +53,9 @@ class ServerHomeContractTests(unittest.TestCase):
                     allow_opaque_type20=True)
                 self.assertEqual(inventory[2], 'OPAQUE_TYPE20_UNVERIFIED')
                 self.assertEqual(len(inventory[0]), 2 if modeled else 1)
-                self.assertFalse(any(
-                    hasattr(c, 'permissions_for') and c.id == 333 and
-                    isinstance(c, type(self.text)) for c in channels
-                ))
+                if modeled:
+                    self.assertNotIsInstance(channels[-1], discord.TextChannel)
+                    self.assertNotIsInstance(channels[-1], discord.CategoryChannel)
                 receipt = finalize_projection(
                     {'inventory': {'state': 'UNVERIFIED',
                                    'reason': 'DISCORD_OPAQUE_CHANNEL_TYPE20'},
