@@ -340,3 +340,22 @@ intersection; private IDs and names never appear in diagnostics.
 This is a bounded offline inventory-correctness safeguard and does not
 change channel APIs, readiness semantics, Production configuration or
 runtime package versions.
+
+## Upstream inherited-permissions distinction (2026-11-25)
+
+Source review of [discord.py PR #10553](https://github.com/Rapptz/discord.py/pull/10553)
+at upstream head `3c2052fb6646b28f8192dc871081078df2d4bdc6`
+confirmed that proposed `PartialChannel` subclasses
+`discord.abc.GuildChannel`, fills common `_overwrites`,
+`category_id` and `position` fields, and is returned by
+`_guild_channel_factory` for unknown types. Inherited generic
+`permissions_for` may consequently exist on an opaque resource.
+
+**The presence of `permissions_for`, matching REST/model IDs or a parent
+reference is not proof of game-text/category semantics.** The collector's
+type-20 branch must still bypass `GuildSnapshot`, `readiness.inspect_one`,
+access and category permission evaluation; output remains `UNVERIFIED`
+until reviewed, version-pinned upstream support and separate owner approval.
+The new offline regression uses a synthetic model that returns all permissions
+as enabled to prove a plausible inherited method cannot promote `READY`.
+No upstream PR is installed and Production is untouched.
