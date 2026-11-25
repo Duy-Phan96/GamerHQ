@@ -298,3 +298,26 @@ constrained package upgrade, channel behavior/permissions, Games ancestry,
 channel limits and compatibility with the source-sealed observer through
 offline tests and protected owner review. Full Games readiness is not
 currently established.
+
+## Strict final inventory gate (2026-11-25)
+
+A source audit found that the private collector's finalizer previously marked a
+projection `GAMES_AUDIT_COLLECTED` for any result other than the explicitly
+opaque type-20 case. The underlying Games projection can legitimately return
+`inventory={'reason':'DISCORD_INVENTORY_HTTP_REJECTED', ...}` after a
+bounded HTTP error while treating all catalog entries as `UNVERIFIED`.
+Such evidence must **not** produce a public COMPLETE state.
+
+The finalizer now requires the **exact** `{'state':'VERIFIED'}` inventory
+marker before emitting `GAMES_AUDIT_COLLECTED`. Opaque type-20 evidence
+continues to emit `GAMES_AUDIT_UNAVAILABLE / DISCORD_OPAQUE_CHANNEL_TYPE20`.
+Every other missing, malformed or unverified inventory produces
+`GAMES_AUDIT_UNAVAILABLE / GAMES_INVENTORY_UNVERIFIED` with a fixed safe
+diagnostic stage `GAMES_FINAL_INVENTORY_GATE`. No private HTTP error, channel
+name, ID or permission details are forwarded into those fixed public fields.
+
+The new regression tests cover HTTP failure, generic UNKNOWN/REVIEW and
+malformed inventory, alongside verified and opaque results. No additional
+Discord calls, service startup, channel semantics assumptions or Production
+changes are introduced. This remains an **offline candidate** until CI and
+isolated security rehearsal pass; no owner audit is requested.
