@@ -35,6 +35,8 @@
 
 ### Fixed
 
+- Read release notes from the exact versioned changelog section for released candidates, retaining the canonical Unreleased fallback for legacy candidates and development.
+
 - Keep personal game selection retryable after an expired Discord acknowledgement; reject inactive games from stale selector controls (PR #351).
 
 - Progression first-game observation now works for existing community members: adding any new selectable game after Progression is enabled emits the same stable one-time `first_game_added` signal, so pre-existing game roles no longer block the achievement.
