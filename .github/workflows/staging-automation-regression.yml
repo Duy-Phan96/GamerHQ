@@ -6,6 +6,42 @@ on:
 permissions:
   contents: read
 jobs:
+  rc4-overlay-qualification:
+    # Public source only. No protected environment, VPS, secrets or Gateway.
+    if: github.head_ref == 'chore/rc4-active-pilot-upgrade-134'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Qualify the frozen RC4 source against the attested active Staging Host
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=1899c6f8cc498fefa0510d0e3f70453f6f1aa082
+          candidate=bc090665e6ffd24f16cc26b5f67f666c8e3f98a5
+          for ref in "$baseline" "$candidate"; do
+            git cat-file -e "$ref^{commit}"
+            test "$(git rev-parse "$ref")" = "$ref"
+          done
+          test "$(git show "$candidate:VERSION")" = 1.0.0-beta.2-rc4
+          # Exact same source trees for schema, startup, SDK and packages.
+          for path in requirements.txt requirements.lock requirements-skills.lock pyproject.toml Dockerfile database skill_runtime skills hosts data/games_seed.json data/game_catalog_expansion.json bot.py config.py; do
+            test "$(git rev-parse "$baseline:$path")" = "$(git rev-parse "$candidate:$path")"
+          done
+          # Overlay COPY does not remove files; reject any deleted path.
+          test -z "$(git diff --no-renames --diff-filter=D --name-only "$baseline" "$candidate")"
+          archive="$RUNNER_TEMP/gamerhq-rc4-source.tar"
+          git archive --format=tar --output="$archive" "$candidate"
+          test "$(stat -c %s "$archive")" -le 33554432
+          digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          printf 'baselineCommit=%s\ncandidateCommit=%s\narchiveSha256=%s\nsourceCompatibility=PASS\n' "$baseline" "$candidate" "$digest"
+          {
+            echo '### RC4 source overlay qualification'
+            printf '\nBaseline: `%s`\n\nCandidate: `%s`\n\nArchive SHA256: `%s`\n\nSource compatibility: PASS. No live deployment or database rehearsal performed.\n' "$baseline" "$candidate" "$digest"
+          } >> "$GITHUB_STEP_SUMMARY"
   generation-enrollment:
     # Entire installer runs as root against /tmp fixtures, never the VPS.
     runs-on: ubuntu-latest
