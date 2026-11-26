@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.0-beta.2-rc4] - 2026-11-26
+
 ### Added
 
 - Added an owner-reviewed staging Host source promotion to the existing scoped controller, retaining the installed Skill and using the shared backup/health/rollback state machine. The one pinned Host commit requires a separate protected deployment-security workflow; production is excluded.
@@ -22,6 +24,8 @@
 
 ### Changed
 
+- Prepare the existing community launch candidate with the reviewed Event Manager adapter/legacy fallback, controlled Staging promotion and tenant admission safeguards, and the Awin Affiliate 0.9.3 package pin. Live acceptance and migration/rollback rehearsal are required before deployment.
+
 - Restored the compact Discord event builder for installed Event Manager creation and editing, reusing date/time/player controls, weekday toggles and preview/confirmation. Player pickers and advanced settings retain the public Skill API, revision checks and retry-safe resource identity.
 - Established progressive enhancement guidance across Host, Skills and Web: preserve working behavior and established UX by default.
 
@@ -30,6 +34,10 @@
 - Documented independent Host, SDK, Runtime API, external Skill and web versioning/release responsibilities.
 
 ### Fixed
+
+- Read release notes from the exact versioned changelog section for released candidates, retaining the canonical Unreleased fallback for legacy candidates and development.
+
+- Keep personal game selection retryable after an expired Discord acknowledgement; reject inactive games from stale selector controls (PR #351).
 
 - Progression first-game observation now works for existing community members: adding any new selectable game after Progression is enabled emits the same stable one-time `first_game_added` signal, so pre-existing game roles no longer block the achievement.
 - Fixed `/server health` area selection so rebuilding the dashboard no longer detaches the active selector before the response is rendered.
