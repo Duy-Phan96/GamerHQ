@@ -497,7 +497,7 @@ def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(ac
 def active_upgrade_installed(source_mirror, monkeypatch, tmp_path):
     import pwd
     from tools import enroll_staging_tenant_acceptance as acceptance
-    from tests.test_staging_pilot_generation import active_documents
+    from test_staging_pilot_generation import active_documents
     mirror, source = source_mirror
     old_main = git(mirror,'rev-parse','refs/heads/main').strip().decode()
     git(mirror,'update-ref','refs/heads/main',source)

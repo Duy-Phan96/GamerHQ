@@ -45,7 +45,7 @@ jobs:
   generation-enrollment:
     # Entire installer runs as root against /tmp fixtures, never the VPS.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +58,17 @@ jobs:
           python -m venv "$RUNNER_TEMP/enrollment-tests"
           "$RUNNER_TEMP/enrollment-tests/bin/python" -m pip install -r requirements.lock -r requirements-dev.txt
           "$RUNNER_TEMP/enrollment-tests/bin/python" -m pip install --no-deps -r requirements-skills.lock
+      - name: Focused active-pilot controller and rollback regressions
+        run: |
+          "$RUNNER_TEMP/enrollment-tests/bin/python" -m pytest -q tests/test_staging_pilot_generation.py tests/test_staging_pilot_activation.py
+      - name: Publish exact reviewed RC4 enrollment installer checksum
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          printf 'controllerCommit=%s\n' "$REVIEWED_COMMIT"
+          printf 'installerSha256=%s\n' "$(git show "$REVIEWED_COMMIT:tools/enroll_staging_pilot_generation.py" | sha256sum | cut -d ' ' -f 1)"
       - name: Rehearse exact enrollment, power loss, retry and immutable source rejection
         run: |
           set -euo pipefail
