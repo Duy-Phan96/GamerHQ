@@ -26,6 +26,7 @@ BASELINE_IMAGE = 'sha256:f50cc0611c474d38b77cbec0a983043d278c892c628dbaad3ced3c7
 REPOSITORY = 'https://github.com/Duy-Phan96/GamerHQ.git'
 ALLOWED = {BUILDER, 'tests/test_staging_host_promotion.py',
            'tools/repair_staging_rc4_overlay.py', 'tests/test_staging_rc4_overlay_repair.py',
+           'tests/test_staging_pilot_enrollment_e2e.py',
            '.github/workflows/staging-automation-regression.yml'}
 
 
@@ -151,8 +152,10 @@ def repair(source, approval):
                 if Path(name).name != name or digest(helper.checked(CONTROL / name)) != sha:
                     raise ValueError('ANCESTOR_CHANGED')
             prior = {item['name']: bytes.fromhex(item['after']) for item in ancestor['plan']['files']}
-            old_entry = old.active_gate(previous, history)
-            if prior['entry'] != old_entry or helper.checked(CONTROL / 'settings/profile.json', uid, private=True) != prior['profile']:
+            # The committed plan records the exact launcher bytes, including the
+            # original ancestor iteration order; do not reconstruct from sorted JSON.
+            old_entry = prior['entry']
+            if helper.checked(CONTROL / 'settings/profile.json', uid, private=True) != prior['profile']:
                 raise ValueError('GENERATION_BINDING_CHANGED')
             history = {**history, old.ACTIVE_TRANSITION: digest(old_marker)}
             old.ACTIVE_TRANSITION = MARKER

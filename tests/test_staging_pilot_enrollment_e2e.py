@@ -565,7 +565,7 @@ def active_upgrade_installed(source_mirror, monkeypatch, tmp_path):
     old_modules={key:value for key,value in sys.modules.items() if key=='staging_automation' or key.startswith('staging_automation.')}
     for key in old_modules:del sys.modules[key]
     try:
-        yield SimpleNamespace(source=source,root=root,entry=entry,policy=policyfile,profile=profilefile,state=statefile,
+        yield SimpleNamespace(source=source,mirror=mirror,root=root,entry=entry,policy=policyfile,profile=profilefile,state=statefile,
                               marker=control/enrollment.ACTIVE_TRANSITION)
         assert all(path.read_bytes()==body for path,body in preserved.items())
     finally:
@@ -592,3 +592,42 @@ def test_active_rc4_enrollment_real_filesystem_and_retry(active_upgrade_installe
     assert json.loads(f.state.read_bytes())['approvedImage']==generation.ACTIVE_BASELINE_IMAGE
     assert json.loads(f.profile.read_bytes())['baseImage']==generation.ACTIVE_BASELINE_IMAGE
     assert enrollment.enroll_active(f.source,enrollment.ACTIVE_APPROVAL)['alreadyEnrolled'] is True
+
+
+@pytest.mark.parametrize('boundary',[None,'entry','policy'])
+def test_single_layer_repair_preserves_real_enrollment_and_resumes(active_upgrade_installed, monkeypatch, boundary):
+    from tools import repair_staging_rc4_overlay as repair
+    f = active_upgrade_installed
+    # Reconstruct the exact previously enrolled revision, not the repair candidate.
+    receipt = enrollment.enroll_active(repair.PREVIOUS, enrollment.ACTIVE_APPROVAL)
+    assert receipt['state'] == 'RC4_ACTIVE_GENERATION_ENROLLED'
+    preserved = {path: path.read_bytes() for path in (f.marker, f.profile, f.state)}
+    old_policy = json.loads(f.policy.read_bytes())
+    monkeypatch.setattr(repair, 'ROOT', f.root)
+    monkeypatch.setattr(repair, 'CONTROL', f.marker.parent)
+    monkeypatch.setattr(repair, 'REPOSITORY', f.mirror.as_uri())
+    native = repair.switch
+    if boundary:
+        def interrupt(plan, read, write):
+            def step(name, body):
+                write(name, body)
+                if name == boundary:
+                    raise PowerLoss()
+            native(plan, read, step)
+        monkeypatch.setattr(repair, 'switch', interrupt)
+        with pytest.raises(PowerLoss):
+            repair.repair(f.source, repair.APPROVAL)
+        marker = f.marker.parent / repair.MARKER
+        assert json.loads(marker.read_bytes())['phase'] == 'PREPARED'
+        monkeypatch.setattr(repair, 'switch', native)
+    receipt = repair.repair(f.source, repair.APPROVAL)
+    assert receipt['state'] == 'RC4_OVERLAY_REPAIR_INSTALLED'
+    assert receipt['activationAuthorized'] is False
+    assert json.loads(f.policy.read_bytes()) == {**old_policy, 'controllerCommit': f.source}
+    assert all(path.read_bytes() == body for path, body in preserved.items())
+    revision = f.root / 'automation-controller/revisions' / f.source
+    previous_revision = revision.parent / repair.PREVIOUS
+    builder = 'pilot-source/' + repair.BUILDER
+    assert (revision / builder).read_bytes() == git(f.mirror,'show',f.source+':'+repair.BUILDER)
+    assert (previous_revision / builder).read_bytes() == git(f.mirror,'show',repair.PREVIOUS+':'+repair.BUILDER)
+    assert repair.repair(f.source, repair.APPROVAL)['alreadyInstalled'] is True
