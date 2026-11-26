@@ -170,7 +170,13 @@ def require_unchanged_dual_checkpoint(original, observed, guilds):
     from tools.staging_automation.policy import Denied
     for guild in guilds:
         name = f"{guild}.sqlite"
-        if _content_digest(Path(original) / name) != _content_digest(Path(observed) / name):
+        before, after = Path(original) / name, Path(observed) / name
+        def schema_identity(path):
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+                if conn.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                    raise Denied("RECOVERY_REQUIRES_OWNER")
+                return (conn.execute("PRAGMA user_version").fetchone(), conn.execute("PRAGMA application_id").fetchone())
+        if schema_identity(before) != schema_identity(after) or _content_digest(before) != _content_digest(after):
             raise Denied("RECOVERY_REQUIRES_OWNER")
 
 

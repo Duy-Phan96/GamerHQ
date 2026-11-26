@@ -443,9 +443,9 @@ def active_gate(target, history):
     """Hold the existing launcher until this exact transition and its ancestors commit."""
     return ("import hashlib,json,sys\nfrom pathlib import Path\n"
             "try:\n p=json.loads(Path(" + repr(str(CONTROL / ACTIVE_TRANSITION)) + ").read_bytes())\n"
-            " assert p.get('phase')=='COMMITTED' and p.get('source')==" + repr(target.name) + "\n"
+            " if p.get('phase')!='COMMITTED' or p.get('source')!=" + repr(target.name) + ": raise ValueError()\n"
             " for name,digest in " + repr(history) + ".items():\n"
-            "  assert hashlib.sha256((Path(" + repr(str(CONTROL)) + ")/name).read_bytes()).hexdigest()==digest\n"
+            "  if hashlib.sha256((Path(" + repr(str(CONTROL)) + ")/name).read_bytes()).hexdigest()!=digest: raise ValueError()\n"
             "except Exception:\n raise SystemExit('PILOT_GENERATION_HELD')\n"
             "sys.path[:0]=" + repr([str(target), str(target / 'pilot-source'), str(ROOT / 'deployment-worker')]) + "\n"
             "from staging_automation.bridge import entry\nentry()\n").encode()

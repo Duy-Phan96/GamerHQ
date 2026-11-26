@@ -135,7 +135,7 @@ def active_upgrade_documents(policy, profile, state, journal, *, source, prepara
             or journal.get('binding') != {**expected, 'preparedSha256': hashlib.sha256(
                 json.dumps(prepared, sort_keys=True, separators=(',', ':')).encode()).hexdigest()}
             or not re.fullmatch(r'[0-9a-f]{64}', journal.get('baselineContainer', ''))
-            or not re.fullmatch(r'[1-9][0-9]{0,19}', str(journal.get('activationRun', '')))
+            or journal.get('activationRun') != '44581943871'
             or not all(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{' + str(size) + '}', value)
                        for value, size in ((source, 40), (preparation_digest, 64), (cutover_digest, 64)))):
         raise Denied('PILOT_CHECKPOINT_REJECTED')

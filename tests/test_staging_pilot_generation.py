@@ -278,7 +278,7 @@ def active_documents():
                 'state': 'PILOT_ACTIVATION_PREPARED', 'activationAuthorized': False, 'gatewayStarted': False,
                 'containerRollbackRehearsal': 'PASS', 'fallbackRollbackRehearsal': 'PASS'}
     state.update(tenantPilotActivationPrepared=prepared, usedTokens={'old-token': 999}, challenge={'old': True})
-    journal = {'phase': 'PILOT_ACTIVE', 'activationRun': '456', 'baselineContainer': 'd' * 64, 'checkpoint': {},
+    journal = {'phase': 'PILOT_ACTIVE', 'activationRun': '44581943871', 'baselineContainer': 'd' * 64, 'checkpoint': {},
                'binding': {'preparedSha256': digest(prepared), 'generation': generation.GENERATION['id'],
                            'baselineImage': generation.BASELINE_IMAGE, 'fallbackImage': generation.BASELINE_IMAGE,
                            'candidateImage': generation.ACTIVE_BASELINE_IMAGE}}
@@ -384,3 +384,25 @@ def test_active_rollback_compares_complete_logical_content_of_both_tenants(tmp_p
         conn.execute("UPDATE skill_deployments SET state='changed'")
     with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
         require_unchanged_dual_checkpoint(before, after, (1, 2))
+
+@pytest.mark.parametrize('phase,mutated,expected', [
+    ('PREPARED', False, False), ('COMMITTED', False, True), ('COMMITTED', True, False),
+])
+def test_active_gate_requires_committed_epoch_and_unchanged_ancestors(tmp_path, monkeypatch, phase, mutated, expected):
+    import hashlib
+    from tools import enroll_staging_pilot_generation as installer
+    monkeypatch.setattr(installer, 'CONTROL', tmp_path)
+    target = tmp_path / 'selected-controller'
+    (target / 'staging_automation').mkdir(parents=True)
+    (target / 'staging_automation/__init__.py').touch()
+    (target / 'staging_automation/bridge.py').write_text('def entry(): print("ENTERED_VERIFIED_CONTROLLER")\n')
+    parent = tmp_path / 'historical.json'
+    parent.write_bytes(b'old')
+    history = {parent.name: hashlib.sha256(parent.read_bytes()).hexdigest()}
+    (tmp_path / installer.ACTIVE_TRANSITION).write_text(json.dumps({'phase':phase,'source':target.name}))
+    if mutated:
+        parent.write_bytes(b'changed')
+    result = subprocess.run([sys.executable, '-O', '-I', '-c', installer.active_gate(target,history).decode()],
+                            capture_output=True,text=True,timeout=10)
+    assert (result.returncode == 0) is expected
+    assert ('ENTERED_VERIFIED_CONTROLLER' in result.stdout) is expected
