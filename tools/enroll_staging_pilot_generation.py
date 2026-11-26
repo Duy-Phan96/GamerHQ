@@ -400,6 +400,257 @@ def enroll(source, approval, *, require_absent=False):
             'discordResourcesChanged': False, 'productionChanged': False, 'verification': proof}
 
 
+
+ACTIVE_PREVIOUS = 'd765265612fe6aece0d91d21fa3eb5b02a359e2f'
+ACTIVE_GENERATION_SOURCE = 'eff7cc14d2af0595ad7e80f99f0f24a7e4595bb9'
+ACTIVE_APPROVAL = 'ENROLL RC4 ACTIVE PILOT UPGRADE'
+ACTIVE_TRANSITION = 'pilot-rc4-upgrade-transition.json'
+ACTIVE_WORKFLOWS = ('staging-rc4-pilot-prepare.yml', 'staging-rc4-pilot-cutover.yml')
+ACTIVE_CLIENT = '2a2b08b8d3c8165d7a70ced3c667024ba219b0ac'
+ACTIVE_PROBE = r'''
+import json,os,sys
+sys.path[:0]=[sys.argv[1],sys.argv[1]+'/pilot-source','/opt/gamerhq-staging/deployment-worker']
+from staging_automation.backend import HostBackend
+from staging_automation.policy import validate_policy
+from tools.staging_dispatch import environment
+from tools.staging_tenant_rehearsal import rehearsal_binding
+from tools.staging_automation.host_promotion import require_baseline_skill, require_runtime_lifecycle, retained_state
+from hosts.gamerhq.staging_rootless import verify_rootless
+from hosts.gamerhq.skill_staging import verify_local_artifacts
+packet=json.load(sys.stdin)
+p,q=packet['profile'],packet['policy']
+validate_policy(q)
+values=environment();os.environ.clear();os.environ.update(values)
+verify_rootless(p)
+b=HostBackend(p,q)
+c=b.inspect()
+binding=rehearsal_binding({**p,'tenantPilot':q['tenantPilot']},q,c)
+if c['Image']!=p['baseImage'] or binding['baselineHostCommit']!=q['hostPromotion']['commit'] or binding['baselineAdmission']!='PILOT_ACTIVE' or b.health()['state']!='HOST_READY':
+ raise ValueError('ACTIVE_PILOT_REQUIRED')
+actual=b.run(['docker','exec','--user','10001:10001',c['Id'],'python','-I','-B','-c',
+               "from pathlib import Path;print(Path('/app/BUILD_COMMIT').read_text().strip())"])
+if actual!=binding['baselineHostCommit']: raise ValueError('ACTIVE_PILOT_REQUIRED')
+verify_local_artifacts(p)
+runtime=b.skill()
+require_baseline_skill(json.loads(open(p['releaseFile']).read()),runtime['version'])
+require_runtime_lifecycle(retained_state(p['database'],p['stagingGuildId']),runtime)
+if b.inspect()['Id']!=c['Id'] or b.health()['state']!='HOST_READY': raise ValueError('ACTIVE_PILOT_REQUIRED')
+print(json.dumps({'state':'ACTIVE_PILOT_VERIFIED','admissionPreserved':True,'hostCommit':actual}))
+'''
+
+
+def active_gate(target, history):
+    """Hold the existing launcher until this exact transition and its ancestors commit."""
+    return ("import hashlib,json,sys\nfrom pathlib import Path\n"
+            "try:\n p=json.loads(Path(" + repr(str(CONTROL / ACTIVE_TRANSITION)) + ").read_bytes())\n"
+            " if p.get('phase')!='COMMITTED' or p.get('source')!=" + repr(target.name) + ": raise ValueError()\n"
+            " for name,digest in " + repr(history) + ".items():\n"
+            "  if hashlib.sha256((Path(" + repr(str(CONTROL)) + ")/name).read_bytes()).hexdigest()!=digest: raise ValueError()\n"
+            "except Exception:\n raise SystemExit('PILOT_GENERATION_HELD')\n"
+            "sys.path[:0]=" + repr([str(target), str(target / 'pilot-source'), str(ROOT / 'deployment-worker')]) + "\n"
+            "from staging_automation.bridge import entry\nentry()\n").encode()
+
+
+def enroll_active(source, approval, *, require_absent=False, checkpoint=lambda _: None):
+    """Next fixed epoch using the existing reviewed bundle and fsynced transition.
+
+    No live Gateway start/stop, database write, Discord mutation or worker/SSH change.
+    The separately protected prepare and cutover workflows must already exist on main.
+    """
+    import fcntl
+    import pwd
+    progress('OWNER_CHECK')
+    if os.geteuid() != 0 or approval != ACTIVE_APPROVAL or not re.fullmatch('[0-9a-f]{40}', source):
+        raise ValueError('OWNER_APPROVAL_REQUIRED')
+    account = pwd.getpwnam('gamerhq-staging-bridge')
+    uid, gid = account.pw_uid, account.pw_gid
+    revisions = ROOT / 'automation-controller/revisions'
+    previous, target = revisions / ACTIVE_PREVIOUS, revisions / source
+    marker = CONTROL / ACTIVE_TRANSITION
+    if require_absent and os.path.lexists(marker):
+        raise ValueError('EXISTING_TRANSITION_REQUIRES_REVIEW')
+    with tempfile.TemporaryDirectory(prefix='gamerhq-rc4-enrollment-') as scratch:
+        env = {'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent', 'GIT_CONFIG_GLOBAL': '/dev/null',
+               'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0'}
+        def git(*args):
+            return subprocess.run(['git', '-C', scratch, '-c', 'gc.auto=0', *args], env=env,
+                                  capture_output=True, check=True, timeout=180).stdout
+        progress('SOURCE_FETCH')
+        git('init', '--quiet')
+        for pin in (source, ACTIVE_PREVIOUS, ACTIVE_GENERATION_SOURCE, LEGACY_CONTROLLER_BASE, ACTIVE_CLIENT, 'refs/heads/main'):
+            fetch_revision(git, pin)
+        main = git('rev-parse', 'FETCH_HEAD').strip().decode()
+        progress('SOURCE_SELF_VERIFICATION')
+        if git('show', source + ':tools/enroll_staging_pilot_generation.py') != Path(__file__).read_bytes():
+            raise ValueError('INSTALLER_SOURCE_MISMATCH')
+        def module(path, name, pin):
+            result = types.ModuleType(name)
+            result.__file__ = str(Path(scratch) / (name + '.py'))
+            exec(compile(git('show', pin + ':' + path), result.__file__, 'exec'), result.__dict__)
+            return result
+        helper = module('tools/enroll_staging_tenant_preview.py', 'verified_helper', source)
+        predecessor = module('tools/enroll_staging_tenant_acceptance.py', 'verified_predecessor', ACTIVE_PREVIOUS)
+        predecessor.ROOT, predecessor.CONTROL = ROOT, CONTROL
+        if helper.PREVIOUS != LEGACY_CONTROLLER_BASE or predecessor.PREVIOUS != ACTIVE_GENERATION_SOURCE:
+            raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+        progress('WORKFLOW_REGISTRATION')
+        workflow_hashes = {}
+        for name in ACTIVE_WORKFLOWS:
+            path = '.github/workflows/' + name
+            body = git('show', source + ':' + path)
+            if (git('show', main + ':' + path) != body or ('ref: ' + ACTIVE_CLIENT + '\n').encode() not in body
+                    or b'GAMERHQ_STAGING_PILOT_GENERATION: active-pilot-rc4-v3' not in body):
+                raise ValueError('WORKFLOW_REGISTRATION_REQUIRED')
+            workflow_hashes[name] = hashlib.sha256(body).hexdigest()
+        progress('INSTALLED_DIRECTORIES')
+        for folder in (ROOT, CONTROL, revisions.parent, revisions, previous, previous / 'staging_automation'):
+            helper.directory(folder)
+        progress('INSTALLED_WORKER')
+        worker = ROOT / 'deployment-worker'
+        if git('-c', 'safe.directory=' + str(worker), '-C', str(worker), 'rev-parse', 'HEAD').strip().decode() != helper.WORKER:
+            raise ValueError('LEGACY_WORKER_MISMATCH')
+        progress('INSTALLED_CONTROLLER')
+        overlays = helper.OVERLAY | {'pilot_activation.py', 'pilot_cutover.py', 'recovery_api_repair.py', 'pilot_generation.py'}
+        changed = {'bridge.py','policy.py','oidc.py','tenant_acceptance.py','pilot_generation.py','pilot_activation.py','pilot_cutover.py'}
+        members = tuple((previous / 'staging_automation').iterdir())
+        if not changed <= {item.name for item in members}:
+            raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+        for item in members:
+            expected = (ACTIVE_PREVIOUS if item.name in {'bridge.py','policy.py','oidc.py','tenant_acceptance.py'}
+                        else ACTIVE_GENERATION_SOURCE if item.name in overlays else LEGACY_CONTROLLER_BASE)
+            relative = helper.SOURCE_PATHS.get(item.name, 'tools/staging_automation/' + item.name)
+            if helper.checked(item) != git('show', expected + ':' + relative):
+                raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+        progress('BUNDLE_STAGING')
+        for folder in (target, target / 'staging_automation', target / 'pilot-source'):
+            helper.directory(folder, gid)
+        archive = Path(scratch) / 'source.tar'
+        git('archive', '--format=tar', '--output', str(archive), source)
+        helper.bundle_sources(archive, target / 'pilot-source', gid)
+        for item in members:
+            body = git('show', source + ':tools/staging_automation/' + item.name) if item.name in changed else helper.checked(item)
+            path = target / 'staging_automation' / item.name
+            if os.path.lexists(path) and helper.checked(path) != body:
+                raise ValueError('IMMUTABLE_EXTENSION_CHANGED')
+            if not os.path.lexists(path):
+                helper.atomic(path, body, gid)
+        if Path('/sys/fs/selinux/enforce').exists():
+            subprocess.run(['/usr/sbin/restorecon','-RF',str(target)], capture_output=True, check=True, timeout=45)
+        sys.path.insert(0, str(target))
+        from staging_automation import pilot_generation as generation
+        progress('ARCHIVE_VERIFICATION')
+        for commit,digest in ((generation.ACTIVE_BASELINE_COMMIT,generation.ACTIVE_BASELINE_ARCHIVE),
+                              (generation.RC4_PIN['commit'],generation.RC4_PIN['archiveSha256'])):
+            fetch_revision(git, commit)
+            if hashlib.sha256(git('archive','--format=tar',commit)).hexdigest()!=digest:
+                raise ValueError('ARCHIVE_PIN_REJECTED')
+        progress('OPERATION_LOCK')
+        parent = ROOT / 'worker'
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o022:
+            raise ValueError('WORKER_DIRECTORY_REJECTED')
+        with os.fdopen(os.open(parent / 'operation.lock', os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as lock:
+            info = os.fstat(lock.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o600:
+                raise ValueError('OPERATION_LOCK_REJECTED')
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if require_absent and os.path.lexists(marker):
+                raise ValueError('EXISTING_TRANSITION_REQUIRES_REVIEW')
+            if os.path.lexists(parent / 'access-revoked'):
+                raise ValueError('RECOVERY_REQUIRES_OWNER')
+            historical = (('pilot-generation-transition.json', ACTIVE_GENERATION_SOURCE),
+                          *predecessor.ANCESTRY, (predecessor.SOURCE_TRANSITION, ACTIVE_PREVIOUS))
+            history = {}
+            for name,pin in historical:
+                raw = helper.checked(CONTROL / name)
+                value = json.loads(raw)
+                if value.get('phase') != 'COMMITTED' or value.get('source') != pin:
+                    raise ValueError('PREVIOUS_GENERATION_CHANGED')
+                history[name] = hashlib.sha256(raw).hexdigest()
+            incident_path = parent / 'tenant-pilot-cutover-v2.json'
+            incident = helper.checked(incident_path, uid, private=True)
+            incident_sha = hashlib.sha256(incident).hexdigest()
+            paths = {'entry': revisions.parent / 'entry.py', 'policy': CONTROL / 'automation-policy.json',
+                     'profile': CONTROL / 'settings/profile.json', 'state': parent / 'automation-state.json'}
+            def read(name):
+                return helper.checked(paths[name], uid if name in {'profile','state'} else 0, private=name in {'profile','state'})
+            progress('TRANSITION_VALIDATION')
+            if os.path.lexists(marker):
+                record = json.loads(helper.checked(marker))
+                if (record.get('source') != source or record.get('phase') not in {'PREPARED','COMMITTED'}
+                        or record.get('incidentSha256') != incident_sha or record.get('ancestorSha256') != history):
+                    raise ValueError('GENERATION_TRANSACTION_CHANGED')
+                if record['phase'] == 'COMMITTED':
+                    # The state may have advanced through protected cutover. Never replay a committed enrollment.
+                    if any(read(row['name']) != bytes.fromhex(row['after']) for row in record['plan']['files'] if row['name'] != 'state'):
+                        raise ValueError('GENERATION_STATE_CHANGED')
+                    return {'state':'RC4_ACTIVE_GENERATION_ENROLLED','alreadyEnrolled':True,
+                            'controllerCommit':source,'activationAuthorized':False,'productionChanged':False}
+                original = {row['name']:bytes.fromhex(row['before']) for row in record['plan']['files']}
+            else:
+                if os.path.lexists(parent / 'tenant-pilot-cutover-rc4-v3.json'):
+                    raise ValueError('GENERATION_ALREADY_IN_USE')
+                original = {name:read(name) for name in paths}
+                if original['entry'] != predecessor.launcher(previous, revise=True):
+                    raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+            progress('GENERATION_DOCUMENTS')
+            old_policy,old_profile,old_state = (json.loads(original[k]) for k in ('policy','profile','state'))
+            if (old_policy.get('controllerCommit') != ACTIVE_PREVIOUS or old_profile.get('hostSourceCommit') != helper.WORKER
+                    or old_policy.get('legacyWorkerCommit') != helper.WORKER or 'gamesAudit' in old_policy):
+                raise ValueError('PREVIOUS_GENERATION_CHANGED')
+            # Do not replace the separately reviewed acceptance collector source.
+            for name in predecessor.FILES:
+                prior = helper.checked(previous / 'pilot-source' / name)
+                if hashlib.sha256(prior).hexdigest() != old_policy['tenantAcceptance']['sourceSha256'][name] or helper.checked(target / 'pilot-source' / name) != prior:
+                    raise ValueError('CONTROLLER_SOURCE_MISMATCH')
+            policy,profile,state = generation.active_upgrade_documents(old_policy,old_profile,old_state,json.loads(incident),
+                source=source,preparation_digest=workflow_hashes[ACTIVE_WORKFLOWS[0]],cutover_digest=workflow_hashes[ACTIVE_WORKFLOWS[1]])
+            desired = {'entry':active_gate(target,history),'policy':generation.encode(policy),
+                       'profile':generation.encode(profile),'state':generation.encode(state)}
+            plan = {'files':[{'name':name,'before':original[name].hex(),'after':desired[name].hex()}
+                             for name in ('entry','profile','state','policy')]}
+            expected = {'source':source,'phase':'PREPARED','incidentSha256':incident_sha,
+                        'ancestorSha256':history,'plan':plan}
+            if os.path.lexists(marker) and record != expected:
+                raise ValueError('GENERATION_TRANSACTION_CHANGED')
+            if any(read(row['name']) not in (bytes.fromhex(row['before']),bytes.fromhex(row['after'])) for row in plan['files']):
+                raise ValueError('GENERATION_STATE_CHANGED')
+            progress('BASELINE_PROBE')
+            probe = ['/usr/sbin/runuser','-u',account.pw_name,'--','/usr/bin/env','-i',
+                     'PATH=/usr/local/bin:/usr/bin:/bin','HOME='+account.pw_dir,
+                     'XDG_RUNTIME_DIR=/run/user/'+str(uid),'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(uid)+'/bus',
+                     'systemd-run','--user','--pipe','--wait','--collect','--quiet',
+                     '--unit=gamerhq-staging-automation-rc4-enrollment-'+uuid.uuid4().hex,
+                     '--property=NoNewPrivileges=yes','--property=ProtectSystem=strict','--property=ProtectHome=yes',
+                     '--property=ReadWritePaths='+str(ROOT/'worker')+' '+str(ROOT/'backups'),
+                     '--property=RestrictSUIDSGID=yes','--property=RuntimeMaxSec=300s',
+                     str(ROOT/'deployment-worker/.venv/bin/python'),'-I','-B','-c',ACTIVE_PROBE,str(target)]
+            proof = subprocess.run(probe,input=json.dumps({'profile':generation.effective_profile(profile,policy),'policy':policy}),
+                                   capture_output=True,text=True,check=True,timeout=330)
+            if len(proof.stdout)>4096 or json.loads(proof.stdout)!={'state':'ACTIVE_PILOT_VERIFIED','admissionPreserved':True,
+                                                                   'hostCommit':generation.ACTIVE_BASELINE_COMMIT}:
+                raise ValueError('PILOT_CHECKPOINT_REJECTED')
+            progress('TRANSITION_PREPARE')
+            if len(generation.encode(expected)) > 262144:
+                raise ValueError('SOURCE_LIMIT')
+            replace(marker,generation.encode(expected),0,gid,0o640)
+            checkpoint('PREPARED')
+            def write(name,body):
+                replace(paths[name],body,uid if name in {'profile','state'} else 0,gid,0o600 if name in {'profile','state'} else 0o640)
+                checkpoint(name)
+            progress('TRANSITION_APPLY')
+            transition_digest = generation.transition(plan,read,write)
+            if (helper.checked(incident_path,uid,private=True)!=incident or
+                    any(hashlib.sha256(helper.checked(CONTROL/name)).hexdigest()!=digest for name,digest in history.items())):
+                raise ValueError('INCIDENT_HISTORY_CHANGED')
+            progress('TRANSITION_COMMIT')
+            replace(marker,generation.encode({**expected,'phase':'COMMITTED'}),0,gid,0o640)
+            checkpoint('COMMITTED')
+    return {'state':'RC4_ACTIVE_GENERATION_ENROLLED','controllerCommit':source,'generation':generation.ACTIVE_GENERATION['id'],
+            'transitionSha256':transition_digest,'incidentPreserved':True,'activationAuthorized':False,
+            'gatewayChanged':False,'databaseChanged':False,'discordResourcesChanged':False,'productionChanged':False}
+
+
 def main():
     _stage_trace.clear()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -407,12 +658,14 @@ def main():
     parser.add_argument('--approval', required=True)
     parser.add_argument('--require-absent-transition', action='store_true',
                         help='Fresh enrollment only; fail closed if a marker exists at admission or under the lock.')
+    parser.add_argument('--active-upgrade', action='store_true', help='Enroll the exact active RC4 upgrade epoch.')
     args = parser.parse_args()
     try:
         options = {'require_absent': True} if args.require_absent_transition else {}
-        receipt = enroll(args.commit, args.approval, **options)
+        operation = enroll_active if args.active_upgrade else enroll
+        receipt = operation(args.commit, args.approval, **options)
         print(json.dumps(receipt))
-        if receipt.get('state') != 'RECOVERED_PRIMARY_GENERATION_ENROLLED':
+        if receipt.get('state') != ('RC4_ACTIVE_GENERATION_ENROLLED' if args.active_upgrade else 'RECOVERED_PRIMARY_GENERATION_ENROLLED'):
             raise SystemExit(1)
     except Exception as error:
         print(json.dumps(rejection(error)))

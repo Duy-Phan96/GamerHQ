@@ -248,3 +248,38 @@ def test_unextended_controller_cannot_select_any_host_source():
     backend = SimpleNamespace(policy={})
     with pytest.raises(Denied, match='NOT_ALLOWED'):
         promote(backend, expected_image='sha256:' + 'a' * 64)
+
+
+def test_overlay_context_adds_only_one_layer_and_preserves_reviewed_bytes(tmp_path):
+    from tools.staging_automation import host_promotion as hp
+    archive = tmp_path / 'source.tar'
+    commit = 'a' * 40
+    expected = {name: name.encode() for name in hp.FILES}
+    expected.update({name + '/fixture.py': name.encode() for name in hp.DIRECTORIES})
+    with tarfile.open(archive, 'w') as output:
+        for name, data in {**expected, '.env': b'private', 'runtime/data.db': b'private',
+                           'Dockerfile': b'untrusted', 'BUILD_COMMIT': b'untrusted'}.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            output.addfile(info, io.BytesIO(data))
+    context = tmp_path / 'context'
+    alias = 'gamerhq-host-promotion-base:' + 'b' * 64
+    hp.write_overlay_context(archive, context, alias, commit)
+    app = context / 'application'
+    assert {p.relative_to(app).as_posix(): p.read_bytes()
+            for p in app.rglob('*') if p.is_file()} == {**expected, 'BUILD_COMMIT': (commit + '\n').encode()}
+    assert (context / 'Dockerfile').read_text().splitlines() == [
+        'FROM ' + alias, 'COPY --chown=10001:10001 application/ /app/',
+        'LABEL org.opencontainers.image.revision=' + commit, 'USER 10001:10001']
+    assert set(p.name for p in context.iterdir()) == {'Dockerfile', 'application'}
+    with pytest.raises(Denied, match='IMMUTABLE_RELEASE_CHANGED'):
+        hp.write_overlay_context(archive, tmp_path / 'bad', alias, 'main')
+
+
+def test_overlay_context_rejects_incomplete_archive(tmp_path):
+    from tools.staging_automation import host_promotion as hp
+    archive = tmp_path / 'source.tar'
+    with tarfile.open(archive, 'w'):
+        pass
+    with pytest.raises(Denied, match='PAYLOAD_REJECTED'):
+        hp.write_overlay_context(archive, tmp_path / 'context', 'unused', 'a' * 40)

@@ -11,9 +11,36 @@ from .policy import Denied, request, validate_policy, charge, admit, PUBLIC, WEB
 from .oidc import verify
 
 
+def assert_active_epoch_image(backend, state):
+    """Bind routine health/acceptance to the new terminal journal or attested baseline."""
+    from .pilot_cutover import journal_path, digest
+    from tools.staging_dispatch import protected_file
+    generation = backend.policy['tenantPilotGeneration']
+    image, commit = generation['baselineImage'], generation['baselineCommit']
+    path = journal_path(backend.profile)
+    if os.path.lexists(path):
+        protected_file(path, private=True, uid=os.geteuid())
+        record = json.loads(path.read_bytes())
+        prepared = state.get('tenantPilotActivationPrepared')
+        if not isinstance(prepared, dict):
+            raise Denied('RECOVERY_REQUIRES_OWNER')
+        if record.get('binding') != {'generation': generation['id'], 'baselineImage': image,
+                'candidateImage': prepared.get('candidateImage'), 'fallbackImage': image,
+                'preparedSha256': digest(prepared)}:
+            raise Denied('RECOVERY_REQUIRES_OWNER')
+        if record.get('phase') == 'PILOT_ACTIVE':
+            image, commit = prepared['candidateImage'], backend.policy['tenantPilotActivation']['commit']
+        elif record.get('phase') not in {'PILOT_ROLLED_BACK', 'PILOT_STOP_CANCELLED'}:
+            raise Denied('RECOVERY_REQUIRES_OWNER')
+    current = backend.inspect()
+    if current['Image'] != image or current['Config']['Labels'].get('org.opencontainers.image.revision') != commit:
+        raise Denied('RECOVERY_REQUIRES_OWNER')
+
+
 def execute(operation, payload, policy, state, backend, save, *, verifier=verify, now=None):
     now = int(time.time() if now is None else now)
     charge(state, operation, now); save(state)
+    active_upgrade = policy.get('tenantPilotGeneration', {}).get('id') == 'active-pilot-rc4-v3'
     cutover = 'tenantPilotCutover' in policy
     path = Path(backend.profile['workRoot']) / 'tenant-pilot-cutover.json' if cutover else None
     if cutover and backend.profile.get('pilotGeneration'):
@@ -99,6 +126,8 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
         admit(operation, state)
     if state.get('enabled'): backend.policy_integrity()
     try:
+        if active_upgrade and operation in {'health', 'smoke', 'tenant-acceptance', 'games-audit'}:
+            assert_active_epoch_image(backend, state)
         if operation == 'games-audit':
             from .games_audit import run
             return run(backend)
@@ -140,8 +169,15 @@ def execute(operation, payload, policy, state, backend, save, *, verifier=verify
             if not cutover or not isinstance(prepared, dict):
                 raise Denied('PILOT_CHECKPOINT_REJECTED')
             recovery_only = state.get('recoveryRequired') is True
-            result = backend.cutover_tenant_pilot(state['approvedImage'], prepared, claims['run_id'],
+            # The transaction's baseline remains immutable even after success.
+            baseline_image = policy['tenantPilotGeneration']['baselineImage'] if active_upgrade else state['approvedImage']
+            result = backend.cutover_tenant_pilot(baseline_image, prepared, claims['run_id'],
                                                   recovery_only=recovery_only)
+            if active_upgrade and not recovery_only and result.get('state') == 'PILOT_ACTIVE' and result.get('activationAuthorized') is True:
+                # The exact journaled cutover has verified its candidate. Preserve
+                # baseline in policy, record active image separately from preparation.
+                state['approvedImage'] = prepared['candidateImage']
+                save(state)
             if recovery_only:
                 if (result.get('state') != 'PILOT_ROLLED_BACK' or result.get('recoveryVerified') is not True
                         or result.get('activationAuthorized') is not False):

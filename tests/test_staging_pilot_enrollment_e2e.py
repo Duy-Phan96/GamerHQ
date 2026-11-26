@@ -340,9 +340,8 @@ def acceptance_installed(source_mirror, monkeypatch, tmp_path):
     import re
     client = re.search(rb'          ref: ([0-9a-f]{40})\n', body).group(1).decode()
     client_path = 'tools/staging_automation_client.py'
-    body = git(mirror, 'show', client + ':' + client_path)
-    for path in ('tools/staging_automation/tenant_acceptance.py', 'tools/tenant_acceptance_report.py'):
-        assert git(mirror, 'show', client + ':' + path) == git(mirror, 'show', source + ':' + path)
+    historical_client = {path: git(mirror, 'show', client + ':' + path) for path in
+                         (client_path, 'tools/staging_automation/tenant_acceptance.py', 'tools/tenant_acceptance_report.py')}
     with tempfile.TemporaryDirectory(prefix='acceptance-registration-') as index_dir:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(index_dir) / 'index'))
         def staged(*args, input=None):
@@ -352,8 +351,9 @@ def acceptance_installed(source_mirror, monkeypatch, tmp_path):
                                    '-C', str(mirror), *args], input=input, env=env,
                                   capture_output=True, check=True, timeout=180).stdout.strip()
         staged('read-tree', source)
-        blob = staged('hash-object', '-w', '--stdin', input=body).decode()
-        staged('update-index', '--add', '--cacheinfo', '100644', blob, client_path)
+        for path, body in historical_client.items():
+            blob = staged('hash-object', '-w', '--stdin', input=body).decode()
+            staged('update-index', '--add', '--cacheinfo', '100644', blob, path)
         tree = staged('write-tree').decode()
         source = staged('commit-tree', tree, '-p', source,
                         input=b'Disposable historical acceptance client fixture\n').decode()
@@ -492,3 +492,142 @@ def test_acceptance_source_revision_preserves_original_enrollment_and_resumes(ac
     current=f.root/'automation-controller/revisions'/f.source
     assert {p.name:p.read_bytes() for p in (current/'staging_automation').iterdir()}==prior_modules
     assert f.installer.enroll(f.source,f.installer.REVISION_APPROVAL,revise=True)==result
+
+@pytest.fixture
+def active_upgrade_installed(source_mirror, monkeypatch, tmp_path):
+    import pwd
+    from tools import enroll_staging_tenant_acceptance as acceptance
+    from test_staging_pilot_generation import active_documents
+    mirror, source = source_mirror
+    old_main = git(mirror,'rev-parse','refs/heads/main').strip().decode()
+    git(mirror,'update-ref','refs/heads/main',source)
+    account = pwd.getpwnam('gamerhq-staging-bridge')
+    uid,gid = account.pw_uid,account.pw_gid
+    root,control=tmp_path/'root',tmp_path/'control'
+    def folder(path, owner=0):
+        path.mkdir(parents=True,exist_ok=True);os.chown(path,owner,gid);path.chmod(0o750)
+        return path
+    def put(path,body,owner=0,mode=0o640):
+        folder(path.parent, uid if path.parent==root/'worker' else 0)
+        path.write_bytes(body);os.chown(path,owner,gid);path.chmod(mode)
+        return path
+    folder(root);folder(control)
+    worker=folder(root/'deployment-worker')
+    git(worker,'init','--quiet')
+    git(worker,'fetch','--quiet','--depth=1',mirror.as_uri(),previous.WORKER)
+    git(worker,'checkout','--quiet','--detach','FETCH_HEAD')
+    previous_path=folder(root/'automation-controller/revisions'/enrollment.ACTIVE_PREVIOUS)
+    folder(previous_path.parent);folder(previous_path.parent.parent)
+    folder(previous_path/'staging_automation')
+    overlays=previous.OVERLAY|{'pilot_activation.py','pilot_cutover.py','recovery_api_repair.py','pilot_generation.py'}
+    names={Path(name).name for name in git(mirror,'ls-tree','--name-only',enrollment.LEGACY_CONTROLLER_BASE,'tools/staging_automation/').decode().splitlines() if name.endswith('.py')}|set(previous.SOURCE_PATHS)|overlays|{'tenant_acceptance.py'}
+    for name in names:
+        pin=(enrollment.ACTIVE_PREVIOUS if name in {'bridge.py','policy.py','oidc.py','tenant_acceptance.py'}
+             else enrollment.ACTIVE_GENERATION_SOURCE if name in overlays else enrollment.LEGACY_CONTROLLER_BASE)
+        relative=previous.SOURCE_PATHS.get(name,'tools/staging_automation/'+name)
+        put(previous_path/'staging_automation'/name,git(mirror,'show',pin+':'+relative))
+    policy,profile,state,journal=active_documents()
+    policy.update(controllerCommit=enrollment.ACTIVE_PREVIOUS,legacyWorkerCommit=previous.WORKER)
+    profile['hostSourceCommit']=previous.WORKER
+    collector={}
+    for name in acceptance.FILES:
+        body=git(mirror,'show',enrollment.ACTIVE_PREVIOUS+':'+name)
+        put(previous_path/'pilot-source'/name,body)
+        collector[name]=digest(body)
+    policy['tenantAcceptance']={'sourceSha256':collector,'workflowSha256':'a'*64}
+    folder(root/'worker',uid)
+    put(root/'worker/operation.lock',b'',uid,0o600)
+    history=[put(control/name,generation.encode({'source':pin,'phase':'COMMITTED'})) for name,pin in
+             (('pilot-generation-transition.json',enrollment.ACTIVE_GENERATION_SOURCE),*acceptance.ANCESTRY,
+              (acceptance.SOURCE_TRANSITION,enrollment.ACTIVE_PREVIOUS))]
+    journalfile=put(root/'worker/tenant-pilot-cutover-v2.json',generation.encode(journal),uid,0o600)
+    statefile=put(root/'worker/automation-state.json',generation.encode(state),uid,0o600)
+    profilefile=put(control/'settings/profile.json',generation.encode(profile),uid,0o600)
+    monkeypatch.setattr(acceptance,'ROOT',root);monkeypatch.setattr(acceptance,'CONTROL',control)
+    entry=put(root/'automation-controller/entry.py',acceptance.launcher(previous_path,revise=True))
+    policyfile=put(control/'automation-policy.json',generation.encode(policy))
+    primary=put(root/'fixture-primary.sqlite',b'primary-not-modified',uid,0o600)
+    secondary=put(root/'fixture-secondary.sqlite',b'secondary-not-modified',uid,0o600)
+    preserved={path:path.read_bytes() for path in [*history,journalfile,primary,secondary]}
+    native_run=subprocess.run
+    def run(command,*args,**kwargs):
+        if command[0]!='/usr/sbin/runuser':return native_run(command,*args,**kwargs)
+        packet=json.loads(kwargs['input'])
+        assert '--property=ProtectSystem=strict' in command and '--property=NoNewPrivileges=yes' in command
+        assert packet['profile']['pilotGeneration']==generation.ACTIVE_GENERATION['id']
+        assert packet['profile']['baseImage']==generation.ACTIVE_BASELINE_IMAGE
+        return subprocess.CompletedProcess(command,0,json.dumps({'state':'ACTIVE_PILOT_VERIFIED','admissionPreserved':True,
+                                                                'hostCommit':generation.ACTIVE_BASELINE_COMMIT}),'')
+    monkeypatch.setattr(subprocess,'run',run)
+    monkeypatch.setattr(enrollment,'ROOT',root);monkeypatch.setattr(enrollment,'CONTROL',control)
+    monkeypatch.setattr(enrollment,'REPOSITORY',mirror.as_uri())
+    old_path=list(sys.path)
+    old_modules={key:value for key,value in sys.modules.items() if key=='staging_automation' or key.startswith('staging_automation.')}
+    for key in old_modules:del sys.modules[key]
+    try:
+        yield SimpleNamespace(source=source,mirror=mirror,root=root,entry=entry,policy=policyfile,profile=profilefile,state=statefile,
+                              marker=control/enrollment.ACTIVE_TRANSITION)
+        assert all(path.read_bytes()==body for path,body in preserved.items())
+    finally:
+        git(mirror,'update-ref','refs/heads/main',old_main)
+        sys.path[:]=old_path
+        for key in list(sys.modules):
+            if key=='staging_automation' or key.startswith('staging_automation.'):del sys.modules[key]
+        sys.modules.update(old_modules)
+
+
+@pytest.mark.parametrize('boundary',[None,'PREPARED','entry','profile','state','policy','COMMITTED'])
+def test_active_rc4_enrollment_real_filesystem_and_retry(active_upgrade_installed,boundary):
+    f=active_upgrade_installed
+    def interrupt(phase):
+        if phase==boundary:raise PowerLoss()
+    if boundary:
+        with pytest.raises(PowerLoss):
+            enrollment.enroll_active(f.source,enrollment.ACTIVE_APPROVAL,checkpoint=interrupt)
+        assert json.loads(f.marker.read_bytes())['phase']==('COMMITTED' if boundary=='COMMITTED' else 'PREPARED')
+    receipt=enrollment.enroll_active(f.source,enrollment.ACTIVE_APPROVAL)
+    assert receipt['state']=='RC4_ACTIVE_GENERATION_ENROLLED' and receipt['activationAuthorized'] is False
+    assert json.loads(f.marker.read_bytes())['phase']=='COMMITTED'
+    assert json.loads(f.policy.read_bytes())['tenantPilotGeneration']==generation.ACTIVE_GENERATION
+    assert json.loads(f.state.read_bytes())['approvedImage']==generation.ACTIVE_BASELINE_IMAGE
+    assert json.loads(f.profile.read_bytes())['baseImage']==generation.ACTIVE_BASELINE_IMAGE
+    assert enrollment.enroll_active(f.source,enrollment.ACTIVE_APPROVAL)['alreadyEnrolled'] is True
+
+
+@pytest.mark.parametrize('boundary',[None,'entry','policy'])
+def test_single_layer_repair_preserves_real_enrollment_and_resumes(active_upgrade_installed, monkeypatch, boundary):
+    from tools import repair_staging_rc4_overlay as repair
+    f = active_upgrade_installed
+    # Reconstruct the exact previously enrolled revision, not the repair candidate.
+    receipt = enrollment.enroll_active(repair.PREVIOUS, enrollment.ACTIVE_APPROVAL)
+    assert receipt['state'] == 'RC4_ACTIVE_GENERATION_ENROLLED'
+    preserved = {path: path.read_bytes() for path in (f.marker, f.profile, f.state)}
+    old_policy = json.loads(f.policy.read_bytes())
+    monkeypatch.setattr(repair, 'ROOT', f.root)
+    monkeypatch.setattr(repair, 'CONTROL', f.marker.parent)
+    monkeypatch.setattr(repair, 'REPOSITORY', f.mirror.as_uri())
+    native = repair.switch
+    if boundary:
+        def interrupt(plan, read, write):
+            def step(name, body):
+                write(name, body)
+                if name == boundary:
+                    raise PowerLoss()
+            native(plan, read, step)
+        monkeypatch.setattr(repair, 'switch', interrupt)
+        with pytest.raises(PowerLoss):
+            repair.repair(f.source, repair.APPROVAL)
+        marker = f.marker.parent / repair.MARKER
+        assert json.loads(marker.read_bytes())['phase'] == 'PREPARED'
+        monkeypatch.setattr(repair, 'switch', native)
+    receipt = repair.repair(f.source, repair.APPROVAL)
+    assert receipt['state'] == 'RC4_OVERLAY_REPAIR_INSTALLED'
+    assert receipt['activationAuthorized'] is False
+    assert json.loads(f.policy.read_bytes()) == {**old_policy, 'controllerCommit': f.source}
+    assert all(path.read_bytes() == body for path, body in preserved.items())
+    revision = f.root / 'automation-controller/revisions' / f.source
+    previous_revision = revision.parent / repair.PREVIOUS
+    builder = 'pilot-source/' + repair.BUILDER
+    assert (revision / builder).read_bytes() == git(f.mirror,'show',f.source+':'+repair.BUILDER)
+    assert (previous_revision / builder).read_bytes() == git(f.mirror,'show',repair.PREVIOUS+':'+repair.BUILDER)
+    assert repair.repair(f.source, repair.APPROVAL)['alreadyInstalled'] is True

@@ -60,7 +60,7 @@ def verify_activation_checkpoint(backup_root, preview, binding, expected_baselin
         raise ValueError("PILOT_CHECKPOINT_REJECTED")
     receipt = json.loads(raw)
     if (receipt.get('schemaVersion') != 1 or receipt.get('binding') != expected_baseline
-            or receipt.get('rollbackRehearsal') != 'PRIMARY_ONLY_PASS'):
+            or receipt.get('rollbackRehearsal') != ('ACTIVE_PILOT_PASS' if expected_baseline.get('baselineAdmission') == 'PILOT_ACTIVE' else 'PRIMARY_ONLY_PASS')):
         raise ValueError("PILOT_CHECKPOINT_REJECTED")
     rows = receipt.get('tenants', ())
     if not isinstance(rows, list) or len(rows) != 2 or {str(row.get('guildId')) for row in rows} != set(binding['guildIds']):
@@ -113,17 +113,19 @@ def retain(store, backup_root, scratch_directory, *, binding=None, secondary_cap
         raise PermissionError("Pilot backup and restore exceed the available Staging storage budget.")
     batch = Path(tempfile.mkdtemp(prefix="tenant-pilot-", dir=backup_root))
     with tempfile.TemporaryDirectory(prefix="tenant-restore-", dir=scratch_directory) as scratch:
-        entries = _capture_and_probe(store, batch, Path(scratch), secondary_capture=secondary_capture)
+        entries = _capture_and_probe(store, batch, Path(scratch), secondary_capture=secondary_capture,
+                                     primary_only_rollback=(binding or {}).get("baselineAdmission") != "PILOT_ACTIVE")
     if before_seal is not None:
         before_seal()
     receipt = batch / "verified.json"
+    rollback = "ACTIVE_PILOT_PASS" if (binding or {}).get("baselineAdmission") == "PILOT_ACTIVE" else "PRIMARY_ONLY_PASS"
     atomic_json(receipt, {"schemaVersion": 1, "tenants": entries, "binding": binding,
-                          "rollbackRehearsal": "PRIMARY_ONLY_PASS"})
+                          "rollbackRehearsal": rollback})
     return {"backupBatch": batch.name, "backupReceiptSha256": _digest(receipt),
-            "tenantRestores": entries, "rollbackRehearsal": "PRIMARY_ONLY_PASS"}
+            "tenantRestores": entries, "rollbackRehearsal": rollback}
 
 
-def _capture_and_probe(store, source, restored, *, secondary_capture=None):
+def _capture_and_probe(store, source, restored, *, secondary_capture=None, primary_only_rollback=True):
     guilds = (store.primary_guild, *sorted(store.additional_guilds))
     clone_store = GuildTenantStore(primary_guild=store.primary_guild,
                                    primary_database=restored / f"{store.primary_guild}.sqlite",
@@ -142,6 +144,10 @@ def _capture_and_probe(store, source, restored, *, secondary_capture=None):
             if _digest(snapshot) != expected or _content_digest(snapshot) != _content_digest(clone):
                 raise ValueError("Tenant restore differs from its verified snapshot.")
         evidence.append({"guildId": guild_id, "backupSha256": expected, "restore": "PASS"})
+    if not primary_only_rollback:
+        # Both restored tenants were opened and compared under the exact admitted
+        # cohort. The active-to-active rollback must retain that admission.
+        return tuple(evidence)
     primary_only = GuildTenantStore(primary_guild=store.primary_guild,
                                     primary_database=clone_store.primary_database,
                                     tenant_directory=restored)
@@ -157,6 +163,21 @@ def _capture_and_probe(store, source, restored, *, secondary_capture=None):
                 if _content_digest(retained.database) != _content_digest(source / retained.database.name):
                     raise ValueError("Primary-only rollback changed the retained secondary tenant.")
     return tuple(evidence)
+
+
+def require_unchanged_dual_checkpoint(original, observed, guilds):
+    """Conservative rollback compatibility: full logical DB content, not selected tables."""
+    from tools.staging_automation.policy import Denied
+    for guild in guilds:
+        name = f"{guild}.sqlite"
+        before, after = Path(original) / name, Path(observed) / name
+        def schema_identity(path):
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+                if conn.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                    raise Denied("RECOVERY_REQUIRES_OWNER")
+                return (conn.execute("PRAGMA user_version").fetchone(), conn.execute("PRAGMA application_id").fetchone())
+        if schema_identity(before) != schema_identity(after) or _content_digest(before) != _content_digest(after):
+            raise Denied("RECOVERY_REQUIRES_OWNER")
 
 
 def snapshot_bytes(directory, guild_id, limit, output):
@@ -229,7 +250,7 @@ def _capture_tenant(command, guild_id, destination, run):
         raise
 
 
-def retain_quiesced(backend, baseline_container, baseline_image, *, run=subprocess.run):
+def retain_quiesced(backend, baseline_container, baseline_image, *, run=subprocess.run, candidate=False):
     """Retain fresh dual snapshots while the approved Host remains stopped.
 
     The caller holds the staging operation lock and owns the stopped-service
@@ -241,6 +262,9 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
 
     profile = {**backend.profile, "tenantPilot": backend.policy["tenantPilot"]}
     cohort = approved_binding(profile, backend.policy)
+    from tools.staging_automation.pilot_generation import is_active_upgrade
+    if candidate and not is_active_upgrade(backend.policy):
+        raise Denied("PILOT_BASELINE_CHANGED")
     if not IMAGE.fullmatch(baseline_image) or not re.fullmatch(r"[0-9a-f]{64}", baseline_container):
         raise Denied("PILOT_BASELINE_CHANGED")
 
@@ -251,9 +275,21 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
                 or state.get("Running") is not False or state.get("Status") != "exited"):
             raise Denied("PILOT_BASELINE_NOT_QUIESCED")
         labels = container.get("Config", {}).get("Labels") or {}
-        if labels.get("org.opencontainers.image.revision") != backend.policy["hostPromotion"]["commit"]:
+        expected_commit = backend.policy["tenantPilotActivation"]["commit"] if candidate else backend.policy["hostPromotion"]["commit"]
+        if labels.get("org.opencontainers.image.revision") != expected_commit:
             raise Denied("PILOT_BASELINE_CHANGED")
-        return container, rehearsal_binding(profile, backend.policy, container)
+        if candidate:
+            from services.tenant_routing import PILOT_ENV
+            override = startup_override(profile, backend.policy, baseline_image)
+            expected = override["services"][profile["service"]]["environment"][PILOT_ENV]
+            if [v for v in container["Config"].get("Env", []) if v.startswith(PILOT_ENV + "=")] != [PILOT_ENV + "=" + expected]:
+                raise Denied("PILOT_BASELINE_CHANGED")
+            binding = {"baselineHostCommit": expected_commit, "baselineImage": baseline_image,
+                       "startupOverrideSha256": hashlib.sha256(json.dumps(override, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                       "baselineAdmission": "PILOT_ACTIVE"}
+        else:
+            binding = rehearsal_binding(profile, backend.policy, container)
+        return container, binding
 
     container, binding = verify_stopped()
     backend.storage_budget()
@@ -313,8 +349,14 @@ def rehearsal_binding(profile, policy, container):
         if actual != [PILOT_ENV + '=' + expected]:
             raise PermissionError('Pilot baseline admission changed.')
     encoded = json.dumps(override, sort_keys=True, separators=(",", ":")).encode()
-    return {"baselineHostCommit": host_commit, "baselineImage": image,
-            "startupOverrideSha256": hashlib.sha256(encoded).hexdigest()}
+    binding = {"baselineHostCommit": host_commit, "baselineImage": image,
+               "startupOverrideSha256": hashlib.sha256(encoded).hexdigest()}
+    from tools.staging_automation.pilot_generation import is_active_upgrade
+    if is_active_upgrade(policy):
+        if host_commit != policy["hostPromotion"]["commit"]:
+            raise PermissionError("Pilot baseline Host changed.")
+        binding["baselineAdmission"] = "PILOT_ACTIVE"
+    return binding
 
 
 def baseline_override(profile, policy, image):
@@ -325,7 +367,7 @@ def baseline_override(profile, policy, image):
         validate_generation(policy)
         if image != generation['baselineImage']:
             raise PermissionError('Pilot baseline image changed.')
-    return startup_override(profile, policy, image, primary_only=generation is not None)
+    return startup_override(profile, policy, image, primary_only=generation is not None and generation["baselineAdmission"] == "PRIMARY_ONLY")
 
 
 def approved_binding(profile, policy):

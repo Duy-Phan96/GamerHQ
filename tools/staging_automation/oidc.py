@@ -78,10 +78,12 @@ def verify(token, policy, operation, challenge, *, read=read_url, now=None):
             filename = 'staging-tenant-pilot-preview.yml'
             digest = policy['tenantPilotWorkflowSha256']
         elif operation == 'tenant-pilot-activation-prepare':
-            filename = 'staging-tenant-pilot-activation-prepare.yml'
+            from .pilot_generation import is_active_upgrade
+            filename = 'staging-rc4-pilot-prepare.yml' if is_active_upgrade(policy) else 'staging-tenant-pilot-activation-prepare.yml'
             digest = policy['tenantPilotActivation']['workflowSha256']
         elif operation == 'tenant-pilot-cutover':
-            filename = 'staging-tenant-pilot-cutover.yml'
+            from .pilot_generation import is_active_upgrade
+            filename = 'staging-rc4-pilot-cutover.yml' if is_active_upgrade(policy) else 'staging-tenant-pilot-cutover.yml'
             digest = policy['tenantPilotCutover']['workflowSha256']
         elif operation in WEB:
             filename = 'staging-web.yml'

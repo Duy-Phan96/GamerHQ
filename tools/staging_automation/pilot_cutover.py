@@ -42,9 +42,12 @@ def confirmation_step(stage):
 
 def journal_path(profile):
     generation = profile.get('pilotGeneration')
-    if generation is not None and generation != 'recovered-primary-v2':
+    names = {None: 'tenant-pilot-cutover.json',
+             'recovered-primary-v2': 'tenant-pilot-cutover-v2.json',
+             'active-pilot-rc4-v3': 'tenant-pilot-cutover-rc4-v3.json'}
+    if generation not in names:
         raise Denied('PILOT_CHECKPOINT_REJECTED')
-    return Path(profile['workRoot']) / ('tenant-pilot-cutover-v2.json' if generation else 'tenant-pilot-cutover.json')
+    return Path(profile['workRoot']) / names[generation]
 
 
 def journal_status(profile):
@@ -84,6 +87,8 @@ class PilotCutover:
 
         self.backend = backend
         self.policy = backend.policy
+        from .pilot_generation import is_active_upgrade
+        self.active_upgrade = is_active_upgrade(self.policy)
         self.profile = {**backend.profile, 'tenantPilot': self.policy['tenantPilot']}
         generation = self.policy.get('tenantPilotGeneration')
         if generation is not None:
@@ -105,7 +110,7 @@ class PilotCutover:
                     or self.fallback != self.baseline or self.candidate == self.baseline))):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
         self.candidate_override = startup_override(self.profile, self.policy, self.candidate)
-        self.fallback_override = startup_override(self.profile, self.policy, self.fallback, primary_only=True)
+        self.fallback_override = startup_override(self.profile, self.policy, self.fallback, primary_only=not self.active_upgrade)
         if (prepared.get('startupOverrideSha256') != digest(self.candidate_override)
                 or prepared.get('fallbackStartupOverrideSha256') != digest(self.fallback_override)):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
@@ -151,7 +156,7 @@ class PilotCutover:
         os.environ['GAMERHQ_STAGING_IMAGE'] = self.baseline
         cmd = ['docker', 'compose', '--file', self.profile['composeFile'], '--profile', 'live-acceptance']
         if override:
-            path = self.path.with_name('tenant-pilot-compose.json')
+            path = self.path.with_name('tenant-pilot-compose-rc4-v3.json' if getattr(self, 'active_upgrade', False) else 'tenant-pilot-compose.json')
             write_record(path, override)
             cmd.extend(['--file', str(path)])
         self.backend.run([*cmd, *args, self.profile['service']], timeout=90,
@@ -189,6 +194,8 @@ class PilotCutover:
         binding = {'baselineHostCommit': self.policy['hostPromotion']['commit'], 'baselineImage': self.baseline,
                    'startupOverrideSha256': digest(baseline_override(self.profile, self.policy, self.baseline)),
                    'quiesced': True}
+        if getattr(self, 'active_upgrade', False):
+            binding['baselineAdmission'] = 'PILOT_ACTIVE'
         return {**captured, **binding, 'capturedAt': int(time.time())}
 
     def verify_checkpoint(self, record, *, recovery=False):
@@ -199,6 +206,8 @@ class PilotCutover:
         binding = {'baselineHostCommit': self.policy['hostPromotion']['commit'], 'baselineImage': self.baseline,
                    'startupOverrideSha256': digest(baseline_override(self.profile, self.policy, self.baseline)),
                    'quiesced': True}
+        if getattr(self, 'active_upgrade', False):
+            binding['baselineAdmission'] = 'PILOT_ACTIVE'
         verify_activation_checkpoint(self.profile['backupRoot'], checkpoint, self.policy['tenantPilot'], binding,
                                      verified_at=stamp, now=stamp if recovery else int(time.time()))
         return Path(self.profile['backupRoot']) / checkpoint['backupBatch']
@@ -248,7 +257,10 @@ class PilotCutover:
             with tempfile.TemporaryDirectory(dir=self.profile['workRoot'], prefix='pilot-health-') as root:
                 snapshot = Path(root) / 'secondary.sqlite'
                 capture_container_tenant(container['Id'], secondary, snapshot)
-                if recovery and application_fingerprint(snapshot) != application_fingerprint(batch / f'{secondary}.sqlite'):
+                if getattr(self, 'active_upgrade', False):
+                    require_retained(retained_state(batch / f'{secondary}.sqlite', secondary, require_event_manager=False),
+                                     retained_state(snapshot, secondary, require_event_manager=False))
+                elif recovery and application_fingerprint(snapshot) != application_fingerprint(batch / f'{secondary}.sqlite'):
                     raise Denied('RECOVERY_REQUIRES_OWNER')
 
     def confirm_fallback(self, record):
@@ -263,6 +275,32 @@ class PilotCutover:
                 self.compose('stop', '--timeout', '30')
             raise
 
+    def prove_rollback_compatibility(self, record):
+        """Snapshot the quiesced exact candidate or baseline, compare both DBs.
+
+        A mismatch or unavailable stopped image holds the existing recovery latch.
+        No restoration into live paths, and no Gateway or credentialed reader.
+        """
+        from tools.staging_tenant_rehearsal import retain_quiesced, require_unchanged_dual_checkpoint, verify_activation_checkpoint
+        original = self.verify_checkpoint(record, recovery=True)
+        stopped = self.inspect()
+        if not stopped or stopped['Image'] not in {self.candidate, self.baseline}:
+            raise Denied('RECOVERY_REQUIRES_OWNER')
+        candidate = stopped['Image'] == self.candidate
+        captured = retain_quiesced(self.backend, stopped['Id'], stopped['Image'], candidate=candidate)
+        # Bind the newly captured stopped image and its exact admission override.
+        binding = {'baselineHostCommit': self.policy['tenantPilotActivation' if candidate else 'hostPromotion']['commit'],
+                   'baselineImage': stopped['Image'],
+                   'startupOverrideSha256': digest(self.candidate_override if candidate else self.fallback_override),
+                   'baselineAdmission': 'PILOT_ACTIVE', 'quiesced': True}
+        stamp = int(time.time())
+        verify_activation_checkpoint(self.profile['backupRoot'], captured, self.policy['tenantPilot'], binding,
+                                     verified_at=stamp, now=stamp)
+        observed = Path(self.profile['backupRoot']) / captured['backupBatch']
+        require_unchanged_dual_checkpoint(original, observed, self.cohort)
+        return {'state': 'DUAL_LOGICAL_CONTENT_UNCHANGED', 'backupBatch': captured['backupBatch'],
+                'backupReceiptSha256': captured['backupReceiptSha256']}
+
     def rollback(self, record):
         current = self.inspect()
         if (record['phase'] == 'STOPPING' and current and current['Id'] == record['baselineContainer']
@@ -274,10 +312,23 @@ class PilotCutover:
             raise Denied('RECOVERY_REQUIRES_OWNER')
         if (record['phase'] == 'ROLLING_BACK' and 'checkpoint' in record and current
                 and current['Image'] == self.fallback and current['State'].get('Running')):
+            if getattr(self, 'active_upgrade', False) and record.get('candidateMayHaveStarted') is True:
+                if record.get('rollbackCompatibility', {}).get('state') != 'DUAL_LOGICAL_CONTENT_UNCHANGED':
+                    self.compose('stop', '--timeout', '30')
+                    raise Denied('RECOVERY_REQUIRES_OWNER')
             self.confirm_fallback(record)
             return self.save(record, 'PILOT_ROLLED_BACK')
         if current and current['State'].get('Running'):
             self.compose('stop', '--timeout', '30')
+        if getattr(self, 'active_upgrade', False) and (record.get('candidateMayHaveStarted') is True or
+                                    record['phase'] in {'STARTING', 'VERIFYING'} or
+                                    (current and current['Image'] == self.candidate)):
+            record = self.save(record, 'ROLLING_BACK', candidateMayHaveStarted=True)
+            try:
+                proof = self.prove_rollback_compatibility(record)
+            except Exception:
+                raise Denied('RECOVERY_REQUIRES_OWNER') from None
+            record = self.save(record, 'ROLLING_BACK', rollbackCompatibility=proof)
         self.attest()
         if 'checkpoint' not in record:
             record = self.save(record, 'ROLLING_BACK', checkpoint=self.checkpoint(record))
@@ -354,7 +405,7 @@ class PilotCutover:
                 self.attest()
                 if preparation_state(self.prepared, pin, int(time.time())) != 'FRESH':
                     raise Denied('PILOT_PREVIEW_EXPIRED')
-                record = self.save(record, 'STARTING')
+                record = self.save(record, 'STARTING', **({'candidateMayHaveStarted': True} if getattr(self, 'active_upgrade', False) else {}))
                 self.compose('up', '--detach', '--no-build', '--pull', 'never', override=self.candidate_override)
                 record = self.save(record, 'VERIFYING')
                 self.confirm(self.candidate, self.candidate_override, record)
