@@ -148,6 +148,9 @@ jobs:
             channel="develop"
           fi
           python -m tools.release_preflight --expect-channel "$channel"
+          if [[ "$channel" != "develop" ]]; then
+            python -m tools.release_readiness --expect-channel "$channel"
+          fi
       - run: python -m pytest
       - run: python -m tools.repository_audit --history
       - run: bash -n scripts/update.sh scripts/backup.sh
