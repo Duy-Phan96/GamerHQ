@@ -6,6 +6,7 @@ Skill. Only exact, checksum-bound Git application source is overlaid.
 """
 import hashlib
 import json
+import re
 import os
 from pathlib import Path, PurePosixPath
 import sqlite3
@@ -172,6 +173,33 @@ def build_overlay(backend, current):
     return build_reviewed_overlay(backend, current, COMMIT, ARCHIVE_SHA256, BASELINE, verify_compatibility)
 
 
+def write_overlay_context(archive, context, alias, commit):
+    """A single filesystem layer avoids deep rootless overlay mount options.
+
+    Only the existing reviewed allowlist is copied. The generated Dockerfile,
+    Git metadata, runtime state and installed wheels are not in that subtree.
+    """
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise Denied('IMMUTABLE_RELEASE_CHANGED')
+    context.mkdir()
+    application = context / 'application'
+    application.mkdir()
+    extract_application(archive, application)
+    for path in FILES:
+        if not (application / path).is_file():
+            raise Denied('PAYLOAD_REJECTED')
+    for path in DIRECTORIES:
+        if not (application / path).is_dir():
+            raise Denied('PAYLOAD_REJECTED')
+    with (application / 'BUILD_COMMIT').open('x', encoding='utf-8') as marker:
+        marker.write(commit + '\n')
+    dockerfile = (f'FROM {alias}\n'
+                  'COPY --chown=10001:10001 application/ /app/\n'
+                  f'LABEL org.opencontainers.image.revision={commit}\n'
+                  'USER 10001:10001\n')
+    (context / 'Dockerfile').write_text(dockerfile, encoding='utf-8')
+
+
 def build_reviewed_overlay(backend, current, commit, archive_sha256, baseline, check_compatibility):
     p = backend.profile
     if source_commit(backend, current) != baseline:
@@ -196,21 +224,12 @@ def build_reviewed_overlay(backend, current, commit, archive_sha256, baseline, c
         git('archive', '--format=tar', '--output=' + str(archive), commit)
         if archive.stat().st_size > 32 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != archive_sha256:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
-        context = root / 'context'; context.mkdir()
-        extract_application(archive, context)
+        context = root / 'context'
         alias = 'gamerhq-host-promotion-base:' + current.split(':')[-1]
+        write_overlay_context(archive, context, alias, commit)
         backend.run(['docker', 'tag', current, alias])
         if backend.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', alias]) != current:
             raise Denied('IMMUTABLE_RELEASE_CHANGED')
-        # Full application tree from the exact commit; installed wheels and all
-        # dependencies stay in the approved current image, outside this overlay.
-        dockerfile = f'FROM {alias}\nUSER root\n'
-        for path in FILES:
-            dockerfile += f'COPY --chown=10001:10001 {path} /app/{path}\n'
-        for path in DIRECTORIES:
-            dockerfile += f'COPY --chown=10001:10001 {path}/ /app/{path}/\n'
-        dockerfile += f'RUN printf \'%s\\n\' {commit} > /app/BUILD_COMMIT\nLABEL org.opencontainers.image.revision={commit}\nUSER 10001:10001\n'
-        (context / 'Dockerfile').write_text(dockerfile, encoding='utf-8')
         identity = root / 'image-id'
         backend.run(['docker', 'build', '--network', 'none', '--iidfile', str(identity), str(context)], timeout=600)
         from hosts.gamerhq.skill_deployment_docker import IMAGE
