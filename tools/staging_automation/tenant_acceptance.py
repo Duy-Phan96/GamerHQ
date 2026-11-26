@@ -77,7 +77,8 @@ def run(backend):
     from .pilot_cutover import journal_status
     pin = backend.policy.get('tenantAcceptance')
     validate_pin(pin)
-    if (backend.operation_lock is None or backend.profile.get('pilotGeneration') != 'recovered-primary-v2'
+    generation = backend.profile.get('pilotGeneration')
+    if (backend.operation_lock is None or generation not in {'recovered-primary-v2', 'active-pilot-rc4-v3'}
             or journal_status(backend.profile).get('phase') != 'PILOT_ACTIVE'):
         raise Denied('ACCEPTANCE_BASELINE_REJECTED')
     container = backend.inspect()
@@ -105,4 +106,4 @@ def run(backend):
     if backend.inspect()['Id'] != container['Id'] or backend.health()['state'] != 'HOST_READY':
         raise Denied('ACCEPTANCE_BASELINE_REJECTED')
     return pack_receipt({**result, 'hostCommit': expected, 'image': container['Image'],
-                         'generation': 'recovered-primary-v2'})
+                         'generation': generation})

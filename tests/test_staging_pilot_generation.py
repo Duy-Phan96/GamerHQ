@@ -354,8 +354,33 @@ def test_active_epoch_never_falls_back_after_unverified_candidate_writes():
     tx.inspect = lambda: {'Image': tx.candidate, 'State': {'Running': True}}
     actions = []
     tx.compose = lambda *args, **kw: actions.append(args)
-    tx.save = lambda record, phase, **kw: actions.append((phase, kw))
+    def save(record, phase, **kw):
+        actions.append((phase, kw))
+        return {**record, 'phase': phase, **kw}
+    tx.save = save
+    def incompatible(record):
+        raise Denied('RECOVERY_REQUIRES_OWNER')
+    tx.prove_rollback_compatibility = incompatible
     tx.attest = lambda: pytest.fail('must not start rollback without compatibility proof')
     with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
         tx.rollback({'phase': 'VERIFYING', 'checkpoint': {}})
     assert actions == [('stop', '--timeout', '30'), ('ROLLING_BACK', {'candidateMayHaveStarted': True})]
+
+
+def test_active_rollback_compares_complete_logical_content_of_both_tenants(tmp_path):
+    import sqlite3
+    from tools.staging_tenant_rehearsal import require_unchanged_dual_checkpoint
+    before, after = tmp_path / 'before', tmp_path / 'after'
+    before.mkdir(); after.mkdir()
+    for folder in (before, after):
+        for guild in (1, 2):
+            with sqlite3.connect(folder / f'{guild}.sqlite') as conn:
+                conn.execute('CREATE TABLE records (value TEXT)')
+                conn.execute('INSERT INTO records VALUES (?)', ('original',))
+                conn.execute('CREATE TABLE skill_deployments (state TEXT)')
+                conn.execute("INSERT INTO skill_deployments VALUES ('retained')")
+    require_unchanged_dual_checkpoint(before, after, (1, 2))
+    with sqlite3.connect(after / '2.sqlite') as conn:
+        conn.execute("UPDATE skill_deployments SET state='changed'")
+    with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
+        require_unchanged_dual_checkpoint(before, after, (1, 2))

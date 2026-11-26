@@ -165,6 +165,15 @@ def _capture_and_probe(store, source, restored, *, secondary_capture=None, prima
     return tuple(evidence)
 
 
+def require_unchanged_dual_checkpoint(original, observed, guilds):
+    """Conservative rollback compatibility: full logical DB content, not selected tables."""
+    from tools.staging_automation.policy import Denied
+    for guild in guilds:
+        name = f"{guild}.sqlite"
+        if _content_digest(Path(original) / name) != _content_digest(Path(observed) / name):
+            raise Denied("RECOVERY_REQUIRES_OWNER")
+
+
 def snapshot_bytes(directory, guild_id, limit, output):
     """Stdlib-only program executed as the existing Staging container user."""
     from contextlib import closing
@@ -235,7 +244,7 @@ def _capture_tenant(command, guild_id, destination, run):
         raise
 
 
-def retain_quiesced(backend, baseline_container, baseline_image, *, run=subprocess.run):
+def retain_quiesced(backend, baseline_container, baseline_image, *, run=subprocess.run, candidate=False):
     """Retain fresh dual snapshots while the approved Host remains stopped.
 
     The caller holds the staging operation lock and owns the stopped-service
@@ -247,6 +256,9 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
 
     profile = {**backend.profile, "tenantPilot": backend.policy["tenantPilot"]}
     cohort = approved_binding(profile, backend.policy)
+    from tools.staging_automation.pilot_generation import is_active_upgrade
+    if candidate and not is_active_upgrade(backend.policy):
+        raise Denied("PILOT_BASELINE_CHANGED")
     if not IMAGE.fullmatch(baseline_image) or not re.fullmatch(r"[0-9a-f]{64}", baseline_container):
         raise Denied("PILOT_BASELINE_CHANGED")
 
@@ -257,9 +269,21 @@ def retain_quiesced(backend, baseline_container, baseline_image, *, run=subproce
                 or state.get("Running") is not False or state.get("Status") != "exited"):
             raise Denied("PILOT_BASELINE_NOT_QUIESCED")
         labels = container.get("Config", {}).get("Labels") or {}
-        if labels.get("org.opencontainers.image.revision") != backend.policy["hostPromotion"]["commit"]:
+        expected_commit = backend.policy["tenantPilotActivation"]["commit"] if candidate else backend.policy["hostPromotion"]["commit"]
+        if labels.get("org.opencontainers.image.revision") != expected_commit:
             raise Denied("PILOT_BASELINE_CHANGED")
-        return container, rehearsal_binding(profile, backend.policy, container)
+        if candidate:
+            from services.tenant_routing import PILOT_ENV
+            override = startup_override(profile, backend.policy, baseline_image)
+            expected = override["services"][profile["service"]]["environment"][PILOT_ENV]
+            if [v for v in container["Config"].get("Env", []) if v.startswith(PILOT_ENV + "=")] != [PILOT_ENV + "=" + expected]:
+                raise Denied("PILOT_BASELINE_CHANGED")
+            binding = {"baselineHostCommit": expected_commit, "baselineImage": baseline_image,
+                       "startupOverrideSha256": hashlib.sha256(json.dumps(override, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                       "baselineAdmission": "PILOT_ACTIVE"}
+        else:
+            binding = rehearsal_binding(profile, backend.policy, container)
+        return container, binding
 
     container, binding = verify_stopped()
     backend.storage_budget()
