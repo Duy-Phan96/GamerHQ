@@ -60,7 +60,7 @@ jobs:
           "$RUNNER_TEMP/enrollment-tests/bin/python" -m pip install --no-deps -r requirements-skills.lock
       - name: Focused active-pilot controller and rollback regressions
         run: |
-          "$RUNNER_TEMP/enrollment-tests/bin/python" -m pytest -q tests/test_staging_pilot_generation.py tests/test_staging_pilot_activation.py
+          "$RUNNER_TEMP/enrollment-tests/bin/python" -m pytest -q tests/test_staging_pilot_generation.py tests/test_staging_pilot_activation.py tests/test_staging_host_promotion.py tests/test_staging_rc4_overlay_repair.py
       - name: Publish exact reviewed RC4 enrollment installer checksum
         env:
           REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -69,6 +69,12 @@ jobs:
           [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           printf 'controllerCommit=%s\n' "$REVIEWED_COMMIT"
           printf 'installerSha256=%s\n' "$(git show "$REVIEWED_COMMIT:tools/enroll_staging_pilot_generation.py" | sha256sum | cut -d ' ' -f 1)"
+      - name: Publish exact reviewed single-layer repair checksum
+        env:
+          REVIEWED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          printf 'repairInstallerSha256=%s\n' "$(git show "$REVIEWED_COMMIT:tools/repair_staging_rc4_overlay.py" | sha256sum | cut -d ' ' -f 1)"
       - name: Rehearse exact enrollment, power loss, retry and immutable source rejection
         run: |
           set -euo pipefail
