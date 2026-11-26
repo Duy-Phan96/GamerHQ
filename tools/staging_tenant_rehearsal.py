@@ -60,7 +60,7 @@ def verify_activation_checkpoint(backup_root, preview, binding, expected_baselin
         raise ValueError("PILOT_CHECKPOINT_REJECTED")
     receipt = json.loads(raw)
     if (receipt.get('schemaVersion') != 1 or receipt.get('binding') != expected_baseline
-            or receipt.get('rollbackRehearsal') != 'PRIMARY_ONLY_PASS'):
+            or receipt.get('rollbackRehearsal') != ('ACTIVE_PILOT_PASS' if expected_baseline.get('baselineAdmission') == 'PILOT_ACTIVE' else 'PRIMARY_ONLY_PASS')):
         raise ValueError("PILOT_CHECKPOINT_REJECTED")
     rows = receipt.get('tenants', ())
     if not isinstance(rows, list) or len(rows) != 2 or {str(row.get('guildId')) for row in rows} != set(binding['guildIds']):
@@ -113,17 +113,19 @@ def retain(store, backup_root, scratch_directory, *, binding=None, secondary_cap
         raise PermissionError("Pilot backup and restore exceed the available Staging storage budget.")
     batch = Path(tempfile.mkdtemp(prefix="tenant-pilot-", dir=backup_root))
     with tempfile.TemporaryDirectory(prefix="tenant-restore-", dir=scratch_directory) as scratch:
-        entries = _capture_and_probe(store, batch, Path(scratch), secondary_capture=secondary_capture)
+        entries = _capture_and_probe(store, batch, Path(scratch), secondary_capture=secondary_capture,
+                                     primary_only_rollback=(binding or {}).get("baselineAdmission") != "PILOT_ACTIVE")
     if before_seal is not None:
         before_seal()
     receipt = batch / "verified.json"
+    rollback = "ACTIVE_PILOT_PASS" if (binding or {}).get("baselineAdmission") == "PILOT_ACTIVE" else "PRIMARY_ONLY_PASS"
     atomic_json(receipt, {"schemaVersion": 1, "tenants": entries, "binding": binding,
-                          "rollbackRehearsal": "PRIMARY_ONLY_PASS"})
+                          "rollbackRehearsal": rollback})
     return {"backupBatch": batch.name, "backupReceiptSha256": _digest(receipt),
-            "tenantRestores": entries, "rollbackRehearsal": "PRIMARY_ONLY_PASS"}
+            "tenantRestores": entries, "rollbackRehearsal": rollback}
 
 
-def _capture_and_probe(store, source, restored, *, secondary_capture=None):
+def _capture_and_probe(store, source, restored, *, secondary_capture=None, primary_only_rollback=True):
     guilds = (store.primary_guild, *sorted(store.additional_guilds))
     clone_store = GuildTenantStore(primary_guild=store.primary_guild,
                                    primary_database=restored / f"{store.primary_guild}.sqlite",
@@ -142,6 +144,10 @@ def _capture_and_probe(store, source, restored, *, secondary_capture=None):
             if _digest(snapshot) != expected or _content_digest(snapshot) != _content_digest(clone):
                 raise ValueError("Tenant restore differs from its verified snapshot.")
         evidence.append({"guildId": guild_id, "backupSha256": expected, "restore": "PASS"})
+    if not primary_only_rollback:
+        # Both restored tenants were opened and compared under the exact admitted
+        # cohort. The active-to-active rollback must retain that admission.
+        return tuple(evidence)
     primary_only = GuildTenantStore(primary_guild=store.primary_guild,
                                     primary_database=clone_store.primary_database,
                                     tenant_directory=restored)
@@ -313,8 +319,14 @@ def rehearsal_binding(profile, policy, container):
         if actual != [PILOT_ENV + '=' + expected]:
             raise PermissionError('Pilot baseline admission changed.')
     encoded = json.dumps(override, sort_keys=True, separators=(",", ":")).encode()
-    return {"baselineHostCommit": host_commit, "baselineImage": image,
-            "startupOverrideSha256": hashlib.sha256(encoded).hexdigest()}
+    binding = {"baselineHostCommit": host_commit, "baselineImage": image,
+               "startupOverrideSha256": hashlib.sha256(encoded).hexdigest()}
+    from tools.staging_automation.pilot_generation import is_active_upgrade
+    if is_active_upgrade(policy):
+        if host_commit != policy["hostPromotion"]["commit"]:
+            raise PermissionError("Pilot baseline Host changed.")
+        binding["baselineAdmission"] = "PILOT_ACTIVE"
+    return binding
 
 
 def baseline_override(profile, policy, image):
@@ -325,7 +337,7 @@ def baseline_override(profile, policy, image):
         validate_generation(policy)
         if image != generation['baselineImage']:
             raise PermissionError('Pilot baseline image changed.')
-    return startup_override(profile, policy, image, primary_only=generation is not None)
+    return startup_override(profile, policy, image, primary_only=generation is not None and generation["baselineAdmission"] == "PRIMARY_ONLY")
 
 
 def approved_binding(profile, policy):

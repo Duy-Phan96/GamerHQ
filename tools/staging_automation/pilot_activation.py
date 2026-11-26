@@ -123,7 +123,14 @@ def prepare(backend, preview, approved_image, *, now, read=github):
     require_runtime_lifecycle(retained_state(profile['database'], profile['stagingGuildId']), runtime)
 
     def compatibility(git):
-        for filename in ('requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml'):
+        from .pilot_generation import is_active_upgrade
+        paths = ('requirements.txt', 'requirements.lock', 'requirements-skills.lock', 'pyproject.toml')
+        if is_active_upgrade(policy):
+            paths += ('Dockerfile', 'database', 'skill_runtime', 'skills', 'hosts', 'bot.py', 'config.py',
+                      'data/games_seed.json', 'data/game_catalog_expansion.json')
+            if git('diff', '--no-renames', '--diff-filter=D', '--name-only', baseline, pin['commit'], '--'):
+                raise Denied('MIGRATION_REQUIRES_OWNER')
+        for filename in paths:
             if git('rev-parse', baseline + ':' + filename) != git('rev-parse', pin['commit'] + ':' + filename):
                 raise Denied('MIGRATION_REQUIRES_OWNER')
 
@@ -154,11 +161,14 @@ def prepare(backend, preview, approved_image, *, now, read=github):
             fallback = approved_image
         else:
             fallback = build_reviewed_overlay(backend, approved_image, pin['commit'], pin['archiveSha256'], baseline, compatibility)
-        fallback_override = startup_override(profile, policy, fallback, primary_only=True)
+        from .pilot_generation import is_active_upgrade
+        active = is_active_upgrade(policy)
+        fallback_override = startup_override(profile, policy, fallback, primary_only=not active)
         value = fallback_override['services'][profile['service']]['environment'][PILOT_ENV]
-        probe_primary = main.replace('print("PASS")', 'assert len(routes.membership)==2; print("PASS")')
-        if backend.run([*probe, '--env', f'{PILOT_ENV}={value}', fallback, '-I', '-B', '-c', probe_primary,
-                        PILOT_ENV, profile['stagingGuildId'], profile['stagingGuildId']]) != 'PASS':
+        probe_fallback = main.replace('print("PASS")', 'assert len(routes.membership)==2; print("PASS")')
+        admitted = list(map(str, cohort)) if active else [profile['stagingGuildId']]
+        if backend.run([*probe, '--env', f'{PILOT_ENV}={value}', fallback, '-I', '-B', '-c', probe_fallback,
+                        PILOT_ENV, profile['stagingGuildId'], *admitted]) != 'PASS':
             raise Denied('OFFLINE_PROBE_FAILED')
         from .pilot_cutover import digest
         rehearse_container_rollback(backend, approved_image, candidate, fallback)

@@ -42,9 +42,12 @@ def confirmation_step(stage):
 
 def journal_path(profile):
     generation = profile.get('pilotGeneration')
-    if generation is not None and generation != 'recovered-primary-v2':
+    names = {None: 'tenant-pilot-cutover.json',
+             'recovered-primary-v2': 'tenant-pilot-cutover-v2.json',
+             'active-pilot-rc4-v3': 'tenant-pilot-cutover-rc4-v3.json'}
+    if generation not in names:
         raise Denied('PILOT_CHECKPOINT_REJECTED')
-    return Path(profile['workRoot']) / ('tenant-pilot-cutover-v2.json' if generation else 'tenant-pilot-cutover.json')
+    return Path(profile['workRoot']) / names[generation]
 
 
 def journal_status(profile):
@@ -84,6 +87,8 @@ class PilotCutover:
 
         self.backend = backend
         self.policy = backend.policy
+        from .pilot_generation import is_active_upgrade
+        self.active_upgrade = is_active_upgrade(self.policy)
         self.profile = {**backend.profile, 'tenantPilot': self.policy['tenantPilot']}
         generation = self.policy.get('tenantPilotGeneration')
         if generation is not None:
@@ -105,7 +110,7 @@ class PilotCutover:
                     or self.fallback != self.baseline or self.candidate == self.baseline))):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
         self.candidate_override = startup_override(self.profile, self.policy, self.candidate)
-        self.fallback_override = startup_override(self.profile, self.policy, self.fallback, primary_only=True)
+        self.fallback_override = startup_override(self.profile, self.policy, self.fallback, primary_only=not self.active_upgrade)
         if (prepared.get('startupOverrideSha256') != digest(self.candidate_override)
                 or prepared.get('fallbackStartupOverrideSha256') != digest(self.fallback_override)):
             raise Denied('PILOT_CHECKPOINT_REJECTED')
@@ -151,7 +156,7 @@ class PilotCutover:
         os.environ['GAMERHQ_STAGING_IMAGE'] = self.baseline
         cmd = ['docker', 'compose', '--file', self.profile['composeFile'], '--profile', 'live-acceptance']
         if override:
-            path = self.path.with_name('tenant-pilot-compose.json')
+            path = self.path.with_name('tenant-pilot-compose-rc4-v3.json' if self.active_upgrade else 'tenant-pilot-compose.json')
             write_record(path, override)
             cmd.extend(['--file', str(path)])
         self.backend.run([*cmd, *args, self.profile['service']], timeout=90,
@@ -189,6 +194,8 @@ class PilotCutover:
         binding = {'baselineHostCommit': self.policy['hostPromotion']['commit'], 'baselineImage': self.baseline,
                    'startupOverrideSha256': digest(baseline_override(self.profile, self.policy, self.baseline)),
                    'quiesced': True}
+        if self.active_upgrade:
+            binding['baselineAdmission'] = 'PILOT_ACTIVE'
         return {**captured, **binding, 'capturedAt': int(time.time())}
 
     def verify_checkpoint(self, record, *, recovery=False):
@@ -199,6 +206,8 @@ class PilotCutover:
         binding = {'baselineHostCommit': self.policy['hostPromotion']['commit'], 'baselineImage': self.baseline,
                    'startupOverrideSha256': digest(baseline_override(self.profile, self.policy, self.baseline)),
                    'quiesced': True}
+        if self.active_upgrade:
+            binding['baselineAdmission'] = 'PILOT_ACTIVE'
         verify_activation_checkpoint(self.profile['backupRoot'], checkpoint, self.policy['tenantPilot'], binding,
                                      verified_at=stamp, now=stamp if recovery else int(time.time()))
         return Path(self.profile['backupRoot']) / checkpoint['backupBatch']
@@ -248,7 +257,10 @@ class PilotCutover:
             with tempfile.TemporaryDirectory(dir=self.profile['workRoot'], prefix='pilot-health-') as root:
                 snapshot = Path(root) / 'secondary.sqlite'
                 capture_container_tenant(container['Id'], secondary, snapshot)
-                if recovery and application_fingerprint(snapshot) != application_fingerprint(batch / f'{secondary}.sqlite'):
+                if self.active_upgrade:
+                    require_retained(retained_state(batch / f'{secondary}.sqlite', secondary, require_event_manager=False),
+                                     retained_state(snapshot, secondary, require_event_manager=False))
+                elif recovery and application_fingerprint(snapshot) != application_fingerprint(batch / f'{secondary}.sqlite'):
                     raise Denied('RECOVERY_REQUIRES_OWNER')
 
     def confirm_fallback(self, record):
@@ -278,6 +290,14 @@ class PilotCutover:
             return self.save(record, 'PILOT_ROLLED_BACK')
         if current and current['State'].get('Running'):
             self.compose('stop', '--timeout', '30')
+        # Until quiesced candidate data compatibility is proved, never launch
+        # an older image after this epoch could have committed new data. The
+        # existing bridge latches RECOVERY_REQUIRES_OWNER. No restore/overwrite.
+        if self.active_upgrade and (record.get('candidateMayHaveStarted') is True or
+                                    record['phase'] in {'STARTING', 'VERIFYING'} or
+                                    (current and current['Image'] == self.candidate)):
+            self.save(record, 'ROLLING_BACK', candidateMayHaveStarted=True)
+            raise Denied('RECOVERY_REQUIRES_OWNER')
         self.attest()
         if 'checkpoint' not in record:
             record = self.save(record, 'ROLLING_BACK', checkpoint=self.checkpoint(record))
@@ -354,7 +374,7 @@ class PilotCutover:
                 self.attest()
                 if preparation_state(self.prepared, pin, int(time.time())) != 'FRESH':
                     raise Denied('PILOT_PREVIEW_EXPIRED')
-                record = self.save(record, 'STARTING')
+                record = self.save(record, 'STARTING', **({'candidateMayHaveStarted': True} if self.active_upgrade else {}))
                 self.compose('up', '--detach', '--no-build', '--pull', 'never', override=self.candidate_override)
                 record = self.save(record, 'VERIFYING')
                 self.confirm(self.candidate, self.candidate_override, record)

@@ -1,6 +1,6 @@
 # RC4 active-pilot Host upgrade — preparation contract
 
-Status: **implementation and protected enrollment pending**. This is not an authorization, executable upgrade, or live acceptance receipt. Refs #134, #352, #329 (frozen).
+Status: **partial controller implementation in draft; protected enrollment pending**. This is not an authorization, executable upgrade, or live acceptance receipt. Refs #134, #352, #329 (frozen).
 
 ## Exact inputs and evidence
 
@@ -8,7 +8,7 @@ Status: **implementation and protected enrollment pending**. This is not an auth
 - Active Staging Host `1899c6f8cc498fefa0510d0e3f70453f6f1aa082`; owner-supplied inventory PASS reports image `sha256:f50cc0611c474d38b77cbec0a983043d278c892c628dbaad3ced3c74bb311def`, matching admission config, and no Production change.
 - All installed version and pin checks PASS: Recurring Posts 1.2.3, XP & Progression 0.2.0, Awin Affiliate 0.9.3, Event Manager 0.1.2, SDK 0.3.0. Enabled/running state was NOT_CHECKED. Recheck identity and authority under the existing protected lock during preparation, not via another independent manual inventory.
 - Complete direct Staging-to-RC4 Git tree comparison: no deleted paths; database, skill_runtime, skills, hosts, both game seed files, bot.py, config.py, requirements files, pyproject.toml and Dockerfile identical. Thus no new schema, dependency or startup implementation in this specific Staging upgrade; fresh restored-copy compatibility remains required. This does not establish Production RC2 downgrade compatibility.
-- Use the existing networkless build_reviewed_overlay. The rc4-overlay-qualification job in the existing offline regression workflow independently publishes the exact Git archive SHA256 and repeats only compatibility checks necessary for that overlay. The future protected build must independently verify this digest. No digest is guessed.
+- Use the existing networkless build_reviewed_overlay. The rc4-overlay-qualification job in the existing offline regression workflow independently publishes the exact Git archive SHA256 and repeats only compatibility checks necessary for that overlay. The future protected build must independently verify this digest. The verified Linux CI digest is `57e413bcabd60f8f7f4d0a5d8b36636b0e1c062c3809875a11d2e9264d83ba04` ([run 45827158804](https://github.com/Duy-Phan96/GamerHQ/actions/runs/45827158804)). No digest is guessed.
 
 ## Minimal protected extension
 
@@ -28,3 +28,7 @@ Implement the next **active-pilot upgrade epoch** in the existing protected cont
 Use existing enrollment E2E and pilot tests for known-byte interruption/retry, old generation behavior, active-to-active baseline/fallback admission, both DB restorations, denied wrong identity, old journal preserved, non-replayable transaction and fail-closed rollback. Require exact CI; do not ship a half-wired controller. No new runtime package or candidate changes are needed.
 
 After reviewed implementation, publish exact immutable controller source/checksum and trusted root-TTY enrollment command, then protected preparation receipt and cutover review. Do not request owner approval until the executable reviewed enrollment is ready. The only next action while this draft is incomplete is completing this branch in the local Codex checkout. Do not repeat the package inventory or #329 audit. On successful RC4 Staging smoke start actual #134 member acceptance one Discord action at a time.
+
+## Implementation checkpoint
+
+The draft adds the fixed active-pilot RC4 generation document builder, journal and Compose namespace, dual admission for baseline/fallback, dual restore receipt binding, stricter source compatibility checks and secondary state retention. The conservative rollback guard stops and latches if RC4 may have written state. A quiesced both-tenant compatibility proof is still required before automating that rollback. The root enrollment, prior history attestation, installed controller packaging/launcher and protected workflow/current-image consumer integration are still pending. Do not install this draft. Existing generation stays unchanged. CI must validate the new commit.

@@ -265,3 +265,97 @@ def test_live_storage_preflight_never_rebinds_or_relabels_existing_data(failure)
         assert command[:5] == ['docker', 'exec', '--user', '10001:10001', container['Id']]
         assert command[-3:] == ['/app/runtime/data', '/app/runtime/data/gamerhq.db', '/app/backups']
         assert '--volume' not in command and '--mount' not in command
+
+
+def active_documents():
+    from tools.staging_automation.pilot_cutover import digest
+    packet = documents()
+    packet[4].update(commit=generation.ACTIVE_BASELINE_COMMIT, archiveSha256=generation.ACTIVE_BASELINE_ARCHIVE,
+                     ciRun=generation.ACTIVE_BASELINE_CI)
+    policy, profile, state = migrate(packet)
+    prepared = {'generation': generation.GENERATION['id'], 'candidateCommit': generation.ACTIVE_BASELINE_COMMIT,
+                'candidateImage': generation.ACTIVE_BASELINE_IMAGE, 'fallbackImage': generation.BASELINE_IMAGE,
+                'state': 'PILOT_ACTIVATION_PREPARED', 'activationAuthorized': False, 'gatewayStarted': False,
+                'containerRollbackRehearsal': 'PASS', 'fallbackRollbackRehearsal': 'PASS'}
+    state.update(tenantPilotActivationPrepared=prepared, usedTokens={'old-token': 999}, challenge={'old': True})
+    journal = {'phase': 'PILOT_ACTIVE', 'activationRun': '456', 'baselineContainer': 'd' * 64, 'checkpoint': {},
+               'binding': {'preparedSha256': digest(prepared), 'generation': generation.GENERATION['id'],
+                           'baselineImage': generation.BASELINE_IMAGE, 'fallbackImage': generation.BASELINE_IMAGE,
+                           'candidateImage': generation.ACTIVE_BASELINE_IMAGE}}
+    return policy, profile, state, journal
+
+
+def upgrade(packet):
+    return generation.active_upgrade_documents(*packet, source='a' * 40,
+                                               preparation_digest='b' * 64, cutover_digest='c' * 64)
+
+
+def test_active_epoch_uses_accepted_image_and_preserves_replay_history():
+    packet = active_documents()
+    before = copy.deepcopy(packet)
+    policy, profile, state = upgrade(packet)
+    assert packet == before
+    assert generation.is_active_upgrade(policy)
+    assert policy['tenantPilotActivation']['commit'] == generation.RC4_PIN['commit']
+    assert profile['baseImage'] == state['approvedImage'] == generation.ACTIVE_BASELINE_IMAGE
+    assert state['usedTokens'] == before[2]['usedTokens']
+    assert 'tenantPilotActivationPrepared' not in state and 'challenge' not in state
+    assert generation.effective_profile(profile, policy)['pilotGeneration'] == generation.ACTIVE_GENERATION['id']
+
+
+@pytest.mark.parametrize(('index', 'key', 'value'), [
+    (2, 'recoveryRequired', True), (2, 'approvedImage', generation.ACTIVE_BASELINE_IMAGE),
+    (3, 'phase', 'PILOT_ROLLED_BACK'), (3, 'binding', {}), (3, 'checkpoint', None),
+    (1, 'productionGuildId', generation.COHORT['guildIds'][1]),
+])
+def test_active_epoch_rejects_unverified_old_transaction(index, key, value):
+    packet = active_documents()
+    packet[index][key] = value
+    with pytest.raises(Denied):
+        upgrade(packet)
+
+
+def test_active_epoch_uses_distinct_journal_and_dual_admission(tmp_path):
+    from tools.staging_automation.pilot_cutover import PilotCutover, digest, journal_path
+    from tools.staging_tenant_rehearsal import baseline_override, startup_override, rehearsal_binding
+    from services.tenant_routing import PILOT_ENV
+    policy, profile, _ = upgrade(active_documents())
+    profile.update(service='gamerhq-staging', database=str(tmp_path / 'primary.sqlite'), workRoot=tmp_path,
+                   tenantPilot=policy['tenantPilot'])
+    historical = tmp_path / 'tenant-pilot-cutover-v2.json'
+    historical.write_bytes(b'accepted historical journal')
+    candidate = 'sha256:' + 'c' * 64
+    fallback = generation.ACTIVE_BASELINE_IMAGE
+    baseline = baseline_override(profile, policy, fallback)
+    admission = baseline['services'][profile['service']]['environment'][PILOT_ENV]
+    assert not json.loads(admission).get('primaryOnly', False)
+    container = {'Image': fallback, 'Config': {'Env': [PILOT_ENV + '=' + admission],
+                 'Labels': {'org.opencontainers.image.revision': generation.ACTIVE_BASELINE_COMMIT}}}
+    assert rehearsal_binding(profile, policy, container)['baselineAdmission'] == 'PILOT_ACTIVE'
+    prepared = {'generation': generation.ACTIVE_GENERATION['id'], 'candidateImage': candidate, 'fallbackImage': fallback,
+                'startupOverrideSha256': digest(startup_override(profile, policy, candidate)),
+                'fallbackStartupOverrideSha256': digest(baseline)}
+    tx = PilotCutover(SimpleNamespace(profile=profile, policy=policy), prepared, fallback, '123')
+    assert tx.fallback_override == baseline
+    assert tx.path == journal_path(generation.effective_profile(profile, policy))
+    assert tx.path != historical and not tx.path.exists()
+    assert historical.read_bytes() == b'accepted historical journal'
+    bad = {**prepared, 'fallbackStartupOverrideSha256': digest(startup_override(profile, policy, fallback, primary_only=True))}
+    with pytest.raises(Denied):
+        PilotCutover(SimpleNamespace(profile=profile, policy=policy), bad, fallback, '123')
+
+
+def test_active_epoch_never_falls_back_after_unverified_candidate_writes():
+    from tools.staging_automation.pilot_cutover import PilotCutover
+    tx = object.__new__(PilotCutover)
+    tx.active_upgrade = True
+    tx.baseline = tx.fallback = generation.ACTIVE_BASELINE_IMAGE
+    tx.candidate = 'sha256:' + 'c' * 64
+    tx.inspect = lambda: {'Image': tx.candidate, 'State': {'Running': True}}
+    actions = []
+    tx.compose = lambda *args, **kw: actions.append(args)
+    tx.save = lambda record, phase, **kw: actions.append((phase, kw))
+    tx.attest = lambda: pytest.fail('must not start rollback without compatibility proof')
+    with pytest.raises(Denied, match='RECOVERY_REQUIRES_OWNER'):
+        tx.rollback({'phase': 'VERIFYING', 'checkpoint': {}})
+    assert actions == [('stop', '--timeout', '30'), ('ROLLING_BACK', {'candidateMayHaveStarted': True})]

@@ -70,14 +70,14 @@ def extract_application(archive, destination):
                 output.write(incoming.read())
 
 
-def retained_state(path, guild):
+def retained_state(path, guild, *, require_event_manager=True):
     """Private comparison only; return no participant/configuration values publicly."""
     with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         if conn.execute('PRAGMA integrity_check').fetchall() != [('ok',)]:
             raise Denied('RECOVERY_REQUIRES_OWNER')
         authority = conn.execute("SELECT * FROM skill_domain_authority WHERE guild_id=? AND domain='event-manager'", (guild,)).fetchall()
         installed = conn.execute("SELECT installed,configured,enabled,version FROM skill_guild_state WHERE guild_id=? AND skill_id='event-manager'", (guild,)).fetchone()
-        if len(authority) != 1 or authority[0][2] != 'event-manager' or not installed or installed[0] != 1:
+        if require_event_manager and (len(authority) != 1 or authority[0][2] != 'event-manager' or not installed or installed[0] != 1):
             raise Denied('RECOVERY_REQUIRES_OWNER')
         # The persisted version belongs to the guild lifecycle row. Retain it
         # verbatim; the approved package version is verified against the Host API.
