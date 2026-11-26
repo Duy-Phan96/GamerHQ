@@ -4,6 +4,7 @@
 
 ### Added
 
+- Progression achievement/reward awards now post a human-readable private Server Log entry for Staff/Admin review, while ordinary raw XP activity remains silent to avoid log spam.
 - Added an owner-reviewed staging Host source promotion to the existing scoped controller, retaining the installed Skill and using the shared backup/health/rollback state machine. The one pinned Host commit requires a separate protected deployment-security workflow; production is excluded.
 
 - Integrated Progression 0.2.0 external member signals through the public `progression.record-signal.v1` contract, emitting replay-safe `discord/server_boosted` and `profile/first_game_added` events from trusted Host observations.
