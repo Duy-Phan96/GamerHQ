@@ -125,7 +125,7 @@ class SupportChatTests(unittest.IsolatedAsyncioTestCase):
         request = self.entry_request()
         await controls.reply_opened_ticket(request, {'channel_id': None}, True)
         self.assertIn('not confirmed ready', request.followup.send.call_args.args[0])
-        self.assertIsNone(request.followup.send.call_args.kwargs['view'])
+        self.assertNotIn('view', request.followup.send.call_args.kwargs)
         self.assertEqual(tickets.list_tickets(self.guild.id), [])
 
     async def test_response_resolves_cache_miss_once_without_new_creation(self):
@@ -146,7 +146,7 @@ class SupportChatTests(unittest.IsolatedAsyncioTestCase):
         channel = self.guild.get_channel(item['channel_id'])
         channel.permissions_for = lambda member: discord.Permissions.none()
         await controls.reply_opened_ticket(request, item, False)
-        self.assertIsNone(request.followup.send.call_args.kwargs['view'])
+        self.assertNotIn('view', request.followup.send.call_args.kwargs)
         self.assertIn('not confirmed ready', request.followup.send.call_args.args[0])
 
     async def test_restart_retains_ids_claims_and_closed_controls(self):
