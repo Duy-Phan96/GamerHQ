@@ -227,6 +227,24 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
         await call(interaction, "delete", {"eventId": "guessed", "revision": 1})
         self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.delete.v1")
 
+    async def test_public_discovery_excludes_private_even_for_admin_and_rechecks_visibility(self):
+        interaction = self.interaction()
+        interaction.user = self.member(admin=True)
+        first = {"id": "public", "ownerId": "10", "status": "active", "members": ["10"],
+                 "config": self.builder(name="Public Raid", visibility="public").draft}
+        private = {**first, "id": "secret", "config": self.builder(name="Private Raid", visibility="private").draft}
+        paused = {**first, "id": "paused", "status": "paused"}
+        manager = EventManager(None)
+        rows = [{"eventId": ident, "status": "scheduled", "startAt": 4102444800, "participants": ["10"]}
+                for ident in ("public", "secret", "paused")]
+        with patch("cogs.event_manager.call", AsyncMock(return_value={"events": [first, private, paused], "occurrences": rows})):
+            await manager.navigate(interaction, "browse-public", ignore_channel=True)
+        view = interaction.followup.send.await_args.kwargs["view"]
+        self.assertEqual([option.label for option in view.children[0].options], ["Public Raid"])
+        with patch("cogs.event_manager.call", AsyncMock(return_value={"state": private})):
+            with self.assertRaisesRegex(ValueError, "no longer publicly available"):
+                await manager.action(interaction, "public", "browse-public")
+
     async def test_event_picker_uses_titles_and_distinguishes_owner_from_admin(self):
         interaction = self.interaction()
         interaction.channel = None

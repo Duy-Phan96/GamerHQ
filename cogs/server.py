@@ -29,22 +29,18 @@ def default_copy_for(channel: discord.TextChannel) -> str:
     if _channel_alias(channel.name) == "choose-your-roles":
         from services.role_panel_service import INTRO
         return INTRO
+    if _channel_alias(channel.name) == "create-event":
+        return ("# 📅 Create Event\n\n"
+                "Plan a one-time or recurring event, with or without a game.\n"
+                "**Public:** visible to the community. **Private:** invite only.\n"
+                "Use Create Event to start, or My Events to manage your events.\n"
+                "Find public events in {looking-for-group}.")
     if _channel_alias(channel.name) == "looking-for-group":
-        return (
-            "# 🎮 Looking for Group\n\n"
-            "**Find Games. Find Mates. Play Together.**\n\n"
-            "Plan public or private events with GamerHQ. An event does not need to be tied to a specific game.\n\n"
-            "## 🚀 CREATE AN EVENT\n"
-            "Use **Create Event** below or `/lfg create`. Choose a title, date, time, player limit and voice reminder.\n\n"
-            "🌐 **Public** — posted here so the community can discover and join it.\n"
-            "🔒 **Private** — invite only. GamerHQ creates a private event channel for the host and invited/joined players.\n\n"
-            "## 👥 INVITES & SHARING\n"
-            "Invite specific players during creation or share the event afterwards.\n"
-            "Public events can be shared with their Discord link. Private events use the host's private invite flow.\n\n"
-            "## 📅 CALENDAR & EVENT SPACE\n"
-            "Event posts include **Google Calendar** so members can add the schedule in one click. Event voice is created automatically before the start under **VOICE CHANNELS**.\n\n"
-            "Only the event creator can manage or change the event through `/lfg manage`."
-        )
+        return ("# 🎯 Looking for Group\n\n"
+                "**Find Games. Find Mates. Play Together.**\n"
+                "Browse current public events and choose one to see its details or join. "
+                "Private events are never included in this list.\n"
+                "To organize an event, visit {create-event}.")
     title = channel.name.replace("-", " ").title()
     return f"# 📌 {title}\n\nAdd the official GamerHQ channel information here."
 
@@ -99,8 +95,11 @@ def managed_channel_view(channel: discord.TextChannel):
         from cogs.roles import build_choose_roles_view
         return build_choose_roles_view()
     if _channel_alias(channel.name) == "looking-for-group":
-        from cogs.lfg import build_lfg_hub_view
-        return build_lfg_hub_view()
+        from cogs.event_manager import EventBrowseEntry
+        return EventBrowseEntry()
+    if _channel_alias(channel.name) == "create-event":
+        from cogs.event_manager import EventCreateEntry
+        return EventCreateEntry()
     return None
 
 

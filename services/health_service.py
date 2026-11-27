@@ -73,9 +73,9 @@ async def _scan(guild, bot=None, *, messages=True):
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','guide','need-support'],
-        'games': ['gaming-chat','looking-for-group'],
+        'games': ['gaming-chat'],
         'community': ['newbies','general','introductions','suggestions','bot-commands'],
-        'events': ['community-events','tournaments','giveaways'],
+        'events': ['create-event','looking-for-group','community-events','tournaments','giveaways'],
     }
     channels = {}
     from services.channel_change_service import removed
@@ -112,7 +112,7 @@ async def _scan(guild, bot=None, *, messages=True):
             if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
                 add(f'{name} mapping', 'RECONCILE', 'Existing channel needs linking. Run /server reconcile; no duplicate will be created.')
             default_parent = categories[0] if len(categories) == 1 else channel.category
-            wanted_parent = desired_channel_parent(guild, name, default_parent)
+            wanted_parent = default_parent if name == 'looking-for-group' else desired_channel_parent(guild, name, default_parent)
             wanted_name = desired_channel_name(guild, name, channel.name)
             issue = channel.category_id != getattr(wanted_parent, 'id', channel.category_id) or channel.name != wanted_name
             add(name,'REPAIRABLE' if issue else 'PASS','Managed runtime state differs from Discord.' if issue else f'Channel {channel.id}; current Discord layout is accepted.')
@@ -125,7 +125,7 @@ async def _scan(guild, bot=None, *, messages=True):
         current, ordered = event_order(guild, guild.channels)
         correct = [c.id for c in current] == [c.id for c in ordered]
         add('EVENTS order', 'PASS' if correct else 'REPAIRABLE',
-            'Community Events, Tournaments, Giveaways order OK.' if correct else 'Owner Repair restores managed event order.')
+            'Create Event, Looking for Group, Community Events, Tournaments, Giveaways order OK.' if correct else 'Owner Repair restores managed event order.')
     except ServerMessageError:
         add('EVENTS order', 'MANUAL_REVIEW', 'Ambiguous event channels; no automatic merge.')
     from services.support_service import resolve as support_resource, CHANNEL_NAME

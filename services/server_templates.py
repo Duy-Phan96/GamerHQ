@@ -22,7 +22,7 @@ class ServerTemplate:
 
 
 GAMERHQ = ServerTemplate('gamerhq-gaming-community', 'GamerHQ Gaming Community', (
-    'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'looking-for-group',
+    'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'create-event', 'looking-for-group',
     'community-events', 'suggestions', 'need-support',
 ), staff_access=True)
 TEMPLATES = (GAMERHQ,)
@@ -114,8 +114,9 @@ def entry_message_keys(guild, destinations):
     if 'choose-your-roles' in destinations:
         board = SimpleNamespace(id=destinations['choose-your-roles'])
         keys.update(dict.fromkeys(role_panel_service.message_keys(guild, board).values(), 'choose-your-roles'))
-    if 'looking-for-group' in destinations:
-        keys[setting_key_for(SimpleNamespace(id=destinations['looking-for-group']))] = 'looking-for-group'
+    for name in ('create-event', 'looking-for-group'):
+        if name in destinations:
+            keys[setting_key_for(SimpleNamespace(id=destinations[name]))] = name
     return keys
 
 

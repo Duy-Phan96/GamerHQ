@@ -152,6 +152,37 @@ class EventSkillHubView(discord.ui.View):
             await interaction.followup.send(str(error)[:1500], ephemeral=True)
 
 
+class EventBrowseEntry(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Browse Public Events", style=discord.ButtonStyle.primary,
+                       custom_id="gamerhq:events:browse-public")
+    async def browse(self, interaction, button):
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("EventManager")
+        if cog is None:
+            return await interaction.followup.send("Public event discovery is unavailable on this server.", ephemeral=True)
+        try:
+            await cog.navigate(interaction, "browse-public", ignore_channel=True)
+        except (ValueError, PermissionError, RuntimeError) as error:
+            await interaction.followup.send(str(error)[:300], ephemeral=True)
+
+
+class EventCreateEntry(EventSkillHubView):
+    @discord.ui.button(label="My Events", style=discord.ButtonStyle.secondary,
+                       custom_id="gamerhq:events:my-events")
+    async def my_events(self, interaction, button):
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("EventManager")
+        if cog is None:
+            return await interaction.followup.send("Event Manager is unavailable on this server.", ephemeral=True)
+        try:
+            await cog.navigate(interaction, "manage", ignore_channel=True)
+        except (ValueError, PermissionError, RuntimeError) as error:
+            await interaction.followup.send(str(error)[:300], ephemeral=True)
+
+
 class EventManager(commands.Cog):
     lfg = app_commands.Group(name="lfg", description="Manage events through the installed Event Manager Skill.")
     def __init__(self, bot):
@@ -184,15 +215,23 @@ class EventManager(commands.Cog):
         if action == "manage" and not server and (ignore_channel or not admin):
             events = [event for event in events if event.get("ownerId") == actor or actor in event["members"]
                       or event["id"] in participant_ids]
+        if action == "browse-public":
+            # Do not include private events even for owners, invitees or admins.
+            events = [event for event in result["events"] if event["status"] == "active"
+                      and event["config"]["visibility"] == "public"
+                      and any(row["eventId"] == event["id"] and session_open(row, event)
+                              for row in result.get("occurrences", ()))]
         if action == "convert":
             events = [event for event in events if event.get("legacyRecurrence")]
         if not events:
-            return await interaction.followup.send("No events available.", ephemeral=True)
+            return await interaction.followup.send("No upcoming public events." if action == "browse-public" else "No events available.", ephemeral=True)
         counts = {}
         for row in sorted(result.get("occurrences", ()), key=lambda item: item["startAt"]):
             if row["status"] in ("scheduled", "active"):
                 counts.setdefault(row["eventId"], len(row["participants"]))
         title = ("All Events" if admin and (server or not ignore_channel) else "My Events") if action == "manage" or manageable else "Choose Event"
+        if action == "browse-public":
+            title = "Public Events"
         picker = EventPicker(self, interaction, events, counts, action, title)
         await interaction.followup.send(content=picker.content(), view=picker, ephemeral=True)
 
@@ -207,6 +246,10 @@ class EventManager(commands.Cog):
             return await interaction.followup.send(view.content(), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         result = await call(interaction, "get", {"eventId": event_id})
         state = result["state"]
+        if action == "browse-public":
+            if state["status"] != "active" or state["config"]["visibility"] != "public":
+                raise ValueError("This event is no longer publicly available. Refresh the event list.")
+            action = "manage"
         if action == "leave-series":
             actor = str(interaction.user.id)
             if actor not in state["members"] or actor == state.get("ownerId"):
@@ -417,5 +460,6 @@ class EventManager(commands.Cog):
 
 
 async def setup(bot):
-    add_shared_entry_view(bot, EventSkillHubView())
+    add_shared_entry_view(bot, EventCreateEntry())
+    add_shared_entry_view(bot, EventBrowseEntry())
     await bot.add_cog(EventManager(bot))

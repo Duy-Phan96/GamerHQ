@@ -95,7 +95,7 @@ READ_ONLY_STATIC = 'static'
 READ_ONLY_INTERACTIVE = 'interactive'
 INTERACTIVE_BOARDS = frozenset({
     'welcome', 'choose-your-games', 'choose-your-roles', 'suggestions',
-    'looking-for-group', 'support-gamerhq', 'need-support', 'gaming-deals',
+    'looking-for-group', 'create-event', 'support-gamerhq', 'need-support', 'gaming-deals',
     'amazon', 'ai-tools', 'electricity', 'community-events',
 })
 STATIC_BOARDS = frozenset({'rules', 'announcements', 'guide', 'gaming-news', 'free-games'})

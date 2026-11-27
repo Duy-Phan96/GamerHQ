@@ -28,7 +28,6 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
         "🎮 GAMES",
         (
             ChannelSpec("💬・gaming-chat", optional=True),
-            ChannelSpec("🎯・looking-for-group"),
         ),
     ),
     CategorySpec(
@@ -58,7 +57,7 @@ SERVER_BLUEPRINT: tuple[CategorySpec, ...] = (
     CategorySpec("🛒 MARKETPLACE", (ChannelSpec("📰・gaming-news"), ChannelSpec("🔥・gaming-deals"), ChannelSpec("🎁・free-games"), ChannelSpec("🛒・amazon"), ChannelSpec("🤖・ai-tools"), ChannelSpec("🇩🇪・electricity"))),
     CategorySpec("🔒 AFFILIATE STATS", (ChannelSpec("💸・purchases"), ChannelSpec("🏆・buyer-ranking")), private=True),
     CategorySpec("🎫 SUPPORT TICKETS", (), private=True),
-    CategorySpec("🏆 EVENTS", (ChannelSpec("🎉・community-events"), ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
+    CategorySpec("🏆 EVENTS", (ChannelSpec("📅・create-event"), ChannelSpec("🎯・looking-for-group"), ChannelSpec("🎉・community-events"), ChannelSpec("🏆・tournaments"), ChannelSpec("🎁・giveaways"))),
     CategorySpec(
         "🔊 VOICE CHANNELS",
         (
@@ -258,7 +257,7 @@ def render_details(report: dict) -> str:
                 icon = "🔊" if channel_spec.kind == "voice" else "#️⃣"
                 lines.append(f"⚠️ {icon} {channel_spec.name} — missing")
         lines.append("")
-    lines.append("**Update preserves welcome/newbies history; moves LFG into the shared GAMES category, adds/reuses community-events above tournaments/giveaways in EVENTS, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
+    lines.append("**Update preserves welcome/newbies history; moves the existing LFG board into EVENTS and adds a separate create-event entry, repairs read-only interactions; maintains guide, suggestions and bot-command pins; creates a private inbox in existing STAFF. Only recognized obsolete bot guides are removed. Repair also deletes recorded legacy finanzberatung only after full content, thread and dependency checks; uncertain cases receive an exact MANUAL_REVIEW reason.**")
     return "\n".join(lines)
 
 

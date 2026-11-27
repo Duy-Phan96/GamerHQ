@@ -380,9 +380,10 @@ def canonical_boards(guild, bot=None, *, warnings=None, defaults=False):
             result[state['key']] = (target, content)
     # These are audit definitions, not additions to the editor action allowlist.
     from cogs.server import setting_key_for, default_copy_for, resolve_channel_placeholders
-    lfg = core_channel(guild, 'looking-for-group')
-    if lfg:
-        result[setting_key_for(lfg)] = (lfg, guarded(resolve_channel_placeholders)(guild, default_copy_for(lfg)))
+    for name in ('create-event', 'looking-for-group'):
+        board = core_channel(guild, name)
+        if board:
+            result[setting_key_for(board)] = (board, guarded(resolve_channel_placeholders)(guild, default_copy_for(board)))
     from services import game_service as games
     board = guild.get_channel(games.choose_games_channel_id(guild.id))
     from services.server_operations import private
