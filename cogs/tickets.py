@@ -44,8 +44,12 @@ async def reply_opened_ticket(interaction, item, created, *, request=False):
     else:
         text = ('Your request is saved, but its chat is not confirmed ready. Please ask the GamerHQ team '
                 'to check it. No replacement was created.')
-    await interaction.followup.send(text, view=view, ephemeral=True,
-                                    allowed_mentions=discord.AllowedMentions.none())
+    # Webhook.send expects a real View when the view argument is supplied.
+    # An unresolved ticket must still receive its private, link-free response.
+    kwargs = {'ephemeral': True, 'allowed_mentions': discord.AllowedMentions.none()}
+    if view is not None:
+        kwargs['view'] = view
+    await interaction.followup.send(text, **kwargs)
 
 
 class TicketModal(discord.ui.Modal, title='Create Support Ticket'):
