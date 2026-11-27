@@ -101,7 +101,32 @@ class FakeChannel:
 
 class FakeCategory:
     __class__ = discord.CategoryChannel
-    permissions_for = FakeChannel.permissions_for
+    def permissions_for(self, target):
+        # Preserve the prior staff permission simulation, rather than granting
+        # every target all permissions merely to support Host preflight.
+        if target == self.guild.me:
+            return self.guild.me.guild_permissions
+        roles = [target] if target in self.guild.roles else target.roles
+        base = self.guild.default_role.permissions.value
+        for role in roles:
+            base |= role.permissions.value
+        rights = discord.Permissions(base)
+        if rights.administrator:
+            return discord.Permissions.all()
+        allow, deny = self.overwrites_for(self.guild.default_role).pair()
+        rights.handle_overwrite(allow.value, deny.value)
+        allow_mask = deny_mask = 0
+        for role in roles:
+            if role == self.guild.default_role:
+                continue
+            allow, deny = self.overwrites_for(role).pair()
+            allow_mask |= allow.value
+            deny_mask |= deny.value
+        rights.handle_overwrite(allow_mask, deny_mask)
+        if target not in self.guild.roles:
+            allow, deny = self.overwrites_for(target).pair()
+            rights.handle_overwrite(allow.value, deny.value)
+        return rights
     set_permissions = FakeChannel.set_permissions
     async def delete(self, **kwargs):
         self.guild.categories.remove(self)

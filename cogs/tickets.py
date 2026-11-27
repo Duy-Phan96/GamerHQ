@@ -316,11 +316,33 @@ class TicketOverviewDetailView(TicketOverviewView):
     def __init__(self, guild, actor_id, row):
         SafeView.__init__(self, timeout=180)
         self.guild_id, self.actor_id = guild.id, actor_id
+        self.ticket_id = row['id']
+        if not row['channel_ready'] and actor_id == guild.owner_id:
+            button = discord.ui.Button(label='Review Recovery', style=discord.ButtonStyle.primary)
+            button.callback = self.review_recovery
+            self.add_item(button)
         if row['channel_ready']:
             self.add_item(discord.ui.Button(
                 label='Open Ticket',
                 url=f"https://discord.com/channels/{guild.id}/{row['channel_id']}",
             ))
+
+    async def review_recovery(self, interaction):
+        if not await self.authorized(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            reviewed = await tickets.review_recovery(interaction.guild, interaction.user, self.ticket_id)
+        except (discord.HTTPException, TimeoutError):
+            return await interaction.followup.send('Could not verify recovery inventory. No changes made.', ephemeral=True)
+        except (ValueError, tickets.ServerMessageError) as error:
+            return await reply_error(interaction, error)
+        operation = ('Create one private channel for the existing reservation' if reviewed['mode'] == 'create'
+                     else 'Reuse the verified private channel and restore its opening message')
+        await interaction.edit_original_response(
+            content=f"# Review ticket #{self.ticket_id:04d} recovery\n{operation}.\nTicket identity and history are retained. Deleted Discord messages cannot be restored. Nothing changes until you confirm.",
+            view=TicketRecoveryConfirmView(interaction.guild, interaction.user.id, reviewed),
+            allowed_mentions=discord.AllowedMentions.none())
 
     @discord.ui.button(label='Back to Overview', style=discord.ButtonStyle.secondary)
     async def back(self, interaction, button):
@@ -332,6 +354,46 @@ class TicketOverviewDetailView(TicketOverviewView):
             view=TicketOverviewView(interaction.guild, interaction.user.id),
             allowed_mentions=discord.AllowedMentions.none(),
         )
+
+
+class TicketRecoveryConfirmView(SafeView):
+    def __init__(self, guild, actor_id, reviewed):
+        super().__init__(timeout=180)
+        self.guild_id, self.actor_id, self.reviewed = guild.id, actor_id, reviewed
+
+    async def authorized(self, interaction):
+        if (interaction.guild is None or interaction.guild.id != self.guild_id or
+                interaction.user.id != self.actor_id or interaction.user.id != interaction.guild.owner_id or
+                _current_staff(interaction.guild, interaction.user) is None):
+            await interaction.response.send_message('Only this server owner can confirm recovery.', ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label='Confirm Recovery', style=discord.ButtonStyle.primary)
+    async def confirm(self, interaction, button):
+        if not await self.authorized(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            item = await tickets.confirm_recovery(interaction.guild, interaction.user, self.reviewed)
+        except (discord.HTTPException, TimeoutError):
+            return await interaction.followup.send('Recovery could not be confirmed. Review the saved ticket before retrying.', ephemeral=True)
+        except (ValueError, tickets.ServerMessageError) as error:
+            return await reply_error(interaction, error)
+        rows = tickets.active_overview(interaction.guild)
+        await interaction.edit_original_response(
+            content=f"✅ Ticket #{item['id']:04d} recovered.\n\n" + _overview_text(interaction.guild, rows),
+            view=TicketOverviewView(interaction.guild, interaction.user.id),
+            allowed_mentions=discord.AllowedMentions.none())
+        self.stop()
+
+    @discord.ui.button(label='Cancel', style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction, button):
+        if not await self.authorized(interaction):
+            return
+        await interaction.response.edit_message(content='Recovery cancelled. No changes made.',
+            view=TicketOverviewView(interaction.guild, interaction.user.id))
+        self.stop()
 
 
 class Tickets(commands.Cog):
