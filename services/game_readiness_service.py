@@ -55,7 +55,9 @@ def _inspect_one(guild, actor, game):
     if not game['active']:
         return state(NOT_SET_UP, 'Inactive catalog entry. Review default initialization or explicit game setup.', target=True)
     if (visible and not game.get('channel_id') and db.get_setting(visibility.default_role_only_key(guild, gid)) == '1'
-            and db.get_setting(channels.hidden_key(guild, gid)) != '1'):
+            and db.get_setting(channels.hidden_key(guild, gid)) != '1'
+            and not db.get_setting(visibility.operation_key(guild, gid))
+            and not db.get_setting(f'game_channel_creation:{guild.id}:{gid}')):
         role, action = visibility._role(guild, game, True)
         if role is not None and action == 'keep':
             _reservation(db.get_setting(f'game_visibility_role_creation:{guild.id}:{gid}'), role.id)

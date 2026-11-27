@@ -2125,6 +2125,12 @@ class Games(commands.Cog):
         ]
 
 
+    @game_admin.command(name="initialize-defaults", description="Owner: review default game roles without creating text channels.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def initialize_default_games(self, interaction: discord.Interaction):
+        from cogs.game_channels import open_default_roles
+        await open_default_roles(interaction)
+
     @game_admin.command(
         name="setup",
         description="Admin: inspect/reconcile Discord areas enabled in the Game Library.",
