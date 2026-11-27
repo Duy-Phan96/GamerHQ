@@ -291,7 +291,13 @@ class GamerHQSkillRuntime:
             raise ValueError("Invalid trusted management actor identity.")
         token = _MANAGEMENT_ACTOR.set(actor_id)
         try:
-            result = await self.management.call(guild_id=guild_id, skill_id=skill_id, contract_id=contract_id, payload=payload)
+            if skill_id == "event-manager" and contract_id == "event-manager.update.v1":
+                from services import public_event_cards
+                async with public_event_cards.guild_lock(guild_id):
+                    await public_event_cards.before_private_update(self, guild_id, payload)
+                    result = await self.management.call(guild_id=guild_id, skill_id=skill_id, contract_id=contract_id, payload=payload)
+            else:
+                result = await self.management.call(guild_id=guild_id, skill_id=skill_id, contract_id=contract_id, payload=payload)
         finally:
             _MANAGEMENT_ACTOR.reset(token)
         if contract_id in self._configuration_mutation_contracts(skill_id):

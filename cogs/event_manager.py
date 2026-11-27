@@ -17,7 +17,10 @@ from cogs.event_attendance import AttendanceView, InvitationView, LeaveMembershi
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+from services.tenant_routing import tenant_cycle
+from database import tenants
+from services import public_event_cards
 
 from cogs.event_editor import SkillEventEditor, safe
 
@@ -187,6 +190,29 @@ class EventManager(commands.Cog):
     lfg = app_commands.Group(name="lfg", description="Manage events through the installed Event Manager Skill.")
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
+        self.public_cards.start()
+
+    def cog_unload(self):
+        self.public_cards.cancel()
+
+    @tasks.loop(seconds=30)
+    @tenant_cycle
+    async def public_cards(self):
+        binding = tenants.current()
+        for guild in self.bot.guilds:
+            if binding is not None and binding.guild_id != guild.id:
+                continue
+            try:
+                await public_event_cards.sync(self.bot.skill_runtime, guild)
+            except Exception as error:
+                logging.getLogger(__name__).warning("Public LFG synchronization pending guild=%s error=%s",
+                    guild.id, type(error).__name__)
+
+    @public_cards.before_loop
+    async def before_public_cards(self):
+        await self.bot.wait_until_ready()
 
     @lfg.command(name="create", description="Create a one-time or recurring event.")
     async def create(self, interaction: discord.Interaction):
@@ -422,6 +448,31 @@ class EventManager(commands.Cog):
     async def on_interaction(self, interaction):
         data = interaction.data or {}
         custom_id = str(data.get("custom_id", ""))
+        public = re.fullmatch(r"gamerhq:lfg-card:(join|leave|details|share):([0-9a-f]{32})", custom_id)
+        if public and not interaction.response.is_done() and interaction.guild and interaction.message:
+            await interaction.response.defer(ephemeral=True)
+            try:
+                async with public_event_cards.guild_lock(interaction.guild.id):
+                    identity = public_event_cards.resolve_control(interaction.guild, interaction.channel,
+                        interaction.message, public[2])
+                    if not identity:
+                        raise ValueError("This public card is no longer available.")
+                    await require_event_ready(interaction, public=True)
+                    event_id, start_at = identity
+                    cards = public_event_cards.project(await call(interaction, "list", {}))
+                    if event_id not in cards or cards[event_id].start_at != start_at:
+                        raise ValueError("This session has changed. Use the updated public event card.")
+                    if public[1] in ("join", "leave"):
+                        await self.member_action(interaction, event_id, public[1], start_at=start_at)
+                    elif public[1] == "details":
+                        await self.action(interaction, event_id, "browse-public")
+                    else:
+                        await interaction.followup.send(interaction.message.jump_url, ephemeral=True,
+                            allowed_mentions=discord.AllowedMentions.none())
+            except (ValueError, PermissionError, RuntimeError, ManagementConflictError):
+                await interaction.followup.send("This public event is no longer available or the action could not be completed.",
+                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            return
         card = re.fullmatch(r"gamerhq:event:manage:[0-9a-f]{32}", custom_id)
         if card and not interaction.response.is_done() and interaction.guild and interaction.message:
             event_id = event_channel_identity(interaction.channel, guild_id=interaction.guild.id,
