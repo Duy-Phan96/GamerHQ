@@ -65,6 +65,14 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(channel.name,f'ticket-{item["id"]:04d}')
             self.assertTrue(channel.messages[item['opening_message_id']].pinned)
 
+    async def test_missing_manage_messages_does_not_reserve_new_ticket(self):
+        self.guild.me.guild_permissions = discord.Permissions.all()
+        self.guild.me.guild_permissions.manage_messages = False
+        with self.assertRaisesRegex(tickets.ServerMessageError, 'Manage Messages'):
+            await self.create()
+        self.assertEqual(tickets.list_tickets(self.guild.id), [])
+        self.assertEqual(tickets.mapped(self.guild, 'support-tickets', True).text_channels, [])
+
     async def test_double_submit_and_configurable_limit(self):
         results=await asyncio.gather(*(tickets.open_ticket(self.guild,self.a,'Subject','Body') for _ in range(5)))
         self.assertEqual(sum(created for _,created in results),1)

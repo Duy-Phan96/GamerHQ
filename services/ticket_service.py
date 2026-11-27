@@ -12,6 +12,7 @@ from services.server_service import ServerMessageError, upsert_fixed_message
 from services.community_structure_service import resource_key
 from cogs.suggestions import private_overwrites, STAFF_ALIASES
 from services import staff_access
+from services.discord_permissions import TICKET_WRITE, resource_issues
 
 log = logging.getLogger(__name__)
 ENTRY_NAME = '🆘・need-support'
@@ -237,6 +238,9 @@ async def open_ticket(guild,member,subject,description,feature='Other', *, ticke
                 return dict(rows[0]),False
             same=next((r for r in rows if r['subject']==subject and r['description']==description and r['created_at']>=now-30),None)
             if same:return dict(same),False
+            issue = resource_issues(guild, category, TICKET_WRITE)
+            if issue:
+                raise ServerMessageError('Ticket creation unavailable. ' + issue)
             if len(category.text_channels)>=50:
                 raise ServerMessageError('The ticket area is full. Please contact staff to review retained tickets.')
             cursor=conn.execute('INSERT INTO support_tickets(guild_id,creator_discord_id,subject,description,category,created_at,updated_at,ticket_type) VALUES(?,?,?,?,?,?,?,?)',(guild.id,member.id,subject,description,feature,now,now,ticket_type))
@@ -308,11 +312,23 @@ async def _recover(guild, member_id=None):
     category=guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if category not in guild.categories:return
     # Staff role changes must revoke access to old history in category/logs too.
-    await category.edit(overwrites=private(guild,category),reason='GamerHQ ticket staff access')
+    desired = private(guild, category)
+    if category.overwrites != desired:
+        issue = resource_issues(guild, category, TICKET_WRITE)
+        if issue:
+            log.warning('Ticket staff access repair blocked: %s', issue)
+            return
+        await category.edit(overwrites=desired,reason='GamerHQ ticket staff access')
     raw=db.get_setting(resource_key(guild,'ticket-logs'))
     logs=guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if logs:
-        await logs.edit(overwrites=private(guild,logs),reason='GamerHQ ticket log staff access')
+        desired = private(guild, logs)
+        if logs.overwrites != desired:
+            issue = resource_issues(guild, logs, TICKET_WRITE)
+            if issue:
+                log.warning('Ticket log access repair blocked: %s', issue)
+                return
+            await logs.edit(overwrites=desired,reason='GamerHQ ticket log staff access')
     for item in list_tickets(guild.id):
         if member_id is not None and member_id not in (item['creator_discord_id'],item['assigned_staff_id']):continue
         async with _ticket_locks.setdefault(item['id'],asyncio.Lock()):

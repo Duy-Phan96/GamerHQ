@@ -28,6 +28,7 @@ class MusicCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.music = self.role(3, 'Music Bots')
         self.guild.default_role = self.everyone
         self.guild.me = MagicMock(spec=discord.Member); self.guild.me.id = 99
+        self.guild.me.guild_permissions = discord.Permissions.all()
         self.guild.get_role.side_effect = lambda rid: next((r for r in self.guild.roles if r.id == rid), None)
         self.guild.get_channel.side_effect = lambda cid: next((c for c in self.guild.channels if c.id == cid), None)
         self.guild.fetch_channels = AsyncMock(side_effect=lambda: list(self.guild.channels))
@@ -53,6 +54,7 @@ class MusicCleanupTests(unittest.IsolatedAsyncioTestCase):
         channel.category, channel.category_id = category, category.id if category else None
         channel.last_message_id = None
         channel.overwrites = dict(category.overwrites) if category else {}
+        channel.permissions_for.return_value = discord.Permissions.all()
         channel.members = []
         channel.channels = []
         channel.overwrites_for.side_effect = lambda role: discord.PermissionOverwrite.from_pair(*channel.overwrites.get(role, discord.PermissionOverwrite()).pair())
@@ -161,6 +163,37 @@ class MusicCleanupTests(unittest.IsolatedAsyncioTestCase):
             await game_service.create_game_structure_confirmed(self.guild, db.get_game_by_id(self.game['id']), plan)
         self.guild.create_category.assert_not_awaited()
         self.guild.create_text_channel.assert_not_awaited()
+        self.guild.create_voice_channel.assert_not_awaited()
+
+    async def test_global_voice_missing_move_grant_does_not_create(self):
+        category = self.channel(200, voice.GLOBAL_VOICE_CATEGORY, discord.CategoryChannel)
+        generator = self.channel(201, voice.GLOBAL_CREATE_VOICE, discord.VoiceChannel, category)
+        self.actor.guild = self.guild; self.actor.display_name = 'Host'
+        self.guild.me.guild_permissions = discord.Permissions(manage_channels=True, manage_roles=True,
+            view_channel=True, connect=True, speak=True)
+        self.guild.create_voice_channel = AsyncMock()
+        await voice.VoiceGenerator(SimpleNamespace())._create_global_temp_voice(self.actor, generator)
+        self.guild.create_voice_channel.assert_not_awaited()
+
+    async def test_global_voice_optional_music_not_granted_with_incompatible_bits(self):
+        category = self.channel(200, voice.GLOBAL_VOICE_CATEGORY, discord.CategoryChannel)
+        generator = self.channel(201, voice.GLOBAL_CREATE_VOICE, discord.VoiceChannel, category)
+        self.actor.guild = self.guild; self.actor.display_name = 'Host'; self.actor.move_to = AsyncMock()
+        self.guild.me.guild_permissions = discord.Permissions(manage_channels=True, manage_roles=True,
+            view_channel=True, connect=True, speak=True, move_members=True, use_voice_activation=True)
+        room = self.channel(202, 'Room', discord.VoiceChannel, category)
+        self.guild.create_voice_channel = AsyncMock(return_value=room)
+        await voice.VoiceGenerator(SimpleNamespace())._create_global_temp_voice(self.actor, generator)
+        desired = self.guild.create_voice_channel.call_args.kwargs['overwrites']
+        self.assertNotIn(self.music, desired)
+        self.assertFalse(desired[self.actor].manage_channels)
+        self.assertTrue(desired[self.guild.me].move_members)
+        self.actor.move_to.assert_awaited_once()
+        self.assertEqual(db.get_temp_voice(room.id)['host_id'], self.actor.id)
+        # Existing inherited denies must not be removed to force a successful create.
+        category.overwrites[self.music] = discord.PermissionOverwrite(ban_members=False)
+        self.guild.create_voice_channel.reset_mock()
+        await voice.VoiceGenerator(SimpleNamespace())._create_global_temp_voice(self.actor, generator)
         self.guild.create_voice_channel.assert_not_awaited()
 
     async def test_global_temp_voice_contains_music_and_private_lobby_stays_private(self):

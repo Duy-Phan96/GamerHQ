@@ -101,6 +101,7 @@ class FakeChannel:
 
 class FakeCategory:
     __class__ = discord.CategoryChannel
+    permissions_for = FakeChannel.permissions_for
     set_permissions = FakeChannel.set_permissions
     async def delete(self, **kwargs):
         self.guild.categories.remove(self)
@@ -154,6 +155,7 @@ class FakeGuild:
         self.custom = self.role(3)
         self.roles = [self.default_role, self.mod, self.custom]
         self.me = MagicMock(spec=discord.Member); self.me.id = 900
+        self.me.guild_permissions = discord.Permissions.all()
     @staticmethod
     def role(rid, default=False, **permissions):
         result = MagicMock(spec=discord.Role)

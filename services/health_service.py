@@ -269,6 +269,10 @@ async def _scan(guild, bot=None, *, messages=True):
         category=tickets.mapped(guild,'support-tickets',True)
         if not category: raise ServerMessageError('Missing private ticket category.')
         tickets.check_private(category)
+        from services.discord_permissions import TICKET_WRITE, resource_issues
+        ticket_issue = resource_issues(guild, category, TICKET_WRITE)
+        if ticket_issue:
+            add('Ticket creation permissions', 'MANUAL_REVIEW', ticket_issue)
         logs=tickets.mapped(guild,'ticket-logs')
         if not logs: raise ServerMessageError('Missing private ticket logs.')
         tickets.check_private(logs)
@@ -390,7 +394,13 @@ async def _scan(guild, bot=None, *, messages=True):
         if not ch: add('Temporary Voice record','MANUAL_REVIEW',f'Channel {row["channel_id"]} absent from this guild cache; verify guild/owner before cleanup.')
         elif not guild.get_member(row['host_id']): add('Temporary Voice owner','WARN',f'Room {ch.id}: owner not cached/present; staff can manage it, occupied room retained.')
     generators=[c for c in guild.channels if isinstance(c,discord.VoiceChannel) and alias(c.name)=='create-voice']
-    add('Create Voice','PASS' if generators else 'MANUAL_REVIEW',f'{len(generators)} entry points detected; {len(temps)} tracked room records.')
+    from services.discord_permissions import VOICE_CREATE, resource_issues
+    voice_issues = [issue for generator in generators for resource in (generator.category, generator)
+                    if (issue := resource_issues(guild, resource, VOICE_CREATE))]
+    detail = f'{len(generators)} entry points detected; {len(temps)} tracked room records.'
+    if voice_issues:
+        detail += ' ' + voice_issues[0]
+    add('Create Voice','PASS' if generators and not voice_issues else 'MANUAL_REVIEW',detail)
     for event in events:
         if event['status']=='scheduled':
             if not guild.get_member(event['host_id']): add('LFG host','WARN',f'Lobby {event["id"]}: host absent/not cached; admin should review.')
