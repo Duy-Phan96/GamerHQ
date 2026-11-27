@@ -950,7 +950,26 @@ class SkillDetailsView(Menu):
             and status.management_available
         ):
             self.action('Configure', self.configure)
+        if self.skill_id == 'event-manager' and actor_id == guild.owner_id:
+            self.action('Review Public Events', self.review_public_events)
         self.action('Back to Skills', self.back)
+
+    async def review_public_events(self, interaction):
+        from hosts.gamerhq.skill_resources import review_event_public_areas
+        try:
+            reviewed = review_event_public_areas(self.guild, interaction.user.id)
+        except (ValueError, PermissionError) as error:
+            return await interaction.response.send_message(str(error), ephemeral=True)
+        if reviewed['allowed']:
+            return await interaction.response.send_message('Public Event Manager areas are already authorized.', ephemeral=True)
+        await interaction.response.edit_message(
+            content=('# Allow public Event Manager areas?\n'
+                     f'Category: <#{reviewed["categoryId"]}>\n'
+                     'Only this server’s Event Manager may create public event areas. Private events remain private. '
+                     'This does not create or publish an event. Nothing changes until you confirm.'),
+            view=EventPublicPolicyConfirmView(self.guild, self.admin_id, reviewed),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     async def configure(self, interaction):
         if self.skill_id == 'progression':
@@ -991,6 +1010,39 @@ class SkillDetailsView(Menu):
             content=_skills_overview_text(statuses),
             view=SkillsView(self.guild, self.admin_id, statuses),
         )
+
+
+class EventPublicPolicyConfirmView(Menu):
+    def __init__(self, guild, actor_id, reviewed):
+        super().__init__(guild, actor_id)
+        self.reviewed = reviewed
+        self.action('Confirm Public Events', self.confirm, style=discord.ButtonStyle.primary)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        from hosts.gamerhq.skill_resources import enable_event_public_areas
+        from services.server_log_service import emit
+        import uuid
+        try:
+            changed = enable_event_public_areas(self.guild, interaction.user.id, self.reviewed)
+        except (ValueError, PermissionError) as error:
+            return await interaction.response.send_message(str(error), ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        if changed:
+            await emit(self.guild, 'event-public-policy:' + uuid.uuid4().hex,
+                       'Event Manager policy updated',
+                       'The owner authorized public event areas in the verified Events category.')
+        await self.show_details(interaction, '✅ Public event areas authorized. Open the existing event and review Save changes to synchronize it.')
+
+    async def cancel(self, interaction):
+        await interaction.response.defer(ephemeral=True)
+        await self.show_details(interaction, 'No policy change.')
+
+    async def show_details(self, interaction, notice):
+        runtime = interaction.client.skill_runtime
+        status = await runtime.status(guild_id=self.guild.id, skill_id='event-manager')
+        await interaction.edit_original_response(content=notice + '\n\n' + _skill_detail_text(status),
+            view=SkillDetailsView(self.guild, self.admin_id, status))
 
 
 class SkillToggleConfirmView(Menu):
