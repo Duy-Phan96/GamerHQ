@@ -54,7 +54,8 @@ async def require_event_ready(interaction, *, public=False):
     """Guard member writes using the guild's actual lifecycle and Host policy."""
     runtime = interaction.client.skill_runtime
     status = await runtime.status(guild_id=interaction.guild.id, skill_id=SKILL)
-    if not (status.installed and status.configured and status.enabled and status.running):
+    # A freshly installed Skill may become configured on its first event write.
+    if not (status.installed and status.enabled and status.running):
         raise ValueError("Event Manager is not running for this server. Ask an admin to enable it under Server Management → Skills.")
     if status.health != "PASS":
         raise ValueError("Event Manager is not ready. Ask an admin to review Skill health.")
@@ -70,7 +71,7 @@ async def require_event_ready(interaction, *, public=False):
             raise ValueError("Public events are not authorized. Ask the server owner to review Public Events in Skill settings.")
 
 
-async def call(interaction, operation, payload):
+async def call(interaction, operation, payload, *, after_member_change=False):
     if not interaction.guild or not isinstance(interaction.user, discord.Member):
         raise PermissionError("Use Event Manager as a member of this server.")
     runtime = interaction.client.skill_runtime
@@ -83,7 +84,7 @@ async def call(interaction, operation, payload):
     if operation in {"update", "delete", "delete-preview", "set-active", "transition", "occurrences-update", "reconcile"}:
         event_id = payload["occurrenceId"].rsplit(":", 1)[0] if operation == "occurrences-update" else payload["eventId"]
         current = (await dispatch("get", {"eventId": event_id}))["state"]
-        if not can_manage(interaction.user, current):
+        if not can_manage(interaction.user, current) and not (operation == "reconcile" and after_member_change):
             raise PermissionError("You don't have permission to manage this event.")
     if operation in {"create", "validate", "update", "reconcile"}:
         # Validation and the final write both recheck readiness. A public
@@ -255,9 +256,10 @@ class EventManager(commands.Cog):
             return await self.finish(interaction, event_id, "Event resumed." if action == "resume" else "Event paused. Its chat and history are kept.")
         raise ValueError("Choose an event action.")
 
-    async def finish(self, interaction, event_id, message):
+    async def finish(self, interaction, event_id, message, *, after_member_change=False):
         try:
-            await call(interaction, "reconcile", {"eventId": event_id})
+            # Trusted continuation only after the Skill accepted the member mutation.
+            await call(interaction, "reconcile", {"eventId": event_id}, after_member_change=after_member_change)
         except Exception:
             logging.getLogger(__name__).warning("Event Discord reconciliation is pending", exc_info=True)
             message += " The Discord card will refresh when synchronization resumes."
@@ -303,7 +305,7 @@ class EventManager(commands.Cog):
         manifest = interaction.client.skill_runtime.registry.get(SKILL).manifest
         if any(contract.id == "event-manager.attendance.v1" for contract in manifest.management_apis.exposes):
             result = await call(interaction, "attendance", {"eventId": event_id, "action": action, "startAt": start_at})
-            return await self.finish(interaction, event_id, result["message"])
+            return await self.finish(interaction, event_id, result["message"], after_member_change=True)
         # Existing 0.1.0 hosts can stage the adapter ahead of the Skill update.
         if action == "leave-series":
             raise ValueError("Permanent membership can be changed in Manage Players.")
@@ -330,7 +332,7 @@ class EventManager(commands.Cog):
         members = members | {actor} if action == "join" else members - {actor}
         await call(interaction, "participate", {"eventId": event_id, "startAt": row["startAt"],
             "members": sorted(members), "revision": row["revision"]})
-        await self.finish(interaction, event_id, "You joined the next session." if action == "join" else "You left the next session.")
+        await self.finish(interaction, event_id, "You joined the next session." if action == "join" else "You left the next session.", after_member_change=True)
 
     @lfg.command(name="join", description="Join the next session of the current or selected event.")
     async def join(self, interaction: discord.Interaction):

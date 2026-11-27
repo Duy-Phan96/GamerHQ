@@ -108,6 +108,7 @@ def test_compact_discord_builder_uses_public_skill_persistence_without_duplicate
         load_external_skill_packages(runtime, ("event-manager",))
         await runtime.register_all()
         await runtime.install_skill(guild_id=1, skill_id="event-manager")
+        await runtime.enable_skill(guild_id=1, skill_id="event-manager")
 
         def interaction():
             return SimpleNamespace(client=bot, guild=guild, user=member,

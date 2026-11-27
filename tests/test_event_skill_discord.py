@@ -178,6 +178,7 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
         await call(interaction, "list", {})
         api.assert_awaited_once()
         status.enabled = status.running = True
+        status.configured = False  # First event may establish domain configuration.
         status.health = "PASS"
         with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": false}'):
             with self.assertRaisesRegex(ValueError, "Public events are not authorized"):
@@ -207,6 +208,10 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
             await call(interaction, "reconcile", {"eventId": "one"})
         self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.reconcile.v1")
         self.assertEqual(api.await_args.kwargs["payload"], {"eventId": "one"})
+        interaction.user = self.member(20)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": true}'):
+            await call(interaction, "reconcile", {"eventId": "one"}, after_member_change=True)
+        self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.reconcile.v1")
 
     async def test_mutation_rechecks_owner_and_guild_before_dispatch(self):
         interaction = self.interaction(ident=20, guild=2)
