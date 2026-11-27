@@ -5,7 +5,7 @@ import time
 import discord
 from database import db
 from services.onboarding_service import alias
-from services.community_structure_service import core_channel
+from services.community_structure_service import core_channel, lfg_target
 from services.server_service import ServerMessageError
 from services.operation_context import read_scope, fetch_message, measured
 from services.music_bot_service import resolve_music_role, should_allow_music_bots, VOICE_RIGHTS, TEXT_RIGHTS, GAME_CHANNEL_FIELDS, blocked_name
@@ -108,11 +108,11 @@ async def _scan(guild, bot=None, *, messages=True):
                 if name == 'gaming-chat':
                     add(name, 'INFO', 'Optional community channel is absent.')
                     continue
-                add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
+                add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events','create-event'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
             if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
                 add(f'{name} mapping', 'RECONCILE', 'Existing channel needs linking. Run /server reconcile; no duplicate will be created.')
             default_parent = categories[0] if len(categories) == 1 else channel.category
-            wanted_parent = default_parent if name == 'looking-for-group' else desired_channel_parent(guild, name, default_parent)
+            wanted_parent = lfg_target(guild, channel, default_parent) if name == 'looking-for-group' else desired_channel_parent(guild, name, default_parent)
             wanted_name = desired_channel_name(guild, name, channel.name)
             issue = channel.category_id != getattr(wanted_parent, 'id', channel.category_id) or channel.name != wanted_name
             add(name,'REPAIRABLE' if issue else 'PASS','Managed runtime state differs from Discord.' if issue else f'Channel {channel.id}; current Discord layout is accepted.')

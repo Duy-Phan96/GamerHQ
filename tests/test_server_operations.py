@@ -84,20 +84,21 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             install.pin_messages = True
             first = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
             self.assertEqual(templates.counts(first), {
-                'Already configured': 0, 'Will reuse': 0, 'Will create': 41, 'Needs review': 2,
+                'Already configured': 0, 'Will reuse': 0, 'Will create': 42, 'Needs review': 2,
                 'Blocked': 8, 'Optional/Skipped': 1, 'Optional modules': 15, 'Skill-owned': 0,
             })
+            self.assertIn('create-event', first['new_boards'])
             self.assertFalse(self.guild.channels)
             self.assertIsNone(db.get_setting(templates.progress_key(self.guild, templates.GAMERHQ)))
             optional = [row for row in first['structure']['rows']
                         if templates.template_decision(row, first['choices']) == 'optional']
             result, counts, remaining = await templates.apply(self.guild, owner, first, self.bot)
-            self.assertEqual((counts['Already configured'], remaining), (52, 10))
+            self.assertEqual((counts['Already configured'], remaining), (54, 10))
             self.assertFalse(result['failed'])
             resumed = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
             result, counts, remaining = await templates.apply(self.guild, owner, resumed, self.bot)
             self.assertEqual(remaining, 0, result)
-            self.assertEqual(counts['Already configured'], 62)
+            self.assertEqual(counts['Already configured'], 64)
             self.assertEqual(len(result['created']), 10)
             self.assertEqual(result['blocked'] + result['needs_review'] + result['failed'], [])
             self.assertTrue(all(ops.mapped(row) is None for row in optional))
@@ -105,10 +106,18 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
                 channel = self.guild.get_channel(int(db.get_setting(f'managed_category:1:{name}')))
                 self.assertIs(channel.overwrites_for(self.guild.default_role).view_channel, False)
                 self.assertIs(channel.overwrites_for(self.guild.me).view_channel, True)
+            from services import community_structure_service as structure
+            create = structure.core_channel(self.guild, 'create-event')
+            lfg = structure.core_channel(self.guild, 'looking-for-group')
+            self.assertIsNotNone(create)
+            self.assertIsNotNone(lfg)
+            self.assertEqual(create.category_id, lfg.category_id)
+            self.assertEqual(create.category_id, structure.core_category(self.guild, 'events').id)
+            self.assertTrue(structure.lfg_layout_migrated(self.guild, lfg))
             before = ({resource.id for resource in self.guild.channels + self.guild.roles},
                       {message.id for channel in self.guild.text_channels for message in channel.messages.values()})
             repeat = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
-            self.assertEqual(len(repeat['boards']['rows']), 11)
+            self.assertEqual(len(repeat['boards']['rows']), 12)
             self.assertTrue(all(row['status'] == 'EXACT_MATCH' and row['resource'].pinned
                                 for row in repeat['boards']['rows']))
             result, again, remaining = await templates.apply(self.guild, owner, repeat, self.bot)

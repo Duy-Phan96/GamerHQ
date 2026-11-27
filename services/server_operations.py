@@ -213,7 +213,12 @@ def target(guild, row):
     from services import structure_adoption_service as runtime
     logical = f"game:{row['game_id']}" if row.get('game_id') else row['name']
     state = runtime.channel_state(guild, logical)
-    if state and not state.get('deleted') and state.get('category_id') is not None:
+    if row['name'] == 'looking-for-group':
+        from services.community_structure_service import lfg_target
+        channel_id = db.get_setting(row['key'])
+        channel = guild.get_channel(int(channel_id)) if channel_id and channel_id.isdigit() else None
+        parent = lfg_target(guild, channel, parent)
+    elif state and not state.get('deleted') and state.get('category_id') is not None:
         adopted = guild.get_channel(int(state['category_id']))
         if isinstance(adopted, discord.CategoryChannel):
             parent = adopted
@@ -1135,6 +1140,9 @@ def persist(guild, row, resource):
         db.set_setting('choose_games_section_message_ids', json.dumps(values))
     else:
         db.set_setting(key, resource.id)
+    if row['kind'] == 'text' and row['name'] == 'looking-for-group':
+        from services.community_structure_service import core_category, mark_lfg_layout
+        mark_lfg_layout(guild, resource, core_category(guild, 'events'))
     aliases = {'welcome': f'onboarding:{guild.id}:welcome', 'bot-commands': 'server_community_commands_channel_id',
                'mod-commands': 'server_staff_commands_channel_id'}
     if row['kind'] == 'text' and row['name'] in aliases:
@@ -1433,7 +1441,10 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                             changes['name'] = display_name(guild, row)
                         if parent and resource.category_id != parent.id: changes.update(category=parent, sync_permissions=False)
                         from services.channel_change_service import edit
-                        await edit(resource, **changes, reason='Confirmed GamerHQ repair')
+                        updated = await edit(resource, **changes, reason='Confirmed GamerHQ repair')
+                        if row['name'] == 'looking-for-group':
+                            from services.community_structure_service import core_category, mark_lfg_layout
+                            mark_lfg_layout(guild, updated, core_category(guild, 'events'))
                     elif kind == 'category':
                         if not row['private'] and private(resource):
                             skipped.append(row['label'] + ': private category retained'); continue

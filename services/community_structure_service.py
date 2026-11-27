@@ -43,6 +43,29 @@ def resource_key(guild, name):
     return f'managed_channel:{guild.id}:{name}'
 
 
+def lfg_migration_key(guild):
+    return f'events_lfg_layout_v1:{guild.id}'
+
+
+def lfg_layout_migrated(guild, channel):
+    return channel is not None and db.get_setting(lfg_migration_key(guild)) == str(channel.id)
+
+
+def lfg_target(guild, channel, default):
+    """Apply the new default once per channel identity, then honor adopted layout."""
+    from services.structure_adoption_service import desired_channel_parent
+    return desired_channel_parent(guild, 'looking-for-group', default) if lfg_layout_migrated(guild, channel) else default
+
+
+def mark_lfg_layout(guild, channel, events):
+    """Record only a completed migration or a verified setup in EVENTS."""
+    if events is None or channel.category_id != events.id or lfg_layout_migrated(guild, channel):
+        return
+    from services.structure_adoption_service import save_runtime_state, snapshot_channel
+    save_runtime_state(guild, 'channel', 'looking-for-group', snapshot_channel(channel))
+    db.set_setting(lfg_migration_key(guild), channel.id)
+
+
 def core_channel(guild, name):
     from services.channel_change_service import removed
     if removed(guild, name):
@@ -161,7 +184,8 @@ async def migrate_boards(guild, changed, failed):
             raise ServerMessageError(f'{name} binding is unavailable; review before creating or moving anything.')
         if board and (board.id in owned or (getattr(board, 'topic', None) or '').startswith('skill-resource:')
                 or not board.category
-                or alias(board.category.name) not in {'start-here', 'community', 'games', 'gaming', 'events'}
+                or (alias(board.category.name) not in {'start-here', 'community', 'games', 'gaming', 'events'}
+                    and not (name == 'looking-for-group' and raw and lfg_layout_migrated(guild, board)))
                 or board.overwrites_for(guild.default_role).view_channel is False
                 or board.category.overwrites_for(guild.default_role).view_channel is False):
             raise ServerMessageError(f'{name} is private, Skill-owned or has unexpected placement. Review its identity.')
@@ -190,7 +214,9 @@ async def migrate_boards(guild, changed, failed):
     from services.structure_adoption_service import desired_channel_parent, desired_channel_name
     for name, default_target in [('looking-for-group', events), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
-        target = default_target if name == 'looking-for-group' else desired_channel_parent(guild, name, default_target)
+        target = lfg_target(guild, channel, default_target) if name == 'looking-for-group' else desired_channel_parent(guild, name, default_target)
+        if name == 'looking-for-group' and target.overwrites_for(guild.default_role).view_channel is False:
+            raise ServerMessageError('MANUAL_REVIEW: adopted LFG destination is private; no move performed.')
         if channel and channel.category_id != target.id:
             from services.channel_change_service import edit
             channels[name] = await edit(channel, category=target, sync_permissions=False, reason='GamerHQ persisted core channel organization')
@@ -200,6 +226,8 @@ async def migrate_boards(guild, changed, failed):
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
+        if name == 'looking-for-group' and channels[name]:
+            mark_lfg_layout(guild, channels[name], events)
     for name, target in [('guide', start), ('suggestions', community), ('create-event', events), ('community-events', events)]:
         channel = channels[name]
         if removed(guild, name):
