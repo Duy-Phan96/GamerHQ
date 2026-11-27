@@ -117,7 +117,10 @@ def resource_issues(guild, channel, required):
     if not member or not channel or channel.guild.id != guild.id:
         return 'Host or channel identity is unavailable.'
     server = member.guild_permissions
-    effective = channel.permissions_for(member)
+    resolve = getattr(channel, 'permissions_for', None)
+    if not callable(resolve):
+        return 'Host channel permissions could not be verified.'
+    effective = resolve(member)
     if not isinstance(server, discord.Permissions) or not isinstance(effective, discord.Permissions):
         return 'Host permissions could not be verified.'
     absent = missing(server, required)

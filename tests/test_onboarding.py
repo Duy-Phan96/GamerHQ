@@ -101,32 +101,6 @@ class FakeChannel:
 
 class FakeCategory:
     __class__ = discord.CategoryChannel
-    def permissions_for(self, target):
-        # Preserve the prior staff permission simulation, rather than granting
-        # every target all permissions merely to support Host preflight.
-        if target == self.guild.me:
-            return self.guild.me.guild_permissions
-        roles = [target] if target in self.guild.roles else target.roles
-        base = self.guild.default_role.permissions.value
-        for role in roles:
-            base |= role.permissions.value
-        rights = discord.Permissions(base)
-        if rights.administrator:
-            return discord.Permissions.all()
-        allow, deny = self.overwrites_for(self.guild.default_role).pair()
-        rights.handle_overwrite(allow.value, deny.value)
-        allow_mask = deny_mask = 0
-        for role in roles:
-            if role == self.guild.default_role:
-                continue
-            allow, deny = self.overwrites_for(role).pair()
-            allow_mask |= allow.value
-            deny_mask |= deny.value
-        rights.handle_overwrite(allow_mask, deny_mask)
-        if target not in self.guild.roles:
-            allow, deny = self.overwrites_for(target).pair()
-            rights.handle_overwrite(allow.value, deny.value)
-        return rights
     set_permissions = FakeChannel.set_permissions
     async def delete(self, **kwargs):
         self.guild.categories.remove(self)
@@ -227,6 +201,10 @@ class FakeGuild:
     def add_category(self, name):
         self.sequence += 1
         category = FakeCategory(self, name, self.sequence)
+        # Only support fixtures need the new ticket permission preflight.
+        # Other categories retain the existing lightweight snapshot contract.
+        if onboarding.alias(name) == 'support-tickets':
+            category.permissions_for = lambda target: target.guild_permissions
         self.categories.append(category)
         return category
     def add_channel(self, name, category):

@@ -50,6 +50,26 @@ async def notify_invited(guild, users):
                 continue
 
 
+async def require_event_ready(interaction, *, public=False):
+    """Guard member writes using the guild's actual lifecycle and Host policy."""
+    runtime = interaction.client.skill_runtime
+    status = await runtime.status(guild_id=interaction.guild.id, skill_id=SKILL)
+    if not (status.installed and status.configured and status.enabled and status.running):
+        raise ValueError("Event Manager is not running for this server. Ask an admin to enable it under Server Management → Skills.")
+    if status.health != "PASS":
+        raise ValueError("Event Manager is not ready. Ask an admin to review Skill health.")
+    if public:
+        import json
+        try:
+            raw = db.get_setting(f"skill_resources:{interaction.guild.id}:{SKILL}")
+            policy = json.loads(raw) if raw else {}
+            allowed = isinstance(policy, dict) and policy.get("allowPublic") is True
+        except (TypeError, ValueError):
+            allowed = False
+        if not allowed:
+            raise ValueError("Public events are not authorized. Ask the server owner to review Public Events in Skill settings.")
+
+
 async def call(interaction, operation, payload):
     if not interaction.guild or not isinstance(interaction.user, discord.Member):
         raise PermissionError("Use Event Manager as a member of this server.")
@@ -60,11 +80,17 @@ async def call(interaction, operation, payload):
         return await runtime.call_management(guild_id=interaction.guild.id, skill_id=SKILL,
             contract_id=f"event-manager.{op}.v1", payload=data, actor_id=interaction.user.id)
 
-    if operation in {"update", "delete", "delete-preview", "set-active", "transition", "occurrences-update"}:
+    if operation in {"update", "delete", "delete-preview", "set-active", "transition", "occurrences-update", "reconcile"}:
         event_id = payload["occurrenceId"].rsplit(":", 1)[0] if operation == "occurrences-update" else payload["eventId"]
         current = (await dispatch("get", {"eventId": event_id}))["state"]
         if not can_manage(interaction.user, current):
             raise PermissionError("You don't have permission to manage this event.")
+    if operation in {"create", "validate", "update", "reconcile"}:
+        # Validation and the final write both recheck readiness. A public
+        # reconciliation uses the saved event visibility, never caller input.
+        public = (current["config"]["visibility"] == "public" if operation == "reconcile"
+                  else payload.get("visibility") == "public")
+        await require_event_ready(interaction, public=public)
     if operation == "attendance-plan":
         current = (await dispatch("get", {"eventId": payload["eventId"]}))["state"]
         payload = {**payload, "manager": can_manage(interaction.user, current)}
@@ -197,16 +223,15 @@ class EventManager(commands.Cog):
             available = hasattr(interaction, "client") and supports_attendance(interaction)
             view = EventActions(self, interaction, state, result.get("history", {}).get("occurrences", ()), manages,
                                 attendance=available)
-            if manages:
-                try:
-                    await call(interaction, "reconcile", {"eventId": event_id})
-                except Exception:
-                    logging.getLogger(__name__).warning("Event card reconciliation is pending", exc_info=True)
             return await interaction.followup.send(content=view.content(), view=view, ephemeral=True)
         if not can_manage(interaction.user, state):
             raise PermissionError("You don't have permission to manage this event.")
         if state["status"] == "deleted":
             raise ValueError("This event has ended.")
+        if action == "sync":
+            await call(interaction, "reconcile", {"eventId": event_id})
+            return await interaction.followup.send(
+                "Event Discord synchronization completed for the existing event.", ephemeral=True)
         if action in ("edit", "players", "convert"):
             if action == "convert" and (not interaction.user.guild_permissions.administrator or not state.get("legacyRecurrence")):
                 raise PermissionError("This imported schedule requires administrator access.")

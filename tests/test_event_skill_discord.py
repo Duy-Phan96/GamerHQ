@@ -164,6 +164,50 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
         permitted.send.assert_awaited_once()
         self.assertIn("/lfg invitations", permitted.send.await_args.args[0])
 
+    async def test_disabled_runtime_blocks_validation_and_create_but_not_existing_reads(self):
+        interaction = self.interaction()
+        api = AsyncMock(return_value={"events": []})
+        status = SimpleNamespace(installed=True, configured=True, enabled=False, running=False, health="DISABLED")
+        runtime = SimpleNamespace(registry=SimpleNamespace(contains=lambda _: True), call_management=api,
+                                  status=AsyncMock(return_value=status))
+        interaction.client = SimpleNamespace(skill_runtime=runtime)
+        for operation in ("validate", "create"):
+            with self.assertRaisesRegex(ValueError, "not running"):
+                await call(interaction, operation, self.builder().draft)
+        api.assert_not_awaited()
+        await call(interaction, "list", {})
+        api.assert_awaited_once()
+        status.enabled = status.running = True
+        status.health = "PASS"
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": false}'):
+            with self.assertRaisesRegex(ValueError, "Public events are not authorized"):
+                await call(interaction, "create", self.builder(visibility="public").draft)
+        self.assertEqual(api.await_count, 1)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": true}'):
+            await call(interaction, "create", self.builder(visibility="public").draft)
+        self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.create.v1")
+
+    async def test_reconcile_requires_manager_and_saved_visibility_policy(self):
+        interaction = self.interaction(ident=20)
+        state = {"ownerId": "10", "config": {"visibility": "public"}}
+        api = AsyncMock(return_value={"state": state})
+        runtime = SimpleNamespace(registry=SimpleNamespace(contains=lambda _: True), call_management=api,
+            status=AsyncMock(return_value=SimpleNamespace(installed=True, configured=True,
+                enabled=True, running=True, health="PASS")))
+        interaction.client = SimpleNamespace(skill_runtime=runtime)
+        with self.assertRaises(PermissionError):
+            await call(interaction, "reconcile", {"eventId": "one"})
+        self.assertEqual(api.await_count, 1)
+        interaction.user = self.member(10)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": false}'):
+            with self.assertRaisesRegex(ValueError, "not authorized"):
+                await call(interaction, "reconcile", {"eventId": "one"})
+        self.assertEqual(api.await_count, 2)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": true}'):
+            await call(interaction, "reconcile", {"eventId": "one"})
+        self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.reconcile.v1")
+        self.assertEqual(api.await_args.kwargs["payload"], {"eventId": "one"})
+
     async def test_mutation_rechecks_owner_and_guild_before_dispatch(self):
         interaction = self.interaction(ident=20, guild=2)
         current = {"state": {"ownerId": "10"}}
