@@ -50,6 +50,10 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
         self.guild.me.guild_permissions = install
         self.guild.voice_channels = []
         db.seed_catalog()
+        from services import game_visibility_service as games, game_channel_service as game_channels
+        hidden = next(g for g in db.get_all_games() if games.untouched_default(self.guild, g, games.default_catalog_names()))
+        db.set_setting(game_channels.hidden_key(self.guild, hidden['id']), '1')
+        self.guild.fetch_roles = AsyncMock(side_effect=lambda: list(self.guild.roles))
         published = fixtures.FakeChannel.send
 
         async def send(channel, **kwargs):
@@ -97,9 +101,21 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result['failed'])
             resumed = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
             result, counts, remaining = await templates.apply(self.guild, owner, resumed, self.bot)
-            self.assertEqual(remaining, 0, result)
             self.assertEqual(counts['Already configured'], 64)
             self.assertEqual(len(result['created']), 10)
+            game_draft = await templates.preview(self.guild, owner, templates.GAMERHQ, self.bot)
+            self.assertTrue(templates.can_apply(game_draft))
+            self.assertGreater(len(game_draft['game_roles']['plans']), 0)
+            self.assertEqual(remaining, len(game_draft['game_roles']['plans']))
+            self.assertEqual(templates.progress_record(self.guild, templates.GAMERHQ)['state'], 'remaining')
+            self.assertFalse(db.get_game_by_id(hidden['id'])['selectable'])
+            rooms_before = {c.id for c in self.guild.channels}
+            result, counts, remaining = await templates.apply(self.guild, owner, game_draft, self.bot)
+            self.assertEqual(remaining, 0, result)
+            self.assertEqual(rooms_before, {c.id for c in self.guild.channels})
+            self.assertFalse(db.get_game_by_id(hidden['id'])['selectable'])
+            self.assertTrue(all(db.get_game_by_id(p['game']['id'])['selectable'] for p in game_draft['game_roles']['plans']))
+            self.assertEqual(templates.progress_record(self.guild, templates.GAMERHQ)['state'], 'complete')
             self.assertEqual(result['blocked'] + result['needs_review'] + result['failed'], [])
             self.assertTrue(all(ops.mapped(row) is None for row in optional))
             for name in ('staff', 'support-tickets'):

@@ -119,7 +119,9 @@ class PublicCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.channel.messages[mid].edits, 1)
         self.assertEqual(cards.load(10, "one")["startAt"], 12000)
         self.assertEqual(cards.resolve_control(self.guild, self.channel, self.channel.messages[mid],
-            cards.card_token(10, "one")), ("one", 12000))
+            cards.card_token(10, "one"), 12000), ("one", 12000))
+        self.assertIsNone(cards.resolve_control(self.guild, self.channel, self.channel.messages[mid],
+            cards.card_token(10, "one"), 11000))
 
     async def test_lost_send_response_recovers_existing_marker_without_duplicate(self):
         card = cards.project(self.snapshot(event("one"), rows=[occurrence("one", 11000)]), now=10000)["one"]

@@ -2233,9 +2233,10 @@ class ServerTemplatesView(Menu):
             return await interaction.edit_original_response(content='The setup preview could not be verified. Open a fresh preview to try again.', view=self)
         view = TemplatePreviewView(self.guild, self.admin_id, draft)
         summary = templates.counts(draft)
-        view.confirm.disabled = not (summary['Will create'] or summary['Will reuse'])
+        view.confirm.disabled = not templates.can_apply(draft)
         lines = [f'# {template.name}', 'Preview Setup', ' · '.join(f'{key} {value}' for key, value in summary.items()),
-                 'Apply Template confirms the safe actions in this preview. Full Report lists every decision.']
+                 'Apply Template confirms the safe actions in this preview. Full Report lists every decision.',
+                 templates.game_summary(draft)]
         if draft.get('install_permissions'):
             lines.append('**Core install baseline** · ' + draft['install_permissions']
                          + ' Existing channels are also checked for effective access.')

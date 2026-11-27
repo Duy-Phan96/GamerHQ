@@ -6,7 +6,8 @@ occurrence is shown; a recurring event reuses the same message. No additional
 event authority or Skill package change is introduced. Events without chat are
 supported. The Host refreshes at a 30-second cadence; Discord/rate-limit or
 Skill outages can delay synchronization. Buttons revalidate the exact card,
-current public event and displayed occurrence; Share returns a public message
+current public event and displayed occurrence (the timestamp is embedded in
+the control ID, so a stale button cannot target a replacement occurrence); Share returns a public message
 jump link, never an invitation token.
 
 Publication requires the existing owner-approved allowPublic policy, running

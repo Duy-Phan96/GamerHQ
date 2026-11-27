@@ -53,7 +53,9 @@ class ChangeTests(unittest.IsolatedAsyncioTestCase):
         old = before(channel)
         for field, value in fields.items(): setattr(channel, field, value)
         await changes.detect(old, channel, self.cog.notify)
-        await asyncio.sleep(0.035)
+        task = changes._timers.get((self.guild.id, channel.id))
+        if task is not None:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
         return changes.load(self.guild.id, channel.id)
 
     async def rename(self):
@@ -63,7 +65,9 @@ class ChangeTests(unittest.IsolatedAsyncioTestCase):
         channel = channel or self.channel
         self.guild.text_channels.remove(channel)
         await changes.detect(channel, None, self.cog.notify, deleted=True)
-        await asyncio.sleep(0.035)
+        task = changes._timers.get((self.guild.id, channel.id))
+        if task is not None:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
         return changes.load(self.guild.id, channel.id)
 
     async def act(self, record, action, user=None):

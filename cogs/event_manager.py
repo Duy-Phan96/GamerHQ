@@ -448,13 +448,13 @@ class EventManager(commands.Cog):
     async def on_interaction(self, interaction):
         data = interaction.data or {}
         custom_id = str(data.get("custom_id", ""))
-        public = re.fullmatch(r"gamerhq:lfg-card:(join|leave|details|share):([0-9a-f]{32})", custom_id)
+        public = re.fullmatch(r"gamerhq:lfg-card:(join|leave|details|share):([0-9a-f]{32}):([0-9]{1,12})", custom_id)
         if public and not interaction.response.is_done() and interaction.guild and interaction.message:
             await interaction.response.defer(ephemeral=True)
             try:
                 async with public_event_cards.guild_lock(interaction.guild.id):
                     identity = public_event_cards.resolve_control(interaction.guild, interaction.channel,
-                        interaction.message, public[2])
+                        interaction.message, public[2], int(public[3]))
                     if not identity:
                         raise ValueError("This public card is no longer available.")
                     await require_event_ready(interaction, public=True)

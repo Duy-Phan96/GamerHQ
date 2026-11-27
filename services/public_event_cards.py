@@ -127,7 +127,7 @@ def controls(guild_id, card):
         ("share", "Share", discord.ButtonStyle.secondary),
     ):
         view.add_item(discord.ui.Button(label=label, style=style,
-            custom_id=f"gamerhq:lfg-card:{action}:{token}",
+            custom_id=f"gamerhq:lfg-card:{action}:{token}:{card.start_at}",
             disabled=action == "join" and card.registered >= card.capacity))
     return view
 
@@ -288,13 +288,13 @@ async def before_private_update(runtime, guild_id, payload):
             await retire(runtime._guild(guild_id), event_id, state)
 
 
-def resolve_control(guild, channel, message, token):
+def resolve_control(guild, channel, message, token, start_at):
     if (not isinstance(channel, discord.TextChannel) or channel.guild.id != guild.id
             or db.get_setting(f"managed_channel:{guild.id}:looking-for-group") != str(channel.id)):
         return None
     for event_id, state in records(guild.id).items():
         if (card_token(guild.id, event_id) == token and state.get("channelId") == channel.id
                 and state.get("messageId") == message.id and not state.get("pending")
-                and owned_message(guild, message, event_id)):
+                and state.get("startAt") == start_at and owned_message(guild, message, event_id)):
             return event_id, state["startAt"]
     return None
