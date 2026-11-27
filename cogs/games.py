@@ -1374,9 +1374,11 @@ class Games(commands.Cog):
         default_permissions=discord.Permissions(administrator=True),
     )
 
-    @game.command(name="select", description="Add or remove one of your game roles.")
-    @app_commands.describe(game="Start typing a game name")
-    async def select(self, interaction: discord.Interaction, game: str):
+    @game.command(name="select", description="Open your games or choose a specific game role.")
+    @app_commands.describe(game="Optional: start typing a game name")
+    async def select(self, interaction: discord.Interaction, game: str | None = None):
+        if game is None:
+            return await open_game_selector(interaction)
         selected = db.get_game_by_name(game)
         if selected is None or not selected.get("selectable"):
             matches = search_games(game, selectable_only=True, limit=1)
