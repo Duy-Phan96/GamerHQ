@@ -357,6 +357,15 @@ async def _scan(guild, bot=None, *, messages=True):
     except ValueError:
         add('Gaming category', 'REPAIRABLE', 'Review/add the shared GAMING category in Server Structure.')
     add('Games log', 'PASS' if game_channels.log_channel(guild) else 'REPAIRABLE', 'Private STAFF games-log must be linked and writable by GamerHQ.')
+    from services import game_visibility_service as game_visibility
+    from services.role_service import assignable
+    defaults = game_visibility.default_catalog_names()
+    untouched = sum(game_visibility.untouched_default(guild, game, defaults) for game in games)
+    selected = [g for g in games if g['active'] and g['selectable']]
+    verified = sum(bool(g.get('role_id') and assignable(guild.get_role(g['role_id']), guild)) for g in selected)
+    add('Game selection readiness', 'MANUAL_REVIEW' if untouched or verified != len(selected) else 'PASS',
+        f'{verified}/{len(selected)} selectable game roles verified; {untouched} untouched defaults. '
+        'Use Initialize Default Games for role-only setup; dedicated chats are optional.')
     channel_ids = set()
     for game in games:
         if game.get('channel_id'):

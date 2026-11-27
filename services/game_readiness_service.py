@@ -52,6 +52,14 @@ def _reservation(raw, expected_id):
 def _inspect_one(guild, actor, game):
     gid = game['id']
     visible = bool(game['selectable'])
+    if not game['active']:
+        return state(NOT_SET_UP, 'Inactive catalog entry. Review default initialization or explicit game setup.', target=True)
+    if (visible and not game.get('channel_id') and db.get_setting(visibility.default_role_only_key(guild, gid)) == '1'
+            and db.get_setting(channels.hidden_key(guild, gid)) != '1'):
+        role, action = visibility._role(guild, game, True)
+        if role is not None and action == 'keep':
+            _reservation(db.get_setting(f'game_visibility_role_creation:{guild.id}:{gid}'), role.id)
+            return state(READY, 'Selectable game role verified; dedicated text channel is optional.', target=False)
     # Reuse ownership, additional-access, role-hierarchy and tombstone checks.
     plan = visibility._plan(guild, actor, gid, visible)
     channel = guild.get_channel(plan['channel_id']) if plan['channel_id'] else None
@@ -134,6 +142,6 @@ async def inventory(guild, actor):
             error = str(exc)
         if not authorized(guild, actor):
             raise ValueError('Administrator access changed. Reopen Manage Visible Games.')
-        games = db.get_all_games(active_only=True)
+        games = db.get_all_games()
         states = {g['id']: unverified(error) if error else inspect_one(fresh, actor, g) for g in games}
     return dict(games=games, states=states, checked_at=time.monotonic(), error=error)

@@ -50,7 +50,7 @@ class AdminGameSelection(SafeView):
 
     def set_inventory(self, games, states, checked_at, error=None):
         # A refresh updates displayed facts, never silently rebases an old draft.
-        self.games = {g['id']: copy.deepcopy(g) for g in games if g['active']}
+        self.games = {g['id']: copy.deepcopy(g) for g in games}
         self.visible = {gid for gid, g in self.games.items() if g['selectable']}
         self.states, self.checked_at, self.read_error = copy.deepcopy(states), checked_at, error
         ranked = sections(list(self.games.values()), member_counts(self.guild, list(self.games.values())))
@@ -95,18 +95,18 @@ class AdminGameSelection(SafeView):
 
     def content(self):
         shows = sum(self.pending.values())
-        heading = 'Browse A–Z' if self.browsing else f'{"0–9 / Other" if self.group == "#" else self.group or "No active games"} · {self.page + 1}/{self.pages()}'
+        heading = 'Browse A–Z' if self.browsing else f'{"0–9 / Other" if self.group == "#" else self.group or "No games"} · {self.page + 1}/{self.pages()}'
         warning = ('\n⚠️ ' + text(self.read_error, 240)) if self.read_error else ''
         if self.checked_at is None or time.monotonic() - self.checked_at > readiness.MAX_AGE:
             warning = '\n⚠️ Refresh for a current check. Unverified games are never shown as ready.'
         note = '\n' + self.notice if self.notice else ''
         return ('# 🎮 Manage Visible Games\n'
                 'Admin settings, not your personal game roles. Choose several games, then review and confirm.\n'
-                '✅ Ready = visible + verified Games chat · ➕ Not set up = hidden, no chat\n'
+                '✅ Ready = selectable role (chat optional) · ➕ Not set up = hidden or inactive\n'
                 '🙈 Hidden = chat/history kept · ⚠️ Setup needed / review · ❔ Unverified\n'
                 '⏳ Blue = unsaved Show/Hide choice, not a completed change.\n'
                 'Ready reflects the last check; **Refresh** rechecks without changing anything.\n'
-                'Show page includes visible games with missing chats. Hidden chats stay accessible to staff.'
+                'Show page reviews chat setup. Initialize Default Games sets up roles only. Hidden chats stay accessible to staff.'
                 f'{warning}{note}\n\n'
                 f'**Pending: {shows} show / set up · {len(self.pending) - shows} hide**\n'
                 f'## {heading}\nNothing changes until you confirm the review.')

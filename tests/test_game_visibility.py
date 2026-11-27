@@ -61,6 +61,46 @@ class VisibilityTests(unittest.IsolatedAsyncioTestCase):
             voice.category = None
         return old, chat, voice
 
+    async def test_initialize_default_roles_preserves_hidden_games_and_creates_no_channels(self):
+        db.seed_catalog()
+        defaults = visibility.default_catalog_names()
+        self.assertEqual(len(defaults), 60)
+        inactive = [g for g in db.get_all_games() if not g['active'] and g['name'] in defaults]
+        hidden = inactive[0]
+        db.set_setting(channels.hidden_key(self.guild, hidden['id']), '1')
+        before = db.get_all_games()
+        review = await visibility.preview_default_roles(self.guild, self.actor)
+        self.assertEqual(db.get_all_games(), before)
+        self.assertEqual(len(review['plans']), len(inactive) - 1)
+        results = await visibility.apply_default_roles(self.guild, self.actor, review)
+        self.assertEqual(len(results), len(review['plans']))
+        self.assertTrue(all(row['ok'] for row in results))
+        self.assertFalse(db.get_game_by_id(hidden['id'])['selectable'])
+        self.assertEqual(db.get_game_by_id(self.game['id'])['role_id'], self.game['role_id'])
+        self.guild.create_text_channel.assert_not_awaited()
+        self.guild.create_category.assert_not_awaited()
+        self.assertEqual((await visibility.preview_default_roles(self.guild, self.actor))['plans'], [])
+        with self.assertRaises(ValueError):
+            await visibility.apply_default_roles(self.guild, self.actor, review)
+
+    async def test_initialize_default_roles_stale_review_and_uncertain_creation(self):
+        db.seed_catalog()
+        review = await visibility.preview_default_roles(self.guild, self.actor)
+        gid = review['plans'][0]['game']['id']
+        db.set_setting(channels.hidden_key(self.guild, gid), '1')
+        with self.assertRaises(ValueError):
+            await visibility.apply_default_roles(self.guild, self.actor, review)
+        self.guild.create_role.assert_not_awaited()
+        review = await visibility.preview_default_roles(self.guild, self.actor)
+        gid = review['plans'][0]['game']['id']
+        with patch.object(self.guild, 'create_role', side_effect=TimeoutError):
+            results = await visibility.apply_default_roles(self.guild, self.actor, review)
+        self.assertFalse(results[0]['ok'])
+        self.assertFalse(db.get_game_by_id(gid)['selectable'])
+        fresh = await visibility.preview_default_roles(self.guild, self.actor)
+        self.assertNotIn(gid, [row['game']['id'] for row in fresh['plans']])
+        self.assertTrue(fresh['blocked'])
+
     async def test_missing_category_and_three_real_games_without_member_threshold(self):
         self.remove_shared_category()
         games = [self.game, await self.make_game('Ark'), await self.make_game('Valheim')]
