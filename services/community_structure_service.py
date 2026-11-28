@@ -70,13 +70,19 @@ def core_channel(guild, name):
     from services.channel_change_service import removed
     if removed(guild, name):
         return None
+    from services.shared_event_category import owned_ids, is_skill_channel
+    owned = owned_ids(guild) if name in EVENT_BOARDS else set()
     raw = db.get_setting(resource_key(guild, name))
     if raw and str(raw).isdigit():
         channel = guild.get_channel(int(raw))
         if channel in guild.text_channels:
+            if name in EVENT_BOARDS and is_skill_channel(channel, owned):
+                raise ServerMessageError(f'MANUAL_REVIEW: #{name} is Skill-owned.')
             return channel
     channel = unique([c for c in guild.text_channels if c.category
                       and alias(c.category.name) in {'start-here', 'community', 'events', 'games', 'gaming'}], name)
+    if channel and name in EVENT_BOARDS and is_skill_channel(channel, owned):
+        raise ServerMessageError(f'MANUAL_REVIEW: #{name} is Skill-owned.')
     if channel is None and name != 'looking-for-group' and any(alias(c.name) == name for c in guild.text_channels):
         raise ServerMessageError(f'MANUAL_REVIEW: #{name} exists outside the expected core categories. No duplicate created.')
     if channel and (not channel.category or alias(channel.category.name) not in {'start-here', 'community', 'events', 'games', 'gaming'}
@@ -199,6 +205,9 @@ async def migrate_boards(guild, changed, failed):
     # (or persist its mapping) before another core board has passed validation.
     if events and events.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
+    from services.shared_event_category import configured_parents, shared_id
+    if events and events.id in configured_parents(guild) and events.id != shared_id(guild, owned=owned):
+        raise ServerMessageError('MANUAL_REVIEW: EVENTS has a conflicting Skill binding; Core migration refused.')
     if not games:
         if legacy_games:
             games = await legacy_games.edit(name='🎮 GAMES', reason='GamerHQ shared game system migration')
@@ -277,7 +286,8 @@ async def migrate_boards(guild, changed, failed):
     current, ordered = event_order(guild, await guild.fetch_channels())
     if [c.id for c in current] != [c.id for c in ordered]:
         from services.channel_change_service import bulk_positions
-        await bulk_positions(guild, [{'id': c.id, 'position': i} for i, c in enumerate(ordered)],
+        managed_ids = {channel.id for name in EVENT_BOARDS if (channel := channels.get(name))}
+        await bulk_positions(guild, [{'id': c.id, 'position': i} for i, c in enumerate(ordered) if c.id in managed_ids],
                              reason='GamerHQ community events before tournaments and giveaways')
     from services.support_service import repair_support
     await repair_support(guild, changed)
