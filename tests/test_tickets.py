@@ -65,6 +65,14 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(channel.name,f'ticket-{item["id"]:04d}')
             self.assertTrue(channel.messages[item['opening_message_id']].pinned)
 
+    async def test_missing_manage_messages_does_not_reserve_new_ticket(self):
+        self.guild.me.guild_permissions = discord.Permissions.all()
+        self.guild.me.guild_permissions.manage_messages = False
+        with self.assertRaisesRegex(tickets.ServerMessageError, 'Manage Messages'):
+            await self.create()
+        self.assertEqual(tickets.list_tickets(self.guild.id), [])
+        self.assertEqual(tickets.mapped(self.guild, 'support-tickets', True).text_channels, [])
+
     async def test_double_submit_and_configurable_limit(self):
         results=await asyncio.gather(*(tickets.open_ticket(self.guild,self.a,'Subject','Body') for _ in range(5)))
         self.assertEqual(sum(created for _,created in results),1)
@@ -146,6 +154,66 @@ class TicketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated['creator_left'],1);self.assertIsNone(updated['assigned_staff_id'])
         await tickets.change(self.guild,self.other_mod,item['id'],'take')
         await tickets.change(self.guild,self.other_mod,item['id'],'close')
+
+    async def reserve_without_channel(self):
+        category = tickets.mapped(self.guild, 'support-tickets', True)
+        with patch.object(category, 'create_text_channel', side_effect=RuntimeError('Creation unavailable')):
+            with self.assertRaises(RuntimeError):
+                await self.create()
+        return tickets.list_tickets(self.guild.id)[0], category
+
+    async def test_reviewed_recovery_preserves_reservation_and_rejects_replay(self):
+        item, category = await self.reserve_without_channel()
+        self.guild.owner_id = self.mod.id
+        with patch.object(discord, 'TextChannel', fixtures.FakeChannel):
+            with self.assertRaisesRegex(ValueError, 'server owner'):
+                await tickets.review_recovery(self.guild, self.other_mod, item['id'])
+            review = await tickets.review_recovery(self.guild, self.mod, item['id'])
+            self.assertEqual(review['mode'], 'create')
+            self.assertEqual(category.text_channels, [])
+            self.assertEqual(tickets.get(item['id']), item)
+            restored = await tickets.confirm_recovery(self.guild, self.mod, review)
+            self.assertEqual(restored['id'], item['id'])
+            self.assertEqual(restored['description'], item['description'])
+            self.assertEqual(restored['created_at'], item['created_at'])
+            self.assertTrue(restored['opening_message_id'])
+            self.assertEqual(len(category.text_channels), 1)
+            tickets.check_private(category.text_channels[0], self.a.id)
+            with self.assertRaises(ValueError):
+                await tickets.confirm_recovery(self.guild, self.mod, review)
+            self.assertEqual(len(category.text_channels), 1)
+
+    async def test_recovery_uncertain_response_blocks_second_create_but_allows_marker_adoption(self):
+        item, category = await self.reserve_without_channel()
+        self.guild.owner_id = self.mod.id
+        with patch.object(discord, 'TextChannel', fixtures.FakeChannel):
+            review = await tickets.review_recovery(self.guild, self.mod, item['id'])
+            with patch.object(category, 'create_text_channel', side_effect=TimeoutError):
+                with self.assertRaises(TimeoutError):
+                    await tickets.confirm_recovery(self.guild, self.mod, review)
+            with self.assertRaisesRegex(ValueError, 'uncertain'):
+                await tickets.review_recovery(self.guild, self.mod, item['id'])
+            channel = await category.create_text_channel(f"ticket-{item['id']:04d}",
+                topic=tickets.marker(self.guild.id, item['id']),
+                overwrites=tickets.private(self.guild, creator=self.a, parent=category))
+            review = await tickets.review_recovery(self.guild, self.mod, item['id'])
+            self.assertEqual(review['mode'], 'reuse')
+            restored = await tickets.confirm_recovery(self.guild, self.mod, review)
+            self.assertEqual(restored['channel_id'], channel.id)
+            self.assertEqual(len(category.text_channels), 1)
+
+    async def test_recovery_rejects_unmarked_name_and_ambiguous_markers(self):
+        item, category = await self.reserve_without_channel()
+        self.guild.owner_id = self.mod.id
+        with patch.object(discord, 'TextChannel', fixtures.FakeChannel):
+            other = await category.create_text_channel(f"ticket-{item['id']:04d}")
+            with self.assertRaisesRegex(ValueError, 'without a verified marker'):
+                await tickets.review_recovery(self.guild, self.mod, item['id'])
+            other.topic = tickets.marker(self.guild.id, item['id'])
+            await category.create_text_channel('duplicate', topic=other.topic)
+            with self.assertRaisesRegex(ValueError, 'Multiple ticket'):
+                await tickets.review_recovery(self.guild, self.mod, item['id'])
+            self.assertIsNone(tickets.get(item['id'])['channel_id'])
 
     async def test_uncertain_create_recovers_topic_without_duplicate(self):
         category=tickets.mapped(self.guild,'support-tickets',True)

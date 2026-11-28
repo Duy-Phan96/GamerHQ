@@ -164,6 +164,55 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
         permitted.send.assert_awaited_once()
         self.assertIn("/lfg invitations", permitted.send.await_args.args[0])
 
+    async def test_disabled_runtime_blocks_validation_and_create_but_not_existing_reads(self):
+        interaction = self.interaction()
+        api = AsyncMock(return_value={"events": []})
+        status = SimpleNamespace(installed=True, configured=True, enabled=False, running=False, health="DISABLED")
+        runtime = SimpleNamespace(registry=SimpleNamespace(contains=lambda _: True), call_management=api,
+                                  status=AsyncMock(return_value=status))
+        interaction.client = SimpleNamespace(skill_runtime=runtime)
+        for operation in ("validate", "create"):
+            with self.assertRaisesRegex(ValueError, "not running"):
+                await call(interaction, operation, self.builder().draft)
+        api.assert_not_awaited()
+        await call(interaction, "list", {})
+        api.assert_awaited_once()
+        status.enabled = status.running = True
+        status.configured = False  # First event may establish domain configuration.
+        status.health = "PASS"
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": false}'):
+            with self.assertRaisesRegex(ValueError, "Public events are not authorized"):
+                await call(interaction, "create", self.builder(visibility="public").draft)
+        self.assertEqual(api.await_count, 1)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": true}'):
+            await call(interaction, "create", self.builder(visibility="public").draft)
+        self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.create.v1")
+
+    async def test_reconcile_requires_manager_and_saved_visibility_policy(self):
+        interaction = self.interaction(ident=20)
+        state = {"ownerId": "10", "config": {"visibility": "public"}}
+        api = AsyncMock(return_value={"state": state})
+        runtime = SimpleNamespace(registry=SimpleNamespace(contains=lambda _: True), call_management=api,
+            status=AsyncMock(return_value=SimpleNamespace(installed=True, configured=True,
+                enabled=True, running=True, health="PASS")))
+        interaction.client = SimpleNamespace(skill_runtime=runtime)
+        with self.assertRaises(PermissionError):
+            await call(interaction, "reconcile", {"eventId": "one"})
+        self.assertEqual(api.await_count, 1)
+        interaction.user = self.member(10)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": false}'):
+            with self.assertRaisesRegex(ValueError, "not authorized"):
+                await call(interaction, "reconcile", {"eventId": "one"})
+        self.assertEqual(api.await_count, 2)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": true}'):
+            await call(interaction, "reconcile", {"eventId": "one"})
+        self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.reconcile.v1")
+        self.assertEqual(api.await_args.kwargs["payload"], {"eventId": "one"})
+        interaction.user = self.member(20)
+        with patch("cogs.event_manager.db.get_setting", return_value='{"allowPublic": true}'):
+            await call(interaction, "reconcile", {"eventId": "one"}, after_member_change=True)
+        self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.reconcile.v1")
+
     async def test_mutation_rechecks_owner_and_guild_before_dispatch(self):
         interaction = self.interaction(ident=20, guild=2)
         current = {"state": {"ownerId": "10"}}
@@ -177,6 +226,24 @@ class EventSkillDiscordTests(unittest.IsolatedAsyncioTestCase):
         interaction.user = self.member(20, admin=True)
         await call(interaction, "delete", {"eventId": "guessed", "revision": 1})
         self.assertEqual(api.await_args.kwargs["contract_id"], "event-manager.delete.v1")
+
+    async def test_public_discovery_excludes_private_even_for_admin_and_rechecks_visibility(self):
+        interaction = self.interaction()
+        interaction.user = self.member(admin=True)
+        first = {"id": "public", "ownerId": "10", "status": "active", "members": ["10"],
+                 "config": self.builder(name="Public Raid", visibility="public").draft}
+        private = {**first, "id": "secret", "config": self.builder(name="Private Raid", visibility="private").draft}
+        paused = {**first, "id": "paused", "status": "paused"}
+        manager = EventManager(None)
+        rows = [{"eventId": ident, "status": "scheduled", "startAt": 4102444800, "participants": ["10"]}
+                for ident in ("public", "secret", "paused")]
+        with patch("cogs.event_manager.call", AsyncMock(return_value={"events": [first, private, paused], "occurrences": rows})):
+            await manager.navigate(interaction, "browse-public", ignore_channel=True)
+        view = interaction.followup.send.await_args.kwargs["view"]
+        self.assertEqual([option.label for option in view.children[0].options], ["Public Raid"])
+        with patch("cogs.event_manager.call", AsyncMock(return_value={"state": private})):
+            with self.assertRaisesRegex(ValueError, "no longer publicly available"):
+                await manager.action(interaction, "public", "browse-public")
 
     async def test_event_picker_uses_titles_and_distinguishes_owner_from_admin(self):
         interaction = self.interaction()

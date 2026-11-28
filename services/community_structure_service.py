@@ -3,7 +3,7 @@ from database import db
 from services.onboarding_service import alias, unique, set_read_only, set_writable
 from services.server_service import ServerMessageError, upsert_fixed_message
 
-EVENT_BOARDS = ('community-events', 'tournaments', 'giveaways')
+EVENT_BOARDS = ('create-event', 'looking-for-group', 'community-events', 'tournaments', 'giveaways')
 EVENTS_INTRO = (
     '# 🎉 Community Events\n\n'
     'Join or create GamerHQ game nights, community sessions and casual events here. '
@@ -43,17 +43,46 @@ def resource_key(guild, name):
     return f'managed_channel:{guild.id}:{name}'
 
 
+def lfg_migration_key(guild):
+    return f'events_lfg_layout_v1:{guild.id}'
+
+
+def lfg_layout_migrated(guild, channel):
+    return channel is not None and db.get_setting(lfg_migration_key(guild)) == str(channel.id)
+
+
+def lfg_target(guild, channel, default):
+    """Apply the new default once per channel identity, then honor adopted layout."""
+    from services.structure_adoption_service import desired_channel_parent
+    return desired_channel_parent(guild, 'looking-for-group', default) if lfg_layout_migrated(guild, channel) else default
+
+
+def mark_lfg_layout(guild, channel, events):
+    """Record only a completed migration or a verified setup in EVENTS."""
+    if events is None or channel.category_id != events.id or lfg_layout_migrated(guild, channel):
+        return
+    from services.structure_adoption_service import save_runtime_state, snapshot_channel
+    save_runtime_state(guild, 'channel', 'looking-for-group', snapshot_channel(channel))
+    db.set_setting(lfg_migration_key(guild), channel.id)
+
+
 def core_channel(guild, name):
     from services.channel_change_service import removed
     if removed(guild, name):
         return None
+    from services.shared_event_category import owned_ids, is_skill_channel
+    owned = owned_ids(guild) if name in EVENT_BOARDS else set()
     raw = db.get_setting(resource_key(guild, name))
     if raw and str(raw).isdigit():
         channel = guild.get_channel(int(raw))
         if channel in guild.text_channels:
+            if name in EVENT_BOARDS and is_skill_channel(channel, owned):
+                raise ServerMessageError(f'MANUAL_REVIEW: #{name} is Skill-owned.')
             return channel
     channel = unique([c for c in guild.text_channels if c.category
                       and alias(c.category.name) in {'start-here', 'community', 'events', 'games', 'gaming'}], name)
+    if channel and name in EVENT_BOARDS and is_skill_channel(channel, owned):
+        raise ServerMessageError(f'MANUAL_REVIEW: #{name} is Skill-owned.')
     if channel is None and name != 'looking-for-group' and any(alias(c.name) == name for c in guild.text_channels):
         raise ServerMessageError(f'MANUAL_REVIEW: #{name} exists outside the expected core categories. No duplicate created.')
     if channel and (not channel.category or alias(channel.category.name) not in {'start-here', 'community', 'events', 'games', 'gaming'}
@@ -76,7 +105,7 @@ def guide_text(guild):
     return (
         '# 📘 GamerHQ Guide\n\nHere are GamerHQ’s main features and how to use them.\n\n'
         f'## 🎮 Games & Roles\nChoose games in **{mention(guild, "choose-your-games")}** and optional notifications, languages and profile settings in **{mention(guild, "choose-your-roles")}**. \n\n'
-        f'## 🎯 Looking for Group\nPlan and join community events in **{mention(guild, "looking-for-group")}**.\n'
+        f'## 🎯 Looking for Group\nCreate events in **{mention(guild, "create-event")}** and browse public events in **{mention(guild, "looking-for-group")}**.\n'
         '`/lfg create` — create a scheduled event\n`/lfg manage` — manage events you created\n`/lfg join-code` — join a private event\nEvents do not require a game selection; event posts include a Google Calendar link.\n\n'
         f'## 🤖 Bot Commands\nUse **{mention(guild, "bot-commands")}** for bot commands.\n\n'
         '## 🎵 Music Bots\n**Jockie Music** — mainly Apple Music · `m!`\n**Pancake** — mainly Spotify · `p!`\nJoin a voice channel, then use a prefix with:\n'
@@ -101,6 +130,12 @@ async def refresh_boards(guild):
     suggestions = core_channel(guild, 'suggestions')
     if suggestions:
         await refresh_entry(suggestions)
+    from cogs.server import default_copy_for, managed_channel_view, setting_key_for, resolve_channel_placeholders
+    create = core_channel(guild, 'create-event')
+    if create and db.get_setting(resource_key(guild, 'create-event')) == str(create.id):
+        await upsert_fixed_message(create, setting_key=setting_key_for(create),
+            content=resolve_channel_placeholders(guild, default_copy_for(create)), pin=True,
+            view=managed_channel_view(create), recover_match=lambda m: (m.content or '').startswith('# 📅 Create Event'))
     events = core_channel(guild, 'community-events') if db.get_setting(resource_key(guild, 'community-events')) else None
     if events:
         await upsert_fixed_message(
@@ -127,8 +162,8 @@ async def migrate_boards(guild, changed, failed):
     if game_target and game_target.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: GAMES category is private; public adoption refused.')
     # Resolve all targets before mutating; never adopt a per-game LFG channel.
-    channels = {name: core_channel(guild, name) for name in ('looking-for-group', 'guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
-    for name in ('guide', 'suggestions', 'community-events'):
+    channels = {name: core_channel(guild, name) for name in ('guide', 'suggestions', *EVENT_BOARDS, 'introductions')}
+    for name in ('guide', 'suggestions', 'create-event', 'community-events'):
         if not channels[name] and unique(guild.text_channels, name):
             raise ServerMessageError(f'#{name} exists outside the core categories; review its location before setup. No duplicate was created.')
     event = channels['community-events']
@@ -142,6 +177,24 @@ async def migrate_boards(guild, changed, failed):
         or event.category.overwrites_for(guild.default_role).view_channel is False
     ):
         raise ServerMessageError('Unmapped community-events is private; review before adopting it as a public board.')
+    # Core boards may share the Event Manager category, but must never adopt
+    # a Skill-owned event area or expose a private channel.
+    with db.connect() as conn:
+        owned = {int(row[0]) for row in conn.execute(
+            "SELECT json_extract(state_json, '$.channelId') FROM skill_managed_resources WHERE guild_id=?",
+            (guild.id,)) if row[0]}
+    for name in ('looking-for-group', 'create-event'):
+        board = channels[name]
+        raw = db.get_setting(resource_key(guild, name))
+        if raw and (board is None or str(board.id) != str(raw)):
+            raise ServerMessageError(f'{name} binding is unavailable; review before creating or moving anything.')
+        if board and (board.id in owned or (getattr(board, 'topic', None) or '').startswith('skill-resource:')
+                or not board.category
+                or (alias(board.category.name) not in {'start-here', 'community', 'games', 'gaming', 'events'}
+                    and not (name == 'looking-for-group' and raw and lfg_layout_migrated(guild, board)))
+                or board.overwrites_for(guild.default_role).view_channel is False
+                or board.category.overwrites_for(guild.default_role).view_channel is False):
+            raise ServerMessageError(f'{name} is private, Skill-owned or has unexpected placement. Review its identity.')
     events = core_category(guild, 'events')
     staff_categories = [c for c in guild.categories if alias(c.name) in STAFF_ALIASES]
     if len(staff_categories) > 1:
@@ -152,6 +205,9 @@ async def migrate_boards(guild, changed, failed):
     # (or persist its mapping) before another core board has passed validation.
     if events and events.overwrites_for(guild.default_role).view_channel is False:
         raise ServerMessageError('MANUAL_REVIEW: EVENTS category is private; public adoption refused.')
+    from services.shared_event_category import configured_parents, shared_id
+    if events and events.id in configured_parents(guild) and events.id != shared_id(guild, owned=owned):
+        raise ServerMessageError('MANUAL_REVIEW: EVENTS has a conflicting Skill binding; Core migration refused.')
     if not games:
         if legacy_games:
             games = await legacy_games.edit(name='🎮 GAMES', reason='GamerHQ shared game system migration')
@@ -165,15 +221,23 @@ async def migrate_boards(guild, changed, failed):
         changed.append('Created EVENTS')
     db.set_setting(f'managed_category:{guild.id}:events', events.id)
     from services.structure_adoption_service import desired_channel_parent, desired_channel_name
-    for name, default_target in [('looking-for-group', games), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
+    for name, default_target in [('looking-for-group', events), ('tournaments', events), ('giveaways', events), ('introductions', community)]:
         channel = channels[name]
-        target = desired_channel_parent(guild, name, default_target)
+        target = lfg_target(guild, channel, default_target) if name == 'looking-for-group' else desired_channel_parent(guild, name, default_target)
+        if name == 'looking-for-group' and target.overwrites_for(guild.default_role).view_channel is False:
+            raise ServerMessageError('MANUAL_REVIEW: adopted LFG destination is private; no move performed.')
         if channel and channel.category_id != target.id:
-            channels[name] = await channel.edit(category=target, sync_permissions=False, reason='GamerHQ persisted core channel organization')
+            from services.channel_change_service import edit
+            channels[name] = await edit(channel, category=target, sync_permissions=False, reason='GamerHQ persisted core channel organization')
+            if name == 'looking-for-group':
+                from services.structure_adoption_service import save_runtime_state, snapshot_channel
+                save_runtime_state(guild, 'channel', name, snapshot_channel(channels[name]))
             changed.append(f'Moved {name} → {target.name}; ID/history/overrides preserved')
         elif not channel:
             failed.append(f'Existing #{name} not found; no replacement/history created.')
-    for name, target in [('guide', start), ('suggestions', community), ('community-events', events)]:
+        if name == 'looking-for-group' and channels[name]:
+            mark_lfg_layout(guild, channels[name], events)
+    for name, target in [('guide', start), ('suggestions', community), ('create-event', events), ('community-events', events)]:
         channel = channels[name]
         if removed(guild, name):
             continue
@@ -184,7 +248,7 @@ async def migrate_boards(guild, changed, failed):
             from services.onboarding_service import guide_overwrites
             empty = SimpleNamespace(guild=guild, name=name, overwrites={}, overwrites_for=lambda target: discord.PermissionOverwrite())
             overwrites = guide_overwrites(empty)
-            display = {'guide': '📘・guide', 'community-events': '🎉・community-events'}.get(name, name)
+            display = {'guide': '📘・guide', 'create-event': '📅・create-event', 'community-events': '🎉・community-events'}.get(name, name)
             channel = await target.create_text_channel(display, overwrites=overwrites, reason='GamerHQ managed board')
             channels[name] = channel
             db.set_setting(resource_key(guild, name), channel.id)
@@ -200,7 +264,7 @@ async def migrate_boards(guild, changed, failed):
         channels['community-events'] = await channels['community-events'].edit(name=events_name, reason='GamerHQ persisted community events naming')
     if channels['looking-for-group'] and channels['looking-for-group'].name != lfg_name:
         channels['looking-for-group'] = await channels['looking-for-group'].edit(name=lfg_name, reason='GamerHQ persisted LFG naming')
-    for name in ('looking-for-group', 'guide', 'suggestions', 'community-events'):
+    for name in ('looking-for-group', 'create-event', 'guide', 'suggestions', 'community-events'):
         if channels[name]:
             await set_read_only(channels[name])
     if channels['introductions']:
@@ -215,14 +279,15 @@ async def migrate_boards(guild, changed, failed):
             # Privacy and move in the same API operation, never temporarily public.
             await staff_inbox.edit(category=staff, sync_permissions=False, overwrites=private_overwrites(guild, staff_inbox), reason='GamerHQ private suggestion inbox')
         db.set_setting(f'staff_suggestions_channel:{guild.id}', staff_inbox.id)
-    for name in ('guide', 'suggestions', 'gaming-chat', 'looking-for-group', *EVENT_BOARDS, 'bot-commands', 'choose-your-games', 'choose-your-roles'):
+    for name in ('guide', 'suggestions', 'gaming-chat', *EVENT_BOARDS, 'bot-commands', 'choose-your-games', 'choose-your-roles'):
         channel = channels.get(name) or core_channel(guild, name)
         if channel:
             db.set_setting(resource_key(guild, name), channel.id)
     current, ordered = event_order(guild, await guild.fetch_channels())
     if [c.id for c in current] != [c.id for c in ordered]:
         from services.channel_change_service import bulk_positions
-        await bulk_positions(guild, [{'id': c.id, 'position': i} for i, c in enumerate(ordered)],
+        managed_ids = {channel.id for name in EVENT_BOARDS if (channel := channels.get(name))}
+        await bulk_positions(guild, [{'id': c.id, 'position': i} for i, c in enumerate(ordered) if c.id in managed_ids],
                              reason='GamerHQ community events before tournaments and giveaways')
     from services.support_service import repair_support
     await repair_support(guild, changed)

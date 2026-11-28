@@ -47,6 +47,38 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         interaction.message.edit.assert_not_awaited()
         self.assertIsNone(db.get_game_by_id(self.game['id'])['channel_id'])
 
+    async def test_bare_game_select_opens_canonical_view_and_named_option_remains(self):
+        from cogs.games import Games, ToggleGameView
+        command = Games.select
+        self.assertFalse(command.parameters[0].required)
+        interaction = self.interaction()
+        await command.callback(None, interaction)
+        self.assertIsInstance(interaction.response.send_message.call_args.kwargs['view'], GameSelectionSession)
+        self.assertTrue(interaction.response.send_message.call_args.kwargs['ephemeral'])
+        named = self.interaction()
+        await command.callback(None, named, self.game['name'])
+        self.assertIsInstance(named.response.send_message.call_args.kwargs['view'], ToggleGameView)
+        self.member.add_roles.assert_not_awaited()
+        self.member.remove_roles.assert_not_awaited()
+
+    async def test_done_closes_without_role_mutation_and_rejects_stale_actions(self):
+        view = GameSelectionSession(self.member, [self.game])
+        other = self.interaction()
+        other.user = SimpleNamespace(id=999)
+        await view.done(other)
+        self.assertFalse(view.finished)
+        view.busy = True
+        await view.done(self.interaction())
+        self.assertFalse(view.finished)
+        view.busy = False
+        interaction = self.interaction()
+        await next(c for c in view.children if c.label == 'Done').callback(interaction)
+        self.assertTrue(view.finished)
+        self.assertIsNone(interaction.response.edit_message.call_args.kwargs['view'])
+        await view.toggle(self.interaction(), self.game['id'])
+        self.member.add_roles.assert_not_awaited()
+        self.member.remove_roles.assert_not_awaited()
+
     async def test_existing_selection_is_green_on_open(self):
         self.member.roles = [self.guild.get_role(self.game['role_id'])]
         view = GameSelectionSession(self.member, [self.game])
@@ -92,7 +124,7 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
             await click('Next ▶')
             self.assertEqual(sum(c.label.startswith('➕ ') for c in view.children), 5)
             await click('Browse A–Z')
-            self.assertEqual([c.label for c in view.children[:-1]], ['A–E', 'F–J', 'K–O', 'P–T', 'U–Z', '0–9 / Other'])
+            self.assertEqual([c.label for c in view.children[:-2]], ['A–E', 'F–J', 'K–O', 'P–T', 'U–Z', '0–9 / Other'])
             await click('0–9 / Other')
             self.assertTrue(any(c.label == '➕ 123 Game' for c in view.children))
             await click('Back to Popular')

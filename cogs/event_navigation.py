@@ -125,6 +125,7 @@ class EventActions(EventView):
                             ("pause", "Pause") if event["status"] == "active" else ("resume", "Resume")])
             if self.session:
                 actions.append(("cancel-session", "Cancel Session"))
+            actions.append(("sync", "Sync Event"))
             actions.append(("delete", "Delete Event"))
         for index, (action, label) in enumerate(actions):
             button = discord.ui.Button(label=label, row=index // 4,

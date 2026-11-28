@@ -80,6 +80,33 @@ class EntryComponentTests(unittest.IsolatedAsyncioTestCase):
             send_modal=AsyncMock(), defer=AsyncMock(), edit_message=AsyncMock(), is_done=lambda: True),
             followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock())
 
+    async def test_unavailable_ticket_reply_omits_view_and_preserves_ticket(self):
+        interaction = self.request()
+        before = self.snapshot()
+        for request in (False, True):
+            for item in ({'channel_id': None}, {'channel_id': self.boards['support'][1].id}):
+                async def send(text, **kwargs):
+                    self.assertNotIn('view', kwargs)
+                    self.assertTrue(kwargs['ephemeral'])
+                    self.assertIn('chat is not confirmed ready', text)
+                    self.assertIn('No replacement was created', text)
+                interaction.followup.send = AsyncMock(side_effect=send)
+                await controls.reply_opened_ticket(interaction, item, False, request=request)
+                interaction.followup.send.assert_awaited_once()
+        self.assertEqual(before, self.snapshot())
+
+    async def test_ready_ticket_reply_keeps_private_open_link(self):
+        interaction = self.request()
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id, channel.guild = 123, self.guild
+        channel.permissions_for.return_value = SimpleNamespace(view_channel=True, read_message_history=True)
+        with patch.object(self.guild, 'get_channel', return_value=channel):
+            await controls.reply_opened_ticket(interaction, {'channel_id': 123, 'opening_message_id': 456}, False)
+        kwargs = interaction.followup.send.call_args.kwargs
+        self.assertTrue(kwargs['ephemeral'])
+        self.assertEqual(kwargs['view'].children[0].label, 'Open Existing Ticket')
+        self.assertEqual(kwargs['view'].children[0].url, f'https://discord.com/channels/{self.guild.id}/123')
+
     async def test_real_received_ids_differ_but_payloads_match_both_known_defaults(self):
         for kind, (spec, channel, message) in self.boards.items():
             with self.subTest(kind=kind):

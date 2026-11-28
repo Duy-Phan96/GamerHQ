@@ -104,6 +104,8 @@ class StructureAdoptionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_public_move_is_adopted_and_restart_bootstrap_does_not_restore_old_parent(self):
         channel = community.core_channel(self.guild, 'looking-for-group')
+        self.assertTrue(community.lfg_layout_migrated(self.guild, channel))
+        self.assertIs(channel.category, community.core_category(self.guild, 'events'))
         before = clone_channel(channel)
         channel.category = self.community
 
@@ -114,6 +116,13 @@ class StructureAdoptionTests(unittest.IsolatedAsyncioTestCase):
         await runtime.bootstrap(self.guild)
         await setup.repair_server(self.guild, self.bot)
         self.assertIs(channel.category, self.community)
+        from services import health_service
+        findings = await health_service.scan(self.guild, messages=False)
+        self.assertEqual(next(f.state for f in findings if f.name == 'looking-for-group'), 'PASS')
+        change = runtime.recent_changes(self.guild, 1)[0]
+        await runtime.undo_change(self.guild, self.owner, change['id'])
+        await setup.repair_server(self.guild, self.bot)
+        self.assertIs(channel.category, community.core_category(self.guild, 'events'))
 
     async def test_intentionally_deleted_optional_channel_stays_removed_after_repair(self):
         channel = community.core_channel(self.guild, 'suggestions')

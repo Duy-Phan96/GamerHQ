@@ -15,6 +15,9 @@ CORE_BOARD_OVERWRITES = ('add_reactions', 'use_application_commands', 'send_mess
 CORE_INSTALL = (*BOARD_PUBLISH, *CORE_BOARD_OVERWRITES, 'embed_links', 'attach_files',
                 'manage_channels', 'manage_roles')
 
+VOICE_CREATE = ('view_channel', 'manage_channels', 'manage_roles', 'connect', 'speak', 'move_members')
+TICKET_WRITE = (*BOARD_PUBLISH, 'manage_channels', 'manage_roles', 'manage_messages', 'attach_files', 'embed_links')
+
 LABELS = {
     'view_channel': 'View Channel', 'read_message_history': 'Read Message History',
     'send_messages': 'Send Messages', 'pin_messages': 'Pin Messages',
@@ -25,6 +28,7 @@ LABELS = {
     'create_private_threads': 'Create Private Threads',
     'create_events': 'Create Events', 'manage_events': 'Manage Events',
     'connect': 'Connect', 'speak': 'Speak', 'move_members': 'Move Members',
+    'manage_messages': 'Manage Messages',
 }
 
 
@@ -106,3 +110,32 @@ async def installation_issues(guild, required):
 
 def install_remediation(absent):
     return 'Host role is missing ' + permission_names(absent) + '. Review Server Settings → Roles → Host bot role.'
+
+def resource_issues(guild, channel, required):
+    """Check both server grants and the current resource's effective grants."""
+    member = guild.me
+    if not member or not channel or channel.guild.id != guild.id:
+        return 'Host or channel identity is unavailable.'
+    server = member.guild_permissions
+    resolve = getattr(channel, 'permissions_for', None)
+    if not callable(resolve):
+        return 'Host channel permissions could not be verified.'
+    effective = resolve(member)
+    if not isinstance(server, discord.Permissions) or not isinstance(effective, discord.Permissions):
+        return 'Host permissions could not be verified.'
+    absent = missing(server, required)
+    if absent:
+        return install_remediation(absent)
+    absent = missing(effective, required)
+    if absent:
+        return 'Host channel permissions are missing ' + permission_names(absent) + '. Review the category/channel overrides.'
+    return ''
+
+
+def unsupported_overwrite_bits(permissions, overwrites):
+    """Creation accepts only guild-granted allow/deny bits. Never strip a deny."""
+    mask = 0
+    for overwrite in overwrites.values():
+        allow, deny = overwrite.pair()
+        mask |= allow.value | deny.value
+    return discord.Permissions(mask & ~permissions.value)

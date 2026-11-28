@@ -69,6 +69,56 @@ def spec(**changes):
             "overview": "Next raid at 19:00", **changes}
 
 
+def test_owner_review_authorizes_only_bound_event_public_policy(fixture):
+    import json
+    from hosts.gamerhq.skill_resources import review_event_public_areas, enable_event_public_areas
+    guild = fixture.guild
+    guild.owner_id = 50
+    parent = guild.get_channel(10)
+    parent.permissions_for.return_value = discord.Permissions(
+        view_channel=True, manage_channels=True, manage_roles=True,
+        send_messages=True, read_message_history=True, embed_links=True)
+    key = "skill_resources:1:event-manager"
+    original = {"categoryId": 10, "allowPublic": False, "maxResources": 10, "voiceCategoryId": 20}
+    db.set_setting(key, json.dumps(original))
+    db.set_setting("skill_resources:1:other-skill", '{"allowPublic": false}')
+    db.set_setting("managed_category:1:events", "10")
+    with pytest.raises(PermissionError):
+        review_event_public_areas(guild, 51)
+    reviewed = review_event_public_areas(guild, 50)
+    assert not reviewed["allowed"]
+    assert json.loads(db.get_setting(key)) == original
+    with pytest.raises(PermissionError):
+        enable_event_public_areas(guild, 51, reviewed)
+    parent.permissions_for.return_value.manage_roles = False
+    with pytest.raises(ValueError, match="Manage Roles"):
+        enable_event_public_areas(guild, 50, reviewed)
+    parent.permissions_for.return_value.manage_roles = True
+    db.set_setting("managed_category:1:events", "11")
+    with pytest.raises(ValueError, match="binding"):
+        enable_event_public_areas(guild, 50, reviewed)
+    db.set_setting("managed_category:1:events", "10")
+    db.set_setting(key, json.dumps({**original, "maxResources": 9}))
+    with pytest.raises(ValueError, match="changed"):
+        enable_event_public_areas(guild, 50, reviewed)
+    db.set_setting(key, json.dumps(original))
+    assert enable_event_public_areas(guild, 50, reviewed)
+    policy = json.loads(db.get_setting(key))
+    assert policy == {**original, "allowPublic": True}
+    assert db.get_setting("skill_resources:1:other-skill") == '{"allowPublic": false}'
+    guild.create_text_channel.assert_not_awaited()
+
+    async def scenario():
+        adapter = fixture.adapter(policy=policy)
+        await adapter.ensure_area(**spec(key="event:public", visibility="public"))
+        await adapter.ensure_area(**spec(key="event:private"))
+        assert fixture.channels[0].test_overrides[guild.default_role].view_channel is True
+        assert fixture.channels[1].test_overrides[guild.default_role].view_channel is False
+        with pytest.raises(InvalidHostOperationError):
+            await fixture.adapter(skill_id="other-skill").ensure_area(**spec(visibility="public"))
+    asyncio.run(scenario())
+
+
 def test_restart_and_retries_keep_one_channel_one_card_and_revoke_member_access(fixture):
     async def scenario():
         first = await fixture.adapter().ensure_area(**spec())

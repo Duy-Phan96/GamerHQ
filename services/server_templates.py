@@ -22,7 +22,7 @@ class ServerTemplate:
 
 
 GAMERHQ = ServerTemplate('gamerhq-gaming-community', 'GamerHQ Gaming Community', (
-    'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'looking-for-group',
+    'welcome', 'guide', 'choose-your-roles', 'choose-your-games', 'create-event', 'looking-for-group',
     'community-events', 'suggestions', 'need-support',
 ), staff_access=True)
 TEMPLATES = (GAMERHQ,)
@@ -114,8 +114,9 @@ def entry_message_keys(guild, destinations):
     if 'choose-your-roles' in destinations:
         board = SimpleNamespace(id=destinations['choose-your-roles'])
         keys.update(dict.fromkeys(role_panel_service.message_keys(guild, board).values(), 'choose-your-roles'))
-    if 'looking-for-group' in destinations:
-        keys[setting_key_for(SimpleNamespace(id=destinations['looking-for-group']))] = 'looking-for-group'
+    for name in ('create-event', 'looking-for-group'):
+        if name in destinations:
+            keys[setting_key_for(SimpleNamespace(id=destinations[name]))] = name
     return keys
 
 
@@ -159,12 +160,23 @@ async def preview(guild, owner, template, bot=None):
                        and row['name'] in template.entry_points and row['bulk_action'] == 'create')
     identity = next((row for row in structure['rows'] if row.get('bulk_member')), None)
     absent = discord_permissions.missing(identity['bulk_permissions'], discord_permissions.CORE_INSTALL) if identity else ()
-    return dict(template=template, structure=structure, choices=choices, boards=boards, progress=record,
+    draft = dict(template=template, structure=structure, choices=choices, boards=boards, progress=record,
                 pin_grants=await server_template_pins.plan(boards['rows']),
                 install_permissions=discord_permissions.install_remediation(absent) if absent else '',
                 new_boards=new_boards,
                 deferred=[name for name in template.entry_points if name not in inspected and name not in new_boards
                           and not any(row['name'] == name and row.get('skill_protected') for row in structure['rows'])])
+    # Game roles can change the role inventory used to confirm Core structure.
+    # Review them only after Core has converged, under the same template flow.
+    if not core_remaining(draft):
+        from services import game_visibility_service as games
+        names = games.default_catalog_names()
+        if any(games.untouched_default(guild, game, names) for game in db.get_all_games()):
+            try:
+                draft['game_roles'] = await games.preview_default_roles(guild, owner)
+            except (ValueError, discord_permissions.DiscordPermissionPreflightError):
+                draft['game_review_issue'] = 'Default game roles require owner and Manage Roles verification.'
+    return draft
 
 
 def counts(draft):
@@ -178,6 +190,43 @@ def counts(draft):
             'Optional/Skipped': decisions.count('skip'),
             'Optional modules': decisions.count('optional'),
             'Skill-owned': decisions.count('delegated')}
+
+
+def core_remaining(draft):
+    summary = counts(draft)
+    return sum(summary[key] for key in ('Will reuse', 'Will create', 'Needs review', 'Blocked'))
+
+
+def game_remaining(draft):
+    games = draft.get('game_roles') or {}
+    return len(games.get('plans', ())) + len(games.get('blocked', ())) + int(bool(draft.get('game_review_issue')))
+
+
+def can_apply(draft):
+    summary = counts(draft)
+    return bool(summary['Will create'] or summary['Will reuse'] or
+                (not core_remaining(draft) and (draft.get('game_roles') or {}).get('plans')))
+
+
+def game_summary(draft):
+    if core_remaining(draft):
+        return 'Default game roles: reviewed in the next setup phase after Core is complete.'
+    games = draft.get('game_roles') or {}
+    if draft.get('game_review_issue'):
+        return 'Default game roles: ' + draft['game_review_issue']
+    if not game_remaining(draft):
+        return 'Default game roles: no untouched catalog entries remain.'
+    creates = sum(row['role_action'] == 'create' for row in games.get('plans', ()))
+    links = sum(row['role_action'] == 'link' for row in games.get('plans', ()))
+    return f"Default game roles: create {creates} · link {links} · review {len(games.get('blocked', ()))} · text channels 0."
+
+
+def game_findings(draft):
+    games = draft.get('game_roles') or {}
+    yield from (f"Game: {row['role_name']} · {row['role_action']} role only" for row in games.get('plans', ()))
+    yield from (f"Game: {row['name']} · {row['reason']}" for row in games.get('blocked', ()))
+    if draft.get('game_review_issue'):
+        yield draft['game_review_issue']
 
 
 def template_decision(row, choices):
@@ -196,7 +245,7 @@ def report_summary(draft):
 
     structure = draft['structure']['rows']
     lines = [draft['template'].name, 'Core structure and managed entry points, with optional and Skill totals shown separately.',
-             *(f'{label}: {count}' for label, count in counts(draft).items()), '']
+             *(f'{label}: {count}' for label, count in counts(draft).items()), '', game_summary(draft)]
     if draft.get('install_permissions'):
         lines.append('Core install baseline · ' + draft['install_permissions']
                      + ' Existing channels are also checked for effective access.')
@@ -219,11 +268,11 @@ def report_summary(draft):
     elif grants:
         next_action = ('Review Pin Permissions before granting access.' if automatic
                        else 'Review the Host-member overwrite instructions in Full Report, then reopen the preview.')
-    elif counts(draft)['Will create'] or counts(draft)['Will reuse']:
+    elif can_apply(draft):
         next_action = 'Review the plan, then select Apply Template to perform the listed safe actions.'
     else:
         next_action = ('Review remaining setup findings in Full Report before reopening the preview.'
-                       if counts(draft)['Needs review'] or counts(draft)['Blocked'] else 'Core setup is complete. Review optional integrations separately.')
+                       if core_remaining(draft) or game_remaining(draft) else 'Core setup and default games are complete. Review optional integrations separately.')
     return '\n'.join([*lines, '', 'Next: ' + next_action])
 
 
@@ -249,6 +298,8 @@ def report_details(draft):
         lines.extend(grant.description() for grant in grants.values())
     lines.extend(f'{name} · Review on a fresh preview once its destination is verified.' for name in draft['deferred'])
     lines.extend(f'{name} · Add missing default entry points after creation and verification.' for name in draft['new_boards'])
+    if game_remaining(draft):
+        lines.extend(('', 'Default game role decisions', *game_findings(draft)))
     return '\n'.join(lines)
 
 
@@ -290,6 +341,32 @@ async def apply(guild, owner, draft, bot=None):
 
         with apply_stage(guild, template, 'saving setup progress'):
             save('applying')
+        if not core_remaining(draft) and (draft.get('game_roles') or {}).get('plans'):
+            from services import game_visibility_service as games
+            with apply_stage(guild, template, 'revalidating Core before game initialization'):
+                current = await preview(guild, owner, template, bot)
+                if core_remaining(current):
+                    raise ServerMessageError('Core setup changed. Open a fresh preview.')
+            result = dict(created=[], reused=[], already_configured=[], skipped=[], blocked=[], failed=[],
+                          needs_review=[], remaining=[])
+            with apply_stage(guild, template, 'initializing reviewed default games'):
+                planned = draft['game_roles']
+                outcomes = await games.apply_default_roles(guild, owner, planned)
+                for plan, outcome in zip(planned['plans'], outcomes):
+                    label = 'Game role: ' + outcome['name']
+                    if outcome['ok']:
+                        result['created' if plan['role_action'] == 'create' else 'reused'].append(label)
+                    else:
+                        result['failed'].append(label + ' · creation or mapping could not be verified')
+            with apply_stage(guild, template, 'verifying game initialization'):
+                refreshed = await preview(guild, owner, template, bot)
+                final = counts(refreshed)
+                remaining = core_remaining(refreshed) + game_remaining(refreshed)
+                result['remaining'] = [*remaining_structure(refreshed), *game_findings(refreshed)]
+                result['needs_review'].extend(f"Game: {row['name']} · {row['reason']}"
+                    for row in (refreshed.get('game_roles') or {}).get('blocked', ()))
+                save('remaining' if remaining else 'complete', remaining)
+            return result, final, remaining
         created = {}
 
         def record_created(row, resource):
@@ -329,8 +406,8 @@ async def apply(guild, owner, draft, bot=None):
         with apply_stage(guild, template, 'verifying the result'):
             refreshed = await preview(guild, owner, template, bot)
             final = counts(refreshed)
-            remaining = sum(final[key] for key in ('Will reuse', 'Will create', 'Needs review', 'Blocked'))
-            result['remaining'] = list(remaining_structure(refreshed))
+            remaining = core_remaining(refreshed) + game_remaining(refreshed)
+            result['remaining'] = [*remaining_structure(refreshed), *game_findings(refreshed)]
             result['remaining'].extend(f"{row['label']} · {row['reason']}" for row in refreshed['boards']['rows']
                                        if row['status'] != 'EXACT_MATCH')
             result['remaining'].extend(f'{name} · Verify the destination for the managed entry point.'

@@ -1631,4 +1631,11 @@ class LFG(commands.Cog):
             except discord.HTTPException:
                 logging.getLogger(__name__).exception('Departed LFG member removed; card refresh deferred event=%s', event['id'])
 
-async def setup(bot): await bot.add_cog(LFG(bot))
+async def setup(bot):
+    from cogs.event_manager import EventBrowseEntry, EventCreateEntry
+    from services.tenant_routing import add_shared_entry_view
+    entry = EventCreateEntry()
+    entry.remove_item(entry.create)
+    add_shared_entry_view(bot, entry)
+    add_shared_entry_view(bot, EventBrowseEntry())
+    await bot.add_cog(LFG(bot))

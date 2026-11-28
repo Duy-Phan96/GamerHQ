@@ -38,7 +38,10 @@ class StructureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ids, [lfg.id, tournament.id, giveaway.id])
         games = structure.core_category(self.guild, 'games')
         self.assertIsNotNone(games)
-        self.assertIs(lfg.category, games)
+        self.assertIs(lfg.category, structure.core_category(self.guild, 'events'))
+        create = structure.core_channel(self.guild, 'create-event')
+        self.assertIs(create.category, lfg.category)
+        self.assertTrue(create.overwrites_for(self.guild.default_role).use_application_commands)
         self.assertIs(structure.core_channel(self.guild, 'gaming-chat'), gaming_chat)
         self.assertIs(gaming_chat.category, self.community)
         self.assertEqual(gaming_chat.edits, [])
@@ -56,11 +59,11 @@ class StructureTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(lfg.mention, structure.guide_text(self.guild))
         self.assertNotIn(per_game.mention, structure.guide_text(self.guild))
 
-    def test_blueprint_places_central_lfg_only_in_games(self):
+    def test_blueprint_places_central_lfg_only_in_events(self):
         parents = [onboarding.alias(category.name) for category in setup.SERVER_BLUEPRINT
                    for channel in category.channels
                    if onboarding.alias(channel.name) == 'looking-for-group']
-        self.assertEqual(parents, ['games'])
+        self.assertEqual(parents, ['events'])
 
     async def test_private_legacy_games_refused_before_rename_or_mapping(self):
         legacy = self.guild.add_category('🎮 GAMING')

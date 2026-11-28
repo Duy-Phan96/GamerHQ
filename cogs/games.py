@@ -1374,9 +1374,11 @@ class Games(commands.Cog):
         default_permissions=discord.Permissions(administrator=True),
     )
 
-    @game.command(name="select", description="Add or remove one of your game roles.")
-    @app_commands.describe(game="Start typing a game name")
-    async def select(self, interaction: discord.Interaction, game: str):
+    @game.command(name="select", description="Open your games or choose a specific game role.")
+    @app_commands.describe(game="Optional: start typing a game name")
+    async def select(self, interaction: discord.Interaction, game: str | None = None):
+        if game is None:
+            return await open_game_selector(interaction)
         selected = db.get_game_by_name(game)
         if selected is None or not selected.get("selectable"):
             matches = search_games(game, selectable_only=True, limit=1)
@@ -2122,6 +2124,12 @@ class Games(commands.Cog):
             )
         ]
 
+
+    @game_admin.command(name="initialize-defaults", description="Owner: review default game roles without creating text channels.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def initialize_default_games(self, interaction: discord.Interaction):
+        from cogs.game_channels import open_default_roles
+        await open_default_roles(interaction)
 
     @game_admin.command(
         name="setup",

@@ -26,6 +26,11 @@ and overview data. No raw Discord client, arbitrary channel ID or role managemen
 is part of this contract. Trusted Host policy is stored at
 `skill_resources:<guild-id>:<skill-id>` with `categoryId`, `allowPublic` (default
 false), and `maxResources` (default 100). Configuration is an explicit Host action;
+for Event Manager, the server owner can review and confirm public areas from
+`/server manage → Skills → Event Manager → Review Public Events`. This changes
+only the existing Event Manager policy when its text category matches the stored
+Events category and required permissions are present. It does not publish events
+or change existing private access. An existing event can be reconciled separately.
 missing policy or inadequate category permissions fails closed. No deployed
 policy or Discord permission was changed during development.
 

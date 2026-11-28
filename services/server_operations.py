@@ -213,7 +213,12 @@ def target(guild, row):
     from services import structure_adoption_service as runtime
     logical = f"game:{row['game_id']}" if row.get('game_id') else row['name']
     state = runtime.channel_state(guild, logical)
-    if state and not state.get('deleted') and state.get('category_id') is not None:
+    if row['name'] == 'looking-for-group':
+        from services.community_structure_service import lfg_target
+        channel_id = db.get_setting(row['key'])
+        channel = guild.get_channel(int(channel_id)) if channel_id and channel_id.isdigit() else None
+        parent = lfg_target(guild, channel, parent)
+    elif state and not state.get('deleted') and state.get('category_id') is not None:
         adopted = guild.get_channel(int(state['category_id']))
         if isinstance(adopted, discord.CategoryChannel):
             parent = adopted
@@ -372,6 +377,9 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
     if protected is None:
         from services.server_configuration_preview import skill_configuration
         protected, _ = skill_configuration(guild)
+    from services.shared_event_category import BOARDS, shared_id, owned_ids, safe_board, is_skill_channel, blocked_destination
+    owned = owned_ids(guild)
+    shared = shared_id(guild, owned=owned)
     rows = definitions(guild)
     if bulk and template_staff:
         rows.append(dict(key=staff_access.key(guild), kind='staff-role', name='gamerhq-staff',
@@ -418,12 +426,25 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
                           for name in ('games', 'gaming'))
             placement_error |= bool((canonical and legacy and canonical != legacy)
                                     or (raw and existing is None) or (removed and existing is None))
+        shared_parent = (kind == 'category' and row['name'] == 'events' and existing is not None
+                         and existing.id == shared and len(candidates) == 1)
+        shared_board = kind == 'text' and row['name'] in BOARDS
+        def protected_candidate(resource):
+            if shared_parent and resource.id == shared:
+                return False
+            if is_skill_channel(resource, owned) or resource.id in protected:
+                return True
+            return (getattr(resource, 'category_id', None) in protected
+                    and not (shared_board and shared is not None
+                             and safe_board(guild, row['name'], resource, shared, owned)))
         if (expected_parent and expected_parent.id in protected
-                or any(r.id in protected or getattr(r, 'category_id', None) in protected
-                       or (getattr(r, 'topic', None) or '').startswith('skill-resource:') for r in candidates)):
+                and not (shared_board and expected_parent.id == shared)
+                or any(protected_candidate(r) for r in candidates)):
             placement_error = True
             row['skill_protected'] = True
             row['reason'] = 'Skill-owned resource or destination'
+        if shared_parent:
+            row['shared_event_parent'] = True
         if existing and review_aliases and alias(existing.name) != row['name'] and any(
                 r.id != existing.id and alias(r.name) == row['name'] for r in collection):
             placement_error = True
@@ -490,7 +511,8 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
     warnings = []
     from services.channel_adoption_service import order_plans
     from services.community_structure_service import event_order
-    known_channels = {r['resource'].id for r in rows if r['kind'] == 'text' and r['resource']}
+    known_channels = {r['resource'].id for r in rows if r['kind'] == 'text' and r['resource']
+                      and not r.get('skill_protected')}
     known_categories = {r['resource'].id: r['resource'] for r in rows if r['kind'] == 'category' and r['resource']}
     try:
         from services.game_channel_service import order_plan
@@ -498,6 +520,8 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
         for current, ordered in plans:
             if not current or current[0].category_id not in known_categories: continue
             category = known_categories[current[0].category_id]
+            if category.id in protected and category.id != shared:
+                continue
             # Preserve unknown siblings' relative order; submit positions for managed IDs only.
             if [c.id for c in current if c.id not in known_channels] != [c.id for c in ordered if c.id not in known_channels]: continue
             positions = [{'id': c.id, 'position': i} for i, c in enumerate(ordered) if c.id in known_channels]
@@ -513,7 +537,8 @@ async def _scan(guild, bot, *, message_keys=None, protected=None, verify_placeme
         boards = managed.canonical_boards(guild, bot, warnings=warnings)
         jobs = [inspect_message(guild, key, channel, content, defaults.get(key, (None, content))[1], boards=boards)
                 for key, (channel, content) in boards.items()
-                if (message_keys is None or key in message_keys) and channel in guild.text_channels]
+                if (message_keys is None or key in message_keys) and channel in guild.text_channels
+                and not blocked_destination(guild, channel, protected, shared=shared, owned=owned)]
         rows.extend(await gather_reads(jobs))
     for warning in dict.fromkeys(warnings):
         rows.append(dict(key=warning, kind='warning', name=warning, label=warning, status='AMBIGUOUS',
@@ -1078,7 +1103,7 @@ async def inspect_message(guild, key, channel, content, default_content, *, boar
 def needs_repair(guild, row, *, placement=False):
     resource = row['resource']
     if row['status'] != 'EXACT_MATCH' or resource is None: return False
-    if row.get('optional'): return False
+    if row.get('optional') or row.get('shared_event_parent') or row.get('skill_protected'): return False
     if placement:
         parent, name = row.get('destination'), row.get('placement_name')
         return bool(parent and name and (resource.category_id != parent.id or resource.name != name))
@@ -1135,6 +1160,9 @@ def persist(guild, row, resource):
         db.set_setting('choose_games_section_message_ids', json.dumps(values))
     else:
         db.set_setting(key, resource.id)
+    if row['kind'] == 'text' and row['name'] == 'looking-for-group':
+        from services.community_structure_service import core_category, mark_lfg_layout
+        mark_lfg_layout(guild, resource, core_category(guild, 'events'))
     aliases = {'welcome': f'onboarding:{guild.id}:welcome', 'bot-commands': 'server_community_commands_channel_id',
                'mod-commands': 'server_staff_commands_channel_id'}
     if row['kind'] == 'text' and row['name'] in aliases:
@@ -1249,7 +1277,9 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                 # Re-read only this board immediately before repairing it.
                 rows = await scan(guild, bot, fresh=True, affected=[old], message_keys={old['key']})
                 row = next((r for r in rows if r['key'] == old['key']), None)
-            if (not row or (row['raw'], row['signature']) != (old['raw'], old['signature'])
+            if (not row or row.get('skill_protected')
+                    or bool(row.get('shared_event_parent')) != bool(old.get('shared_event_parent'))
+                    or (row['raw'], row['signature']) != (old['raw'], old['signature'])
                     or bulk and (bulk_action(row), row.get('bulk_id')) != (bulk_action(old), old.get('bulk_id'))):
                 if bulk:
                     if row and row['status'] == 'EXACT_MATCH' and row['bulk_action'] == 'reuse':
@@ -1433,7 +1463,10 @@ async def apply(guild, actor, draft, bot=None, *, confirmed=False, choices=None,
                             changes['name'] = display_name(guild, row)
                         if parent and resource.category_id != parent.id: changes.update(category=parent, sync_permissions=False)
                         from services.channel_change_service import edit
-                        await edit(resource, **changes, reason='Confirmed GamerHQ repair')
+                        updated = await edit(resource, **changes, reason='Confirmed GamerHQ repair')
+                        if row['name'] == 'looking-for-group':
+                            from services.community_structure_service import core_category, mark_lfg_layout
+                            mark_lfg_layout(guild, updated, core_category(guild, 'events'))
                     elif kind == 'category':
                         if not row['private'] and private(resource):
                             skipped.append(row['label'] + ': private category retained'); continue

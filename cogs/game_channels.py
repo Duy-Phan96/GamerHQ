@@ -58,10 +58,58 @@ class CandidateView(SafeView):
             self.add_item(button)
 
 
+class DefaultGameRolesConfirm(Menu):
+    def __init__(self, guild, actor_id, draft):
+        super().__init__(guild, actor_id)
+        self.draft = draft
+        self.action('Confirm Initialize Games', self.confirm)
+        self.action('Cancel', self.cancel)
+
+    async def confirm(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        from services import game_visibility_service as visibility
+        try:
+            results = await visibility.apply_default_roles(self.guild, interaction.user, self.draft)
+            count = sum(row['ok'] for row in results)
+            notice = f'Initialized {count}/{len(self.draft["plans"])} reviewed default games. No text channels created.'
+            if count != len(self.draft['plans']) or self.draft['blocked']:
+                notice += ' Remaining or blocked games need a fresh review.'
+        except (ValueError, discord.HTTPException, TimeoutError) as exc:
+            notice = str(exc) if isinstance(exc, ValueError) else 'Could not verify game initialization. Open a fresh review.'
+        view = GamesMenu(self.guild, self.admin_id)
+        await interaction.edit_original_response(content=notice + '\n\n' + view.text(), view=view,
+            allowed_mentions=discord.AllowedMentions.none())
+
+    async def cancel(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        view = GamesMenu(self.guild, self.admin_id)
+        await interaction.response.edit_message(content='Cancelled. No changes made.\n\n' + view.text(), view=view)
+
+
+async def open_default_roles(interaction):
+    if not await check_admin(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)
+    from services import game_visibility_service as visibility
+    try:
+        draft = await visibility.preview_default_roles(interaction.guild, interaction.user)
+    except (ValueError, discord.HTTPException, TimeoutError) as exc:
+        return await interaction.edit_original_response(content=str(exc) if isinstance(exc, ValueError)
+            else 'Could not verify the game role inventory. No changes made.', view=None)
+    view = DefaultGameRolesConfirm(interaction.guild, interaction.user.id, draft) if draft['plans'] else None
+    await interaction.edit_original_response(content=visibility.default_roles_description(draft), view=view,
+        allowed_mentions=discord.AllowedMentions.none())
+
+
 class GamesMenu(Menu):
     def __init__(self, guild, actor_id):
         super().__init__(guild, actor_id)
         self.action('Manage Visible Games', self.visible_selector)
+        if actor_id == guild.owner_id:
+            self.action('Initialize Default Games', self.initialize_defaults)
         self.action('Set up Games Channels', self.visible_setup)
         self.action('Game System Migration', self.migration)
         for label, mode in [('Game Library', 'library'), ('Game Channels', 'channels'),
@@ -80,11 +128,14 @@ class GamesMenu(Menu):
                 f'Selectable Games: {len(db.get_selectable_games())}\n'
                 f'Games with Channels: {sum(bool(g.get("channel_id")) for g in games)}\n'
                 f'Channel Candidates: {sum(c["status"] == "PENDING" for c in service.candidates(self.guild))}\n'
-                'Manage Visible Games selects several games to show or hide together after review. Set up Games Channels also handles missing chats for already-visible games. Nothing is deleted.')
+                'Initialize Default Games makes untouched catalog games selectable without chats. Manage Visible Games reviews game/chat visibility; dedicated channels remain optional. Nothing is deleted.')
 
     async def visible_selector(self, interaction):
         from cogs.game_visibility_selector import open_selector
         await open_selector(interaction)
+
+    async def initialize_defaults(self, interaction):
+        await open_default_roles(interaction)
 
     async def visible_setup(self, interaction):
         await open_visible_setup(interaction)

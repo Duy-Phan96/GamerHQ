@@ -5,7 +5,7 @@ import time
 import discord
 from database import db
 from services.onboarding_service import alias
-from services.community_structure_service import core_channel
+from services.community_structure_service import core_channel, lfg_target
 from services.server_service import ServerMessageError
 from services.operation_context import read_scope, fetch_message, measured
 from services.music_bot_service import resolve_music_role, should_allow_music_bots, VOICE_RIGHTS, TEXT_RIGHTS, GAME_CHANNEL_FIELDS, blocked_name
@@ -73,9 +73,9 @@ async def _scan(guild, bot=None, *, messages=True):
         add('Persistent controls','WARN' if not required <= ids else 'PASS','Restart/cog registration needs review.' if not required <= ids else f'{len(views)} persistent views registered; suggestion entry/review available.')
     groups = {
         'start-here': ['welcome','rules','announcements','choose-your-games','choose-your-roles','guide','need-support'],
-        'games': ['gaming-chat','looking-for-group'],
+        'games': ['gaming-chat'],
         'community': ['newbies','general','introductions','suggestions','bot-commands'],
-        'events': ['community-events','tournaments','giveaways'],
+        'events': ['create-event','looking-for-group','community-events','tournaments','giveaways'],
     }
     channels = {}
     from services.channel_change_service import removed
@@ -108,11 +108,11 @@ async def _scan(guild, bot=None, *, messages=True):
                 if name == 'gaming-chat':
                     add(name, 'INFO', 'Optional community channel is absent.')
                     continue
-                add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
+                add(name,'REPAIRABLE' if name in {'guide','suggestions','bot-commands','welcome','newbies','community-events','create-event'} else 'MANUAL_REVIEW','Expected channel is missing.'); continue
             if not db.get_setting(f'managed_channel:{guild.id}:{name}') and name not in {'welcome', 'newbies', 'rules', 'announcements', 'general', 'introductions'}:
                 add(f'{name} mapping', 'RECONCILE', 'Existing channel needs linking. Run /server reconcile; no duplicate will be created.')
             default_parent = categories[0] if len(categories) == 1 else channel.category
-            wanted_parent = desired_channel_parent(guild, name, default_parent)
+            wanted_parent = lfg_target(guild, channel, default_parent) if name == 'looking-for-group' else desired_channel_parent(guild, name, default_parent)
             wanted_name = desired_channel_name(guild, name, channel.name)
             issue = channel.category_id != getattr(wanted_parent, 'id', channel.category_id) or channel.name != wanted_name
             add(name,'REPAIRABLE' if issue else 'PASS','Managed runtime state differs from Discord.' if issue else f'Channel {channel.id}; current Discord layout is accepted.')
@@ -125,7 +125,7 @@ async def _scan(guild, bot=None, *, messages=True):
         current, ordered = event_order(guild, guild.channels)
         correct = [c.id for c in current] == [c.id for c in ordered]
         add('EVENTS order', 'PASS' if correct else 'REPAIRABLE',
-            'Community Events, Tournaments, Giveaways order OK.' if correct else 'Owner Repair restores managed event order.')
+            'Create Event, Looking for Group, Community Events, Tournaments, Giveaways order OK.' if correct else 'Owner Repair restores managed event order.')
     except ServerMessageError:
         add('EVENTS order', 'MANUAL_REVIEW', 'Ambiguous event channels; no automatic merge.')
     from services.support_service import resolve as support_resource, CHANNEL_NAME
@@ -269,6 +269,10 @@ async def _scan(guild, bot=None, *, messages=True):
         category=tickets.mapped(guild,'support-tickets',True)
         if not category: raise ServerMessageError('Missing private ticket category.')
         tickets.check_private(category)
+        from services.discord_permissions import TICKET_WRITE, resource_issues
+        ticket_issue = resource_issues(guild, category, TICKET_WRITE)
+        if ticket_issue:
+            add('Ticket creation permissions', 'MANUAL_REVIEW', ticket_issue)
         logs=tickets.mapped(guild,'ticket-logs')
         if not logs: raise ServerMessageError('Missing private ticket logs.')
         tickets.check_private(logs)
@@ -353,6 +357,15 @@ async def _scan(guild, bot=None, *, messages=True):
     except ValueError:
         add('Gaming category', 'REPAIRABLE', 'Review/add the shared GAMING category in Server Structure.')
     add('Games log', 'PASS' if game_channels.log_channel(guild) else 'REPAIRABLE', 'Private STAFF games-log must be linked and writable by GamerHQ.')
+    from services import game_visibility_service as game_visibility
+    from services.role_service import assignable
+    defaults = game_visibility.default_catalog_names()
+    untouched = sum(game_visibility.untouched_default(guild, game, defaults) for game in games)
+    selected = [g for g in games if g['active'] and g['selectable']]
+    verified = sum(bool(g.get('role_id') and assignable(guild.get_role(g['role_id']), guild)) for g in selected)
+    add('Game selection readiness', 'MANUAL_REVIEW' if untouched or verified != len(selected) else 'PASS',
+        f'{verified}/{len(selected)} selectable game roles verified; {untouched} untouched defaults. '
+        'Use Initialize Default Games for role-only setup; dedicated chats are optional.')
     channel_ids = set()
     for game in games:
         if game.get('channel_id'):
@@ -390,7 +403,13 @@ async def _scan(guild, bot=None, *, messages=True):
         if not ch: add('Temporary Voice record','MANUAL_REVIEW',f'Channel {row["channel_id"]} absent from this guild cache; verify guild/owner before cleanup.')
         elif not guild.get_member(row['host_id']): add('Temporary Voice owner','WARN',f'Room {ch.id}: owner not cached/present; staff can manage it, occupied room retained.')
     generators=[c for c in guild.channels if isinstance(c,discord.VoiceChannel) and alias(c.name)=='create-voice']
-    add('Create Voice','PASS' if generators else 'MANUAL_REVIEW',f'{len(generators)} entry points detected; {len(temps)} tracked room records.')
+    from services.discord_permissions import VOICE_CREATE, resource_issues
+    voice_issues = [issue for generator in generators for resource in (generator.category, generator)
+                    if (issue := resource_issues(guild, resource, VOICE_CREATE))]
+    detail = f'{len(generators)} entry points detected; {len(temps)} tracked room records.'
+    if voice_issues:
+        detail += ' ' + voice_issues[0]
+    add('Create Voice','PASS' if generators and not voice_issues else 'MANUAL_REVIEW',detail)
     for event in events:
         if event['status']=='scheduled':
             if not guild.get_member(event['host_id']): add('LFG host','WARN',f'Lobby {event["id"]}: host absent/not cached; admin should review.')

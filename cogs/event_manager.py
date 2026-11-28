@@ -17,7 +17,10 @@ from cogs.event_attendance import AttendanceView, InvitationView, LeaveMembershi
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+from services.tenant_routing import tenant_cycle
+from database import tenants
+from services import public_event_cards
 
 from cogs.event_editor import SkillEventEditor, safe
 
@@ -50,7 +53,28 @@ async def notify_invited(guild, users):
                 continue
 
 
-async def call(interaction, operation, payload):
+async def require_event_ready(interaction, *, public=False):
+    """Guard member writes using the guild's actual lifecycle and Host policy."""
+    runtime = interaction.client.skill_runtime
+    status = await runtime.status(guild_id=interaction.guild.id, skill_id=SKILL)
+    # A freshly installed Skill may become configured on its first event write.
+    if not (status.installed and status.enabled and status.running):
+        raise ValueError("Event Manager is not running for this server. Ask an admin to enable it under Server Management → Skills.")
+    if status.health != "PASS":
+        raise ValueError("Event Manager is not ready. Ask an admin to review Skill health.")
+    if public:
+        import json
+        try:
+            raw = db.get_setting(f"skill_resources:{interaction.guild.id}:{SKILL}")
+            policy = json.loads(raw) if raw else {}
+            allowed = isinstance(policy, dict) and policy.get("allowPublic") is True
+        except (TypeError, ValueError):
+            allowed = False
+        if not allowed:
+            raise ValueError("Public events are not authorized. Ask the server owner to review Public Events in Skill settings.")
+
+
+async def call(interaction, operation, payload, *, after_member_change=False):
     if not interaction.guild or not isinstance(interaction.user, discord.Member):
         raise PermissionError("Use Event Manager as a member of this server.")
     runtime = interaction.client.skill_runtime
@@ -60,11 +84,17 @@ async def call(interaction, operation, payload):
         return await runtime.call_management(guild_id=interaction.guild.id, skill_id=SKILL,
             contract_id=f"event-manager.{op}.v1", payload=data, actor_id=interaction.user.id)
 
-    if operation in {"update", "delete", "delete-preview", "set-active", "transition", "occurrences-update"}:
+    if operation in {"update", "delete", "delete-preview", "set-active", "transition", "occurrences-update", "reconcile"}:
         event_id = payload["occurrenceId"].rsplit(":", 1)[0] if operation == "occurrences-update" else payload["eventId"]
         current = (await dispatch("get", {"eventId": event_id}))["state"]
-        if not can_manage(interaction.user, current):
+        if not can_manage(interaction.user, current) and not (operation == "reconcile" and after_member_change):
             raise PermissionError("You don't have permission to manage this event.")
+    if operation in {"create", "validate", "update", "reconcile"}:
+        # Validation and the final write both recheck readiness. A public
+        # reconciliation uses the saved event visibility, never caller input.
+        public = (current["config"]["visibility"] == "public" if operation == "reconcile"
+                  else payload.get("visibility") == "public")
+        await require_event_ready(interaction, public=public)
     if operation == "attendance-plan":
         current = (await dispatch("get", {"eventId": payload["eventId"]}))["state"]
         payload = {**payload, "manager": can_manage(interaction.user, current)}
@@ -125,10 +155,64 @@ class EventSkillHubView(discord.ui.View):
             await interaction.followup.send(str(error)[:1500], ephemeral=True)
 
 
+class EventBrowseEntry(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Browse Public Events", style=discord.ButtonStyle.primary,
+                       custom_id="gamerhq:events:browse-public")
+    async def browse(self, interaction, button):
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("EventManager")
+        if cog is None:
+            return await interaction.followup.send("Public event discovery is unavailable on this server.", ephemeral=True)
+        try:
+            await cog.navigate(interaction, "browse-public", ignore_channel=True)
+        except (ValueError, PermissionError, RuntimeError) as error:
+            await interaction.followup.send(str(error)[:300], ephemeral=True)
+
+
+class EventCreateEntry(EventSkillHubView):
+    @discord.ui.button(label="My Events", style=discord.ButtonStyle.secondary,
+                       custom_id="gamerhq:events:my-events")
+    async def my_events(self, interaction, button):
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("EventManager")
+        if cog is None:
+            return await interaction.followup.send("Event Manager is unavailable on this server.", ephemeral=True)
+        try:
+            await cog.navigate(interaction, "manage", ignore_channel=True)
+        except (ValueError, PermissionError, RuntimeError) as error:
+            await interaction.followup.send(str(error)[:300], ephemeral=True)
+
+
 class EventManager(commands.Cog):
     lfg = app_commands.Group(name="lfg", description="Manage events through the installed Event Manager Skill.")
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
+        self.public_cards.start()
+
+    def cog_unload(self):
+        self.public_cards.cancel()
+
+    @tasks.loop(seconds=30)
+    @tenant_cycle
+    async def public_cards(self):
+        binding = tenants.current()
+        for guild in self.bot.guilds:
+            if binding is not None and binding.guild_id != guild.id:
+                continue
+            try:
+                await public_event_cards.sync(self.bot.skill_runtime, guild)
+            except Exception as error:
+                logging.getLogger(__name__).warning("Public LFG synchronization pending guild=%s error=%s",
+                    guild.id, type(error).__name__)
+
+    @public_cards.before_loop
+    async def before_public_cards(self):
+        await self.bot.wait_until_ready()
 
     @lfg.command(name="create", description="Create a one-time or recurring event.")
     async def create(self, interaction: discord.Interaction):
@@ -157,15 +241,23 @@ class EventManager(commands.Cog):
         if action == "manage" and not server and (ignore_channel or not admin):
             events = [event for event in events if event.get("ownerId") == actor or actor in event["members"]
                       or event["id"] in participant_ids]
+        if action == "browse-public":
+            # Do not include private events even for owners, invitees or admins.
+            events = [event for event in result["events"] if event["status"] == "active"
+                      and event["config"]["visibility"] == "public"
+                      and any(row["eventId"] == event["id"] and session_open(row, event)
+                              for row in result.get("occurrences", ()))]
         if action == "convert":
             events = [event for event in events if event.get("legacyRecurrence")]
         if not events:
-            return await interaction.followup.send("No events available.", ephemeral=True)
+            return await interaction.followup.send("No upcoming public events." if action == "browse-public" else "No events available.", ephemeral=True)
         counts = {}
         for row in sorted(result.get("occurrences", ()), key=lambda item: item["startAt"]):
             if row["status"] in ("scheduled", "active"):
                 counts.setdefault(row["eventId"], len(row["participants"]))
         title = ("All Events" if admin and (server or not ignore_channel) else "My Events") if action == "manage" or manageable else "Choose Event"
+        if action == "browse-public":
+            title = "Public Events"
         picker = EventPicker(self, interaction, events, counts, action, title)
         await interaction.followup.send(content=picker.content(), view=picker, ephemeral=True)
 
@@ -180,6 +272,10 @@ class EventManager(commands.Cog):
             return await interaction.followup.send(view.content(), view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         result = await call(interaction, "get", {"eventId": event_id})
         state = result["state"]
+        if action == "browse-public":
+            if state["status"] != "active" or state["config"]["visibility"] != "public":
+                raise ValueError("This event is no longer publicly available. Refresh the event list.")
+            action = "manage"
         if action == "leave-series":
             actor = str(interaction.user.id)
             if actor not in state["members"] or actor == state.get("ownerId"):
@@ -197,16 +293,15 @@ class EventManager(commands.Cog):
             available = hasattr(interaction, "client") and supports_attendance(interaction)
             view = EventActions(self, interaction, state, result.get("history", {}).get("occurrences", ()), manages,
                                 attendance=available)
-            if manages:
-                try:
-                    await call(interaction, "reconcile", {"eventId": event_id})
-                except Exception:
-                    logging.getLogger(__name__).warning("Event card reconciliation is pending", exc_info=True)
             return await interaction.followup.send(content=view.content(), view=view, ephemeral=True)
         if not can_manage(interaction.user, state):
             raise PermissionError("You don't have permission to manage this event.")
         if state["status"] == "deleted":
             raise ValueError("This event has ended.")
+        if action == "sync":
+            await call(interaction, "reconcile", {"eventId": event_id})
+            return await interaction.followup.send(
+                "Event Discord synchronization completed for the existing event.", ephemeral=True)
         if action in ("edit", "players", "convert"):
             if action == "convert" and (not interaction.user.guild_permissions.administrator or not state.get("legacyRecurrence")):
                 raise PermissionError("This imported schedule requires administrator access.")
@@ -230,9 +325,10 @@ class EventManager(commands.Cog):
             return await self.finish(interaction, event_id, "Event resumed." if action == "resume" else "Event paused. Its chat and history are kept.")
         raise ValueError("Choose an event action.")
 
-    async def finish(self, interaction, event_id, message):
+    async def finish(self, interaction, event_id, message, *, after_member_change=False):
         try:
-            await call(interaction, "reconcile", {"eventId": event_id})
+            # Trusted continuation only after the Skill accepted the member mutation.
+            await call(interaction, "reconcile", {"eventId": event_id}, after_member_change=after_member_change)
         except Exception:
             logging.getLogger(__name__).warning("Event Discord reconciliation is pending", exc_info=True)
             message += " The Discord card will refresh when synchronization resumes."
@@ -278,7 +374,7 @@ class EventManager(commands.Cog):
         manifest = interaction.client.skill_runtime.registry.get(SKILL).manifest
         if any(contract.id == "event-manager.attendance.v1" for contract in manifest.management_apis.exposes):
             result = await call(interaction, "attendance", {"eventId": event_id, "action": action, "startAt": start_at})
-            return await self.finish(interaction, event_id, result["message"])
+            return await self.finish(interaction, event_id, result["message"], after_member_change=True)
         # Existing 0.1.0 hosts can stage the adapter ahead of the Skill update.
         if action == "leave-series":
             raise ValueError("Permanent membership can be changed in Manage Players.")
@@ -305,7 +401,7 @@ class EventManager(commands.Cog):
         members = members | {actor} if action == "join" else members - {actor}
         await call(interaction, "participate", {"eventId": event_id, "startAt": row["startAt"],
             "members": sorted(members), "revision": row["revision"]})
-        await self.finish(interaction, event_id, "You joined the next session." if action == "join" else "You left the next session.")
+        await self.finish(interaction, event_id, "You joined the next session." if action == "join" else "You left the next session.", after_member_change=True)
 
     @lfg.command(name="join", description="Join the next session of the current or selected event.")
     async def join(self, interaction: discord.Interaction):
@@ -352,6 +448,31 @@ class EventManager(commands.Cog):
     async def on_interaction(self, interaction):
         data = interaction.data or {}
         custom_id = str(data.get("custom_id", ""))
+        public = re.fullmatch(r"gamerhq:lfg-card:(join|leave|details|share):([0-9a-f]{32}):([0-9]{1,12})", custom_id)
+        if public and not interaction.response.is_done() and interaction.guild and interaction.message:
+            await interaction.response.defer(ephemeral=True)
+            try:
+                async with public_event_cards.guild_lock(interaction.guild.id):
+                    identity = public_event_cards.resolve_control(interaction.guild, interaction.channel,
+                        interaction.message, public[2], int(public[3]))
+                    if not identity:
+                        raise ValueError("This public card is no longer available.")
+                    await require_event_ready(interaction, public=True)
+                    event_id, start_at = identity
+                    cards = public_event_cards.project(await call(interaction, "list", {}))
+                    if event_id not in cards or cards[event_id].start_at != start_at:
+                        raise ValueError("This session has changed. Use the updated public event card.")
+                    if public[1] in ("join", "leave"):
+                        await self.member_action(interaction, event_id, public[1], start_at=start_at)
+                    elif public[1] == "details":
+                        await self.action(interaction, event_id, "browse-public")
+                    else:
+                        await interaction.followup.send(interaction.message.jump_url, ephemeral=True,
+                            allowed_mentions=discord.AllowedMentions.none())
+            except (ValueError, PermissionError, RuntimeError, ManagementConflictError):
+                await interaction.followup.send("This public event is no longer available or the action could not be completed.",
+                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            return
         card = re.fullmatch(r"gamerhq:event:manage:[0-9a-f]{32}", custom_id)
         if card and not interaction.response.is_done() and interaction.guild and interaction.message:
             event_id = event_channel_identity(interaction.channel, guild_id=interaction.guild.id,
@@ -390,5 +511,6 @@ class EventManager(commands.Cog):
 
 
 async def setup(bot):
-    add_shared_entry_view(bot, EventSkillHubView())
+    add_shared_entry_view(bot, EventCreateEntry())
+    add_shared_entry_view(bot, EventBrowseEntry())
     await bot.add_cog(EventManager(bot))

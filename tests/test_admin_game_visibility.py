@@ -63,14 +63,14 @@ class AdminVisibilityTests(unittest.IsolatedAsyncioTestCase):
         self.guild.create_text_channel.assert_not_awaited()
         self.assertTrue(db.get_game_by_id(self.game['id'])['selectable'])
 
-    async def test_active_hidden_games_included_and_inactive_excluded(self):
+    async def test_active_hidden_and_inactive_games_are_browsable(self):
         second = await self.make_game('Ark')
         db.set_game_selectable(second['id'], False)
         with db.connect() as conn:
             conn.execute('UPDATE games SET active=0 WHERE id=?', (self.game['id'],))
-        view = self.selector()
+        view = self.selector(db.get_all_games())
         self.assertIn(second['id'], view.games)
-        self.assertNotIn(self.game['id'], view.games)
+        self.assertIn(self.game['id'], view.games)
         self.assertFalse(view.is_visible(second['id']))
 
     async def test_120_games_pagination_keeps_choices_and_bounded_components(self):

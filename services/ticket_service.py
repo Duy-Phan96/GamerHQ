@@ -12,6 +12,8 @@ from services.server_service import ServerMessageError, upsert_fixed_message
 from services.community_structure_service import resource_key
 from cogs.suggestions import private_overwrites, STAFF_ALIASES
 from services import staff_access
+from services.discord_permissions import TICKET_WRITE, resource_issues, unsupported_overwrite_bits
+from database import tenants
 
 log = logging.getLogger(__name__)
 ENTRY_NAME = '🆘・need-support'
@@ -78,12 +80,20 @@ def active_overview(guild):
         channel = guild.get_channel(item['channel_id']) if item.get('channel_id') else None
         assigned = guild.get_member(item['assigned_staff_id']) if item.get('assigned_staff_id') else None
         creator = guild.get_member(item['creator_discord_id'])
+        ready = bool(isinstance(channel, discord.TextChannel) and
+                     channel.guild.id == guild.id and item.get('opening_message_id') and
+                     channel.topic == marker(guild.id, item['id']))
+        if ready:
+            try:
+                check_private(channel, item['creator_discord_id'])
+            except ServerMessageError:
+                ready = False
         rows.append({
             'id': item['id'],
             'status': item['status'],
             'ticket_type': item.get('ticket_type', 'GENERAL_SUPPORT'),
-            'channel_id': channel.id if isinstance(channel, discord.TextChannel) else None,
-            'channel_ready': isinstance(channel, discord.TextChannel),
+            'channel_id': channel.id if ready else None,
+            'channel_ready': ready,
             'assigned_staff_id': assigned.id if assigned and staff(assigned) else None,
             'assigned_name': assigned.display_name if assigned and staff(assigned) else None,
             'creator_id': item['creator_discord_id'],
@@ -178,14 +188,23 @@ def opening_text(item):
             + ('This ticket is closed. Its history remains available to you and the team.' if item['status']=='CLOSED' else 'A member of the GamerHQ team will help you here.'))
 
 
-async def publish(guild,item):
+async def publish(guild,item, *, channel=None):
     from cogs.tickets import TicketActions
-    channel = guild.get_channel(item['channel_id']) if item['channel_id'] else None
+    if channel is None:
+        channel = guild.get_channel(item['channel_id']) if item['channel_id'] else None
+    elif (channel.guild.id != guild.id or channel.id != item['channel_id']
+          or channel.topic != marker(guild.id, item['id'])):
+        raise ServerMessageError('Ticket ownership changed; publication blocked.')
     if not channel:
         raise ServerMessageError('Ticket channel is unavailable. Staff can review the saved ticket.')
     # Privacy is repaired before posting submitted content or closed-ticket state.
     creator = creator_target(guild,item,channel)
-    await channel.edit(overwrites=private(guild,channel,creator,item['status']=='CLOSED'),reason='GamerHQ ticket access')
+    desired = private(guild,channel,creator,item['status']=='CLOSED')
+    if channel.overwrites != desired:
+        edited = await channel.edit(overwrites=desired,reason='GamerHQ ticket access')
+        if edited is not None:
+            channel = edited
+    check_private(channel, item['creator_discord_id'])
     title = ticket_title(item)
     message = await upsert_fixed_message(channel,setting_key=f'ticket_opening:{guild.id}:{item["id"]}',
         content=opening_text(item),allowed_mentions=discord.AllowedMentions.none(),view=TicketActions(status=item['status']),pin=True,recover_match=lambda msg:(msg.content or '').startswith(title+'\n'))
@@ -237,6 +256,9 @@ async def open_ticket(guild,member,subject,description,feature='Other', *, ticke
                 return dict(rows[0]),False
             same=next((r for r in rows if r['subject']==subject and r['description']==description and r['created_at']>=now-30),None)
             if same:return dict(same),False
+            issue = resource_issues(guild, category, TICKET_WRITE)
+            if issue:
+                raise ServerMessageError('Ticket creation unavailable. ' + issue)
             if len(category.text_channels)>=50:
                 raise ServerMessageError('The ticket area is full. Please contact staff to review retained tickets.')
             cursor=conn.execute('INSERT INTO support_tickets(guild_id,creator_discord_id,subject,description,category,created_at,updated_at,ticket_type) VALUES(?,?,?,?,?,?,?,?)',(guild.id,member.id,subject,description,feature,now,now,ticket_type))
@@ -266,6 +288,115 @@ def authorize(guild,actor,item,staff_only=False):
         raise ValueError('Current server membership is required.')
     if not staff(actor) and (staff_only or item['creator_discord_id']!=actor.id):
         raise ValueError('Only the ticket creator or authorized staff can use this action.' if not staff_only else 'Staff only.')
+
+
+def recovery_checkpoint(guild_id, ticket_id):
+    return f'ticket_recovery_pending:{guild_id}:{ticket_id}'
+
+
+def _overwrite_signature(overwrites):
+    return tuple(sorted((target.id, *[part.value for part in overwrite.pair()])
+                        for target, overwrite in overwrites.items()))
+
+
+async def _review_recovery(guild, actor, ticket_id):
+    tenants.require_guild(guild.id)
+    item = get(ticket_id)
+    authorize(guild, actor, item, staff_only=True)
+    if actor.id != guild.owner_id:
+        raise ValueError('Only the server owner can authorize ticket channel recovery.')
+    if item['status'] == 'CLOSED':
+        raise ValueError('Closed ticket history requires separate manual review.')
+    # Recheck membership and inventory using REST, not only the Gateway cache.
+    owner = await guild.fetch_member(actor.id)
+    creator = await guild.fetch_member(item['creator_discord_id'])
+    if (owner.id != guild.owner_id or owner.guild.id != guild.id or
+            creator.guild.id != guild.id or creator.id != item['creator_discord_id'] or creator.bot):
+        raise ValueError('Ticket membership could not be verified.')
+    bound = db.get_setting(f'managed_category:{guild.id}:support-tickets')
+    if not bound or not bound.isdecimal():
+        raise ValueError('Support category binding requires setup review.')
+    inventory = await guild.fetch_channels()
+    if len(inventory) > 600 or any(c.guild.id != guild.id for c in inventory):
+        raise ValueError('Discord channel inventory could not be verified.')
+    categories = [c for c in inventory if c.id == int(bound) and isinstance(c, discord.CategoryChannel)]
+    if len(categories) != 1:
+        raise ValueError('Support category binding requires setup review.')
+    category = categories[0]
+    check_private(category)
+    issue = resource_issues(guild, category, TICKET_WRITE)
+    if issue:
+        raise ServerMessageError(issue)
+    expected_marker = marker(guild.id, ticket_id)
+    matches = [c for c in inventory if getattr(c, 'topic', None) == expected_marker]
+    if len(matches) > 1:
+        raise ValueError('Multiple ticket ownership markers found. No channel will be created.')
+    channel = matches[0] if matches else None
+    if channel is not None:
+        if not isinstance(channel, discord.TextChannel) or channel.category_id != category.id:
+            raise ValueError('Ticket channel ownership or category is inconsistent.')
+        if item['channel_id'] and item['channel_id'] != channel.id:
+            raise ValueError('Stored ticket channel conflicts with its ownership marker.')
+        check_private(channel, creator.id)
+        issue = resource_issues(guild, channel, TICKET_WRITE)
+        if issue:
+            raise ServerMessageError(issue)
+        desired = private(guild, channel, creator)
+        mode = 'reuse'
+    else:
+        # Never replace a previously bound/deleted channel or claim its history.
+        if item['channel_id'] or item['opening_message_id']:
+            raise ValueError('Previously bound ticket channel is missing; history needs manual review.')
+        if db.get_setting(recovery_checkpoint(guild.id, ticket_id)):
+            raise ValueError('A previous recovery create is uncertain. Inspect its outcome; no second channel will be created.')
+        if any(c.name == f'ticket-{ticket_id:04d}' for c in inventory):
+            raise ValueError('A channel with the ticket name already exists without a verified marker.')
+        if sum(getattr(c, 'category_id', None) == category.id for c in inventory) >= 50:
+            raise ValueError('The support category is full. No channel will be created.')
+        desired = private(guild, creator=creator, parent=category)
+        mode = 'create'
+    if unsupported_overwrite_bits(guild.me.guild_permissions, desired).value:
+        raise ServerMessageError('Ticket overwrite permissions require owner review.')
+    signature = (guild.id, actor.id, ticket_id, item['status'], item['creator_discord_id'],
+                 item['channel_id'], item['opening_message_id'], category.id,
+                 channel.id if channel is not None else None, mode,
+                 _overwrite_signature(category.overwrites), _overwrite_signature(desired))
+    return {'ticket_id': ticket_id, 'mode': mode, 'signature': signature}, category, channel, creator, desired
+
+
+async def review_recovery(guild, actor, ticket_id):
+    reviewed, _, _, _, _ = await _review_recovery(guild, actor, ticket_id)
+    return reviewed
+
+
+async def confirm_recovery(guild, actor, reviewed):
+    ticket_id = reviewed['ticket_id']
+    async with _ticket_locks.setdefault(ticket_id, asyncio.Lock()):
+        current, category, channel, creator, desired = await _review_recovery(guild, actor, ticket_id)
+        if current != reviewed:
+            raise ValueError('Ticket recovery state changed. Review it again.')
+        if current['mode'] == 'create':
+            # Persist before POST. A lost response must never cause a second
+            # create on another click or after restart. A unique marker can
+            # still be adopted on a later reviewed attempt.
+            db.set_setting(recovery_checkpoint(guild.id, ticket_id), 'pending')
+            channel = await category.create_text_channel(
+                f'ticket-{ticket_id:04d}', topic=marker(guild.id,ticket_id),
+                overwrites=desired, reason=f'GamerHQ reviewed ticket recovery #{ticket_id:04d}')
+        if (channel.guild.id != guild.id or channel.category_id != category.id or
+                channel.topic != marker(guild.id, ticket_id)):
+            raise ServerMessageError('Recovered channel identity could not be verified.')
+        check_private(channel, creator.id)
+        with db.connect() as conn:
+            result = conn.execute(
+                "UPDATE support_tickets SET channel_id=? WHERE id=? AND guild_id=? AND status!='CLOSED' AND (channel_id IS NULL OR channel_id=?)",
+                (channel.id, ticket_id, guild.id, channel.id))
+            if result.rowcount != 1:
+                raise ServerMessageError('Ticket binding changed. Recovery needs review.')
+        db.set_setting(recovery_checkpoint(guild.id, ticket_id), '')
+        await publish(guild, get(ticket_id), channel=channel)
+        await audit(guild, get(ticket_id), actor.id, 'recovered')
+        return get(ticket_id)
 
 
 async def change(guild,actor,ticket_id,action):
@@ -308,11 +439,23 @@ async def _recover(guild, member_id=None):
     category=guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if category not in guild.categories:return
     # Staff role changes must revoke access to old history in category/logs too.
-    await category.edit(overwrites=private(guild,category),reason='GamerHQ ticket staff access')
+    desired = private(guild, category)
+    if category.overwrites != desired:
+        issue = resource_issues(guild, category, TICKET_WRITE)
+        if issue:
+            log.warning('Ticket staff access repair blocked: %s', issue)
+            return
+        await category.edit(overwrites=desired,reason='GamerHQ ticket staff access')
     raw=db.get_setting(resource_key(guild,'ticket-logs'))
     logs=guild.get_channel(int(raw)) if raw and str(raw).isdigit() else None
     if logs:
-        await logs.edit(overwrites=private(guild,logs),reason='GamerHQ ticket log staff access')
+        desired = private(guild, logs)
+        if logs.overwrites != desired:
+            issue = resource_issues(guild, logs, TICKET_WRITE)
+            if issue:
+                log.warning('Ticket log access repair blocked: %s', issue)
+                return
+            await logs.edit(overwrites=desired,reason='GamerHQ ticket log staff access')
     for item in list_tickets(guild.id):
         if member_id is not None and member_id not in (item['creator_discord_id'],item['assigned_staff_id']):continue
         async with _ticket_locks.setdefault(item['id'],asyncio.Lock()):

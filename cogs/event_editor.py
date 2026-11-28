@@ -560,7 +560,7 @@ class SkillEventEditor(discord.ui.View):
                     await api(interaction, "reconcile", {"eventId": event["id"]})
                     message = "Event saved and its persistent area synchronized." if event.get("config", {}).get("chatEnabled", True) else "Event saved. Event chat is off."
                 except Exception:
-                    message = "Event saved. Discord synchronization is pending; check Skill health before retrying."
+                    message = "Event saved. Discord synchronization is pending. Open /lfg manage → Sync Event after reviewing Skill health. Do not create another event."
                 await interaction.edit_original_response(content=message, view=None)
                 self.stop()
                 if "invited" in event:

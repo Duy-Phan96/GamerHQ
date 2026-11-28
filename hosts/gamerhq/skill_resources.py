@@ -56,6 +56,60 @@ def has_publication_marker(message, marker):
                 for row in getattr(message, "components", ()) for button in row.children))
 
 
+def review_event_public_areas(guild, actor_id):
+    """Review only the current, already bound Event Manager text category."""
+    tenants.require_guild(guild.id)
+    if actor_id != guild.owner_id:
+        raise PermissionError("Only the server owner can authorize public event areas.")
+    key = f"skill_resources:{guild.id}:event-manager"
+    raw = db.get_setting(key)
+    mapped = db.get_setting(f"managed_category:{guild.id}:events")
+    try:
+        policy = json.loads(raw) if raw else {}
+        if not isinstance(policy, dict) or type(policy.get("allowPublic", False)) is not bool:
+            raise ValueError()
+        category_id = int(policy["categoryId"])
+        if category_id <= 0 or not mapped or int(mapped) != category_id:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Event Manager category binding needs Host review.") from None
+    parent = guild.get_channel(category_id)
+    if not isinstance(parent, discord.CategoryChannel) or parent.guild.id != guild.id:
+        raise ValueError("Event Manager category binding needs Host review.")
+    if not guild.me:
+        raise ValueError("Host bot membership could not be verified.")
+    from services.discord_permissions import missing, permission_names
+    absent = missing(parent.permissions_for(guild.me),
+                     ("view_channel", "manage_channels", "manage_roles",
+                      "send_messages", "read_message_history", "embed_links"))
+    if absent:
+        raise ValueError("Event category is missing Host permissions: " + permission_names(absent))
+    return {"raw": raw, "categoryId": category_id, "allowed": policy.get("allowPublic", False)}
+
+
+def enable_event_public_areas(guild, actor_id, reviewed):
+    """Compare the reviewed policy/binding before writing; never change other Skills."""
+    current = review_event_public_areas(guild, actor_id)
+    if current != reviewed:
+        raise ValueError("Event policy changed. Review it again.")
+    if current["allowed"]:
+        return False
+    policy = json.loads(current["raw"])
+    policy["allowPublic"] = True
+    key = f"skill_resources:{guild.id}:event-manager"
+    with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        mapping = conn.execute("SELECT value FROM settings WHERE key=?",
+                               (f"managed_category:{guild.id}:events",)).fetchone()
+        if not mapping or mapping["value"] != str(current["categoryId"]):
+            raise ValueError("Event category binding changed. Review it again.")
+        result = conn.execute("UPDATE settings SET value=? WHERE key=? AND value=?",
+                              (json.dumps(policy, sort_keys=True), key, current["raw"]))
+        if result.rowcount != 1:
+            raise ValueError("Event policy changed. Review it again.")
+    return True
+
+
 class GamerHQManagedResources:
     def __init__(self, *, guild, skill_id, permissions, policy=None, clock=time.time, user_lookup=None):
         _valid_identity(guild.id, skill_id)

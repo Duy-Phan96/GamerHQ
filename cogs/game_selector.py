@@ -31,10 +31,14 @@ class GameSelectionSession(SafeView):
         self.page = 0
         self.browsing = False
         self.busy = False
+        self.finished = False
         self.rebuild()
 
     async def interaction_check(self, interaction):
         if interaction.guild and interaction.guild.id == self.guild_id and interaction.user.id == self.member_id:
+            if self.finished:
+                await interaction.response.send_message('This selector is closed. Open it again to change your games.', ephemeral=True)
+                return False
             return True
         await interaction.response.send_message('This selector belongs to another member.', ephemeral=True)
         return False
@@ -44,7 +48,7 @@ class GameSelectionSession(SafeView):
         heading = 'Browse A–Z' if self.browsing else (
             f"{group_label if self.current_group == POPULAR else '🎮 Games ' + (group_label or '')}"
             f" · {self.page + 1}/{self.page_count()}")
-        return ('# 🎮 Your Games\n\nChoose a game to add or remove it immediately.\n'
+        return ('# 🎮 Your Games\n\nChoose a game to add or remove it immediately. Changes are saved automatically.\n'
                 '✅ Selected · ➕ Add\n\n## ' + heading)
 
     def page_count(self):
@@ -66,6 +70,19 @@ class GameSelectionSession(SafeView):
         self.rebuild()
         await interaction.response.edit_message(content=self.status_text(), view=self)
 
+    async def done(self, interaction):
+        if not await self.interaction_check(interaction):
+            return
+        if self.busy:
+            return await interaction.response.send_message('Please wait a moment, then try again.', ephemeral=True)
+        self.finished = True
+        try:
+            await interaction.response.edit_message(content='✅ Your game selection is saved.', view=None)
+        except Exception:
+            self.finished = False
+            raise
+        self.stop()
+
     def rebuild(self):
         self.clear_items()
         if not self.games_by_group:
@@ -77,6 +94,7 @@ class GameSelectionSession(SafeView):
                 async def choose(interaction, group=group): await self.navigate(interaction, group=group)
                 self.navigation('0–9 / Other' if group == '#' else group, choose, row=index // 5)
             self.navigation('Back to Popular', popular, row=2)
+            self.navigation('Done', self.done, row=2)
             return
         games = self.games_by_group[self.current_group]
         for index, game in enumerate(games[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]):
@@ -96,6 +114,7 @@ class GameSelectionSession(SafeView):
         self.navigation('Browse A–Z' if self.current_group == POPULAR else 'Other Letter Ranges', browse, row=4)
         if self.current_group != POPULAR:
             self.navigation('Back to Popular', popular, row=4)
+        self.navigation('Done', self.done, row=4)
 
     async def toggle(self, interaction, game_id):
         if not await self.interaction_check(interaction): return

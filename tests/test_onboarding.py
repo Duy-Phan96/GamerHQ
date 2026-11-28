@@ -154,6 +154,7 @@ class FakeGuild:
         self.custom = self.role(3)
         self.roles = [self.default_role, self.mod, self.custom]
         self.me = MagicMock(spec=discord.Member); self.me.id = 900
+        self.me.guild_permissions = discord.Permissions.all()
     @staticmethod
     def role(rid, default=False, **permissions):
         result = MagicMock(spec=discord.Role)
@@ -200,6 +201,10 @@ class FakeGuild:
     def add_category(self, name):
         self.sequence += 1
         category = FakeCategory(self, name, self.sequence)
+        # Only support fixtures need the new ticket permission preflight.
+        # Other categories retain the existing lightweight snapshot contract.
+        if onboarding.alias(name) == 'support-tickets':
+            category.permissions_for = lambda target: target.guild_permissions
         self.categories.append(category)
         return category
     def add_channel(self, name, category):

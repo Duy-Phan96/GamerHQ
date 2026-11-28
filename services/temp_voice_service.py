@@ -103,7 +103,9 @@ async def act(guild, actor, channel_id, action, value=None):
                     overwrites[target] = overwrite
                 # Store before edit: interrupted edits are safe to retry/unlock.
                 db.set_setting(setting, json.dumps(original))
-                overwrites = with_music_access(guild, overwrites, parent=channel.category)
+                # Do not introduce a Music Bots grant that creation could not safely apply.
+                if music in channel.overwrites:
+                    overwrites = with_music_access(guild, overwrites, parent=channel.category)
                 await channel.edit(overwrites=overwrites, reason=reason)
             elif action == 'lock':
                 # Reapply saved targets if an earlier Discord edit failed.
@@ -111,7 +113,10 @@ async def act(guild, actor, channel_id, action, value=None):
                     if str(target.id) in json.loads(saved):
                         overwrite = channel.overwrites_for(target); overwrite.connect = False
                         overwrites[target] = overwrite
-                await channel.edit(overwrites=with_music_access(guild, overwrites, parent=channel.category), reason=reason)
+                music, _ = resolve_music_role(guild, persist=False)
+                if music in channel.overwrites:
+                    overwrites = with_music_access(guild, overwrites, parent=channel.category)
+                await channel.edit(overwrites=overwrites, reason=reason)
             elif saved:
                 original = json.loads(saved)
                 for target in guild.roles:

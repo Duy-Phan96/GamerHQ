@@ -38,6 +38,8 @@ def skill_configuration(guild):
             (guild.id,),
         ).fetchone()
     protected.update(int(row[0]) for row in owned if row[0])
+    from services.shared_event_category import configured_parents
+    protected.update(configured_parents(guild))
     if any(skill['skill_id'] == 'event-manager' for skill in skills):
         authoritative = authority is not None and authority[0] == 'event-manager'
         rows.append(('skill', 'event-manager.authority', 'Leave unchanged' if authoritative else 'Conflict',
@@ -67,8 +69,10 @@ def structure_row(guild, row, protected):
     if kind == 'order':
         return ('structure', 'managed ordering', 'Leave unchanged', 'Review ordering separately')
     resources = row['candidates']
-    if any(r.id in protected or getattr(r, 'category_id', None) in protected for r in resources):
+    if row.get('skill_protected'):
         return (kind, name, 'Conflict', 'Skill-owned resource or destination')
+    if row.get('shared_event_parent'):
+        return (kind, name, 'Reuse', 'Shared EVENTS category; parent permissions and identity preserved')
     status = row['status']
     if row.get('optional') and status != 'EXACT_MATCH':
         return (kind, name, 'Leave unchanged', 'Optional channel excluded from setup')
@@ -148,6 +152,9 @@ async def preview(guild, actor, bot=None):
             raise ServerMessageError('Discord inventory does not belong to the configured guild.')
         snapshot = operations.GuildSnapshot(guild, channels, roles)
         protected, skill_rows = skill_configuration(snapshot)
+        from services.shared_event_category import blocked_destination, shared_id, owned_ids
+        owned = owned_ids(snapshot)
+        shared = shared_id(snapshot, owned=owned)
         definitions = await operations._scan(snapshot, bot, message_keys=(), protected=protected)
         rows = [structure_row(snapshot, row, protected) for row in definitions]
         matched = {r.id for row in definitions for r in row['candidates']}
@@ -174,7 +181,7 @@ async def preview(guild, actor, bot=None):
                 rows.append(('message', name, 'Leave unchanged', 'Recorded; live message unverified'))
             elif channel not in snapshot.text_channels:
                 rows.append(('message', name, 'Conflict', 'Resolve the destination before verifying this message'))
-            elif channel.id in protected or channel.category_id in protected:
+            elif blocked_destination(snapshot, channel, protected, shared=shared, owned=owned):
                 rows.append(('message', name, 'Conflict', 'Skill-owned destination; use its owning tools'))
             else:
                 pending.append((name, operations.inspect_message(

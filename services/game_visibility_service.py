@@ -369,8 +369,8 @@ async def preview_batch(guild, actor, requested, *, expected_games=None):
         game = db.get_game_by_id(gid)
         name = game['name'] if game else 'Game no longer available'
         try:
-            if not game or not game['active']:
-                raise ValueError('This game is no longer active. Refresh the selector.')
+            if not game or (not game['active'] and not visible):
+                raise ValueError('This game is inactive or unavailable. Review explicit setup.')
             if expected_games is not None and game != expected_games.get(gid):
                 raise ValueError('This game changed since you opened the selector. Refresh before changing it.')
             plan = _plan(fresh, actor, gid, visible)
@@ -442,4 +442,138 @@ async def apply_batch(guild, actor, draft, *, override=False, progress=None):
                 await progress(index + 1, len(draft['plans']))
             except discord.HTTPException:
                 pass  # A progress edit failure does not change the operation result.
+    return results
+
+# Initial catalog setup is role-only. A chat remains a separate reviewed
+# resource operation, including for popular games.
+def default_role_only_key(guild, game_id):
+    return f'game_default_role_only:{guild.id}:{game_id}'
+
+
+def default_catalog_names():
+    with db.SEED_PATH.open(encoding='utf-8') as source:
+        return {row['name'] for row in json.load(source)['games']}
+
+
+def untouched_default(guild, game, names):
+    gid = game['id']
+    return (game['name'] in names and not game['active'] and not game['selectable']
+            and not any(game.get(field) for field in ('role_id', 'channel_id', 'area_enabled',
+                'category_id', 'chat_channel_id', 'memes_channel_id', 'clips_channel_id',
+                'lfg_channel_id', 'create_voice_channel_id'))
+            and not channels.legacy_hints(game)
+            and db.get_setting(channels.hidden_key(guild, gid)) not in ('1',)
+            and not db.get_setting(operation_key(guild, gid))
+            and not db.get_setting(f'game_channel_removed:{guild.id}:{gid}')
+            and not db.get_setting(f'game_channel_creation:{guild.id}:{gid}')
+            and not db.get_setting(default_role_only_key(guild, gid)))
+
+
+def _default_role_plan(guild, actor):
+    if not authorized(guild, actor) or actor.id != guild.owner_id:
+        raise ValueError('Only the server owner can initialize default game roles.')
+    if not guild.me or not guild.me.guild_permissions.manage_roles:
+        raise ValueError('The bot needs Manage Roles to initialize default game roles.')
+    names = default_catalog_names()
+    plans, blocked, seen = [], [], set()
+    creates = 0
+    for game in db.get_all_games():
+        if not untouched_default(guild, game, names):
+            continue
+        gid = game['id']
+        try:
+            if db.get_setting(f'game_visibility_role_creation:{guild.id}:{gid}'):
+                raise ValueError('Previous role creation requires review.')
+            role, action = _role(guild, game, True)
+            name = f"{game.get('emoji') or '🎮'} {game['name']}"
+            if name.casefold() in seen:
+                raise ValueError('Another game has the same role name.')
+            if len(guild.roles) + creates + int(action == 'create') > ROLE_LIMIT:
+                raise ValueError('The server role limit would be exceeded.')
+            signature = (role.id, role.name, role.permissions.value, role.position) if role else None
+            seen.add(name.casefold())
+            creates += int(action == 'create')
+            plans.append(dict(game=game, role_name=name, role_action=action, role_signature=signature))
+        except ValueError as exc:
+            blocked.append(dict(name=game['name'], reason=str(exc)))
+    return dict(guild_id=guild.id, actor_id=actor.id, plans=plans, blocked=blocked)
+
+
+async def preview_default_roles(guild, actor):
+    if not authorized(guild, actor) or actor.id != guild.owner_id:
+        raise ValueError('Only the server owner can initialize default game roles.')
+    draft = _default_role_plan(await _snapshot(guild), actor)
+    return {**draft, 'created': time.time(), 'used': False}
+
+
+def default_roles_description(draft):
+    from collections import Counter
+    counts = Counter(p['role_action'] for p in draft['plans'])
+    lines = ['# Initialize default games',
+        f"Make {len(draft['plans'])} untouched catalog games selectable.",
+        f"Create roles: {counts['create']} · Link safe existing roles: {counts['link']}",
+        'Text channels: 0. Existing member roles, chats and hidden games stay unchanged.',
+        'Only reviewed, untouched catalog entries are included.']
+    for plan in [p for p in draft['plans'] if p['role_action'] == 'link'][:8]:
+        lines.append('Link: ' + discord.utils.escape_markdown(plan['role_name'])[:100])
+    if counts['link'] > 8:
+        lines.append(f"… {counts['link'] - 8} more safe matching roles.")
+    for row in draft['blocked'][:5]:
+        lines.append('Review: ' + discord.utils.escape_markdown(row['name'])[:80] + ' — ' + row['reason'])
+    if len(draft['blocked']) > 5:
+        lines.append(f"… {len(draft['blocked']) - 5} more blocked games.")
+    lines.append('Nothing changes until you confirm.')
+    return '\n'.join(lines)[:1950]
+
+
+async def apply_default_roles(guild, actor, draft):
+    if (not authorized(guild, actor) or actor.id != guild.owner_id
+            or guild.id != draft['guild_id'] or actor.id != draft['actor_id']
+            or draft['used'] or time.time() - draft['created'] > 240):
+        raise ValueError('This review expired, was used, or access changed.')
+    draft['used'] = True
+    results = []
+    async with managed.lock(f'operations:{guild.id}'), channels._guild_locks.setdefault(guild.id, asyncio.Lock()):
+        fresh = await _snapshot(guild)
+        current = _default_role_plan(fresh, actor)
+        if any(current[key] != draft[key] for key in ('plans', 'blocked')):
+            raise ValueError('The catalog or role inventory changed. Open a fresh review.')
+        names = default_catalog_names()
+        for plan in draft['plans']:
+            game = plan['game']
+            gid = game['id']
+            async with area_lock(gid):
+                try:
+                    if not authorized(guild, actor) or actor.id != guild.owner_id:
+                        raise ValueError('Owner access changed.')
+                    now = db.get_game_by_id(gid)
+                    if now != game or not untouched_default(guild, now, names):
+                        raise ValueError('Game policy changed.')
+                    role, action = _role(fresh, now, True)
+                    signature = (role.id, role.name, role.permissions.value, role.position) if role else None
+                    if action != plan['role_action'] or signature != plan['role_signature']:
+                        raise ValueError('Game role review changed.')
+                    if role is None:
+                        role = await _reserved_create(fresh, f'game_visibility_role_creation:{guild.id}:{gid}',
+                            lambda: fresh.create_role(name=plan['role_name'], permissions=discord.Permissions.none(),
+                                reason='GamerHQ confirmed default game selection setup'))
+                        fresh = _replace(fresh, role, role=True)
+                    if not assignable(role, fresh) or not authorized(guild, actor):
+                        raise ValueError('Game role or owner access changed.')
+                    with db.connect() as conn:
+                        conn.execute('BEGIN IMMEDIATE')
+                        updated = conn.execute(
+                            'UPDATE games SET role_id=?,active=1,selectable=1 WHERE id=? AND active=0 AND selectable=0 AND role_id IS NULL',
+                            (role.id, gid))
+                        if updated.rowcount != 1:
+                            raise ValueError('Game state changed; role mapping needs review.')
+                        conn.execute('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                            (default_role_only_key(guild, gid), '1'))
+                    results.append(dict(name=game['name'], ok=True))
+                except (ValueError, discord.HTTPException, TimeoutError):
+                    results.append(dict(name=game['name'], ok=False))
+                    break  # Keep partial state and never automatically repeat an uncertain create.
+    if results:
+        await channels.audit(guild, 'Default Game Roles',
+            f"{sum(row['ok'] for row in results)} of {len(draft['plans'])} reviewed games initialized; no channels created.")
     return results
